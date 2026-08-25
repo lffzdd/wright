@@ -1,0 +1,20 @@
+{
+  "mode": "default",
+  "permissions": {
+    "allow": [
+      "execute_command(ls*)",
+      "execute_command(pwd*)",
+      "execute_command(cat *)",
+      "execute_command(echo *)",
+      "write_file",
+      "edit_file"
+    ],
+    "deny": [
+      "execute_command(rm *)",
+      "execute_command(sudo *)",
+      "execute_command(* sudo *)",
+      "execute_command(*git push*)",
+      "http_request(http://*)"
+    ]
+  }
+}

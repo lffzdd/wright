@@ -1,0 +1,14 @@
+{
+  "_说明": "把本文件复制为 .mcp.json(去掉 .example)即可生效。main.py 启动时读取 workspace/.mcp.json,把这里每个 stdio server 的工具并入工具池,工具名形如 mcp__<server名>__<工具名>。本版仅支持 stdio(需要 command 字段);带 url 的 sse/http server 会被跳过。",
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/绝对路径/到/某目录"]
+    },
+    "echo-python-示例": {
+      "command": "uv",
+      "args": ["run", "python", "/绝对路径/到/你的_stdio_mcp_server.py"],
+      "env": {}
+    }
+  }
+}

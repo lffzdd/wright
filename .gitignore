@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+.DS_Store
+.env
+src/wright/workspace/.wright_sessions/
+src/wright/workspace/.wright_tasks/
+src/wright/workspace/.wright_traces/
+src/wright/workspace/.mcp.json
+src/wright/memory_store/

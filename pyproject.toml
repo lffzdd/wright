@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wright"
+version = "0.1.0"
+description = "A coding agent for the terminal."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Liu Feifan" }]
+keywords = ["agent", "llm", "coding-agent", "cli"]
+dependencies = [
+    "openai>=2.29.0",
+    "python-dotenv>=1.0.0",
+    "mcp>=1.28.0,<2",
+    "jsonschema>=4.26.0",
+    "prompt-toolkit>=3.0.53",
+    "pydantic>=2.0",
+    "rich>=13.0",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+wright = "wright.main:main"
+
+[project.urls]
+Homepage = "https://github.com/lffzdd/wright"
+Repository = "https://github.com/lffzdd/wright"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wright"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/wright/permission/permission_settings.json" = "wright/permission/permission_settings.json"
+"src/wright/workspace/skills" = "wright/workspace/skills"
+"src/wright/workspace/.mcp.json.example" = "wright/workspace/.mcp.json.example"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["src/wright/tests"]
+python_files = ["test_*.py"]

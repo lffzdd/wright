@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "pre_tool_use": [
+      {
+        "name": "protect-production",
+        "matcher": "execute_command",
+        "command": ["python3", "hooks/protect_production.py"],
+        "timeout": 5
+      }
+    ],
+    "agent_stop": [
+      {
+        "name": "project-completion-gate",
+        "command": ["python3", "hooks/check_completion.py"],
+        "timeout": 10
+      }
+    ]
+  }
+}
