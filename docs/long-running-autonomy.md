@@ -1,7 +1,8 @@
 # Long-running Autonomy（第四阶段）
 
 第四阶段在统一 Task Runtime 上增加了可持久化调度，但没有把 Scheduler、Agent 和 Shell
-合并成一个巨型状态机。SQLite 文件位于 `workspace/.wright_tasks/tasks.sqlite3`。
+合并成一个巨型状态机。SQLite 文件位于
+`~/.wright/projects/<project-id>/tasks.sqlite3`。
 
 ## 两层持久化模型
 

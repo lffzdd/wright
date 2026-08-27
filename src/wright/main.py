@@ -29,6 +29,14 @@ from .tools.loop_tools import loop_tool
 from .llm import LLMClient
 from .lifecycle import LifecycleConfigError, load_lifecycle_manager
 from .looping import SessionLoopRegistry, parse_loop_command
+from .paths import (
+    ensure_project_state,
+    mcp_config_paths,
+    session_dir,
+    skill_directories,
+    task_db_path,
+    trace_dir,
+)
 from .permission import (
     FallbackApprovalHandler,
     InteractiveApprovalHandler,
@@ -44,7 +52,7 @@ from .session import SessionState
 from .skills import SkillRegistry, optional_skill_tools
 from .subagent import build_agent_tools
 from .tasks import RuntimeTask, TaskNotFoundError, TaskService
-from .tools.mcp_client import McpManager, load_mcp_config
+from .tools.mcp_client import McpManager, load_mcp_configs
 from .verifier import Verifier
 
 
@@ -77,6 +85,13 @@ def parse_cli_args() -> argparse.Namespace:
         "--hooks-config",
         metavar="PATH",
         help="显式启用指定 lifecycle command hooks 配置（不会自动执行仓库配置）",
+    )
+    parser.add_argument(
+        "--workspace",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help="要编辑的项目目录 (默认: 当前工作目录)",
     )
     return parser.parse_args()
 
@@ -219,9 +234,24 @@ def _start_input_reader(
 
 
 
+def _load_env() -> None:
+    """Load API keys from the nearest .env without requiring a specific cwd."""
+    here = Path(__file__).resolve()
+    candidates = [
+        Path.cwd() / ".env",
+        here.parents[2] / ".env",  # repo root (src/wright/main.py)
+        here.parent / ".env",
+    ]
+    for path in candidates:
+        if path.is_file():
+            load_dotenv(path)
+            return
+    load_dotenv()
+
+
 def main() -> None:
     args = parse_cli_args()
-    load_dotenv()
+    _load_env()
 
     base_url = os.getenv("OPENAI_BASE_URL")
     api_key = os.getenv("OPENAI_API_KEY")
@@ -264,10 +294,16 @@ def main() -> None:
 
     renderer = ConsoleRenderer()
 
-    workspace_dir = Path(__file__).resolve().parent / "workspace"
+    workspace_dir = (args.workspace or Path.cwd()).expanduser().resolve()
+    if not workspace_dir.is_dir():
+        raise SystemExit(f"workspace 不存在: {workspace_dir}")
+    ensure_project_state(workspace_dir)
+    logger.info("workspace=%s", workspace_dir)
+    logger.info("state=%s", session_dir(workspace_dir).parent)
+
     # 多轮对话:session 整段存活,每轮把用户输入 append 进同一条历史；Agent.run 会把
     # user_goal 更新为当前任务，供 Verifier 和 checkpoint 使用。
-    checkpoint_store = SessionCheckpointStore(workspace_dir / ".wright_sessions")
+    checkpoint_store = SessionCheckpointStore(session_dir(workspace_dir))
     resumed = bool(args.resume is not None or args.continue_latest)
     try:
         if args.resume is not None:
@@ -314,7 +350,7 @@ def main() -> None:
     background_runtime = AgentBackgroundRuntime(event_queue)
     session_state.agent_background_runtime = background_runtime
     autonomy_store = AutonomyStore(
-        workspace_dir / ".wright_tasks" / "tasks.sqlite3",
+        task_db_path(workspace_dir),
         session_id=session_state.session_id,
         workspace_dir=workspace_dir,
     )
@@ -328,6 +364,7 @@ def main() -> None:
             workspace_dir,
             session_state.session_id,
             config_path=(Path(args.hooks_config) if args.hooks_config else None),
+            trace_dir=trace_dir(workspace_dir),
         )
     except LifecycleConfigError as exc:
         raise SystemExit(f"无法加载 lifecycle hooks: {exc}") from exc
@@ -338,10 +375,9 @@ def main() -> None:
     )
 
 
-    # MCP 接入:从 workspace 下的 .mcp.json 发现外部 stdio server,连接并把它们的工具
-    # 翻译成本系统的 Tool。session 由 mcp_manager 持有,整段运行期保持存活,finally 关闭。
-    # 没配 .mcp.json 时 configs 为空,start() 直接返回 [],对其余流程完全无感。
-    mcp_manager = McpManager(load_mcp_config(workspace_dir / ".mcp.json"))
+    # MCP 接入:用户 ~/.wright/mcp.json + 项目 .wright/mcp.json,后者同名覆盖。
+    # 没配时 configs 为空,start() 直接返回 [],对其余流程完全无感。
+    mcp_manager = McpManager(load_mcp_configs(mcp_config_paths(workspace_dir)))
     mcp_tools = mcp_manager.start()
 
     # 权限裁决:加载持久化配置(模式 + allow/deny 规则),按"要不要人"两种装配。
@@ -394,7 +430,7 @@ def main() -> None:
     # 无 skill 加载器的纯净上下文——委派时把需要的流程写进任务描述。
     # loop 同理：会话内重跑必须看见当前对话，不能下放到隔离的子 Agent。
     memory_manager = MemoryManager(llm_client, selector_llm=selector_llm)
-    skill_registry = SkillRegistry(workspace_dir / "skills")
+    skill_registry = SkillRegistry(skill_directories(workspace_dir))
     skill_tools = optional_skill_tools(skill_registry)
     tools = [
         *tools,

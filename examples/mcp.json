@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/absolute/path/to/a/directory"]
+    },
+    "echo": {
+      "command": "uv",
+      "args": ["run", "python", "/absolute/path/to/your_stdio_mcp_server.py"],
+      "env": {}
+    }
+  }
+}

@@ -35,11 +35,8 @@
 
 ## Trace 格式
 
-每个 session 写入：
-
-```text
-workspace/.wright_traces/<session_id>.jsonl
-```
+每个 session 写入 `~/.wright/projects/<project-id>/traces/<session_id>.jsonl`，
+不写进项目源码树。`WRIGHT_HOME` 可改根目录。
 
 每行包含 `schema_version`、稳定 `event_id`、单调 `sequence`、时间、session / root turn /
 subagent 身份和有界 `payload`。记录器线程安全；恢复旧 session 时从已有 sequence 继续；若

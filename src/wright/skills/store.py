@@ -1,4 +1,4 @@
-"""扫描、解析和原子写入 workspace/skills/<id>/SKILL.md。"""
+"""扫描、解析和原子写入 skills/<id>/SKILL.md。"""
 
 from __future__ import annotations
 

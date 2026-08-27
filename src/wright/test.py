@@ -8,10 +8,14 @@ LLMClient 用假参数构造(不发起任何网络请求),整套测试离线可�
 """
 
 import json
+import tempfile
 import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
+
+_TMP = tempfile.TemporaryDirectory(prefix="wright-test-", ignore_cleanup_errors=True)
+_WORKSPACE = Path(_TMP.name)
 
 from .agent import Agent
 from .events import ContentDelta, ContentDone, UsageEvent
@@ -45,7 +49,7 @@ class RecordingRenderer(SilentRenderer):
 def _make_session(user_goal: str = "") -> SessionState:
     return SessionState.create(
         user_goal=user_goal,
-        workspace_dir=Path(__file__).resolve().parent / "workspace",
+        workspace_dir=_WORKSPACE,
     )
 
 

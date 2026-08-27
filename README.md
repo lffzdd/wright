@@ -39,8 +39,17 @@ or:
 uv run python -m wright.main
 ```
 
-The agent’s workspace is `src/wright/workspace`. Resume a session with
-`wright --continue` or `wright --resume`.
+The agent edits the current directory (or `--workspace DIR`). Sessions, traces,
+and the task database go to `~/.wright/projects/<id>/`, not into your repo.
+Resume with `wright --continue` or `wright --resume`.
+
+```bash
+cd /path/to/your/project
+uv run --directory /path/to/wright wright
+# or, after `uv tool install`:
+wright
+wright --workspace /path/to/your/project
+```
 
 ## Tests
 
@@ -58,9 +67,21 @@ RAG package. Wright does not vendor that stack.
 
 | Path | Role |
 |------|------|
-| `src/wright/` | Agent runtime, tools, permissions, memory, skills |
+| cwd / `--workspace` | Project files the agent may edit |
+| `~/.wright/projects/<id>/` | Sessions, traces, autonomy task DB |
+| `~/.wright/memory/` | Long-term memory |
+| `~/.wright/mcp.json` | User MCP servers |
+| `{project}/.wright/mcp.json` | Project MCP servers (override user on the same name) |
+| `{project}/.wright/skills/` | Project skills (override user skills) |
+| `~/.wright/skills/` | User skills |
+| `src/wright/` | Agent runtime |
 | `src/wright/tests/` | pytest suite |
-| `docs/` | Design notes for the control plane, autonomy, skills, hooks |
+| `examples/` | Sample skills and an `mcp.json` template |
+| `docs/` | Design notes |
+
+Copy `examples/skills/` into `~/.wright/skills` or a project’s `.wright/skills`.
+Copy `examples/mcp.json` to `~/.wright/mcp.json` or `{project}/.wright/mcp.json`
+when you actually want MCP servers — Wright does not seed a dummy config.
 
 ## License
 

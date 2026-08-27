@@ -37,8 +37,6 @@ packages = ["src/wright"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/wright/permission/permission_settings.json" = "wright/permission/permission_settings.json"
-"src/wright/workspace/skills" = "wright/workspace/skills"
-"src/wright/workspace/.mcp.json.example" = "wright/workspace/.mcp.json.example"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

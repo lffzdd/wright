@@ -9,6 +9,7 @@
 """
 
 import json
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -21,7 +22,8 @@ from .subagent import build_agent_tools, make_spawn_agent_tool
 from .tools.base import Tool, ToolResult
 
 
-WORKSPACE = Path(__file__).resolve().parent / "workspace"
+_TMP = tempfile.TemporaryDirectory(prefix="wright-subagent-", ignore_cleanup_errors=True)
+WORKSPACE = Path(_TMP.name)
 
 
 class ScriptedLLM:

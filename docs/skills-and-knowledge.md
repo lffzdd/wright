@@ -20,8 +20,9 @@
 ## Skill 生命周期
 
 ```text
-磁盘  workspace/skills/<id>/SKILL.md
-        │  SkillRegistry 扫描 / 缓存 / 失效
+磁盘  {project}/.wright/skills/<id>/SKILL.md
+      ~/.wright/skills/<id>/SKILL.md
+        │  SkillRegistry 扫描 / 缓存 / 失效（项目目录优先）
         ▼
 会话开始  若至少有一个合法 skill
         ├── 工具：skill（写入冻结的工具清单）

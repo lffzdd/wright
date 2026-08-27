@@ -1,7 +1,7 @@
 """记忆目录的路径解析与创建。
 
 记忆是【跨会话持久化】的长期记忆,存放位置和 workspace 解耦:
-    - 默认落在包内 `memory_store/`(随仓库走,与 workspace 隔离);
+    - 默认落在 `~/.wright/memory`(可用 WRIGHT_HOME 改根目录);
     - 可用环境变量 `WRIGHT_MEMORY_DIR` 覆盖到任意绝对/相对路径。
 
 记忆目录【不】受 file_tools 的 workspace 沙箱约束——它本就该在 workspace 之外,
@@ -13,22 +13,20 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from ..paths import wright_home
+
 # MEMORY.md:始终注入上下文的索引文件名(对标 Claude Code memdir 的 ENTRYPOINT)。
 MEMORY_INDEX = "MEMORY.md"
-
-# 默认记忆目录:本包同级的 memory_store/。用包文件定位而非 cwd,
-# 保证无论从哪里启动进程,主 Agent 都读写同一份记忆。
-_DEFAULT_MEMORY_DIR = Path(__file__).resolve().parent.parent / "memory_store"
 
 
 def memory_dir() -> Path:
     """解析记忆目录的绝对路径。
 
-    优先级:环境变量 WRIGHT_MEMORY_DIR > 包内 memory_store/。
+    优先级:环境变量 WRIGHT_MEMORY_DIR > ~/.wright/memory。
     环境变量给的相对路径按【当前工作目录】解析后再 resolve。
     """
     override = os.getenv("WRIGHT_MEMORY_DIR")
-    base = Path(override) if override else _DEFAULT_MEMORY_DIR
+    base = Path(override) if override else wright_home() / "memory"
     return base.expanduser().resolve()
 
 

@@ -108,30 +108,33 @@ class PermissionSettings:
 
 
 def load_permission_settings(path: Path | None = None) -> PermissionSettings:
-    """加载权限配置。优先级:显式 path > 环境变量 WRIGHT_PERMISSION_CONFIG > 模块默认文件。
+    """加载权限配置。
 
-    文件缺失或为空时回落到内置默认(mode=default、规则全空 → 等价于"全拒",
-    最保守)。解析失败直接抛,宁可启动报错也不要静默放行一份坏配置。
+    优先级:显式 path > 环境变量 WRIGHT_PERMISSION_CONFIG > ~/.wright/
+    permission_settings.json > 包内默认文件。显式 path 缺失时返回空配置,
+    不继续往下找。解析失败直接抛,宁可启动报错也不要静默放行一份坏配置。
     """
-    candidate = (
-        path
-        or _env_path()
-        or Path(__file__).resolve().parent / "permission_settings.json"
-    )
-    if not candidate.is_file():
-        return PermissionSettings()
-    data = json.loads(candidate.read_text(encoding="utf-8"))
-    return PermissionSettings.from_dict(data)
+    if path is not None:
+        if not path.is_file():
+            return PermissionSettings()
+        return PermissionSettings.from_dict(
+            json.loads(path.read_text(encoding="utf-8"))
+        )
+    for candidate in (_env_path(), _user_path(), _packaged_path()):
+        if candidate is not None and candidate.is_file():
+            return PermissionSettings.from_dict(
+                json.loads(candidate.read_text(encoding="utf-8"))
+            )
+    return PermissionSettings()
 
 
 def default_settings_path() -> Path:
-    """当前生效的配置文件路径(env 覆盖 > 模块默认文件)。
+    """"别再问"写回的路径(env 覆盖 > ~/.wright/permission_settings.json)。
 
-    供"别再问→落盘"用:必须和 load_permission_settings 读的是同一个文件,
-    否则记下的规则下次加载不到。注意它不含显式 path 分支——那是调用方临时指定的,
-    不该被持久化反向写回。
+    不写包内默认文件:安装后那份可能只读,也不该被一次本地确认改掉。
+    注意它不含显式 path 分支——那是调用方临时指定的,不该被持久化反向写回。
     """
-    return _env_path() or Path(__file__).resolve().parent / "permission_settings.json"
+    return _env_path() or _user_path()
 
 
 def append_allow_rule(rule: str, path: Path | None = None) -> None:
@@ -139,11 +142,14 @@ def append_allow_rule(rule: str, path: Path | None = None) -> None:
 
     这是交互式"Yes, 别再问"的持久化落点:把这次的人工放行固化成一条规则,
     下次同类调用会在【规则层】就被自动 allow,连交互 handler 都到不了。
-    文件不存在则新建一份最小配置。保持 indent=2,人能直接看/改。
+    首次写用户文件时从包内默认配置拷一份再追加,避免丢掉预置 allow 规则。
+    保持 indent=2,人能直接看/改。
     """
     target = path or default_settings_path()
     if target.is_file():
         data = json.loads(target.read_text(encoding="utf-8"))
+    elif path is None and _packaged_path().is_file():
+        data = json.loads(_packaged_path().read_text(encoding="utf-8"))
     else:
         data = {"mode": "default", "permissions": {"allow": [], "deny": []}}
 
@@ -151,6 +157,7 @@ def append_allow_rule(rule: str, path: Path | None = None) -> None:
     allow = perms.setdefault("allow", [])
     if rule not in allow:
         allow.append(rule)
+        target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
             json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
@@ -158,7 +165,17 @@ def append_allow_rule(rule: str, path: Path | None = None) -> None:
 
 def _env_path() -> Path | None:
     raw = os.getenv("WRIGHT_PERMISSION_CONFIG")
-    return Path(raw) if raw else None
+    return Path(raw).expanduser().resolve() if raw else None
+
+
+def _user_path() -> Path:
+    from ..paths import user_permission_settings_path
+
+    return user_permission_settings_path()
+
+
+def _packaged_path() -> Path:
+    return Path(__file__).resolve().parent / "permission_settings.json"
 
 
 class RuleBasedApprovalHandler:

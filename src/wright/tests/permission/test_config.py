@@ -257,3 +257,16 @@ def test_append_allow_rule_creates_missing_file(tmp_path):
     append_allow_rule("write_file", cfg)
     assert cfg.is_file()
     assert load_permission_settings(cfg).allow[0].tool_name == "write_file"
+
+
+def test_user_permission_file_overrides_packaged_defaults(tmp_path, monkeypatch):
+    monkeypatch.delenv("WRIGHT_PERMISSION_CONFIG", raising=False)
+    monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "home"))
+    user_cfg = tmp_path / "home" / "permission_settings.json"
+    user_cfg.parent.mkdir(parents=True)
+    user_cfg.write_text(
+        json.dumps({"mode": "default", "permissions": {"allow": ["http_request"]}}),
+        encoding="utf-8",
+    )
+    settings = load_permission_settings()
+    assert [rule.tool_name for rule in settings.allow] == ["http_request"]

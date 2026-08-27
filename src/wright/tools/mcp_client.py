@@ -5,9 +5,9 @@
 所以接入 = 多产出几个 `Tool` 对象。MCP 的 inputSchema 与 Tool.parameters 同为
 JSON Schema,映射 1:1。
 
-本版范围(刻意收窄):只做 client、配置走 .mcp.json,只接 tools
+本版范围(刻意收窄):只做 client、配置走 mcp.json,只接 tools
 (不接 resources/prompts,不做动态 list_changed,不做 server 方向)。
-transport 支持三种(对标 Claude Code):stdio(子进程)、sse、http(streamable HTTP)。
+transport 支持三种:stdio(子进程)、sse、http(streamable HTTP)。
 
 —— async↔sync 桥(本模块的核心机关)——
 官方 mcp SDK 是 asyncio 原生,而本系统的 ToolExecutor 是同步 + 线程池,tool.call 必须
@@ -31,6 +31,7 @@ cancel scope:进入(__aenter__)和退出(__aexit__)必须在【同一个 anyio �
 import asyncio
 import json
 import threading
+from collections.abc import Sequence
 from concurrent.futures import Future
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
@@ -52,7 +53,7 @@ logger = get_logger(__name__)
 
 @dataclass
 class McpServerConfig:
-    """一个 MCP server 的接入参数(对标 .mcp.json 里 mcpServers 的一条)。
+    """一个 MCP server 的接入参数(对标 mcp.json 里 mcpServers 的一条)。
 
     transport 决定用到哪些字段:
       - "stdio":command(必填)/ args / env —— 起子进程。
@@ -71,9 +72,9 @@ class McpServerConfig:
 
 
 def load_mcp_config(path: Path) -> list[McpServerConfig]:
-    """读 .mcp.json,解析出所有 server 配置(stdio / sse / http 三种 transport)。
+    """读一份 mcp.json,解析出所有 server 配置(stdio / sse / http 三种 transport)。
 
-    格式对标 Claude Code:{"mcpServers": {"<name>": {...}}},条目里:
+    格式:{"mcpServers": {"<name>": {...}}},条目里:
       - stdio:{"command", "args"?, "env"?}(或显式 "type": "stdio")。
       - sse  :{"type": "sse",  "url", "headers"?}。
       - http :{"type": "http", "url", "headers"?}("streamable-http" 同义)。
@@ -143,11 +144,20 @@ def load_mcp_config(path: Path) -> list[McpServerConfig]:
     return configs
 
 
+def load_mcp_configs(paths: Sequence[Path]) -> list[McpServerConfig]:
+    """按顺序加载多份 mcp.json,后出现的同名 server 覆盖前面的。"""
+    by_name: dict[str, McpServerConfig] = {}
+    for path in paths:
+        for config in load_mcp_config(path):
+            by_name[config.name] = config
+    return list(by_name.values())
+
+
 class McpManager:
     """持有一条常驻事件循环线程 + 所有 MCP session,负责连接、工具发现与关闭。
 
     用法:
-        mgr = McpManager(load_mcp_config(workspace / ".mcp.json"))
+        mgr = McpManager(load_mcp_configs([user_mcp, project_mcp]))
         mcp_tools = mgr.start()          # 连接 + 发现,返回已包装好的 Tool 列表
         ...                              # 整段 agent 运行期 session 保持存活
         mgr.shutdown()                   # 关闭所有 session / 子进程

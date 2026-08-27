@@ -381,12 +381,14 @@ def load_lifecycle_manager(
     session_id: str,
     *,
     config_path: Path | None = None,
+    trace_dir: Path | None = None,
 ) -> LifecycleManager:
     """Create tracing and load only an explicitly selected command-hook file."""
     workspace = workspace_dir.resolve()
+    traces = (trace_dir or (workspace / ".wright_traces")).resolve()
     manager = LifecycleManager(
         session_id,
-        TraceRecorder(workspace / ".wright_traces" / f"{session_id}.jsonl"),
+        TraceRecorder(traces / f"{session_id}.jsonl"),
     )
     if config_path is None:
         return manager
