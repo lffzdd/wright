@@ -2,6 +2,7 @@ import json
 
 from ..agent import Agent
 from ..events import ContentDone
+from ..lifecycle import HookRegistration, LifecycleManager
 from ..renderer import SilentRenderer
 from ..session import SessionState
 from ..tools.base import ToolCall, ToolResult
@@ -134,3 +135,51 @@ def test_verifier_restats_successful_file_artifacts(tmp_path):
 
     assert result.approved is False
     assert result.issues[0].code == "artifact_missing"
+
+
+def test_verifier_and_stop_hook_retries_are_independent(tmp_path):
+    main_llm = ScriptLLM([
+        _final("first"),
+        _final("second"),
+        _final("third"),
+    ])
+    reviewer = ScriptLLM([
+        json.dumps({
+            "approved": False,
+            "issues": [{"code": "tests_unverified", "message": "缺少证据"}],
+        }, ensure_ascii=False),
+        json.dumps({"approved": True, "issues": []}),
+        json.dumps({"approved": True, "issues": []}),
+    ])
+
+    def stop_hook(event):
+        payload = event.payload
+        if payload.get("status") != "completed":
+            return None
+        if payload.get("final_answer") == "second":
+            return {"decision": "deny", "reason": "hook wants more"}
+        return None
+
+    lifecycle = LifecycleManager("session")
+    lifecycle.register(HookRegistration(
+        event="agent_stop", name="completion-gate", callback=stop_hook
+    ))
+    session = SessionState.create("goal", tmp_path)
+    agent = Agent(
+        main_llm,
+        [],
+        session,
+        SilentRenderer(),
+        verifier=Verifier(reviewer),
+        lifecycle=lifecycle,
+        max_verification_retries=2,
+    )
+
+    result = agent.run("verify the project", max_steps=5)
+
+    assert result == "third"
+    assert session.status == "completed"
+    assert session.turns[0].verification.approved is False
+    assert session.turns[1].verification.approved is True
+    assert session.turns[2].verification.approved is True
+

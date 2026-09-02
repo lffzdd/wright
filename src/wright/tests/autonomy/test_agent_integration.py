@@ -9,6 +9,7 @@ from ...autonomy.runner import launch_durable_run
 from ...events import ContentDone
 from ...permission import PermissionSettings
 from ...renderer import SilentRenderer
+from ...services import RuntimeServices
 from ...session import SessionState
 from ...tools.ask_user_tool import ask_user_tool
 from ...tools.autonomy_tools import autonomy_tools
@@ -56,11 +57,14 @@ def _runtime(tmp_path):
     events = queue.Queue()
     session = SessionState.create("interactive", workspace)
     session.session_id = "session"
-    session.durable_task_store = store
     background = AgentBackgroundRuntime(events, max_workers=1)
-    session.agent_background_runtime = background
     scheduler = AutonomyScheduler(store, events, poll_interval=1)
-    return workspace, store, session, scheduler, events, background
+    services = RuntimeServices(
+        agent_background=background,
+        durable_store=store,
+        autonomy_scheduler=scheduler,
+    )
+    return workspace, store, session, scheduler, events, background, services
 
 
 def _claim_run(store, prompt="review the repository", name="daily review"):
@@ -77,7 +81,7 @@ def _claim_run(store, prompt="review the repository", name="daily review"):
 
 
 def test_durable_run_leaves_root_session_untouched(tmp_path):
-    workspace, store, session, scheduler, events, background = _runtime(tmp_path)
+    workspace, store, session, scheduler, events, background, services = _runtime(tmp_path)
     nested = workspace / "nested"
     nested.mkdir()
     root_agent = Agent(
@@ -108,6 +112,7 @@ def test_durable_run_leaves_root_session_untouched(tmp_path):
         base_tools=[],
         permission_settings=PermissionSettings(),
         background_runtime=background,
+        services=services,
     )
     assert launch is not None
     event_type, finished_id = events.get(timeout=2)
@@ -134,7 +139,7 @@ def test_durable_run_leaves_root_session_untouched(tmp_path):
 
 
 def test_durable_run_does_not_block_root_user_input(tmp_path):
-    workspace, store, session, scheduler, events, background = _runtime(tmp_path)
+    workspace, store, session, scheduler, events, background, services = _runtime(tmp_path)
     run_id = _claim_run(store, prompt="slow work")
     started = time.monotonic()
     launch = launch_durable_run(
@@ -145,6 +150,7 @@ def test_durable_run_does_not_block_root_user_input(tmp_path):
         base_tools=[],
         permission_settings=PermissionSettings(),
         background_runtime=background,
+        services=services,
     )
     assert launch is not None
     assert time.monotonic() - started < 0.08
@@ -167,7 +173,7 @@ def test_durable_run_does_not_block_root_user_input(tmp_path):
 
 
 def test_durable_session_omits_ask_user_and_autonomy_tools(tmp_path):
-    workspace, store, session, scheduler, events, background = _runtime(tmp_path)
+    workspace, store, session, scheduler, events, background, services = _runtime(tmp_path)
     run_id = _claim_run(store)
     memory_tools = build_memory_tools(
         tmp_path / "memory", include_legacy_save=True
@@ -198,6 +204,7 @@ def test_durable_session_omits_ask_user_and_autonomy_tools(tmp_path):
         ],
         permission_settings=PermissionSettings(),
         background_runtime=background,
+        services=services,
     )
     assert launch is not None
     names = set(launch.tool_names)
@@ -223,7 +230,7 @@ def test_durable_session_omits_ask_user_and_autonomy_tools(tmp_path):
 
 
 def test_cancelled_dispatched_run_is_not_started(tmp_path):
-    workspace, store, session, scheduler, events, background = _runtime(tmp_path)
+    workspace, store, session, scheduler, events, background, services = _runtime(tmp_path)
     run_id = _claim_run(store, prompt="should not execute", name="cancel me")
     store.cancel_run(run_id, "external cancellation")
     launch = launch_durable_run(
@@ -234,6 +241,7 @@ def test_cancelled_dispatched_run_is_not_started(tmp_path):
         base_tools=[],
         permission_settings=PermissionSettings(),
         background_runtime=background,
+        services=services,
     )
     assert launch is None
     run = store.get_run(run_id)

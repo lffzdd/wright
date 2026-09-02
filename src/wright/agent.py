@@ -1,5 +1,6 @@
 import json
 from collections.abc import Sequence
+from dataclasses import dataclass
 import time
 from typing import TYPE_CHECKING, Callable
 
@@ -8,11 +9,13 @@ from openai.types.chat import ChatCompletionMessageParam
 from .context import ContextCompactor
 from .events import ContentDelta, ContentDone, ReasoningDelta, UsageEvent
 from .executor import ToolExecutor
+from .logger import get_logger
 from .memory import MemoryManager
 from .permission import PermissionResolver
 from .llm import LLMClient
 from .prompt import build_system_prompt
 from .renderer import Renderer
+from .services import RuntimeServices
 from .session import SessionState, UsageRecord
 from .skills.prompt import catalog_reminder
 from .skills.registry import SkillRegistry
@@ -24,8 +27,21 @@ from .verifier import Verifier
 if TYPE_CHECKING:
     from .checkpoint import SessionCheckpointStore
 
+logger = get_logger(__name__)
+
+
+@dataclass
+class _RetryCounters:
+    invalid: int = 0
+    verifier: int = 0
+    hook: int = 0
+
 
 class Agent:
+    _TERMINAL_MARKERS = {
+        "failed": "mark_failed",
+        "max_steps": "mark_max_steps",
+    }
     def __init__(
         self,
         llm: LLMClient,
@@ -47,10 +63,12 @@ class Agent:
         on_shell_task_done: Callable[[str], None] | None = None,
         lifecycle=None,
         skills: SkillRegistry | None = None,
+        services: RuntimeServices | None = None,
     ):
         self.llm = llm
         self.session_state = session_state
         self.renderer = renderer
+        self.services = services
         # 长期记忆协作者:只主 Agent 注入,子 Agent 传 None(保持纯净隔离上下文)。
         # Agent 只在主循环里喊它三声:构造时取指令、每轮注入召回、收口后提取落盘。
         self.memory = memory
@@ -118,6 +136,7 @@ class Agent:
             cancellation_check=self._is_cancelled,
             allow_background_tasks=allow_background_tasks,
             lifecycle=lifecycle,
+            services=services,
         )
         if (
             checkpoint_store is not None
@@ -324,7 +343,7 @@ class Agent:
                 self._usage_observer(usage_record)
             except Exception:
                 # 计量旁路失败不能破坏当前消息账本；控制面仍可用 step 上限止损。
-                pass
+                logger.debug("usage observer failed", exc_info=True)
 
     def _is_cancelled(self) -> bool:
         return bool(
@@ -544,228 +563,261 @@ class Agent:
 
         return live(self.session_state.control_plane.tree(root_turn_id))
 
+    def _terminate(
+        self,
+        status: str,
+        *,
+        reason: str,
+        message: str,
+        record_memory: bool,
+    ) -> None:
+        """Single exit path: render, mark, persist memory, checkpoint, emit."""
+        self.renderer.on_final(message)
+        getattr(self.session_state, self._TERMINAL_MARKERS[status])()
+        if record_memory:
+            self._finalize_memory(None, extract_semantic=False)
+        self._checkpoint()
+        self._emit_agent_stop(status, reason=reason)
+
+    def _handle_final_turn(
+        self,
+        turn,
+        content: str,
+        usage_record: UsageRecord | None,
+        transient_plan_tokens: int,
+        counters: _RetryCounters,
+        *,
+        record_memory: bool,
+    ) -> tuple[str | None, str]:
+        """Return (final_answer, outcome) where outcome is
+        'done' | 'retry' | 'terminated' | 'cancelled'."""
+        turn_record = self.session_state.record_assistant_turn(
+            assistant_raw=content,
+            parsed=turn.parsed,
+            route="final",
+        )
+        if usage_record is not None:
+            self._record_usage_for_turn(
+                turn_record, usage_record, transient_plan_tokens
+            )
+        if self._stop_if_cancelled(record_memory=record_memory):
+            return None, "cancelled"
+
+        verification = (
+            self.verifier.verify(self.session_state, turn.final_answer)
+            if self.verifier
+            else None
+        )
+        if verification is not None:
+            self.session_state.record_verification(
+                turn_record,
+                verification.approved,
+                [issue.to_dict() for issue in verification.issues],
+            )
+            if not verification.approved:
+                counters.verifier += 1
+                self.session_state.append_message(
+                    verification.feedback_message()
+                )
+                self._checkpoint()
+                if counters.verifier >= self.max_verification_retries:
+                    self._terminate(
+                        "failed",
+                        reason="completion verification retry limit",
+                        message="最终答案连续未通过完成验证，任务终止。",
+                        record_memory=record_memory,
+                    )
+                    return None, "terminated"
+                return None, "retry"
+            counters.verifier = 0
+
+        stop_decision = self._emit_agent_stop(
+            "completed", final_answer=turn.final_answer
+        )
+        if stop_decision is not None and stop_decision.decision == "deny":
+            counters.hook += 1
+            self.session_state.append_message({
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "error": "agent_stop hook rejected completion",
+                        "reason": stop_decision.reason,
+                    },
+                    ensure_ascii=False,
+                ),
+            })
+            self._checkpoint()
+            if counters.hook >= self.max_verification_retries:
+                self._terminate(
+                    "failed",
+                    reason="agent_stop hook retry limit",
+                    message="最终答案连续未通过 lifecycle hook，任务终止。",
+                    record_memory=record_memory,
+                )
+                return None, "terminated"
+            return None, "retry"
+        counters.hook = 0
+
+        self.renderer.on_final(turn.final_answer)
+        self.session_state.mark_completed()
+        # 每个终态都记录 episode；只有成功回合才提取长期语义记忆。
+        # 若同 turn 仍有后台 Agent，等最后一条 runtime notification
+        # 收口后再一次性写 episode，避免把 running 摘要永久固化。
+        if (
+            record_memory
+            and not self._has_live_agent_tasks(
+                self.session_state.agent_root_turn_id
+            )
+        ):
+            self._finalize_memory(
+                turn.final_answer, extract_semantic=True
+            )
+        self._checkpoint()
+        return turn.final_answer, "done"
+
+    def _handle_tool_calls_turn(
+        self,
+        turn,
+        content: str,
+        usage_record: UsageRecord | None,
+        transient_plan_tokens: int,
+        *,
+        record_memory: bool,
+    ) -> bool:
+        """Return False if the run was cancelled mid-turn."""
+        turn_record = self.session_state.record_assistant_turn(
+            assistant_raw=content,
+            parsed=turn.parsed,
+            route="tool_calls",
+            tool_calls=turn.tool_calls,
+        )
+        if usage_record is not None:
+            self._record_usage_for_turn(
+                turn_record, usage_record, transient_plan_tokens
+            )
+        if self._stop_if_cancelled(record_memory=record_memory):
+            return False
+
+        # 工具副作用前先落 pending checkpoint。若进程在调用期间崩溃，
+        # 恢复层会把这些调用标成 outcome unknown 并要求模型先检查现场，
+        # 不会把同一个写操作静默重放。
+        self._checkpoint()
+
+        outcomes = self.executor.execute(
+            turn.tool_calls,
+            on_call=self.renderer.on_tool_call,
+            on_result=self.renderer.on_tool_result,
+        )
+
+        for outcome in outcomes:
+            self.session_state.record_tool_execution(
+                call_id=outcome.call.id,
+                result=outcome.result,
+                status=outcome.status,
+            )
+
+        self.session_state.append_message(
+            build_tool_results_message(
+                [
+                    (outcome.call, outcome.result)
+                    for outcome in outcomes
+                ]
+            )
+        )
+        self._checkpoint()
+        return True
+
+    def _handle_invalid_turn(
+        self,
+        content: str,
+        error: TurnAbort,
+        usage_record: UsageRecord | None,
+        transient_plan_tokens: int,
+        counters: _RetryCounters,
+        *,
+        record_memory: bool,
+    ) -> str:
+        """Return 'retry' | 'terminated' | 'cancelled'."""
+        counters.invalid += 1
+        turn_record = self.session_state.record_invalid_turn(
+            content,
+            f"LLM output could not be parsed or routed: {error}",
+        )
+        if usage_record is not None:
+            self._record_usage_for_turn(
+                turn_record, usage_record, transient_plan_tokens
+            )
+        if self._stop_if_cancelled(record_memory=record_memory):
+            return "cancelled"
+
+        if counters.invalid >= self.max_consecutive_invalid:
+            self._terminate(
+                "failed",
+                reason="invalid output retry limit",
+                message=(
+                    f"连续 {counters.invalid} 轮输出无法解析，任务终止。"
+                ),
+                record_memory=record_memory,
+            )
+            return "terminated"
+
+        self.session_state.append_message({
+            "role": "user",
+            "content": json.dumps(
+                {"error": f"LLM output could not be parsed or routed: {error}"},
+                ensure_ascii=False,
+            ),
+        })
+        self._checkpoint()
+        return "retry"
+
     def _run_loop(
         self,
         max_steps: int,
-        consecutive_invalid: int = 0,
-        consecutive_verification: int = 0,
         *,
         record_memory: bool = True,
     ) -> str | None:
         """运行当前 user turn 直到 final_answer 或耗尽步数。"""
-
-        for loop_index in range(max_steps):
+        counters = _RetryCounters()
+        for _ in range(max_steps):
             if self._stop_if_cancelled(record_memory=record_memory):
                 return None
             reminders = self._ephemeral_reminders()
-            transient_plan_tokens = sum(
+            transient = sum(
                 estimate_message_tokens(message) for message in reminders
             )
-            self._compact_context_if_needed(transient_plan_tokens)
-
-            # ----- 步骤 1：调用 LLM 推理 -----
+            self._compact_context_if_needed(transient)
             content, usage_record = self._run_turn(reminders)
-            # assistant 原文不再在这里手动入队:改由 session 的 record_* 方法
-            # 在记账的同时落进 wire,wire 与 turn 原子产生、靠稳定 id 关联。
-
-            # ----- 步骤 2：解析 + 校验(协议层) -----
-            # parse_turn 把"解析 JSON + 校验形状 + 二选一路由 + 解析 tool_calls"
-            # 一次性收口在 protocol 层;形状级错误统一抛 TurnAbort,主循环只管分流。
             try:
                 turn = parse_turn(content)
-                consecutive_invalid = 0  # 解析成功,连击清零
-
+                counters.invalid = 0
                 if turn.kind == "final":
-                    # 先落候选 turn，再运行 completion gate。若被拒绝，它仍是有价值的
-                    # 历史证据，验证反馈会作为下一条 user message 进入正常 ReAct 循环。
-                    turn_record = self.session_state.record_assistant_turn(
-                        assistant_raw=content,
-                        parsed=turn.parsed,
-                        route="final",
+                    answer, outcome = self._handle_final_turn(
+                        turn, content, usage_record, transient, counters,
+                        record_memory=record_memory,
                     )
-                    if usage_record is not None:
-                        self._record_usage_for_turn(
-                            turn_record, usage_record, transient_plan_tokens
-                        )
-                    if self._stop_if_cancelled(record_memory=record_memory):
+                    if outcome == "done":
+                        return answer
+                    if outcome != "retry":
                         return None
-
-                    verification = (
-                        self.verifier.verify(self.session_state, turn.final_answer)
-                        if self.verifier
-                        else None
-                    )
-                    if verification is not None:
-                        self.session_state.record_verification(
-                            turn_record,
-                            verification.approved,
-                            [issue.to_dict() for issue in verification.issues],
-                        )
-                        if not verification.approved:
-                            consecutive_verification += 1
-                            self.session_state.append_message(
-                                verification.feedback_message()
-                            )
-                            self._checkpoint()
-                            if (
-                                consecutive_verification
-                                >= self.max_verification_retries
-                            ):
-                                self.renderer.on_final(
-                                    "最终答案连续未通过完成验证，任务终止。"
-                                )
-                                self.session_state.mark_failed()
-                                if record_memory:
-                                    self._finalize_memory(
-                                        None, extract_semantic=False
-                                    )
-                                self._checkpoint()
-                                self._emit_agent_stop(
-                                    "failed",
-                                    reason="completion verification retry limit",
-                                )
-                                return None
-                            continue
-
-                    stop_decision = self._emit_agent_stop(
-                        "completed", final_answer=turn.final_answer
-                    )
-                    if stop_decision is not None and stop_decision.decision == "deny":
-                        consecutive_verification += 1
-                        self.session_state.append_message({
-                            "role": "user",
-                            "content": json.dumps(
-                                {
-                                    "error": "agent_stop hook rejected completion",
-                                    "reason": stop_decision.reason,
-                                },
-                                ensure_ascii=False,
-                            ),
-                        })
-                        self._checkpoint()
-                        if consecutive_verification >= self.max_verification_retries:
-                            self.renderer.on_final(
-                                "最终答案连续未通过 lifecycle hook，任务终止。"
-                            )
-                            self.session_state.mark_failed()
-                            if record_memory:
-                                self._finalize_memory(
-                                    None, extract_semantic=False
-                                )
-                            self._checkpoint()
-                            self._emit_agent_stop(
-                                "failed", reason="agent_stop hook retry limit"
-                            )
-                            return None
-                        continue
-
-                    self.renderer.on_final(turn.final_answer)
-                    self.session_state.mark_completed()
-                    # 每个终态都记录 episode；只有成功回合才提取长期语义记忆。
-                    # 若同 turn 仍有后台 Agent，等最后一条 runtime notification
-                    # 收口后再一次性写 episode，避免把 running 摘要永久固化。
-                    if (
-                        record_memory
-                        and not self._has_live_agent_tasks(
-                            self.session_state.agent_root_turn_id
-                        )
+                elif turn.kind == "tool_calls":
+                    if not self._handle_tool_calls_turn(
+                        turn, content, usage_record, transient,
+                        record_memory=record_memory,
                     ):
-                        self._finalize_memory(
-                            turn.final_answer, extract_semantic=True
-                        )
-                    self._checkpoint()
-                    return turn.final_answer
-
-                if turn.kind == "tool_calls":
-                    # 更新会话，添加成功回合记录
-                    turn_record = self.session_state.record_assistant_turn(
-                        assistant_raw=content,
-                        parsed=turn.parsed,
-                        route="tool_calls",
-                        tool_calls=turn.tool_calls,
-                    )
-                    if usage_record is not None:
-                        self._record_usage_for_turn(
-                            turn_record, usage_record, transient_plan_tokens
-                        )
-                    if self._stop_if_cancelled(record_memory=record_memory):
                         return None
-
-                    # 工具副作用前先落 pending checkpoint。若进程在调用期间崩溃，
-                    # 恢复层会把这些调用标成 outcome unknown 并要求模型先检查现场，
-                    # 不会把同一个写操作静默重放。
-                    self._checkpoint()
-
-                    outcomes = self.executor.execute(
-                        turn.tool_calls,
-                        on_call=self.renderer.on_tool_call,
-                        on_result=self.renderer.on_tool_result,
-                    )
-
-                    for outcome in outcomes:
-                        self.session_state.record_tool_execution(
-                            call_id=outcome.call.id,
-                            result=outcome.result,
-                            status=outcome.status,
-                        )
-
-                    self.session_state.append_message(
-                        build_tool_results_message(
-                            [
-                                (outcome.call, outcome.result)
-                                for outcome in outcomes
-                            ]
-                        )
-                    )
-                    self._checkpoint()
-
-            except TurnAbort as e:
-                consecutive_invalid += 1
-
-                # 更新会话，添加失败回合记录
-                turn_record = self.session_state.record_invalid_turn(
-                    content,
-                    f"LLM 输出无法解析或路由: {e}",
+            except TurnAbort as error:
+                outcome = self._handle_invalid_turn(
+                    content, error, usage_record, transient, counters,
+                    record_memory=record_memory,
                 )
-                if usage_record is not None:
-                    self._record_usage_for_turn(
-                        turn_record, usage_record, transient_plan_tokens
-                    )
-                if self._stop_if_cancelled(record_memory=record_memory):
+                if outcome != "retry":
                     return None
+        self._terminate(
+            "max_steps",
+            reason="max steps reached",
+            message=f"已达到最大步数上限（{max_steps} 步），任务未完成。",
+            record_memory=record_memory,
+        )
+        return None
 
-                # 连续失败到阈值就止损:再喂回去多半还是同样的废 JSON。
-                if consecutive_invalid >= self.max_consecutive_invalid:
-                    self.renderer.on_final(
-                        f"连续 {consecutive_invalid} 轮输出无法解析，任务终止。"
-                    )
-                    self.session_state.mark_failed()
-                    if record_memory:
-                        self._finalize_memory(None, extract_semantic=False)
-                    self._checkpoint()
-                    self._emit_agent_stop(
-                        "failed", reason="invalid output retry limit"
-                    )
-                    return None
-
-                # 没到阈值:把错误喂回模型,给它一次改正的机会
-                self.session_state.append_message({
-                    "role": "user",
-                    "content": json.dumps(
-                        {"error": f"LLM 输出无法解析或路由：{e}"},
-                        ensure_ascii=False,
-                    ),
-                })
-                self._checkpoint()
-                continue
-
-        else:
-            self.renderer.on_final(
-                f"已达到最大步数上限（{max_steps} 步），任务未完成。"
-            )
-            self.session_state.mark_max_steps()
-            if record_memory:
-                self._finalize_memory(None, extract_semantic=False)
-            self._checkpoint()
-            self._emit_agent_stop("max_steps", reason="max steps reached")
-            return None

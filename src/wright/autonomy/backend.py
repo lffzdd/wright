@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Callable
 
-from ..tasks.service import TaskNotFoundError, TaskWaitCancelled
+from ..tasks.types import TaskNotFoundError, TaskWaitCancelled
 from ..tasks.types import RuntimeTask, TaskKind, TaskStatus
 from .models import DurableRunRecord
 from .store import AutonomyNotFoundError, AutonomyStore

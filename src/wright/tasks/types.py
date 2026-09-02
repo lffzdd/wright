@@ -21,6 +21,14 @@ TERMINAL_TASK_STATUSES = frozenset({
 })
 
 
+class TaskNotFoundError(ValueError):
+    pass
+
+
+class TaskWaitCancelled(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class RuntimeTask:
     """Common task view returned by every backend.

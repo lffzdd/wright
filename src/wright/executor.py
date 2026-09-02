@@ -16,11 +16,13 @@ import threading
 import time
 from typing import Callable
 
+from .logger import get_logger
 from .permission import (
     PermissionApprovalHandler,
     PermissionPolicy,
     PermissionResolver,
 )
+from .services import RuntimeServices
 from .session import ToolExecutionTerminal
 from .tools.base import (
     Tool,
@@ -30,6 +32,9 @@ from .tools.base import (
     ToolRuntime,
 )
 from .tools.validation import validate_tool_arguments
+
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -56,6 +61,7 @@ class ToolExecutor:
         cancellation_check: Callable[[], bool] | None = None,
         allow_background_tasks: bool = True,
         lifecycle=None,
+        services: RuntimeServices | None = None,
     ):
         if tool_timeout <= 0:
             raise ValueError("tool_timeout 必须 > 0")
@@ -90,6 +96,7 @@ class ToolExecutor:
             notify_background_done=on_shell_task_done,
             allow_background_tasks=allow_background_tasks,
             lifecycle=lifecycle,
+            services=services,
         )
 
     def _emit_lifecycle(self, event: str, payload: dict):
@@ -141,29 +148,23 @@ class ToolExecutor:
                 )
             if hook_decision.updated_input is not None:
                 arguments = dict(hook_decision.updated_input)
-
-        effective_call = ToolCall(tool_call.name, arguments, tool_call.id)
-        updated_validation_error = validate_tool_arguments(tool, arguments)
-        if updated_validation_error is not None:
-            return effective_call, updated_validation_error
-        return effective_call, None
+                updated_validation_error = validate_tool_arguments(tool, arguments)
+                if updated_validation_error is not None:
+                    return (
+                        ToolCall(tool_call.name, arguments, tool_call.id),
+                        updated_validation_error,
+                    )
+        return ToolCall(tool_call.name, arguments, tool_call.id), None
 
     def _invoke_tool(
         self,
+        tool: Tool,
         tool_call: ToolCall,
         local_cancel: threading.Event,
         effective_timeout: float,
         on_call_start: Callable[[], None] | None = None,
     ) -> ToolResult:
         """查找并执行【单个】工具，返回标准化 tool_result。"""
-        tool = self.tool_registry.get(tool_call.name)
-        if tool is None:
-            return ToolResult.fail(err=f"Unknown tool: {tool_call.name}")
-
-        validation_error = validate_tool_arguments(tool, tool_call.arguments)
-        if validation_error is not None:
-            return validation_error
-
         arguments = dict(tool_call.arguments)
 
         runtime = replace(
@@ -250,14 +251,13 @@ class ToolExecutor:
         try:
             return self.cwd_provider().resolve()
         except Exception:
+            logger.debug("cwd_provider failed; falling back to workspace_dir", exc_info=True)
             return self.workspace_dir
 
     def _is_concurrency_safe(self, tool_call: ToolCall) -> bool:
         """按本次参数判断能否并发；未知/判断异常一律按排他执行。"""
         tool = self.tool_registry.get(tool_call.name)
         if tool is None:
-            return False
-        if validate_tool_arguments(tool, tool_call.arguments) is not None:
             return False
         try:
             return bool(tool.is_concurrency_safe(dict(tool_call.arguments)))
@@ -266,11 +266,16 @@ class ToolExecutor:
 
     def _run_one(self, idx: int, tool_call: ToolCall) -> tuple[int, ToolExecutionOutcome]:
         tool = self.tool_registry.get(tool_call.name)
+        if tool is None:
+            result = ToolResult.fail(err=f"Unknown tool: {tool_call.name}")
+            return idx, ToolExecutionOutcome(
+                call=tool_call, result=result, status="failed"
+            )
         local_cancel = threading.Event()
         timer: threading.Timer | None = None
         effective_timeout = (
             tool.execution_timeout
-            if tool is not None and tool.execution_timeout is not None
+            if tool.execution_timeout is not None
             else self.tool_timeout
         )
         if effective_timeout <= 0:
@@ -285,12 +290,13 @@ class ToolExecutor:
 
         try:
             result = self._invoke_tool(
+                tool,
                 tool_call,
                 local_cancel,
                 effective_timeout,
                 on_call_start=(
                     start_deadline
-                    if tool is not None and tool.timeout_owner == "executor"
+                    if tool.timeout_owner == "executor"
                     else None
                 ),
             )
@@ -300,7 +306,7 @@ class ToolExecutor:
 
         if local_cancel.is_set():
             result = ToolResult.fail(
-                f"timeout: 超过 {effective_timeout}s，工具已响应取消并退出",
+                f"timeout: exceeded {effective_timeout}s; tool observed cancel and exited",
                 data=result.data,
             )
             status: ToolExecutionTerminal = "timeout"

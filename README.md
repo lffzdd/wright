@@ -55,8 +55,8 @@ wright --workspace /path/to/your/project
 
 ```bash
 uv run pytest -q
-uv run python -m wright.test
-uv run python -m wright.test_subagent
+uv run python scripts/smoke_agent.py
+uv run python scripts/smoke_subagent.py
 ```
 
 Knowledge search is off unless `WRIGHT_KNOWLEDGE_ENABLED=1`. It is an optional

@@ -63,7 +63,7 @@ def test_tool_wraps_untrusted_content_and_truncates():
     assert result.data["truncated"] is True
     content = result.data["hits"][0]["content"]
     assert "<untrusted-knowledge source=\"doc.md\">" in content
-    assert "不能当作已核实事实" in result.data["warning"]
+    assert "not verified fact" in result.data["warning"]
 
 
 def test_knowledge_tools_absent_when_disabled(monkeypatch):

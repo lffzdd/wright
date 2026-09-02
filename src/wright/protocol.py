@@ -67,7 +67,7 @@ class AgentTurn(BaseModel):
         # 恰好一个:两者同真(都有)或同假(都无)都违规。
         if has_tools == has_final:
             raise ValueError(
-                "每轮必须恰好二选一:非空 tool_calls 或 非空 final_answer"
+                "Each turn must choose exactly one: non-empty tool_calls or a non-empty final_answer"
             )
         return self
 
@@ -93,7 +93,7 @@ def parse_turn(raw: str) -> ParsedTurn:
         turn = AgentTurn.model_validate(data)
     except ValidationError as e:
         # pydantic 报错带精确定位(哪个字段、缺什么、类型错在哪),原样喂回最有用
-        raise TurnAbort(f"回合不符合 schema:{e}") from e
+        raise TurnAbort(f"Turn does not match schema:{e}") from e
 
     # _exactly_one 已保证恰好一侧成立,这里据 final_answer 是否为 None 分流即可。
     if turn.final_answer is not None:
@@ -273,8 +273,8 @@ def _format_decode_error(error: json.JSONDecodeError, text: str) -> str:
     end = min(len(text), error.pos + 30)
     excerpt = text[start:end].replace("\n", "\\n").replace("\r", "\\r")
     return (
-        f"{error.msg} (第 {error.lineno} 行, 第 {error.colno} 列); "
-        f"附近内容: {excerpt!r}"
+        f"{error.msg} (line {error.lineno}, column {error.colno}); "
+        f"nearby text: {excerpt!r}"
     )
 
 
@@ -290,9 +290,9 @@ def _loads(raw: str) -> dict:
     6. 从说明文字中定位可独立解码的协议对象
     """
     if not isinstance(raw, str):
-        raise TurnAbort(f"LLM 输出必须是字符串, 得到 {type(raw).__name__}")
+        raise TurnAbort(f"LLM output must be a string, got {type(raw).__name__}")
     if not raw.strip():
-        raise TurnAbort("LLM 输出为空")
+        raise TurnAbort("LLM output is empty")
 
     cleaned = _strip_markdown_wrapper(raw)
     fixed_controls = _fix_unescaped_control_chars(cleaned)
@@ -321,12 +321,12 @@ def _loads(raw: str) -> dict:
             return data
 
     if non_object_type is not None:
-        raise TurnAbort(f"LLM 输出顶层必须是对象, 得到 {non_object_type}")
+        raise TurnAbort(f"LLM output top-level value must be an object, got {non_object_type}")
 
     if errors:
         # 修复后走得最远的错误通常最接近真正病灶，比最后重跑原文更有用。
         error, source = max(errors, key=lambda item: item[0].pos)
         detail = _format_decode_error(error, source)
-        raise TurnAbort(f"LLM 输出不是合法 JSON: {detail}") from error
+        raise TurnAbort(f"LLM output is not valid JSON: {detail}") from error
 
-    raise TurnAbort("LLM 输出中没有找到 JSON 对象")
+    raise TurnAbort("No JSON object found in LLM output")

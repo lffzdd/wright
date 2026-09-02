@@ -84,12 +84,12 @@ def check_ask_user_permission(
         _clean_options(arguments.get("options"))
     except ValueError as e:
         return PermissionCheckResult(
-            "deny", f"ask_user 输入无效: {e}", source="tool_validation"
+            "deny", f"ask_user input invalid: {e}", source="tool_validation"
         )
 
     return PermissionCheckResult(
         "ask",
-        f"ask_user 需要用户回答: {question}",
+        f"ask_user needs a user answer: {question}",
         source="tool_interaction",
     )
 
@@ -97,25 +97,26 @@ def check_ask_user_permission(
 ask_user_tool = Tool(
     name="ask_user",
     description=(
-        "当缺少的信息会实质改变方案、存在多个不可自行判断的选择，或必须由用户确认时，"
-        "向用户提出一个明确问题并等待回答。不要用它询问可以通过现有工具自行查明的信息。"
+        "Ask the user one concrete question and wait when missing information would "
+        "change the plan, there are choices you cannot judge, or the user must confirm. "
+        "Do not use this for facts you can look up with existing tools."
     ),
     parameters={
         "type": "object",
         "properties": {
             "question": {
                 "type": "string",
-                "description": "需要用户回答的单个、具体问题",
+                "description": "A single, specific question the user should answer",
             },
             "context": {
                 "type": "string",
-                "description": "可选：为什么需要询问，以及答案会影响什么",
+                "description": "Optional: why this is needed and how the answer changes the work",
             },
             "options": {
                 "type": "array",
                 "items": {"type": "string"},
                 "maxItems": MAX_OPTIONS,
-                "description": "可选的候选答案；用户仍可自由输入其它回答",
+                "description": "Optional candidate answers; the user may still type something else",
             },
         },
         "required": ["question"],

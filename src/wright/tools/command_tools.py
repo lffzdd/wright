@@ -7,12 +7,15 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
+from ..logger import get_logger
 from ..processes import terminate_process_tree
 from .base import Tool, ToolCancelledError, ToolResult, ToolRuntime
 from .command_permissions import (
     check_execute_command_permission,
     is_execute_command_concurrency_safe,
 )
+
+logger = get_logger(__name__)
 
 def _session(runtime: ToolRuntime | None) -> Any:
     session = runtime.session_state if runtime is not None else None
@@ -55,7 +58,10 @@ def get_task_output(task_id: str, runtime: ToolRuntime | None = None) -> ToolRes
     try:
         from ..tasks import TaskNotFoundError, TaskService
 
-        task = TaskService.for_session(_session(runtime)).get(task_id)
+        task = TaskService.for_session(
+            _session(runtime),
+            runtime.services if runtime is not None else None,
+        ).get(task_id)
         if task.kind != "shell":
             return ToolResult.fail(f"Task is not a shell task: {task_id}")
     except TaskNotFoundError as e:
@@ -99,7 +105,7 @@ def execute_command(
             and runtime is not None
             and not runtime.allow_background_tasks
         ):
-            return ToolResult.fail("当前 Agent 不允许创建后台任务")
+            return ToolResult.fail("This Agent cannot create background tasks")
         cwd = session.get_cwd()
 
         # 注入 cwd 追踪：用临时文件，和 Claude Code 的 claude-{id}-cwd 一致
@@ -126,7 +132,7 @@ def execute_command(
         )
     except FileNotFoundError:
         return ToolResult.fail(
-            f"命令不存在: {command.split()[0] if command.split() else command}"
+            f"command not found: {command.split()[0] if command.split() else command}"
         )
     except Exception as e:
         return ToolResult.fail(f"{type(e).__name__}: {e}")
@@ -154,7 +160,7 @@ def execute_command(
         try:
             task.on_done()
         except Exception:
-            pass
+            logger.debug("background command on_done callback failed", exc_info=True)
 
     def _reader():
         assert proc.stdout is not None
@@ -193,7 +199,7 @@ def execute_command(
         return ToolResult.success(
             {
                 "task_id": task_id,
-                "message": f"命令已在后台运行，用 get_task 查询 {task_id}。",
+                "message": f"Command is running in the background; use get_task for {task_id}.",
             }
         )
 
@@ -216,7 +222,7 @@ def execute_command(
             with output_lock:
                 output_so_far = "".join(output_lines)[-MAX_OUTPUT_CHARS:]
             return ToolResult.fail(
-                f"命令超过 {timeout}s；当前 Agent 禁止转为后台任务",
+                f"Command exceeded {timeout}s; this Agent cannot convert it to a background task",
                 data={"timed_out": True, "output_so_far": output_so_far},
             )
         # 超时：不 kill，转后台
@@ -238,7 +244,7 @@ def execute_command(
             {
                 "task_id": task_id,
                 "timed_out": True,
-                "message": f"命令超过 {timeout}s 未完成，已转为后台任务 {task_id}。",
+                "message": f"Command exceeded {timeout}s; moved to background task {task_id}.",
                 "output_so_far": output_so_far,
             }
         )
@@ -249,14 +255,14 @@ def execute_command(
     with output_lock:
         output = "".join(output_lines)
     if len(output) > MAX_OUTPUT_CHARS:
-        output = f"[...截断，仅显示末尾]\n{output[-MAX_OUTPUT_CHARS:]}"
+        output = f"[...truncated, showing tail]\n{output[-MAX_OUTPUT_CHARS:]}"
 
     returncode = proc.returncode
     data = {"returncode": returncode, "output": output}
 
     if returncode == 0:
         return ToolResult.success(data)
-    return ToolResult.fail(err=f"命令以退出码 {returncode} 结束", data=data)
+    return ToolResult.fail(err=f"Command exited with code {returncode}", data=data)
 
 
 def _consume_cwd_file(cwd_file: Path) -> Path | None:

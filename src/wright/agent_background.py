@@ -49,14 +49,14 @@ class AgentBackgroundRuntime:
                 if completed.cancelled():
                     control.finish_task(
                         task_id, status="cancelled", steps_used=0,
-                        error="后台 Agent 在启动前被取消",
+                        error="Background Agent cancelled before start",
                     )
                 else:
                     error = completed.exception()
                     if error is not None:
                         control.finish_task(
                             task_id, status="failed", steps_used=0,
-                            error=f"后台 Agent worker 异常: {type(error).__name__}: {error}",
+                            error=f"Background Agent worker failed: {type(error).__name__}: {error}",
                         )
                 record = control.get(task_id)
                 if record.status in {"completed", "failed", "cancelled", "timed_out"}:
@@ -84,6 +84,6 @@ class AgentBackgroundRuntime:
     @staticmethod
     def _cancel_running(node: dict[str, Any], control: AgentControlPlane) -> None:
         if node.get("status") in {"pending", "running"}:
-            control.request_cancel(str(node["id"]), "主会话正在退出")
+            control.request_cancel(str(node["id"]), "Root session is exiting")
         for child in node.get("children", []):
             AgentBackgroundRuntime._cancel_running(child, control)

@@ -1,5 +1,6 @@
 from ...autonomy import AutonomyStore
 from ...session import SessionState
+from ...services import RuntimeServices
 from ...tools.autonomy_tools import (
     cancel_schedule_tool,
     create_task_tool,
@@ -22,8 +23,11 @@ def _runtime(tmp_path):
     )
     session = SessionState.create("root", workspace)
     session.session_id = "session"
-    session.durable_task_store = store
-    return store, ToolRuntime(session_state=session, workspace_dir=workspace)
+    return store, ToolRuntime(
+        session_state=session,
+        workspace_dir=workspace,
+        services=RuntimeServices(durable_store=store),
+    )
 
 
 def test_schedule_tools_cover_definition_lifecycle_and_history(tmp_path):

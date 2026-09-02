@@ -19,5 +19,5 @@ jobs:
         run: uv run pytest -q
       - name: Offline runtime tests
         run: |
-          uv run python -m wright.test
-          uv run python -m wright.test_subagent
+          uv run python scripts/smoke_agent.py
+          uv run python scripts/smoke_subagent.py

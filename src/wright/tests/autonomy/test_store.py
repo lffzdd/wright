@@ -11,6 +11,7 @@ from ...autonomy import (
 )
 from ...autonomy.triggers import probe_public_web_page
 from ...session import SessionState
+from ...services import RuntimeServices
 from ...tasks import TaskService
 
 
@@ -333,7 +334,6 @@ def test_failed_run_retries_only_within_explicit_budget(tmp_path):
 def test_task_service_projects_and_cancels_durable_runs(tmp_path):
     store = _store(tmp_path)
     session = SessionState.create("root", tmp_path / "workspace")
-    session.durable_task_store = store
     automation = store.create_automation(
         name="pending",
         prompt="later",
@@ -341,7 +341,9 @@ def test_task_service_projects_and_cancels_durable_runs(tmp_path):
         now=0,
     )
     run_id = store.materialize_due(now=0)[0]
-    service = TaskService.for_session(session)
+    service = TaskService.for_session(
+        session, RuntimeServices(durable_store=store)
+    )
 
     task = service.get(run_id)
     assert task.kind == "durable"

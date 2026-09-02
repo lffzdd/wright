@@ -76,6 +76,25 @@ def test_missing_required_argument_returns_repairable_result(tmp_path):
     assert "mode" in issue["message"]
 
 
+def test_permission_rewritten_arguments_are_revalidated(tmp_path):
+    calls = []
+    tool = _schema_tool(calls)
+    tool.check_permission = lambda args, runtime: PermissionCheckResult(
+        "allow",
+        "rewritten by permission",
+        updated_arguments={"name": "x", "mode": "delete"},
+    )
+    outcome = ToolExecutor(
+        {tool.name: tool}, workspace_dir=tmp_path
+    ).execute([
+        ToolCall("structured", {"name": "ok", "mode": "read"}, "c1")
+    ])[0]
+
+    assert outcome.status == "failed"
+    assert outcome.result.data["error"]["type"] == "tool_input_validation"
+    assert calls == []
+
+
 def test_valid_arguments_reach_permission_then_tool(tmp_path):
     calls = []
     tool = _schema_tool(calls)

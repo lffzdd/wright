@@ -132,8 +132,8 @@ Explanation ends with }"""
         with self.assertRaises(TurnAbort) as ctx:
             _loads('{"reasoning": nope}')
         message = str(ctx.exception)
-        self.assertIn("第 1 行", message)
-        self.assertIn("附近内容", message)
+        self.assertIn("line 1", message)
+        self.assertIn("nearby text", message)
 
     def test_exactly_one_rule_violation_raises_turn_abort(self):
         raw = """{
@@ -143,7 +143,7 @@ Explanation ends with }"""
 }"""
         with self.assertRaises(TurnAbort) as ctx:
             parse_turn(raw)
-        self.assertIn("二选一", str(ctx.exception))
+        self.assertIn("exactly one", str(ctx.exception))
 
 
 if __name__ == "__main__":

@@ -39,7 +39,7 @@ def save_memory(
         path = write_memory_file(name, description, type, content, directory)
         rebuild_index(directory)
         return ToolResult.success(
-            {"message": "记忆已保存", "id": path.stem, "file": path.name, "type": type}
+            {"message": "Memory saved", "id": path.stem, "file": path.name, "type": type}
         )
     except (MemoryStoreError, OSError) as exc:
         return ToolResult.fail(str(exc))
@@ -85,7 +85,7 @@ def update_memory(
     directory: Path | None = None,
 ) -> ToolResult:
     if all(value is None for value in (name, description, type, content)):
-        return ToolResult.fail("至少提供一个要更新的字段")
+        return ToolResult.fail("Provide at least one field to update")
     try:
         record = store_update_memory(
             memory_id,
@@ -109,7 +109,7 @@ def delete_memory(
     try:
         deleted = store_delete_memory(memory_id, directory)
         return ToolResult.success(
-            {"message": "记忆已删除", "id": deleted.id, "name": deleted.name}
+            {"message": "Memory deleted", "id": deleted.id, "name": deleted.name}
         )
     except (MemoryStoreError, OSError) as exc:
         return ToolResult.fail(str(exc))
@@ -150,7 +150,7 @@ def search_memory(
             "memories": "\n".join(
                 f"- [{record.type}] {record.id}.md: {record.description}"
                 for record in records
-            ) or "(暂无记忆)",
+            ) or "(no memories)",
             "results": results,
         })
     except (MemoryStoreError, OSError) as exc:
@@ -162,7 +162,7 @@ def _delete_permission(
 ) -> PermissionCheckResult:
     return PermissionCheckResult(
         "ask",
-        f"删除长期记忆 {arguments.get('memory_id', '')}，该操作会影响未来会话",
+        f"Delete long-term memory {arguments.get('memory_id', '')}; this affects future sessions",
         ("deletes_data",),
         source="memory_tool",
     )
@@ -189,8 +189,8 @@ def build_memory_tools(
     create_tool = Tool(
         name="create_memory",
         description=(
-            "创建一条新的跨会话语义记忆。若同 id 已存在会失败；先 search_memory，"
-            "已有内容应使用 update_memory，避免静默覆盖。"
+            "Create a new cross-session semantic memory. Fails if the id already exists; "
+            "search_memory first, then update_memory for existing entries instead of overwriting."
         ),
         parameters={
             "type": "object",
@@ -202,7 +202,7 @@ def build_memory_tools(
     )
     get_tool = Tool(
         name="get_memory",
-        description="按 memory_id 读取一条长期记忆的完整正文和元数据。",
+        description="Read the full body and metadata of one long-term memory by memory_id.",
         parameters={
             "type": "object",
             "properties": {"memory_id": {"type": "string", "minLength": 1}},
@@ -215,7 +215,8 @@ def build_memory_tools(
     update_tool = Tool(
         name="update_memory",
         description=(
-            "更新已有长期记忆。只传需要改变的字段；memory_id 保持稳定，即使修改 name。"
+            "Update an existing long-term memory. Send only fields that change; "
+            "memory_id stays stable even if name changes."
         ),
         parameters={
             "type": "object",
@@ -236,7 +237,7 @@ def build_memory_tools(
     )
     delete_tool = Tool(
         name="delete_memory",
-        description="删除一条已过期、错误或用户明确要求忘记的长期记忆。",
+        description="Delete a long-term memory that is stale, wrong, or that the user asked to forget.",
         parameters={
             "type": "object",
             "properties": {"memory_id": {"type": "string", "minLength": 1}},
@@ -249,7 +250,8 @@ def build_memory_tools(
     search_tool = Tool(
         name="search_memory",
         description=(
-            "按关键词和可选类型搜索长期记忆，返回 id、类型和描述；需要正文再调用 get_memory。"
+            "Search long-term memories by keyword and optional type; returns id, type, and "
+            "description. Call get_memory when you need the body."
         ),
         parameters={
             "type": "object",
@@ -269,8 +271,8 @@ def build_memory_tools(
         tools.insert(0, Tool(
             name="save_memory",
             description=(
-                "兼容性 upsert：保存长期记忆，同名会覆盖。新工作优先使用 "
-                "create_memory/update_memory 的显式语义。"
+                "Compatibility upsert: save a long-term memory, overwriting the same name. "
+                "Prefer create_memory/update_memory for new work."
             ),
             parameters={
                 "type": "object",

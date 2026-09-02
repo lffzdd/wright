@@ -13,6 +13,7 @@ from typing import Any
 
 from .planning import PlanManager
 from .coordination import AgentControlError, AgentControlPlane
+from .logger import get_logger
 from .session import (
     MessageRecord,
     SessionState,
@@ -24,6 +25,7 @@ from .session import (
 from .tools.base import ToolCall, ToolResult
 from .util import build_tool_results_message
 
+logger = get_logger(__name__)
 
 CHECKPOINT_VERSION = 1
 _SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,128}")
@@ -133,7 +135,11 @@ class SessionCheckpointStore:
                         dt = datetime.fromisoformat(saved_at).astimezone()
                         saved_at_str = dt.strftime("%Y-%m-%d %H:%M:%S")
                     except Exception:
-                        pass
+                        logger.debug(
+                            "checkpoint timestamp parse failed: %s",
+                            saved_at,
+                            exc_info=True,
+                        )
                 results.append({
                     "session_id": path.stem,
                     "saved_at": saved_at_str,
@@ -141,6 +147,7 @@ class SessionCheckpointStore:
                     "user_goal": session_info.get("user_goal", ""),
                 })
             except Exception:
+                logger.debug("skip unreadable checkpoint %s", path, exc_info=True)
                 continue
         return results
 

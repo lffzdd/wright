@@ -1,8 +1,11 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from ..permission import PermissionCheckResult
+
+if TYPE_CHECKING:
+    from ..services import RuntimeServices
 
 TimeoutOwner = Literal["executor", "tool"]
 
@@ -36,6 +39,9 @@ class ToolRuntime:
     # Session-scoped lifecycle bus. Kept process-local and intentionally absent
     # from tool schemas/checkpoints.
     lifecycle: Any = None
+    # Live process-local services. Same isolation as lifecycle: not in schemas
+    # or checkpoints, and not derived from SessionState.
+    services: "RuntimeServices | None" = None
 
     # 文本流式输出:例如 shell stdout。命名保持通用,不绑定 command 工具。
     emit_output: Callable[[str], None] | None = None

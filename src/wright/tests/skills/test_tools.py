@@ -38,7 +38,7 @@ def test_skill_returns_full_body_and_rejects_unknown(tmp_path: Path):
 
     missing = skill.call({"skill_id": "nope"}, runtime)
     assert not missing.ok
-    assert "未知 skill" in missing.err
+    assert "Unknown skill" in missing.err
 
 
 def test_skill_tool_schema_is_valid():

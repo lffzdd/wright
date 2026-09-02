@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import json
 from typing import Any, Sequence
 
+from ..agent import Agent
 from ..agent_background import AgentBackgroundRuntime
 from ..coordination import AgentControlError, AgentControlPlane
 from ..llm import LLMClient
@@ -21,6 +22,7 @@ from ..permission import (
     RuleBasedApprovalHandler,
 )
 from ..renderer import SilentRenderer
+from ..services import RuntimeServices
 from ..session import SessionState, UsageRecord
 from ..subagent import (
     DEFAULT_MAX_DEPTH,
@@ -181,6 +183,7 @@ def launch_durable_run(
     permission_settings: PermissionSettings,
     background_runtime: AgentBackgroundRuntime,
     lifecycle: Any = None,
+    services: RuntimeServices,
     max_steps: int = 50,
     max_depth: int = DEFAULT_MAX_DEPTH,
 ) -> DurableLaunch | None:
@@ -243,8 +246,6 @@ def launch_durable_run(
     child_session.agent_root_turn_id = root_turn_id
     control.bind_child_session(record.id, child_session.session_id)
 
-    from ..agent import Agent
-
     def cancelled() -> bool:
         if scheduler.store.is_cancel_requested(run_id):
             reason = (
@@ -274,6 +275,7 @@ def launch_durable_run(
         usage_observer=observe_usage,
         allow_background_tasks=False,
         lifecycle=lifecycle,
+        services=services,
     )
     user_prompt = _user_prompt_for_run(scheduler, run_id)
 

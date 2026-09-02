@@ -62,28 +62,28 @@ def replan(
 create_plan_tool = Tool(
     name="create_plan",
     description=(
-        "为当前复杂任务建立一个简洁、可执行的步骤计划。适用于需要多个独立步骤、"
-        "会使用多个工具或需要持续跟踪进度的任务；简单的一步问题不必创建计划。"
-        "已有未完成计划时默认拒绝覆盖，只有明确放弃旧计划才传 replace=true。"
+        "Create a concise, executable step plan for the current complex task. Use it when "
+        "the work has several independent steps, multiple tools, or needs progress tracking. "
+        "Skip it for a one-step question. An unfinished plan is not replaced unless replace=true."
     ),
     parameters={
         "type": "object",
         "properties": {
             "objective": {
                 "type": "string",
-                "description": "这份计划要达成的明确目标",
+                "description": "The clear goal this plan should achieve",
             },
             "steps": {
                 "type": "array",
                 "items": {"type": "string"},
                 "minItems": 1,
                 "maxItems": 12,
-                "description": "按执行顺序排列的简洁步骤标题",
+                "description": "Short step titles in execution order",
             },
             "replace": {
                 "type": "boolean",
                 "default": False,
-                "description": "是否明确替换当前尚未完成的整份计划",
+                "description": "Whether to replace the current unfinished plan",
             },
         },
         "required": ["objective", "steps"],
@@ -94,15 +94,16 @@ create_plan_tool = Tool(
 update_plan_tool = Tool(
     name="update_plan",
     description=(
-        "更新一个计划步骤的状态。开始步骤时标为 in_progress，做完立即标为 completed；"
-        "无法继续时标为 blocked 并在 note 说明原因。任何时刻最多一个步骤 in_progress。"
+        "Update one plan step. Mark it in_progress when you start, completed as soon as it "
+        "is done, or blocked with a note if it cannot continue. At most one step may be "
+        "in_progress at a time."
     ),
     parameters={
         "type": "object",
         "properties": {
             "step_id": {
                 "type": "string",
-                "description": "create_plan/get_plan 返回的步骤 id，如 step_1",
+                "description": "Step id from create_plan/get_plan, e.g. step_1",
             },
             "status": {
                 "type": "string",
@@ -113,11 +114,11 @@ update_plan_tool = Tool(
                     "blocked",
                     "skipped",
                 ],
-                "description": "步骤的新状态",
+                "description": "New step status",
             },
             "note": {
                 "type": "string",
-                "description": "可选的进展、结果或阻塞原因",
+                "description": "Optional progress, result, or blocker",
             },
         },
         "required": ["step_id", "status"],
@@ -127,7 +128,7 @@ update_plan_tool = Tool(
 
 get_plan_tool = Tool(
     name="get_plan",
-    description="读取当前任务的完整计划、整体状态、revision 和所有步骤。",
+    description="Read the current task plan: overall status, revision, and all steps.",
     parameters={"type": "object", "properties": {}, "required": []},
     call=lambda args, runtime: get_plan(runtime=runtime),
     is_concurrency_safe=lambda args: True,

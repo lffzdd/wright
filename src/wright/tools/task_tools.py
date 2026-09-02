@@ -11,7 +11,7 @@ from .base import Tool, ToolResult, ToolRuntime
 def _service(runtime: ToolRuntime) -> TaskService:
     if runtime.session_state is None:
         raise RuntimeError("task tool requires a SessionState runtime")
-    return TaskService.for_session(runtime.session_state)
+    return TaskService.for_session(runtime.session_state, runtime.services)
 
 
 def get_task(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
@@ -39,7 +39,7 @@ def wait_task(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
 
 
 def cancel_task(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
-    reason = str(arguments.get("reason") or "主 Agent 请求取消")[:1_000]
+    reason = str(arguments.get("reason") or "Root Agent requested cancellation")[:1_000]
     try:
         service = _service(runtime)
         before = service.get(str(arguments["task_id"]))

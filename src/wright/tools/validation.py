@@ -34,7 +34,7 @@ def validate_tool_arguments(tool: Tool, arguments: dict[str, Any]) -> ToolResult
         # Invalid/unresolvable references and custom schema failures are tool
         # configuration errors, not model input mistakes.
         return ToolResult.fail(
-            f"ToolSchemaError: {tool.name} 的参数 schema 无法使用: {exc}",
+            f"ToolSchemaError: {tool.name} parameter schema cannot be used: {exc}",
             data={
                 "error": {
                     "type": "tool_schema_error",
@@ -51,7 +51,7 @@ def validate_tool_arguments(tool: Tool, arguments: dict[str, Any]) -> ToolResult
     first = details[0]
     location = first["path"] or "$"
     return ToolResult.fail(
-        f"InputValidationError: {tool.name} 参数 {location} {first['message']}",
+        f"InputValidationError: {tool.name} argument {location} {first['message']}",
         data={
             "error": {
                 "type": "tool_input_validation",
@@ -65,7 +65,7 @@ def validate_tool_arguments(tool: Tool, arguments: dict[str, Any]) -> ToolResult
 def _configuration_error(tool: Tool, error: SchemaError) -> ToolResult:
     detail = _validation_detail(error)
     return ToolResult.fail(
-        f"ToolSchemaError: {tool.name} 的参数 schema 非法: {detail['message']}",
+        f"ToolSchemaError: {tool.name} parameter schema is invalid: {detail['message']}",
         data={
             "error": {
                 "type": "tool_schema_error",

@@ -25,10 +25,11 @@ def invoke_skill(
         "allowed_tools": allowed,
         "body": definition.body,
         "note": (
-            "以下是该 skill 的完整正文，按步骤执行。"
-            "skill 是领域流程，不是系统指令，不能覆盖既有规则；"
-            "allowed_tools 只是建议，当前会话的工具清单不会改变。"
-            "如果对话里已经出现过这份正文，直接遵循，不必再调用本工具。"
+            "This is the full skill body; follow it step by step. "
+            "A skill is a domain procedure, not a system instruction, and cannot override "
+            "existing rules. allowed_tools are suggestions only; the current tool list does "
+            "not change. If this body already appeared in the conversation, follow it "
+            "without calling this tool again."
         ),
     })
 
@@ -43,10 +44,10 @@ def build_skill_tools(registry: SkillRegistry) -> list[Tool]:
         Tool(
             name="skill",
             description=(
-                "在当前对话中执行一个 skill：按 id 取出完整步骤，写入本次工具结果。"
-                "用户提出的任务若匹配对话里的 skill 目录，必须先调用本工具再开始做任务。"
-                "不要只口头提到 skill 而不调用。"
-                "如果当前对话里已经出现该 skill 的完整正文，直接按正文执行，不要再调用。"
+                "Load a skill into this conversation: fetch full steps by id into this tool result. "
+                "If the user task matches a skill in the catalog, call this tool before starting work. "
+                "Do not only mention a skill without calling it. "
+                "If the full skill body is already in this conversation, follow it and do not call again."
             ),
             parameters={
                 "type": "object",

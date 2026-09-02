@@ -4,7 +4,7 @@
 LLMClient 用假参数构造(不发起任何网络请求),整套测试离线可跑。
 
 运行(项目根目录下):
-    python -m wright.test
+    uv run python scripts/smoke_agent.py
 """
 
 import json
@@ -17,12 +17,12 @@ from types import SimpleNamespace
 _TMP = tempfile.TemporaryDirectory(prefix="wright-test-", ignore_cleanup_errors=True)
 _WORKSPACE = Path(_TMP.name)
 
-from .agent import Agent
-from .events import ContentDelta, ContentDone, UsageEvent
-from .llm import LLMClient
-from .renderer import SilentRenderer
-from .session import SessionState, UsageRecord
-from .tools.base import Tool, ToolCall, ToolResult, ToolRuntime
+from wright.agent import Agent
+from wright.events import ContentDelta, ContentDone, UsageEvent
+from wright.llm import LLMClient
+from wright.renderer import SilentRenderer
+from wright.session import SessionState, UsageRecord
+from wright.tools.base import Tool, ToolCall, ToolResult, ToolRuntime
 
 
 class RecordingRenderer(SilentRenderer):

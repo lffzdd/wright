@@ -5,7 +5,7 @@
 就能驱动整条委派链,全程不发任何网络请求。
 
 运行(项目根目录下):
-    python -m wright.test_subagent
+    uv run python scripts/smoke_subagent.py
 """
 
 import json
@@ -14,12 +14,12 @@ import threading
 import time
 from pathlib import Path
 
-from .agent import Agent
-from .events import ContentDone
-from .renderer import SilentRenderer
-from .session import SessionState
-from .subagent import build_agent_tools, make_spawn_agent_tool
-from .tools.base import Tool, ToolResult
+from wright.agent import Agent
+from wright.events import ContentDone
+from wright.renderer import SilentRenderer
+from wright.session import SessionState
+from wright.subagent import build_agent_tools, make_spawn_agent_tool
+from wright.tools.base import Tool, ToolResult
 
 
 _TMP = tempfile.TemporaryDirectory(prefix="wright-subagent-", ignore_cleanup_errors=True)

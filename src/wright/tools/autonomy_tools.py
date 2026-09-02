@@ -11,15 +11,16 @@ from .base import Tool, ToolResult, ToolRuntime
 
 
 def _store(runtime: ToolRuntime):
-    session = runtime.session_state
-    store = getattr(session, "durable_task_store", None)
+    store = runtime.services.durable_store if runtime.services else None
     if store is None:
         raise RuntimeError("durable task runtime is not configured")
     return store
 
 
 def _notify(runtime: ToolRuntime) -> None:
-    scheduler = getattr(runtime.session_state, "autonomy_scheduler", None)
+    scheduler = (
+        runtime.services.autonomy_scheduler if runtime.services else None
+    )
     if scheduler is not None:
         scheduler.notify_changed()
 

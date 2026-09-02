@@ -91,7 +91,7 @@ def test_concurrency_capacity_fails_fast_instead_of_deadlocking_nested_agents():
 
     assert first.status == "running"
     assert second.status == "failed"
-    assert "并发" in second.error
+    assert "Concurrent" in second.error
 
 
 def test_snapshot_restore_marks_live_tasks_interrupted_and_keeps_completed_tasks():
@@ -105,7 +105,7 @@ def test_snapshot_restore_marks_live_tasks_interrupted_and_keeps_completed_tasks
     )
 
     assert restored.get(live.id).status == "failed"
-    assert "结果未知" in restored.get(live.id).error
+    assert "unknown" in restored.get(live.id).error
     assert restored.get(done.id).status == "completed"
     assert restored.get(done.id).result == "ok"
 

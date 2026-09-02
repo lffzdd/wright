@@ -14,6 +14,10 @@ import threading
 import time
 from typing import Any, Callable, Literal
 
+from .logger import get_logger
+
+logger = get_logger(__name__)
+
 
 AgentTaskStatus = Literal[
     "pending", "running", "completed", "failed", "cancelled", "timed_out"
@@ -256,34 +260,34 @@ class AgentControlPlane:
         task = _bounded_string(task, "task", 4_000)
         root_turn_id = _bounded_string(root_turn_id, "root_turn_id", 180)
         if requested_steps < 1:
-            raise AgentControlError("requested_steps 必须 > 0")
+            raise AgentControlError("requested_steps must be > 0")
         depth_limit = min(self.config.max_depth, max_depth or self.config.max_depth)
         if depth < 1 or depth > depth_limit:
             raise AgentControlError(
-                f"子 Agent depth={depth} 超过上限 {depth_limit}"
+                f"Child Agent depth={depth} exceeds limit {depth_limit}"
             )
 
         with self._lock:
             self._prune_history_unlocked(root_turn_id)
             if len(self._tasks) >= self.config.max_stored_tasks:
-                raise AgentControlError("控制面历史任务已达到存储上限")
+                raise AgentControlError("Control-plane history has reached the storage limit")
             turn_tasks = [
                 record for record in self._tasks.values()
                 if record.root_turn_id == root_turn_id
             ]
             if len(turn_tasks) >= self.config.max_tasks_per_turn:
-                raise AgentControlError("本轮子 Agent 任务数已达到上限")
+                raise AgentControlError("This turn has reached the child Agent task limit")
             siblings = [
                 record for record in turn_tasks if record.parent_id == parent_id
             ]
             if len(siblings) >= self.config.max_children_per_parent:
-                raise AgentControlError("同一父任务的子 Agent 数已达到上限")
+                raise AgentControlError("This parent has reached the child Agent limit")
             if parent_id is not None:
                 parent = self._tasks.get(parent_id)
                 if parent is None or parent.root_turn_id != root_turn_id:
-                    raise AgentControlError("parent agent task 不存在或不属于当前 turn")
+                    raise AgentControlError("parent agent task does not exist or is not in this turn")
                 if parent.status not in {"pending", "running"}:
-                    raise AgentControlError("parent agent task 已终止")
+                    raise AgentControlError("parent agent task has already terminated")
 
             used_or_reserved_steps = sum(
                 (
@@ -295,7 +299,7 @@ class AgentControlPlane:
             )
             available_steps = self.config.max_steps_per_turn - used_or_reserved_steps
             if available_steps < 1:
-                raise AgentControlError("本轮子 Agent 共享 step 预算已耗尽")
+                raise AgentControlError("This turn's shared child-Agent step budget is exhausted")
             allocation = min(requested_steps, available_steps)
 
             self._counter += 1
@@ -322,7 +326,7 @@ class AgentControlPlane:
                 ended_at=now if status == "failed" else None,
                 step_budget=allocation if status == "running" else 0,
                 error=(
-                    "并发子 Agent 数已达到上限"
+                    "Concurrent child Agent limit reached"
                     if status == "failed" else ""
                 ),
             )
@@ -358,7 +362,7 @@ class AgentControlPlane:
             if turn_total >= self.config.max_tokens_per_turn:
                 self._request_cancel_turn_unlocked(
                     record.root_turn_id,
-                    "本轮子 Agent 共享 token 预算已耗尽",
+                    "This turn's shared child-Agent token budget is exhausted",
                 )
         self._notify_change()
 
@@ -520,7 +524,10 @@ class AgentControlPlane:
                 if mark_interrupted and record.status in {"pending", "running"}:
                     record.status = "failed"
                     record.ended_at = time.time()
-                    record.error = "子 Agent 因进程重启而中断；执行结果未知，请核实 workspace"
+                    record.error = (
+                        "Child Agent interrupted by process restart; "
+                        "execution result is unknown, verify the workspace"
+                    )
                     record.cancel_requested = True
                     record.cancel_reason = "process_restart"
                 plane._tasks[record.id] = record
@@ -596,7 +603,7 @@ class AgentControlPlane:
             try:
                 callback()
             except Exception:
-                pass
+                logger.debug("control-plane on_change callback failed", exc_info=True)
 
 
 def _bounded_string(

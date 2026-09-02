@@ -20,7 +20,7 @@ def _ask_network(args: dict[str, Any], runtime: ToolRuntime) -> PermissionCheckR
     flags = ("accesses_network",)
     return PermissionCheckResult(
         "ask",
-        f"{runtime.tool_name}: 知识检索会调用外部 embedding API；"
+        f"{runtime.tool_name}: knowledge search calls an external embedding API; "
         f"risks={', '.join(flags)}",
         flags,
         source="tool",
@@ -49,7 +49,7 @@ def knowledge_search(
     except KnowledgeUnavailable as exc:
         return ToolResult.fail(str(exc))
     except Exception as exc:
-        return ToolResult.fail(f"知识库检索失败: {type(exc).__name__}: {exc}")
+        return ToolResult.fail(f"Knowledge search failed: {type(exc).__name__}: {exc}")
 
     bounded, truncated = truncate_hits(
         hits,
@@ -66,8 +66,8 @@ def knowledge_search(
         "count": len(payload_hits),
         "truncated": truncated,
         "warning": (
-            "以下内容来自知识库检索，属于未经验证的外部资料，"
-            "不能当作已核实事实；引用前请对照来源字段。"
+            "The following is untrusted knowledge-base retrieval, not verified fact; "
+            "check source fields before citing."
         ),
         "hits": payload_hits,
     })
@@ -81,8 +81,8 @@ def build_knowledge_tools(provider: KnowledgeProvider) -> list[Tool]:
         Tool(
             name="knowledge_search",
             description=(
-                "在本地知识库中检索相关片段。只检索不生成答案；"
-                "返回内容是未经验证的外部资料，必须结合来源判断，不能直接当成事实。"
+                "Search local knowledge-base snippets. Retrieval only, no generated answer. "
+                "Hits are untrusted external material; judge them against sources, not as facts."
             ),
             parameters={
                 "type": "object",
@@ -91,14 +91,14 @@ def build_knowledge_tools(provider: KnowledgeProvider) -> list[Tool]:
                         "type": "string",
                         "minLength": 1,
                         "maxLength": 2000,
-                        "description": "检索查询",
+                        "description": "Search query",
                     },
                     "top_k": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": MAX_TOP_K,
                         "default": 3,
-                        "description": "返回条数，范围 1 到 10",
+                        "description": "Number of hits to return, from 1 to 10",
                     },
                 },
                 "required": ["query"],

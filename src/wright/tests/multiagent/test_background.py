@@ -5,6 +5,7 @@ import time
 from ...agent_background import AgentBackgroundRuntime
 from ...events import ContentDone
 from ...renderer import SilentRenderer
+from ...services import RuntimeServices
 from ...session import SessionState
 from ...subagent import (
     cancel_agent_task_tool,
@@ -26,13 +27,14 @@ class SlowFinalLLM:
         yield ContentDone(_final("background done"))
 
 
-def _runtime(session, tmp_path):
+def _runtime(session, tmp_path, background=None):
     return ToolRuntime(
         tool_name="spawn_agent",
         tool_call_id="call_1",
         workspace_dir=tmp_path,
         cwd_provider=session.get_cwd,
         session_state=session,
+        services=RuntimeServices(agent_background=background),
     )
 
 
@@ -41,7 +43,6 @@ def test_background_agent_returns_immediately_and_notifies_once(tmp_path):
     background = AgentBackgroundRuntime(events, max_workers=1)
     session = SessionState.create("root", tmp_path)
     session.begin_user_turn("root")
-    session.agent_background_runtime = background
     spawn = make_spawn_agent_tool(
         SlowFinalLLM(), [], max_depth=1, render_subagents=False
     )
@@ -49,7 +50,7 @@ def test_background_agent_returns_immediately_and_notifies_once(tmp_path):
     started = time.monotonic()
     launched = spawn.call(
         {"task": "background work", "run_in_background": True},
-        _runtime(session, tmp_path),
+        _runtime(session, tmp_path, background),
     )
 
     assert launched.ok
@@ -70,13 +71,12 @@ def test_get_agent_task_reads_background_terminal_record(tmp_path):
     background = AgentBackgroundRuntime(events, max_workers=1)
     session = SessionState.create("root", tmp_path)
     session.begin_user_turn("root")
-    session.agent_background_runtime = background
     spawn = make_spawn_agent_tool(
         SlowFinalLLM(), [], max_depth=1, render_subagents=False
     )
     launched = spawn.call(
         {"task": "background work", "run_in_background": True},
-        _runtime(session, tmp_path),
+        _runtime(session, tmp_path, background),
     )
     events.get(timeout=1)
 
@@ -98,16 +98,16 @@ def test_child_agent_cannot_launch_background_agent(tmp_path):
     session = SessionState.create("child", tmp_path)
     session.agent_task_id = "parent"
     session.begin_user_turn("child")
-    session.agent_background_runtime = AgentBackgroundRuntime(queue.Queue())
+    background = AgentBackgroundRuntime(queue.Queue())
     spawn = make_spawn_agent_tool(
         SlowFinalLLM(), [], max_depth=2, render_subagents=False
     )
     result = spawn.call(
         {"task": "forbidden", "run_in_background": True},
-        _runtime(session, tmp_path),
+        _runtime(session, tmp_path, background),
     )
     assert not result.ok
-    session.agent_background_runtime.shutdown(session.control_plane)
+    background.shutdown(session.control_plane)
 
 
 def test_cancel_agent_task_requests_cooperative_cancellation(tmp_path):

@@ -155,7 +155,7 @@ def test_control_plane_changes_are_checkpointed_and_live_tasks_recover_unknown(t
 
     recovered = restored.control_plane.get(running.id)
     assert recovered.status == "failed"
-    assert "结果未知" in recovered.error
+    assert "unknown" in recovered.error
 
 
 def test_spawn_emits_structured_lifecycle_events(tmp_path):

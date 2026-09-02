@@ -67,13 +67,6 @@ class SessionState:
     _background_tasks_lock: threading.RLock = field(
         default_factory=threading.RLock, repr=False
     )
-    # Live threads and queues are process-local; checkpoints intentionally do
-    # not serialize them.  A restored session therefore treats live work as
-    # unknown via the existing control-plane recovery path.
-    agent_background_runtime: Any = field(default=None, repr=False, compare=False)
-    durable_task_store: Any = field(default=None, repr=False, compare=False)
-    autonomy_scheduler: Any = field(default=None, repr=False, compare=False)
-    loop_registry: Any = field(default=None, repr=False, compare=False)
 
     @classmethod
     def create(

@@ -69,7 +69,7 @@ class SkillRegistry:
             return definition
         if last_error is not None:
             raise last_error
-        raise SkillNotFoundError(f"未知 skill: {normalized}")
+        raise SkillNotFoundError(f"Unknown skill: {normalized}")
 
     def scan_errors(self) -> tuple[str, ...]:
         with self._lock:

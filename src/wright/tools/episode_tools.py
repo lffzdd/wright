@@ -60,7 +60,7 @@ def delete_episode(
     try:
         episode = EpisodeStore(directory).delete(episode_id)
         return ToolResult.success({
-            "message": "episode 已删除",
+            "message": "Episode deleted",
             "id": episode.id,
             "goal": episode.goal,
         })
@@ -73,7 +73,7 @@ def _delete_permission(
 ) -> PermissionCheckResult:
     return PermissionCheckResult(
         "ask",
-        f"删除历史 episode {arguments.get('episode_id', '')}",
+        f"Delete historical episode {arguments.get('episode_id', '')}",
         ("deletes_data",),
         source="episode_tool",
     )
@@ -89,8 +89,8 @@ def build_episode_tools(directory: Path | None = None) -> list[Tool]:
         Tool(
             name="search_episodes",
             description=(
-                "搜索过去任务的执行经历，包括目标、结果和完成状态。episode 是历史经验，"
-                "使用前仍需核实当前状态。"
+                "Search past task episodes: goal, outcome, and completion status. "
+                "Episodes are historical experience; re-check current state before acting on them."
             ),
             parameters={
                 "type": "object",
@@ -110,7 +110,7 @@ def build_episode_tools(directory: Path | None = None) -> list[Tool]:
         ),
         Tool(
             name="get_episode",
-            description="按 episode_id 读取完整历史执行记录，包括计划、工具轨迹和验证结果。",
+            description="Read a full historical episode by episode_id, including plan, tool trace, and verification.",
             parameters={
                 "type": "object",
                 "properties": {"episode_id": {"type": "string", "minLength": 1}},
@@ -122,7 +122,7 @@ def build_episode_tools(directory: Path | None = None) -> list[Tool]:
         ),
         Tool(
             name="delete_episode",
-            description="删除用户明确要求忘记的历史 episode。episode 不支持模型手工创建或修改。",
+            description="Delete a historical episode the user asked to forget. Models cannot create or edit episodes.",
             parameters={
                 "type": "object",
                 "properties": {"episode_id": {"type": "string", "minLength": 1}},

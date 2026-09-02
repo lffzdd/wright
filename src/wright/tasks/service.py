@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 import time
-from typing import Callable, Protocol, Sequence, runtime_checkable
+from typing import TYPE_CHECKING, Callable, Protocol, Sequence, runtime_checkable
 
 from ..coordination import AgentControlError, AgentTaskRecord
 from ..processes import terminate_process_tree
-from .types import RuntimeTask, TaskKind, TaskStatus
+from .types import (
+    RuntimeTask,
+    TaskKind,
+    TaskNotFoundError,
+    TaskStatus,
+    TaskWaitCancelled,
+)
 
-
-class TaskNotFoundError(ValueError):
-    pass
-
-
-class TaskWaitCancelled(RuntimeError):
-    pass
+if TYPE_CHECKING:
+    from ..services import RuntimeServices
 
 
 @runtime_checkable
@@ -175,7 +176,7 @@ class ShellTaskBackend:
         with task.output_lock:
             output = "".join(task.output_lines)[-8_000:]
         error = (
-            f"命令以退出码 {returncode} 结束"
+            f"Command exited with code {returncode}"
             if status == "failed" else ""
         )
         return RuntimeTask(
@@ -209,15 +210,19 @@ class TaskService:
         self.backends = tuple(backends)
 
     @classmethod
-    def for_session(cls, session_state) -> "TaskService":
+    def for_session(
+        cls,
+        session_state,
+        services: "RuntimeServices | None" = None,
+    ) -> "TaskService":
         backends: list[TaskBackend] = [
             AgentTaskBackend(session_state.control_plane),
             ShellTaskBackend(session_state),
         ]
-        durable_store = getattr(session_state, "durable_task_store", None)
+        durable_store = services.durable_store if services is not None else None
         if durable_store is not None:
             # Lazy import keeps the in-memory task facade usable without the
-            # optional durable runtime being attached to a SessionState.
+            # optional durable runtime being attached.
             from ..autonomy.backend import DurableTaskBackend
 
             backends.append(DurableTaskBackend(durable_store))

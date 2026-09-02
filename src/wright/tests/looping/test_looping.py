@@ -10,6 +10,7 @@ from ...checkpoint import SessionCheckpointStore
 from ...events import ContentDone
 from ...looping import LoopError, SessionLoopRegistry, parse_interval, parse_loop_command
 from ...renderer import SilentRenderer
+from ...services import RuntimeServices
 from ...session import SessionState
 from ...tools.base import ToolRuntime
 from ...tools.loop_tools import loop_tool
@@ -45,7 +46,6 @@ def test_loop_tick_uses_runtime_event_without_resetting_goal_or_plan(tmp_path):
     workspace.mkdir()
     session = SessionState.create("keep this goal", workspace)
     events, idle, registry = _registry()
-    session.loop_registry = registry
     agent = Agent(
         ScriptLLM(["initial answer", "loop result"]),
         [],
@@ -123,7 +123,7 @@ def test_loop_rejects_short_interval_and_capacity():
     with pytest.raises(LoopError, match="at most 20"):
         registry.create(prompt="one more", interval_seconds=5)
 
-    runtime = ToolRuntime(session_state=type("S", (), {"loop_registry": registry})())
+    runtime = ToolRuntime(services=RuntimeServices(loop_registry=registry))
     failed = loop_tool.call(
         {"action": "create", "interval_seconds": 1, "prompt": "nope"},
         runtime,
@@ -137,7 +137,6 @@ def test_loop_state_is_absent_from_checkpoint(tmp_path):
     workspace.mkdir()
     session = SessionState.create("goal", workspace)
     events, idle, registry = _registry()
-    session.loop_registry = registry
     created = registry.create(
         name="secret-loop-name",
         prompt="UNIQUE_LOOP_PROMPT_xyz",
@@ -150,7 +149,6 @@ def test_loop_state_is_absent_from_checkpoint(tmp_path):
     assert "secret-loop-name" not in text
     assert "UNIQUE_LOOP_PROMPT_xyz" not in text
     restored = store.load(session.session_id)
-    assert restored.loop_registry is None
     registry.close()
 
 

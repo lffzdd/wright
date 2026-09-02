@@ -101,10 +101,13 @@ def test_checkpoint_does_not_restore_live_autonomy_handles(tmp_path):
 
     store.save(session)
     restored = store.load(session.session_id)
+    text = store.path_for(session.session_id).read_text(encoding="utf-8")
 
-    assert restored.durable_task_store is None
-    assert restored.autonomy_scheduler is None
-    assert restored.loop_registry is None
+    assert "durable_task_store" not in text
+    assert "autonomy_scheduler" not in text
+    assert "loop_registry" not in text
+    assert "agent_background" not in text
+    assert "durable_store" not in text
 
 
 def test_unknown_checkpoint_version_is_rejected(tmp_path):

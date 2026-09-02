@@ -10,14 +10,18 @@ from typing import Any, Sequence
 
 from rich.console import Console
 
+from .agent import Agent
 from .coordination import AgentControlError, AgentTaskRecord
 from .llm import LLMClient
+from .logger import get_logger
 from .permission import PermissionResolver
 from .renderer import Renderer, SilentRenderer
 from .session import SessionState, UsageRecord
 from .tools.base import Tool, ToolResult, ToolRuntime
 from .tools.autonomy_tools import autonomy_tools
 from .tools.task_tools import task_tools
+
+logger = get_logger(__name__)
 
 
 DEFAULT_CHILD_MAX_STEPS = 20
@@ -82,8 +86,9 @@ SPAWN_AGENT_PARAMETERS = {
             "minLength": 1,
             "maxLength": 4_000,
             "description": (
-                "自包含的子任务。子 Agent 看不到父对话历史，因此必须写全背景、目标、"
-                "约束和期望产出。"
+                "A self-contained subtask. The child Agent cannot see parent "
+                "history, so include full background, goal, constraints, and "
+                "expected output."
             ),
         },
         "run_in_background": {
@@ -97,10 +102,12 @@ SPAWN_AGENT_PARAMETERS = {
 }
 
 SPAWN_AGENT_DESCRIPTION = (
-    "把一个自包含、可独立完成的子任务交给隔离上下文的子 Agent。多个连续 "
-    "spawn_agent 调用可并发；控制面会记录 task_id、父子关系、状态、预算和用量。"
-    "子 Agent 共享 workspace 和权限边界，但不继承父对话、长期记忆或 ask_user。"
-    "run_in_background=true 仅供主 Agent 使用，完成后会自动通知主会话。"
+    "Hand a self-contained subtask to a child Agent with an isolated context. "
+    "Consecutive spawn_agent calls may run concurrently; the control plane "
+    "records task_id, parent/child links, status, budget, and usage. "
+    "Child Agents share the workspace and permission boundary, but not parent "
+    "history, long-term memory, or ask_user. "
+    "run_in_background=true is root-only; completion notifies the parent session."
 )
 
 
@@ -139,7 +146,7 @@ def _child_base_tools(base_tools: Sequence[Tool]) -> list[Tool]:
                     "type": "boolean",
                     "const": False,
                     "default": False,
-                    "description": "子 Agent 禁止遗留后台进程，必须为 false",
+                    "description": "Must be false; child Agents cannot leave background processes",
                 }
             child_tools.append(replace(
                 tool,
@@ -180,7 +187,7 @@ def make_spawn_agent_tool(
             return ToolResult.fail("spawn_agent requires SessionState runtime")
         control = session.control_plane
         if run_in_background and session.agent_task_id is not None:
-            return ToolResult.fail("子 Agent 不允许创建后台 Agent")
+            return ToolResult.fail("Child Agents cannot launch background Agents")
         child_depth = depth + 1
         effective_max_depth = min(max_depth, control.config.max_depth)
         root_turn_id = session.agent_root_turn_id or (
@@ -238,7 +245,7 @@ def make_spawn_agent_tool(
             try:
                 child_session.set_cwd(runtime.cwd_provider())
             except Exception:
-                pass
+                logger.debug("child session set_cwd failed", exc_info=True)
         control.bind_child_session(record.id, child_session.session_id)
 
         child_renderer: Renderer = (
@@ -261,8 +268,6 @@ def make_spawn_agent_tool(
                 usage.total_tokens,
             )
 
-        from .agent import Agent
-
         child_agent = Agent(
             llm,
             child_tools,
@@ -274,6 +279,7 @@ def make_spawn_agent_tool(
             usage_observer=observe_usage,
             allow_background_tasks=False,
             lifecycle=runtime.lifecycle,
+            services=runtime.services,
         )
 
         def run_child() -> ToolResult:
@@ -282,19 +288,19 @@ def make_spawn_agent_tool(
                 cancellation_reason = control.cancellation_reason(record.id)
                 runtime_reason = runtime.get_cancellation_reason()
                 if runtime_reason == "timeout":
-                    task_status, error = "timed_out", "子 Agent 超过父工具 deadline"
+                    task_status, error = "timed_out", "Child Agent exceeded parent tool deadline"
                 elif cancellation_reason or runtime.is_cancelled():
                     task_status = "cancelled"
-                    error = cancellation_reason or runtime_reason or "子 Agent 被取消"
+                    error = cancellation_reason or runtime_reason or "Child Agent cancelled"
                 elif final_answer is None:
                     task_status = "failed"
-                    error = (f"子 Agent 未完成任务 (status={child_session.status}, "
+                    error = (f"Child Agent did not finish (status={child_session.status}, "
                              f"steps={child_session.step_count}/{record.step_budget})")
                 else:
                     task_status, error = "completed", ""
             except Exception as exc:
                 final_answer = None
-                task_status, error = "failed", f"子 Agent 异常: {type(exc).__name__}: {exc}"
+                task_status, error = "failed", f"Child Agent error: {type(exc).__name__}: {exc}"
 
             usage = {
                 "prompt_tokens": child_session.total_usage.prompt_tokens,
@@ -317,11 +323,13 @@ def make_spawn_agent_tool(
             return ToolResult.success({**common, "result": finished.result})
 
         if run_in_background:
-            background_runtime = getattr(session, "agent_background_runtime", None)
+            background_runtime = (
+                runtime.services.agent_background if runtime.services else None
+            )
             if background_runtime is None:
                 finished = control.finish_task(
                     record.id, status="failed", steps_used=0,
-                    error="当前会话未配置后台 Agent runtime",
+                    error="Current session has no background Agent runtime",
                 )
                 _emit(runtime, finished)
                 return ToolResult.fail(finished.error, data={"task_id": finished.id})
@@ -367,8 +375,8 @@ def _get_agent_tree(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResu
 get_agent_tree_tool = Tool(
     name="get_agent_tree",
     description=(
-        "读取子 Agent 控制面的任务树、生命周期、用量和结果摘要。"
-        "默认只返回当前 user turn；调试历史时可包含全部 turn。"
+        "Read the child-Agent control-plane tree: lifecycle, usage, and result summaries. "
+        "Defaults to the current user turn; include all turns when debugging history."
     ),
     parameters={
         "type": "object",
@@ -389,7 +397,7 @@ def _get_agent_task(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResu
     try:
         from .tasks import TaskNotFoundError, TaskService
 
-        task = TaskService.for_session(session).get(task_id)
+        task = TaskService.for_session(session, runtime.services).get(task_id)
     except TaskNotFoundError as exc:
         return ToolResult.fail(str(exc))
     if task.kind != "agent":
@@ -422,11 +430,11 @@ def _cancel_agent_task(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolR
     if session is None:
         return ToolResult.fail("cancel_agent_task requires SessionState runtime")
     task_id = str(arguments["task_id"])
-    reason = str(arguments.get("reason") or "主 Agent 请求取消")[:1_000]
+    reason = str(arguments.get("reason") or "Root Agent requested cancellation")[:1_000]
     try:
         from .tasks import TaskNotFoundError, TaskService
 
-        service = TaskService.for_session(session)
+        service = TaskService.for_session(session, runtime.services)
         before = service.get(task_id)
         if before.kind != "agent":
             return ToolResult.fail(f"Task is not an Agent task: {task_id}")
