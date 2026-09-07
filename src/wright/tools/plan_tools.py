@@ -137,8 +137,9 @@ get_plan_tool = Tool(
 replan_tool = Tool(
     name="replan",
     description=(
-        "当事实、约束或执行结果导致原路线不再适用时重规划。已完成/已跳过步骤保留为历史，"
-        "旧的未完成步骤会标为 skipped，并追加新的待执行步骤。"
+        "Replan when new facts, constraints, or results make the current route "
+        "obsolete. Completed and skipped steps are kept as history, remaining "
+        "unfinished steps are marked skipped, and the new steps are appended."
     ),
     parameters={
         "type": "object",
@@ -148,11 +149,11 @@ replan_tool = Tool(
                 "items": {"type": "string"},
                 "minItems": 1,
                 "maxItems": 12,
-                "description": "新的后续执行步骤",
+                "description": "The new steps to execute from here on.",
             },
             "reason": {
                 "type": "string",
-                "description": "为什么原路线需要调整",
+                "description": "Why the current route needs to change.",
             },
         },
         "required": ["steps", "reason"],

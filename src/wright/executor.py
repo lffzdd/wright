@@ -220,15 +220,13 @@ class ToolExecutor:
 
         # 浅拷贝再改:钳超时是执行期的局部需要,不能回写 tool_call.arguments
         # ——那个 dict 同一对象被 session 记账引用着,原地改会篡改"已记录的历史输入"。
-        arguments = dict(
-            arguments
-            if permission.updated_arguments is None
-            else permission.updated_arguments
-        )
-
-        updated_validation_error = validate_tool_arguments(tool, arguments)
-        if updated_validation_error is not None:
-            return updated_validation_error
+        if permission.updated_arguments is None:
+            arguments = dict(arguments)
+        else:
+            arguments = dict(permission.updated_arguments)
+            updated_validation_error = validate_tool_arguments(tool, arguments)
+            if updated_validation_error is not None:
+                return updated_validation_error
 
         # 内层超时必须 ≤ 外层线程预算:模型可以给工具传很大的 timeout,
         # 不钳制的话外层先掐,工具内部的超时机制(如 execute_command 转后台)永远轮不到登场
