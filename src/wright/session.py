@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import json
 import threading
 import time
 from typing import Any, Callable, Literal, TypeAlias
@@ -173,6 +174,8 @@ class SessionState:
         parsed: dict,
         route: Literal["tool_calls", "final"],
         tool_calls: list[ToolCall] | None = None,
+        *,
+        assistant_message: dict | None = None,
     ) -> TurnRecord:
         """记录一轮合法 assistant 输出。
 
@@ -198,7 +201,16 @@ class SessionState:
         # 校验全部通过后才落 wire / 改状态:
         # 上面任一 raise 都不能留下半截 message 或 tool_execution。
         step = self._next_step()
-        message_id = self._append_assistant_message(assistant_raw)
+        if assistant_message is None:
+            assistant_message = {"role": "assistant", "content": assistant_raw or None}
+            if tool_calls:
+                assistant_message["tool_calls"] = [
+                    {"id": call.id, "type": "function", "function": {
+                        "name": call.name,
+                        "arguments": json.dumps(call.arguments, ensure_ascii=False),
+                    }} for call in tool_calls
+                ]
+        message_id = self.append_message(assistant_message)
 
         for tool_call in tool_calls:
             self.tool_executions[tool_call.id] = ToolExecutionRecord(

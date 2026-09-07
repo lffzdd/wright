@@ -1,7 +1,7 @@
-import json
+
+from wright.tests.responses import event, response
 
 from ...agent import Agent
-from ...events import ContentDone
 from ...renderer import SilentRenderer
 from ...session import SessionState
 from ...tools.plan_tools import create_plan_tool
@@ -14,13 +14,11 @@ class PlanningLLM:
         self.calls = 0
         self.seen_messages = []
 
-    def __call__(self, messages):
+    def __call__(self, messages, **kwargs):
         self.seen_messages.append(list(messages))
         self.calls += 1
         if self.calls == 1:
-            content = json.dumps(
-                {
-                    "tool_calls": [
+            content = response(content=None, calls=[
                         {
                             "name": "create_plan",
                             "arguments": {
@@ -28,17 +26,10 @@ class PlanningLLM:
                                 "steps": ["检查", "实现", "验证"],
                             },
                         }
-                    ],
-                    "final_answer": None,
-                },
-                ensure_ascii=False,
-            )
+                    ])
         else:
-            content = json.dumps(
-                {"tool_calls": [], "final_answer": "计划已建立"},
-                ensure_ascii=False,
-            )
-        yield ContentDone(content=content)
+            content = response(content="计划已建立", calls=[])
+        yield event(content=content)
 
 
 def test_agent_injects_latest_plan_as_ephemeral_reminder(tmp_path):

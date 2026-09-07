@@ -1,7 +1,7 @@
 """
 Wright 主入口：终端里的 coding agent。
 
-当前回合协议仍是多工具 ReAct JSON 信封；主循环一次可发起多个工具调用。
+通过原生工具调用驱动主循环，一轮可执行多个工具并回传各自结果。
 """
 
 from .repl import Repl

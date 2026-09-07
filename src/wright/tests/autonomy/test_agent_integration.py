@@ -1,12 +1,12 @@
-import json
 import queue
 import time
+
+from wright.tests.responses import event, response
 
 from ...agent import Agent
 from ...agent_background import AgentBackgroundRuntime
 from ...autonomy import AutonomyScheduler, AutonomyStore, TriggerSpec
 from ...autonomy.runner import launch_durable_run
-from ...events import ContentDone
 from ...permission import PermissionSettings
 from ...renderer import SilentRenderer
 from ...services import RuntimeServices
@@ -21,7 +21,7 @@ from ...skills.store import write_skill
 
 
 def _final(answer):
-    return json.dumps({"tool_calls": [], "final_answer": answer})
+    return response(content=answer, calls=[])
 
 
 class ScriptLLM:
@@ -30,8 +30,8 @@ class ScriptLLM:
     def __init__(self, answers):
         self.answers = list(answers)
 
-    def __call__(self, messages):
-        yield ContentDone(_final(self.answers.pop(0)))
+    def __call__(self, messages, **kwargs):
+        yield event(_final(self.answers.pop(0)))
 
 
 class SlowLLM:
@@ -41,9 +41,9 @@ class SlowLLM:
         self.answer = answer
         self.delay = delay
 
-    def __call__(self, messages):
+    def __call__(self, messages, **kwargs):
         time.sleep(self.delay)
-        yield ContentDone(_final(self.answer))
+        yield event(_final(self.answer))
 
 
 def _runtime(tmp_path):

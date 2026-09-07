@@ -1,10 +1,11 @@
-import json
 import time
+
+from wright.tests.responses import event, response
 
 from ...agent import Agent
 from ...checkpoint import SessionCheckpointStore
 from ...coordination import AgentControlConfig, AgentControlPlane
-from ...events import ContentDone, UsageEvent
+from ...events import UsageEvent
 from ...executor import ToolExecutor
 from ...renderer import SilentRenderer
 from ...session import SessionState
@@ -14,14 +15,11 @@ from ...tools.command_tools import execute_command
 
 
 def _tool(name, **arguments):
-    return json.dumps({
-        "tool_calls": [{"name": name, "arguments": arguments}],
-        "final_answer": None,
-    })
+    return response(content=None, calls=[{"name": name, "arguments": arguments}])
 
 
 def _final(answer):
-    return json.dumps({"tool_calls": [], "final_answer": answer})
+    return response(content=answer, calls=[])
 
 
 class ScriptLLM:
@@ -30,8 +28,8 @@ class ScriptLLM:
     def __init__(self, script):
         self.script = list(script)
 
-    def __call__(self, messages):
-        yield ContentDone(self.script.pop(0))
+    def __call__(self, messages, **kwargs):
+        yield event(self.script.pop(0))
 
 
 def test_nested_agents_form_one_shared_task_tree(tmp_path):
@@ -67,9 +65,9 @@ class _Usage:
 class UsageLLM:
     context_limit = 128_000
 
-    def __call__(self, messages):
+    def __call__(self, messages, **kwargs):
         yield UsageEvent(_Usage())
-        yield ContentDone(_final("would finish"))
+        yield event(_final("would finish"))
 
 
 def test_shared_token_budget_stops_child_before_accepting_final(tmp_path):
@@ -101,9 +99,9 @@ def test_shared_token_budget_stops_child_before_accepting_final(tmp_path):
 class SlowFinalLLM:
     context_limit = 128_000
 
-    def __call__(self, messages):
+    def __call__(self, messages, **kwargs):
         time.sleep(0.05)
-        yield ContentDone(_final("too late"))
+        yield event(_final("too late"))
 
 
 def test_executor_deadline_propagates_to_child_control_state(tmp_path):

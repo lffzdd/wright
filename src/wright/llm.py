@@ -16,7 +16,7 @@ LLM 传输层：屏蔽"流式 / 非流式"的差异，对外统一吐出事件�
 import time
 import random
 
-from typing import Any, Iterator, Callable
+from typing import Iterator, Callable
 
 from openai import OpenAI, APIConnectionError, APIStatusError, omit
 from openai.types.chat import ChatCompletionMessageParam
@@ -50,17 +50,14 @@ class LLMClient:
         self.max_attempts = max_attempts
         self.base_wait = base_wait
         self.max_wait = max_wait
-        # 协议契约的"合法 JSON"那一层下沉到服务端:json_object 模式让服务端在
-        # 解码阶段保证返回内容必能 json.loads(不再靠 prompt 自觉、也不靠本地抠大括号)。
-        # 注意这只保证"是合法 JSON",不保证"形状对"——形状校验仍归本地 protocol 层。
-        # 端点不支持时(如不认 json_schema 的服务)传 None 即退回纯文本。
-        self.response_format: Any = (
-            {"type": "json_object"} if response_format is None else response_format
-        )
+        self.response_format = response_format
 
     def __call__(
         self,
         messages: list[ChatCompletionMessageParam],
+        *,
+        tools: list[dict] | None = None,
+        response_format: dict | None = None,
     ) -> Iterator[LLMEvent]:
         """调用一次 LLM，以事件流的形式产出结果。
 
@@ -70,13 +67,17 @@ class LLMClient:
         Yields:
             LLMEvent: ReasoningDelta / ContentDelta /   ContentDone / UsageEvent
         """
+        options = {
+            "tools": tools or omit,
+            "response_format": response_format or self.response_format or omit,
+        }
         if self.stream:
-            yield from self._call_stream(messages)
+            yield from self._call_stream(messages, options)
         else:
-            yield from self._call_once(messages)
+            yield from self._call_once(messages, options)
 
     def _call_stream(
-        self, messages: list[ChatCompletionMessageParam]
+        self, messages: list[ChatCompletionMessageParam], options: dict
     ) -> Iterator[LLMEvent]:
         """流式路径：逐 chunk 实时 yield Delta，最后汇总成 ContentDone。
 
@@ -92,9 +93,7 @@ class LLMClient:
                 model=self.model,
                 stream=True,
                 stream_options={"include_usage": True},
-                # response_format 为空 dict 时按"不约束"处理:传 omit 哨兵
-                # 等同于不带这个参数(退回纯文本路径)。
-                response_format=self.response_format or omit,
+                **options,
             ),
             max_attempts=self.max_attempts,
             base_wait=self.base_wait,
@@ -103,12 +102,28 @@ class LLMClient:
 
         content: list[str] = []
         reasoning: list[str] = []
+        tool_calls: dict[int, dict] = {}
+        finish_reason = None
         for chunk in resp:  # 走到这里说明连接已建立;中途断流让它往上抛
             usage = getattr(chunk, "usage", None)
             if chunk.choices:
-                delta = chunk.choices[0].delta
+                choice = chunk.choices[0]
+                finish_reason = choice.finish_reason or finish_reason
+                delta = choice.delta
+                for call in delta.tool_calls or []:
+                    target = tool_calls.setdefault(call.index, {
+                        "id": "", "type": "function",
+                        "function": {"name": "", "arguments": ""},
+                    })
+                    if call.id:
+                        target["id"] += call.id
+                    if call.type:
+                        target["type"] = call.type
+                    if call.function:
+                        target["function"]["name"] += call.function.name or ""
+                        target["function"]["arguments"] += call.function.arguments or ""
                 reasoning_piece = getattr(delta, "reasoning_content", None)
-                content_piece = delta.content or ""
+                content_piece = delta.content or getattr(delta, "refusal", None) or ""
                 if reasoning_piece:
                     reasoning.append(reasoning_piece)
                     yield ReasoningDelta(reasoning_piece)
@@ -117,11 +132,16 @@ class LLMClient:
                     yield ContentDelta(content_piece)
             if usage:
                 yield UsageEvent(usage)
-        yield ContentDone(content="".join(content), reasoning="".join(reasoning))
+        yield ContentDone(
+            content="".join(content), reasoning="".join(reasoning),
+            tool_calls=[tool_calls[index] for index in sorted(tool_calls)],
+            finish_reason=finish_reason or "incomplete",
+        )
 
     def _call_once(
         self,
         messages: list[ChatCompletionMessageParam],
+        options: dict,
     ) -> Iterator[LLMEvent]:
         """非流式路径：一次性拿到完整响应，直接产出一个 ContentDone。"""
         resp = call_with_retry(
@@ -129,7 +149,7 @@ class LLMClient:
                 messages=messages,
                 model=self.model,
                 stream=False,
-                response_format=self.response_format or omit,
+                **options,
             ),
             max_attempts=self.max_attempts,
             base_wait=self.base_wait,
@@ -137,13 +157,17 @@ class LLMClient:
         )
 
         message = resp.choices[0].message
-        content = message.content or ""
+        content = message.content or message.refusal or ""
         reasoning = getattr(message, "reasoning_content", None) or ""
 
         if getattr(resp, "usage", None):
             yield UsageEvent(resp.usage)
 
-        yield ContentDone(content=content, reasoning=reasoning)
+        yield ContentDone(
+            content=content, reasoning=reasoning,
+            tool_calls=[call.model_dump(exclude_none=True) for call in message.tool_calls or []],
+            finish_reason=resp.choices[0].finish_reason or "incomplete",
+        )
 
 
 def is_retryable(exception: Exception) -> bool:

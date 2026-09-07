@@ -12,6 +12,8 @@ import json
 import tempfile
 import threading
 import time
+from wright.tests.responses import event, response
+
 from pathlib import Path
 
 from wright.agent import Agent
@@ -31,38 +33,32 @@ class ScriptedLLM:
 
     context_limit = 128_000
 
-    def __init__(self, script: list[str]):
+    def __init__(self, script: list[ContentDone]):
         self.script = script
         self.calls = 0
         self.seen_messages: list[list] = []
+        self.seen_tools: list[list] = []
 
-    def __call__(self, messages):
+    def __call__(self, messages, **kwargs):
         self.seen_messages.append(list(messages))
+        self.seen_tools.append(kwargs.get("tools", []))
         content = self.script[self.calls]
         self.calls += 1
-        yield ContentDone(content=content)
+        yield event(content=content)
 
 
-def _tool_calls(name: str, **arguments) -> str:
-    return json.dumps(
-        {"tool_calls": [{"name": name, "arguments": arguments}], "final_answer": None}
-    )
+def _tool_calls(name: str, **arguments) -> ContentDone:
+    return response(content=None, calls=[{"name": name, "arguments": arguments}])
 
 
-def _many_tool_calls(calls: list[tuple[str, dict]]) -> str:
-    return json.dumps(
-        {
-            "tool_calls": [
-                {"name": name, "arguments": arguments}
-                for name, arguments in calls
-            ],
-            "final_answer": None,
-        }
-    )
+def _many_tool_calls(calls: list[tuple[str, dict]]) -> ContentDone:
+    return response(calls=[
+        {"name": name, "arguments": arguments} for name, arguments in calls
+    ])
 
 
-def _final(answer: str) -> str:
-    return json.dumps({"tool_calls": [], "final_answer": answer})
+def _final(answer: str) -> ContentDone:
+    return response(content=answer, calls=[])
 
 
 def _make_session(goal: str = "主任务") -> SessionState:
@@ -102,14 +98,15 @@ def test_parent_delegates_and_aggregates_child_result():
     tool_results_msgs = [
         m
         for m in session.wire_messages()
-        if m.get("role") == "user" and "tool_results" in str(m.get("content", ""))
+        if m.get("role") == "tool"
     ]
     assert len(tool_results_msgs) == 1
-    payload = json.loads(tool_results_msgs[0]["content"])["tool_results"][0]
-    assert payload["name"] == "spawn_agent"
-    assert payload["result"]["ok"] is True
-    assert payload["result"]["data"]["result"] == "子 Agent 报告:1 到 100 之和为 5050"
-    assert payload["result"]["data"]["status"] == "completed"
+    assert llm.seen_tools[0] == llm.seen_tools[2]
+    payload = json.loads(tool_results_msgs[0]["content"])
+    assert tool_results_msgs[0]["tool_call_id"] in session.tool_executions
+    assert payload["ok"] is True
+    assert payload["data"]["result"] == "子 Agent 报告:1 到 100 之和为 5050"
+    assert payload["data"]["status"] == "completed"
 
 
 def test_child_context_is_isolated_from_parent():
@@ -162,11 +159,11 @@ def test_child_failure_surfaces_as_failed_tool_result():
     tool_results_msgs = [
         m
         for m in session.wire_messages()
-        if m.get("role") == "user" and "tool_results" in str(m.get("content", ""))
+        if m.get("role") == "tool"
     ]
-    payload = json.loads(tool_results_msgs[0]["content"])["tool_results"][0]
-    assert payload["result"]["ok"] is False
-    assert payload["result"]["data"]["status"] == "max_steps"
+    payload = json.loads(tool_results_msgs[0]["content"])
+    assert payload["ok"] is False
+    assert payload["data"]["status"] == "max_steps"
 
 
 def test_multiple_spawn_agents_run_concurrently_and_preserve_result_order():
@@ -180,10 +177,10 @@ def test_multiple_spawn_agents_run_concurrently_and_preserve_result_order():
             self.active_children = 0
             self.max_active_children = 0
 
-        def __call__(self, messages):
+        def __call__(self, messages, **kwargs):
             last = messages[-1]["content"]
             if last == "并行委派":
-                yield ContentDone(
+                yield event(
                     content=_many_tool_calls([
                         ("spawn_agent", {"task": "task-a"}),
                         ("spawn_agent", {"task": "task-b"}),
@@ -199,15 +196,14 @@ def test_multiple_spawn_agents_run_concurrently_and_preserve_result_order():
                 time.sleep(0.1)
                 with self.lock:
                     self.active_children -= 1
-                yield ContentDone(content=_final(f"done:{last}"))
+                yield event(content=_final(f"done:{last}"))
                 return
-            if isinstance(last, str) and "tool_results" in last:
-                payload = json.loads(last)
+            if messages[-1].get("role") == "tool":
                 ordered = [
-                    item["result"]["data"]["result"]
-                    for item in payload["tool_results"]
+                    json.loads(item["content"])["data"]["result"]
+                    for item in messages if item.get("role") == "tool"
                 ]
-                yield ContentDone(content=_final("|".join(ordered)))
+                yield event(content=_final("|".join(ordered)))
                 return
             raise AssertionError(f"unexpected messages: {messages!r}")
 

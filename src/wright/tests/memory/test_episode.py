@@ -2,7 +2,8 @@ import json
 
 import pytest
 
-from ...events import ContentDone
+from wright.tests.responses import event
+
 from ...memory.episode import (
     EpisodeNotFoundError,
     EpisodeStore,
@@ -36,7 +37,7 @@ def _completed_session(tmp_path):
         ToolResult.success({"stdout": "secret-result-must-not-be-persisted"}),
     )
     final_turn = session.record_assistant_turn(
-        json.dumps({"tool_calls": [], "final_answer": "已修复"}),
+        "已修复",
         {"tool_calls": [], "final_answer": "已修复"},
         "final",
     )
@@ -108,8 +109,8 @@ class _EpisodeSelector:
     def __init__(self, episode_id):
         self.episode_id = episode_id
 
-    def __call__(self, messages):
-        yield ContentDone(json.dumps({
+    def __call__(self, messages, **kwargs):
+        yield event(json.dumps({
             "selected_memories": [],
             "selected_episodes": [self.episode_id],
         }, ensure_ascii=False))

@@ -1,10 +1,10 @@
-import json
 import queue
 import time
 
+from wright.tests.responses import event, response
+
 from ...agent_background import AgentBackgroundRuntime
 from ...events import ContentDone
-from ...renderer import SilentRenderer
 from ...services import RuntimeServices
 from ...session import SessionState
 from ...subagent import (
@@ -15,16 +15,16 @@ from ...subagent import (
 from ...tools.base import ToolRuntime
 
 
-def _final(answer: str) -> str:
-    return json.dumps({"tool_calls": [], "final_answer": answer})
+def _final(answer: str) -> ContentDone:
+    return response(content=answer, calls=[])
 
 
 class SlowFinalLLM:
     context_limit = 128_000
 
-    def __call__(self, messages):
+    def __call__(self, messages, **kwargs):
         time.sleep(0.05)
-        yield ContentDone(_final("background done"))
+        yield event(_final("background done"))
 
 
 def _runtime(session, tmp_path, background=None):

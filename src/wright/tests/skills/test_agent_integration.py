@@ -1,9 +1,9 @@
-import json
+from wright.tests.responses import event, response
+
 from pathlib import Path
 
 from ...agent import Agent
 from ...checkpoint import SessionCheckpointStore
-from ...events import ContentDone
 from ...renderer import SilentRenderer
 from ...session import SessionState
 from ...skills.registry import SkillRegistry
@@ -18,20 +18,17 @@ class ScriptLLM:
         self.script = list(script)
         self.seen_messages = []
 
-    def __call__(self, messages):
+    def __call__(self, messages, **kwargs):
         self.seen_messages.append(list(messages))
-        yield ContentDone(content=self.script.pop(0))
+        yield event(content=self.script.pop(0))
 
 
 def _tool(name, **arguments):
-    return json.dumps({
-        "tool_calls": [{"name": name, "arguments": arguments}],
-        "final_answer": None,
-    }, ensure_ascii=False)
+    return response(content=None, calls=[{"name": name, "arguments": arguments}])
 
 
 def _final(answer):
-    return json.dumps({"tool_calls": [], "final_answer": answer}, ensure_ascii=False)
+    return response(content=answer, calls=[])
 
 
 def _write_skill(directory: Path) -> SkillRegistry:

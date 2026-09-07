@@ -4,10 +4,12 @@
 """
 
 import json
+from wright.tests.responses import event, response
+
 from pathlib import Path
 
 from ...agent import Agent
-from ...events import ContentDone, UsageEvent
+from ...events import UsageEvent
 from ...memory import MemoryManager
 from ...memory.store import write_memory_file
 from ...renderer import SilentRenderer
@@ -25,10 +27,10 @@ class MainLLM:
 
     context_limit = 128000
 
-    def __call__(self, messages):
+    def __call__(self, messages, **kwargs):
         yield UsageEvent(_Usage())
-        yield ContentDone(
-            content=json.dumps({"tool_calls": [], "final_answer": "done"}),
+        yield event(
+            content=response(content="done", calls=[]),
             reasoning="",
         )
 
@@ -39,7 +41,7 @@ class SelectorLLM:
     def __init__(self):
         self.calls = 0
 
-    def __call__(self, messages):
+    def __call__(self, messages, **kwargs):
         self.calls += 1
         payload = {
             "selected_memories": ["user-likes-bun.md"],  # recall 取这个
@@ -53,12 +55,12 @@ class SelectorLLM:
                 }
             ],
         }
-        yield ContentDone(content=json.dumps(payload, ensure_ascii=False), reasoning="")
+        yield event(content=json.dumps(payload, ensure_ascii=False), reasoning="")
 
 
 class EmptySelectorLLM:
-    def __call__(self, messages):
-        yield ContentDone(content=json.dumps({
+    def __call__(self, messages, **kwargs):
+        yield event(content=json.dumps({
             "selected_memories": [],
             "selected_episodes": [],
             "memories": [],
@@ -137,7 +139,7 @@ def test_recall_failure_is_best_effort(tmp_path: Path):
     write_memory_file("context", "forces selector call", "project", "x", directory=tmp_path)
 
     class BrokenSelector:
-        def __call__(self, messages):
+        def __call__(self, messages, **kwargs):
             raise RuntimeError("selector unavailable")
 
     manager = MemoryManager(MainLLM(), selector_llm=BrokenSelector(), directory=tmp_path)

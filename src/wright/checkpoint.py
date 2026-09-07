@@ -23,11 +23,11 @@ from .session import (
     VerificationRecord,
 )
 from .tools.base import ToolCall, ToolResult
-from .util import build_tool_results_message
+from .util import build_tool_results_messages
 
 logger = get_logger(__name__)
 
-CHECKPOINT_VERSION = 1
+CHECKPOINT_VERSION = 2
 _SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,128}")
 _SESSION_STATUSES = {"running", "completed", "failed", "max_steps"}
 _TURN_ROUTES = {"tool_calls", "final", "invalid"}
@@ -239,7 +239,8 @@ def _deserialize_session(payload: Any) -> SessionState:
     version = root.get("version")
     if version != CHECKPOINT_VERSION:
         raise CheckpointError(
-            f"不支持的 checkpoint version: {version}; 当前只支持 {CHECKPOINT_VERSION}"
+            f"不支持的 checkpoint version: {version}; 当前只支持 {CHECKPOINT_VERSION}。"
+            "旧 JSON 协议会话请在 legacy-json-react 标签版本中打开；新版请新建会话。"
         )
     data = _object(root.get("session"), "session")
 
@@ -337,31 +338,44 @@ def _deserialize_session(payload: Any) -> SessionState:
 
 def _recover_interrupted_tool_calls(session: SessionState) -> None:
     """Close pending calls from a crashed process without replaying side effects."""
+    # Insert missing results beside their assistant call, before any later
+    # user/reminder message. Never replay a potentially completed side effect.
+    answered = {
+        record.message.get("tool_call_id")
+        for record in session.message_records if record.message.get("role") == "tool"
+    }
     for turn in session.turns:
-        interrupted = [
-            session.tool_executions[call_id]
-            for call_id in turn.tool_execution_ids
-            if session.tool_executions[call_id].status in {"pending", "running"}
-        ]
-        if not interrupted:
+        missing = []
+        for call_id in turn.tool_execution_ids:
+            execution = session.tool_executions[call_id]
+            if call_id in answered:
+                continue
+            if execution.status in {"pending", "running"} or execution.result is None:
+                execution.result = ToolResult.fail(
+                    "Tool execution was interrupted by process restart; outcome is unknown. "
+                    "Inspect the current state before deciding whether to retry.",
+                    data={"error": {"type": "tool_execution_interrupted", "retriable": False}},
+                )
+                execution.status = "failed"
+            missing.append((execution.call, execution.result))
+        if not missing:
             continue
-
-        call_results = []
-        for execution in interrupted:
-            result = ToolResult.fail(
-                "Tool execution was interrupted by process restart; outcome is unknown. "
-                "Inspect the current state before deciding whether to retry.",
-                data={
-                    "error": {
-                        "type": "tool_execution_interrupted",
-                        "retriable": False,
-                    }
-                },
-            )
-            execution.result = result
-            execution.status = "failed"
-            call_results.append((execution.call, result))
-        session.append_message(build_tool_results_message(call_results))
+        position = next(
+            index + 1 for index, record in enumerate(session.message_records)
+            if record.id == turn.message_id
+        )
+        while (
+            position < len(session.message_records)
+            and session.message_records[position].message.get("role") == "tool"
+        ):
+            position += 1
+        for message in build_tool_results_messages(missing):
+            session.append_message(message)
+            record = session.message_records.pop()
+            session.message_records.insert(position, record)
+            if position < session.active_turn_start_message_index:
+                session.active_turn_start_message_index += 1
+            position += 1
 
 
 def _deserialize_skill_catalog_sent(value: Any) -> bool:

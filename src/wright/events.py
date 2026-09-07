@@ -12,7 +12,7 @@ ReAct 事件类型定义（传输层与展示层之间的"中间结构"）
     这样实时打印靠 Delta，完整内容靠 Done，两边职责清清楚楚。
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 @dataclass
@@ -31,13 +31,26 @@ class ContentDelta:
 
 @dataclass
 class ContentDone:
-    """本轮回复结束，携带拼接好的完整内容，供主循环解析 JSON。
+    """本轮回复结束，携带正文与原生工具调用。
 
     无论流式还是非流式，每一轮 LLM 调用都必定以一个 ContentDone 收尾。
     """
 
     content: str
     reasoning: str = ""
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    finish_reason: str | None = None
+
+    def assistant_message(self) -> dict[str, Any]:
+        message: dict[str, Any] = {
+            "role": "assistant", "content": self.content or None,
+        }
+        if self.tool_calls:
+            message["tool_calls"] = self.tool_calls
+        # Some compatible reasoning providers require this field on tool turns.
+        if self.reasoning:
+            message["reasoning_content"] = self.reasoning
+        return message
 
 
 @dataclass

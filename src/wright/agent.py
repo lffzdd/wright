@@ -19,9 +19,9 @@ from .services import RuntimeServices
 from .session import SessionState, UsageRecord
 from .skills.prompt import catalog_reminder
 from .skills.registry import SkillRegistry
-from .protocol import TurnAbort, parse_turn
-from .tools.base import Tool
-from .util import build_tool_results_message, estimate_message_tokens
+from .protocol import TurnAbort, encode_tools, parse_turn
+from .tools.base import Tool, ToolResult
+from .util import build_tool_results_messages, estimate_message_tokens
 from .verifier import Verifier
 
 if TYPE_CHECKING:
@@ -88,7 +88,7 @@ class Agent:
         self._permission_resolver = permission_resolver
         self._cancellation_check = cancellation_check
         self._active_run_cancellation_check: Callable[[], bool] | None = None
-        # 连续 N 轮解析失败就止损:再喂回去也大概率是同样的废 JSON,
+        # 连续 N 轮响应不完整或工具调用无效就止损,
         # 与其烧光 max_steps,不如如实标 failed 退出。中间成功一次即清零。
         self.max_consecutive_invalid = max_consecutive_invalid
 
@@ -100,25 +100,14 @@ class Agent:
             keep_recent_tool_results=keep_recent_tool_results,
         )
 
+        # Schemas are request-local: parent and child agents may share one client.
+        self.tool_schemas, self._tool_names = encode_tools(tools)
         if not self.session_state.message_records:
-            # 有记忆时把静态记忆指令段拼进 system prompt(类型分类法/如何保存/何时存取/
-            # 据记忆行动前先核实)。MEMORY.md 内容和相关记忆不在这里——走每轮注入保新鲜。
             memory_section = self.memory.instructions() if self.memory else ""
-            msg: ChatCompletionMessageParam = {
+            self.session_state.append_message({
                 "role": "system",
-                "content": build_system_prompt(
-                    json.dumps(
-                        [
-                            tool.to_dict() for tool in tools
-                            if tool.expose_to_model
-                        ],
-                        ensure_ascii=False,
-                        indent=2,
-                    ),
-                    memory_section=memory_section,
-                ),
-            }
-            self.session_state.append_message(msg)
+                "content": build_system_prompt(memory_section=memory_section),
+            })
 
         # 工具调度执行独立成 collaborator:Agent 只在主循环里把这一轮的 tool_calls
         # 交给它,查表/钳超时/并发分流/异常兜底都归 ToolExecutor。
@@ -242,12 +231,10 @@ class Agent:
     def _run_turn(
         self,
         extra_messages: Sequence[ChatCompletionMessageParam] | None = None,
-    ) -> tuple[str, UsageRecord | None]:
-        """跑一轮 LLM 调用：实时渲染事件流，返回拼接好的完整 content。"""
+    ) -> tuple[ContentDone, UsageRecord | None]:
+        """渲染事件流，返回包含正文和工具调用的完整响应。"""
 
-        # 初始化空串:依赖"LLMClient 必以 ContentDone 收尾"的契约,
-        # 但契约被破坏时不该炸出莫名其妙的 NameError
-        content = ""
+        response = ContentDone("", finish_reason="incomplete")
         usage_record: UsageRecord | None = None
 
         wire_messages = self.session_state.wire_messages()
@@ -266,13 +253,13 @@ class Agent:
         })
         started = time.monotonic()
         try:
-            for event in self.llm(wire_messages):
+            for event in self.llm(wire_messages, tools=self.tool_schemas):
                 if isinstance(event, ReasoningDelta):
                     self.renderer.on_reasoning_delta(event.piece)
                 elif isinstance(event, ContentDelta):
                     self.renderer.on_content_delta(event.piece)
                 elif isinstance(event, ContentDone):
-                    content = event.content
+                    response = event
                 elif isinstance(event, UsageEvent):
                     usage_record = UsageRecord.from_usage(event.usage)
 
@@ -291,7 +278,8 @@ class Agent:
 
         self._emit_lifecycle("llm_end", {
             "duration_ms": round((time.monotonic() - started) * 1_000, 3),
-            "output_chars": len(content),
+            "output_chars": len(response.content),
+            "tool_call_count": len(response.tool_calls),
             "usage": (
                 {
                     "prompt_tokens": usage_record.prompt_tokens,
@@ -302,7 +290,7 @@ class Agent:
             ),
         })
 
-        return content, usage_record
+        return response, usage_record
 
     def _plan_reminder(self) -> ChatCompletionMessageParam | None:
         block = self.session_state.plan_manager.to_prompt_block()
@@ -594,6 +582,7 @@ class Agent:
         turn_record = self.session_state.record_assistant_turn(
             assistant_raw=content,
             parsed=turn.parsed,
+            assistant_message=turn.assistant_message,
             route="final",
         )
         if usage_record is not None:
@@ -688,6 +677,7 @@ class Agent:
         turn_record = self.session_state.record_assistant_turn(
             assistant_raw=content,
             parsed=turn.parsed,
+            assistant_message=turn.assistant_message,
             route="tool_calls",
             tool_calls=turn.tool_calls,
         )
@@ -696,6 +686,14 @@ class Agent:
                 turn_record, usage_record, transient_plan_tokens
             )
         if self._stop_if_cancelled(record_memory=record_memory):
+            cancelled = []
+            for call in turn.tool_calls:
+                result = ToolResult.fail("Cancelled before tool execution")
+                self.session_state.record_tool_execution(call.id, result)
+                cancelled.append((call, result))
+            for message in build_tool_results_messages(cancelled):
+                self.session_state.append_message(message)
+            self._checkpoint()
             return False
 
         # 工具副作用前先落 pending checkpoint。若进程在调用期间崩溃，
@@ -716,20 +714,16 @@ class Agent:
                 status=outcome.status,
             )
 
-        self.session_state.append_message(
-            build_tool_results_message(
-                [
-                    (outcome.call, outcome.result)
-                    for outcome in outcomes
-                ]
-            )
-        )
+        for message in build_tool_results_messages(
+            [(outcome.call, outcome.result) for outcome in outcomes]
+        ):
+            self.session_state.append_message(message)
         self._checkpoint()
         return True
 
     def _handle_invalid_turn(
         self,
-        content: str,
+        response: ContentDone,
         error: TurnAbort,
         usage_record: UsageRecord | None,
         transient_plan_tokens: int,
@@ -740,8 +734,12 @@ class Agent:
         """Return 'retry' | 'terminated' | 'cancelled'."""
         counters.invalid += 1
         turn_record = self.session_state.record_invalid_turn(
-            content,
+            response.content,
             f"LLM output could not be parsed or routed: {error}",
+            parsed={
+                "response": response.assistant_message(),
+                "finish_reason": response.finish_reason,
+            },
         )
         if usage_record is not None:
             self._record_usage_for_turn(
@@ -787,9 +785,18 @@ class Agent:
                 estimate_message_tokens(message) for message in reminders
             )
             self._compact_context_if_needed(transient)
-            content, usage_record = self._run_turn(reminders)
+            response, usage_record = self._run_turn(reminders)
+            content = response.content
             try:
-                turn = parse_turn(content)
+                turn = parse_turn(response)
+                if any(
+                    call.id in self.session_state.tool_executions
+                    for call in turn.tool_calls
+                ):
+                    raise TurnAbort("Provider reused a tool call ID from an earlier turn")
+                for call, recorded in zip(turn.tool_calls, turn.parsed["tool_calls"]):
+                    call.name = self._tool_names.get(call.name, call.name)
+                    recorded["name"] = call.name
                 counters.invalid = 0
                 if turn.kind == "final":
                     answer, outcome = self._handle_final_turn(
@@ -808,7 +815,7 @@ class Agent:
                         return None
             except TurnAbort as error:
                 outcome = self._handle_invalid_turn(
-                    content, error, usage_record, transient, counters,
+                    response, error, usage_record, transient, counters,
                     record_memory=record_memory,
                 )
                 if outcome != "retry":
@@ -820,4 +827,3 @@ class Agent:
             record_memory=record_memory,
         )
         return None
-

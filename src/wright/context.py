@@ -10,9 +10,7 @@
 compaction 可以改写、删除、合并非 assistant records;被 TurnRecord.message_id
 引用的 assistant record 必须保留,除非未来把 assistant 原文归档到 TurnRecord。
 
-注意:_is_tool_result_message / _fold_old_tool_results 编码了工具结果消息的
-wire 格式({"tool_results": [...]}),必须和 util.build_tool_results_message
-造出来的结构保持一致——两边改一处,另一处要跟着改。
+原生工具结果可折叠正文，但必须保留 role=tool 和 tool_call_id。
 """
 
 import json
@@ -64,20 +62,10 @@ class ContextCompactor:
 
     @staticmethod
     def _is_tool_result_message(msg: ChatCompletionMessageParam) -> bool:
-        if msg.get("role") != "user":
-            return False
-
-        content = msg.get("content")
-        if not isinstance(content, str):
-            return False
-
-        try:
-            content_json = json.loads(content)
-        except json.JSONDecodeError:
-            return False
-
-        return isinstance(content_json, dict) and isinstance(
-            content_json.get("tool_results"), list
+        return (
+            msg.get("role") == "tool"
+            and bool(msg.get("tool_call_id"))
+            and isinstance(msg.get("content"), str)
         )
 
     def _fold_old_tool_results(
@@ -112,36 +100,19 @@ class ContextCompactor:
             except json.JSONDecodeError:
                 continue
 
-            if content_json.get("folded"):
+            if not isinstance(content_json, dict) or content_json.get("folded"):
                 continue
 
-            # 记下折叠前的估算
             old_tokens = estimate_message_tokens(msg)
-
-            folded_results = []
-            for item in content_json["tool_results"]:
-                if not isinstance(item, dict):
-                    continue
-
-                result = item.get("result")
-                ok = result.get("ok", True) if isinstance(result, dict) else True
-                err = result.get("err", "") if isinstance(result, dict) else ""
-                folded_results.append(
-                    {
-                        "id": item.get("id"),
-                        "name": item.get("name"),
-                        "result": {
-                            "ok": ok,
-                            "err": err,
-                            "data": "[旧工具结果已折叠以节省上下文]",
-                        },
-                    }
-                )
-
-            msg["content"] = json.dumps(
-                {"tool_results": folded_results, "folded": True},
-                ensure_ascii=False,
-            )
+            folded_content = json.dumps({
+                "ok": content_json.get("ok", True),
+                "err": content_json.get("err", ""),
+                "data": "[旧工具结果已折叠以节省上下文]",
+                "folded": True,
+            }, ensure_ascii=False)
+            if len(folded_content) >= len(content):
+                continue
+            msg["content"] = folded_content
             folded_count += 1
 
             # 折叠后的估算差值就是省下的 token

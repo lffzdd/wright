@@ -16,15 +16,16 @@ from ..llm import LLMClient
 def side_query(llm: LLMClient, system: str, user: str) -> str:
     """发一轮 system+user 的 side-query,返回最终文本内容。
 
-    LLMClient 默认 response_format=json_object,故 selector/extractor 拿到的就是
-    合法 JSON 字符串。调用方负责 json.loads 与异常兜底。
+    仅此类结构化数据查询使用 JSON mode；不传入 Agent 的工具清单。
     """
     messages: list[ChatCompletionMessageParam] = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
     content = ""
-    for event in llm(messages):
+    for event in llm(messages, response_format={"type": "json_object"}):
         if isinstance(event, ContentDone):
+            if event.finish_reason not in {None, "stop"}:
+                raise ValueError(f"Side query did not complete: {event.finish_reason}")
             content = event.content
     return content

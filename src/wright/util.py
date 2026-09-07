@@ -18,28 +18,26 @@ def estimate_tokens(text: str) -> int:
 
 
 def estimate_message_tokens(message: ChatCompletionMessageParam) -> int:
-    """估算单条 wire 消息的 token 数(只数 str 形态的 content)。"""
+    """估算正文、原生工具参数和供应商推理字段的 token 数。"""
     content = message.get("content")
-    return estimate_tokens(content) if isinstance(content, str) else 0
+    count = estimate_tokens(content) if isinstance(content, str) else 0
+    if message.get("tool_calls"):
+        count += estimate_tokens(json.dumps(message["tool_calls"], ensure_ascii=False))
+    reasoning = message.get("reasoning_content")
+    if isinstance(reasoning, str):
+        count += estimate_tokens(reasoning)
+    return count
 
 
-def build_tool_results_message(
+def build_tool_results_messages(
     tool_tuple: list[tuple[ToolCall, ToolResult]],
-) -> ChatCompletionMessageParam:
-    msg: ChatCompletionMessageParam = {
-        "role": "user",
-        "content": json.dumps(
-            {
-                "tool_results": [
-                    {
-                        "id": tool_call.id,
-                        "name": tool_call.name,
-                        "result": tool_result.to_dict(),
-                    }
-                    for tool_call, tool_result in tool_tuple
-                ]
-            },
-            ensure_ascii=False,
-        ),
-    }
-    return msg
+) -> list[ChatCompletionMessageParam]:
+    """One native result per call, preserving the provider's call ID."""
+    return [
+        {
+            "role": "tool",
+            "tool_call_id": call.id,
+            "content": json.dumps(result.to_dict(), ensure_ascii=False),
+        }
+        for call, result in tool_tuple
+    ]

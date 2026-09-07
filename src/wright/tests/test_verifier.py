@@ -1,7 +1,8 @@
 import json
 
+from wright.tests.responses import event, response
+
 from ..agent import Agent
-from ..events import ContentDone
 from ..lifecycle import HookRegistration, LifecycleManager
 from ..renderer import SilentRenderer
 from ..session import SessionState
@@ -11,17 +12,11 @@ from ..verifier import Verifier
 
 
 def _final(answer):
-    return json.dumps({"tool_calls": [], "final_answer": answer}, ensure_ascii=False)
+    return response(content=answer, calls=[])
 
 
 def _tool(name, arguments):
-    return json.dumps(
-        {
-            "tool_calls": [{"name": name, "arguments": arguments}],
-            "final_answer": None,
-        },
-        ensure_ascii=False,
-    )
+    return response(content=None, calls=[{"name": name, "arguments": arguments}])
 
 
 class ScriptLLM:
@@ -31,9 +26,9 @@ class ScriptLLM:
         self.responses = list(responses)
         self.messages = []
 
-    def __call__(self, messages):
+    def __call__(self, messages, **kwargs):
         self.messages.append(list(messages))
-        yield ContentDone(self.responses.pop(0))
+        yield event(self.responses.pop(0))
 
 
 def test_incomplete_plan_blocks_final_and_returns_to_agent_loop(tmp_path):

@@ -176,20 +176,20 @@ def test_legacy_alias_stays_executable_but_is_hidden_from_new_prompt(tmp_path):
     class UnusedLLM:
         context_limit = 128_000
 
-        def __call__(self, messages):
+        def __call__(self, messages, **kwargs):
             raise AssertionError("not called")
 
     session = _session(tmp_path)
-    Agent(
+    agent = Agent(
         UnusedLLM(),
         [get_task_tool, get_task_output_tool],
         session,
         SilentRenderer(),
     )
-    system_prompt = str(session.messages[0]["content"])
+    schema_names = {item["function"]["name"] for item in agent.tool_schemas}
 
-    assert '"name": "get_task"' in system_prompt
-    assert '"name": "get_task_output"' not in system_prompt
+    assert "get_task" in schema_names
+    assert "get_task_output" not in schema_names
     assert get_task_output_tool.expose_to_model is False
 
 

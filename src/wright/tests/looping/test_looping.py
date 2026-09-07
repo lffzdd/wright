@@ -5,9 +5,10 @@ import time
 
 import pytest
 
+from wright.tests.responses import event, response
+
 from ...agent import Agent
 from ...checkpoint import SessionCheckpointStore
-from ...events import ContentDone
 from ...looping import LoopError, SessionLoopRegistry, parse_interval, parse_loop_command
 from ...renderer import SilentRenderer
 from ...services import RuntimeServices
@@ -17,7 +18,7 @@ from ...tools.loop_tools import loop_tool
 
 
 def _final(answer):
-    return json.dumps({"tool_calls": [], "final_answer": answer})
+    return response(content=answer, calls=[])
 
 
 class ScriptLLM:
@@ -26,8 +27,8 @@ class ScriptLLM:
     def __init__(self, answers):
         self.answers = list(answers)
 
-    def __call__(self, messages):
-        yield ContentDone(_final(self.answers.pop(0)))
+    def __call__(self, messages, **kwargs):
+        yield event(_final(self.answers.pop(0)))
 
 
 def _registry(min_interval=0.05, idle=None):

@@ -57,7 +57,7 @@ class VerificationResult:
                         "issues": [issue.to_dict() for issue in self.issues],
                         "instruction": (
                             "不要重复同一个最终答案。请使用现有工具补齐证据或工作，"
-                            "更新计划后再提交 final_answer。"
+                            "更新计划后再给出最终回答。"
                         ),
                     }
                 },

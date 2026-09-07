@@ -1,30 +1,20 @@
-import json
 
-import pytest
+
+from wright.tests.responses import event, response
 
 from ...agent import Agent
-from ...events import ContentDone
 from ...renderer import SilentRenderer
 from ...permission import PermissionCheckResult, PermissionResolver
 from ...session import SessionState
 from ...tools.ask_user_tool import ask_user_tool
-from ...tools.base import Tool, ToolResult
 
 
 def _tool_turn(name, **arguments):
-    return json.dumps(
-        {
-            "tool_calls": [{"name": name, "arguments": arguments}],
-            "final_answer": None,
-        },
-        ensure_ascii=False,
-    )
+    return response(content=None, calls=[{"name": name, "arguments": arguments}])
 
 
 def _final(answer):
-    return json.dumps(
-        {"tool_calls": [], "final_answer": answer}, ensure_ascii=False
-    )
+    return response(content=answer, calls=[])
 
 
 def _interaction_handler(answer, calls=None):
@@ -49,7 +39,7 @@ class AskThenAnswerLLM:
         self.calls = 0
         self.seen_messages = []
 
-    def __call__(self, messages):
+    def __call__(self, messages, **kwargs):
         self.seen_messages.append(list(messages))
         self.calls += 1
         if self.calls == 1:
@@ -61,7 +51,7 @@ class AskThenAnswerLLM:
             )
         else:
             content = _final("已选择蓝色主题")
-        yield ContentDone(content=content)
+        yield event(content=content)
 
 
 def test_ask_user_runs_through_without_pausing(tmp_path):
@@ -101,10 +91,10 @@ def test_ask_user_runs_through_without_pausing(tmp_path):
 
     # ask_user 的回答作为 tool_result 出现在第二轮的 messages 里
     second_call_messages = llm.seen_messages[1]
-    # 找到包含 ask_user 结果的 user message（tool results）
+    # 找到包含 ask_user 结果的 tool message（tool results）
     tool_result_msgs = [
         m for m in second_call_messages
-        if m.get("role") == "user" and isinstance(m.get("content"), str)
+        if m.get("role") == "tool" and isinstance(m.get("content"), str)
         and "蓝色" in m["content"]
     ]
     assert len(tool_result_msgs) >= 1
@@ -119,14 +109,14 @@ def test_ask_user_can_be_called_multiple_times(tmp_path):
         def __init__(self):
             self.calls = 0
 
-        def __call__(self, messages):
+        def __call__(self, messages, **kwargs):
             self.calls += 1
             script = [
                 _tool_turn("ask_user", question="first?"),
                 _tool_turn("ask_user", question="second?"),
                 _final("done"),
             ]
-            yield ContentDone(content=script[self.calls - 1])
+            yield event(content=script[self.calls - 1])
 
     answers = iter(["one", "two"])
     def interaction_handler(request):
@@ -161,12 +151,12 @@ def test_ask_user_without_interaction_handler_returns_error(tmp_path):
         def __init__(self):
             self.calls = 0
 
-        def __call__(self, messages):
+        def __call__(self, messages, **kwargs):
             self.calls += 1
             if self.calls == 1:
-                yield ContentDone(content=_tool_turn("ask_user", question="q?"))
+                yield event(content=_tool_turn("ask_user", question="q?"))
             else:
-                yield ContentDone(content=_final("recovered"))
+                yield event(content=_final("recovered"))
 
     session = SessionState.create("no-handler", tmp_path)
     agent = Agent(
@@ -207,7 +197,7 @@ def test_ask_user_cannot_be_auto_approved_by_normal_permission_handler(tmp_path)
     tool_results = [
         message["content"]
         for message in session.messages
-        if message.get("role") == "user" and isinstance(message.get("content"), str)
+        if message.get("role") == "tool" and isinstance(message.get("content"), str)
     ]
     assert any("Permission denied" in content for content in tool_results)
     assert not any("forged" in content for content in tool_results)

@@ -11,6 +11,8 @@ import json
 import tempfile
 import threading
 import time
+from wright.tests.responses import event, response
+
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -255,9 +257,9 @@ def test_run_turn_records_usage():
             self.calls = 0
             self.context_limit = 128_000
 
-        def __call__(self, messages):
+        def __call__(self, messages, **kwargs):
             self.calls += 1
-            yield ContentDone(content=f"content {self.calls}")
+            yield event(content=f"content {self.calls}")
             yield UsageEvent(
                 SimpleNamespace(
                     prompt_tokens=100 * self.calls,
@@ -269,11 +271,11 @@ def test_run_turn_records_usage():
     agent = Agent(FakeLLM(), [], _make_session(), SilentRenderer(), tool_timeout=5)
 
     content, usage = agent._run_turn()
-    assert content == "content 1"
+    assert content.content == "content 1"
     assert usage == UsageRecord(prompt_tokens=100, completion_tokens=10, total_tokens=110)
 
     content, usage = agent._run_turn()
-    assert content == "content 2"
+    assert content.content == "content 2"
     assert usage == UsageRecord(prompt_tokens=200, completion_tokens=20, total_tokens=220)
 
 
@@ -283,8 +285,8 @@ def test_run_turn_records_dict_usage():
     class FakeLLM:
         context_limit = 128_000
 
-        def __call__(self, messages):
-            yield ContentDone(content="ok")
+        def __call__(self, messages, **kwargs):
+            yield event(content="ok")
             yield UsageEvent(
                 {
                     "completion_tokens": 1541,
@@ -304,7 +306,7 @@ def test_run_turn_records_dict_usage():
     agent = Agent(FakeLLM(), [], _make_session(), SilentRenderer(), tool_timeout=5)
 
     content, usage = agent._run_turn()
-    assert content == "ok"
+    assert content.content == "ok"
     assert usage == UsageRecord(
         prompt_tokens=11, completion_tokens=1541, total_tokens=1552
     )
@@ -315,7 +317,7 @@ def test_stream_usage_event_can_live_on_choice_chunk():
 
     usage = SimpleNamespace(prompt_tokens=12, completion_tokens=3)
     chunk = SimpleNamespace(
-        choices=[SimpleNamespace(delta=SimpleNamespace(content="hi"))],
+        choices=[SimpleNamespace(finish_reason="stop", delta=SimpleNamespace(content="hi", tool_calls=None))],
         usage=usage,
     )
 
@@ -333,7 +335,7 @@ def test_stream_usage_event_can_live_on_choice_chunk():
     llm.max_wait = 0
     llm.response_format = {"type": "json_object"}
 
-    events = list(llm._call_stream([{"role": "user", "content": "hello"}]))
+    events = list(llm._call_stream([{"role": "user", "content": "hello"}], {}))
 
     assert isinstance(events[0], ContentDelta) and events[0].piece == "hi"
     assert isinstance(events[1], UsageEvent)
@@ -345,7 +347,7 @@ def test_session_records_tool_turn_and_execution():
     call = ToolCall("read_file", {"file": "a.py"}, "call_1")
 
     turn = session.record_assistant_turn(
-        assistant_raw='{"tool_calls":[{"name":"read_file"}],"final_answer":null}',
+        assistant_raw='Inspecting file',
         parsed={"tool_calls": [{"name": "read_file"}], "final_answer": None},
         route="tool_calls",
         tool_calls=[call],
@@ -375,7 +377,7 @@ def test_session_rejects_duplicate_tool_ids_without_partial_state():
 
     try:
         session.record_assistant_turn(
-            assistant_raw='{"tool_calls":[{},{}],"final_answer":null}',
+            assistant_raw='Invalid duplicate call IDs',
             parsed={"tool_calls": [{}, {}], "final_answer": None},
             route="tool_calls",
             tool_calls=calls,
@@ -393,10 +395,10 @@ def test_session_rejects_duplicate_tool_ids_without_partial_state():
 def test_session_records_invalid_usage_and_status():
     session = _make_session("bad output")
 
-    turn = session.record_invalid_turn("not json", "LLM 输出不是合法 JSON")
+    turn = session.record_invalid_turn("", "LLM 输出被截断")
     assert session.step_count == 1
     assert turn.route == "invalid"
-    assert turn.error == "LLM 输出不是合法 JSON"
+    assert turn.error == "LLM 输出被截断"
     assert turn.tool_execution_ids == []
 
     session.record_usage_for_turn(
@@ -410,7 +412,7 @@ def test_session_records_invalid_usage_and_status():
     )
 
     final_turn = session.record_assistant_turn(
-        assistant_raw='{"tool_calls":[],"final_answer":"done"}',
+        assistant_raw='done',
         parsed={"tool_calls": [], "final_answer": "done"},
         route="final",
     )
@@ -428,13 +430,13 @@ def test_assistant_raw_uses_stable_message_id_after_non_assistant_reorder():
     session.append_message({"role": "user", "content": "before"})
 
     first_turn = session.record_assistant_turn(
-        assistant_raw='{"tool_calls":[],"final_answer":"one"}',
+        assistant_raw='one',
         parsed={"tool_calls": [], "final_answer": "one"},
         route="final",
     )
     session.append_message({"role": "user", "content": "between"})
     second_turn = session.record_assistant_turn(
-        assistant_raw='{"tool_calls":[],"final_answer":"two"}',
+        assistant_raw='two',
         parsed={"tool_calls": [], "final_answer": "two"},
         route="final",
     )
@@ -456,16 +458,16 @@ def test_assistant_raw_uses_stable_message_id_after_non_assistant_reorder():
         assistant_records[0],
     ]
 
-    assert session.assistant_raw(first_turn) == '{"tool_calls":[],"final_answer":"one"}'
-    assert session.assistant_raw(second_turn) == '{"tool_calls":[],"final_answer":"two"}'
+    assert session.assistant_raw(first_turn) == 'one'
+    assert session.assistant_raw(second_turn) == 'two'
 
 
 def test_run_defaults_to_session_max_steps():
     class InvalidLLM:
         context_limit = 128_000
 
-        def __call__(self, messages):
-            yield ContentDone(content="not json")
+        def __call__(self, messages, **kwargs):
+            yield ContentDone("", finish_reason="length")
 
     session = _make_session()
     session.max_steps = 2
@@ -478,13 +480,13 @@ def test_run_defaults_to_session_max_steps():
 
 
 def test_run_aborts_after_consecutive_invalid():
-    """连续 N 轮废 JSON 就止损 failed,不该把 max_steps 烧光。"""
+    """连续 N 轮响应不完整 就止损 failed,不该把 max_steps 烧光。"""
 
     class InvalidLLM:
         context_limit = 128_000
 
-        def __call__(self, messages):
-            yield ContentDone(content="not json")
+        def __call__(self, messages, **kwargs):
+            yield ContentDone("", finish_reason="length")
 
     session = _make_session()
     session.max_steps = 25
@@ -506,10 +508,10 @@ def test_consecutive_invalid_resets_on_success():
     """计数器是'连续'语义:中间成功一次必须清零,不是累计总失败数。"""
 
     script = [
-        "not json",  # 连续 1
-        json.dumps({"tool_calls": [{"name": "noop"}], "final_answer": None}),  # 成功→清零
-        "not json",  # 连续 1(若没清零会变成 2 而误杀)
-        json.dumps({"tool_calls": [], "final_answer": "done"}),  # 成功收尾
+        ContentDone("", finish_reason="length"),  # 连续 1
+        response(content=None, calls=[{"name": "noop"}]),  # 成功→清零
+        ContentDone("", finish_reason="length"),  # 连续 1(若没清零会变成 2 而误杀)
+        response(content="done", calls=[]),  # 成功收尾
     ]
 
     class ScriptedLLM:
@@ -518,10 +520,10 @@ def test_consecutive_invalid_resets_on_success():
         def __init__(self):
             self.calls = 0
 
-        def __call__(self, messages):
+        def __call__(self, messages, **kwargs):
             content = script[self.calls]
             self.calls += 1
-            yield ContentDone(content=content)
+            yield event(content=content)
 
     def noop():
         return ToolResult.success("ok")
@@ -543,21 +545,16 @@ def test_consecutive_invalid_resets_on_success():
 
 def test_is_tool_result_message_only_accepts_valid_tool_results():
     compactor = _make_agent([], tool_timeout=5).compactor
-
-    assert compactor._is_tool_result_message(
-        {"role": "user", "content": json.dumps({"tool_results": []})}
-    )
-    assert not compactor._is_tool_result_message(
-        {"role": "assistant", "content": json.dumps({"tool_results": []})}
-    )
-    assert not compactor._is_tool_result_message({"role": "user", "content": "not json"})
-    assert not compactor._is_tool_result_message(
-        {"role": "user", "content": json.dumps("tool_results")}
-    )
-    assert not compactor._is_tool_result_message(
-        {"role": "user", "content": json.dumps({"tool_results": {}})}
-    )
-    assert not compactor._is_tool_result_message({"role": "user", "content": None})
+    assert compactor._is_tool_result_message({
+        "role": "tool", "tool_call_id": "c1", "content": "result",
+    })
+    for message in [
+        {"role": "user", "content": '{"tool_results": []}'},
+        {"role": "assistant", "content": "result"},
+        {"role": "tool", "content": "result"},
+        {"role": "tool", "tool_call_id": "c1", "content": None},
+    ]:
+        assert not compactor._is_tool_result_message(message)
 
 
 def test_fold_old_tool_results_keeps_recent_and_roles():
@@ -566,26 +563,11 @@ def test_fold_old_tool_results_keeps_recent_and_roles():
     original_messages = list(agent.messages)
     for i in range(5):
         agent.session_state.append_message(
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {
-                        "tool_results": [
-                            {
-                                "id": f"call_{i}",
-                                "name": "read_file",
-                                "result": {
+            {"role": "tool", "tool_call_id": f"call_{i}", "content": json.dumps({
                                     "ok": True,
                                     "err": "",
                                     "data": f"large result {i} " * 20,
-                                },
-                            }
-                        ]
-                    },
-                    ensure_ascii=False,
-                ),
-                "_test_extra_field": f"keep {i}",
-            }
+                                }, ensure_ascii=False), "_test_extra_field": f"keep {i}"}
         )
         agent.session_state.append_message(
             {"role": "assistant", "content": f"assistant {i}"}
@@ -616,7 +598,7 @@ def test_fold_old_tool_results_keeps_recent_and_roles():
 
     for folded in tool_result_messages[:3]:
         assert folded["folded"] is True
-        result = folded["tool_results"][0]["result"]
+        result = folded
         assert result["ok"] is True
         assert result["err"] == ""
         assert result["data"] == "[旧工具结果已折叠以节省上下文]"
@@ -636,7 +618,7 @@ def test_fold_old_tool_results_keeps_recent_and_roles():
     for recent_idx, recent in enumerate(tool_result_messages[3:], start=3):
         assert "folded" not in recent
         assert (
-            recent["tool_results"][0]["result"]["data"]
+            recent["data"]
             == f"large result {recent_idx} " * 20
         )
 
@@ -645,21 +627,7 @@ def test_fold_old_tool_results_is_idempotent():
     agent = _make_agent([], tool_timeout=5, keep_recent_tool_results=1)
     for i in range(3):
         agent.session_state.append_message(
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {
-                        "tool_results": [
-                            {
-                                "id": f"call_{i}",
-                                "name": "read_file",
-                                "result": {"ok": False, "err": f"err {i}", "data": "x"},
-                            }
-                        ]
-                    },
-                    ensure_ascii=False,
-                ),
-            }
+            {"role": "tool", "tool_call_id": f"call_{i}", "content": json.dumps({"ok": False, "err": f"err {i}", "data": "x" * 200}, ensure_ascii=False)}
         )
 
     compactor = agent.compactor
@@ -677,25 +645,11 @@ def test_fold_old_tool_results_is_idempotent():
 
 def _append_tool_result_message(agent: Agent, idx: int) -> None:
     agent.session_state.append_message(
-        {
-            "role": "user",
-            "content": json.dumps(
-                {
-                    "tool_results": [
-                        {
-                            "id": f"call_{idx}",
-                            "name": "read_file",
-                            "result": {
+        {"role": "tool", "tool_call_id": f"call_{idx}", "content": json.dumps({
                                 "ok": True,
                                 "err": "",
                                 "data": f"large result content that is long enough to make folding save tokens {idx}" * 5,
-                            },
-                        }
-                    ]
-                },
-                ensure_ascii=False,
-            ),
-        }
+                            }, ensure_ascii=False)}
     )
 
 
@@ -781,7 +735,7 @@ def test_running_total_calibrated_by_usage():
 
     # 模拟 record_assistant_turn + record_usage
     turn = session.record_assistant_turn(
-        assistant_raw='{"tool_calls":[],"final_answer":"done"}',
+        assistant_raw='done',
         parsed={"tool_calls": [], "final_answer": "done"},
         route="final",
     )
@@ -805,7 +759,7 @@ def test_running_total_append_message_increments():
     assert after - before == 50  # 200 chars // 4
 
     turn = session.record_assistant_turn(
-        assistant_raw='{"tool_calls":[],"final_answer":"done"}',
+        assistant_raw='done',
         parsed={"tool_calls": [], "final_answer": "done"},
         route="final",
     )

@@ -3,11 +3,14 @@
 A coding agent for the terminal. Point it at a workspace, give it a task, and it
 uses files, shell, web, MCP tools, skills, and sub-agents to get the work done.
 
-Wright is the extracted, installable form of a learning implementation that grew
-inside a larger LLM monorepo. The loop is still ReAct-shaped today (the model
-returns a JSON turn with either tool calls or a final answer). Native tool
-calling is the next protocol change; the runtime around it — permissions,
-concurrent tools, checkpoints, memory, autonomy — stays.
+Wright uses native function calling through the OpenAI-compatible Chat Completions
+API. The model returns tool calls or a normal text answer; Wright runs the tools
+and returns each result with its original call ID. Permissions, concurrent tools,
+checkpoints, memory, and autonomy remain in the runtime.
+
+The original custom JSON ReAct implementation is preserved at the
+`legacy-json-react` Git tag. See [the migration and study guide](docs/native-tool-calling.md)
+for the reading order, execution records, and how to open the old version.
 
 ## Install
 
@@ -17,7 +20,8 @@ cd wright
 uv sync --group dev
 ```
 
-Copy `.env.example` to `.env` and set an OpenAI-compatible endpoint:
+Copy `.env.example` to `.env` and set an OpenAI-compatible endpoint and model
+that support native function calling:
 
 ```bash
 OPENAI_BASE_URL=https://api.openai.com/v1
@@ -41,7 +45,9 @@ uv run python -m wright.main
 
 The agent edits the current directory (or `--workspace DIR`). Sessions, traces,
 and the task database go to `~/.wright/projects/<id>/`, not into your repo.
-Resume with `wright --continue` or `wright --resume`.
+Resume with `wright --continue` or `wright --resume`. Native sessions use checkpoint
+version 2; version 1 sessions must be opened with `legacy-json-react`. Start a new
+session after upgrading; existing checkpoint files are not converted or deleted.
 
 ```bash
 cd /path/to/your/project

@@ -1,8 +1,9 @@
 import json
 import pytest
 
+from wright.tests.responses import event, response
+
 from ...agent import Agent
-from ...events import ContentDone
 from ...lifecycle import HookRegistration, LifecycleManager, TraceRecorder
 from ...renderer import SilentRenderer
 from ...session import SessionState
@@ -11,7 +12,7 @@ from ...tools.base import ToolRuntime
 
 
 def _final(answer):
-    return json.dumps({"tool_calls": [], "final_answer": answer})
+    return response(content=answer, calls=[])
 
 
 class ScriptLLM:
@@ -20,14 +21,14 @@ class ScriptLLM:
     def __init__(self, script):
         self.script = list(script)
 
-    def __call__(self, messages):
-        yield ContentDone(self.script.pop(0))
+    def __call__(self, messages, **kwargs):
+        yield event(self.script.pop(0))
 
 
 class BrokenLLM:
     context_limit = 128_000
 
-    def __call__(self, messages):
+    def __call__(self, messages, **kwargs):
         raise RuntimeError("provider unavailable")
         yield
 
@@ -61,8 +62,8 @@ def test_agent_emits_root_lifecycle_and_compaction_events(tmp_path):
         keep_recent_tool_results=0,
     )
     session.append_message({
-        "role": "user",
-        "content": json.dumps({"tool_results": [{"id": "old", "name": "x", "result": {"ok": True, "data": "x" * 500}}]}),
+        "role": "tool", "tool_call_id": "old",
+        "content": json.dumps({"ok": True, "data": "x" * 500}),
     })
     session.context_tokens = 80
 

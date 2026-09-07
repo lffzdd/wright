@@ -1,9 +1,10 @@
 """召回选择器(用假 LLM)+ 记忆工具的单测。"""
 
 import json
+from wright.tests.responses import event
+
 from pathlib import Path
 
-from ...events import ContentDone
 from ...memory.recall import build_recall_block, find_relevant_memories
 from ...memory.store import write_memory_file
 from ...tools.memory_tools import (
@@ -23,8 +24,8 @@ class FakeLLM:
     def __init__(self, payload: dict):
         self._content = json.dumps(payload, ensure_ascii=False)
 
-    def __call__(self, messages):
-        yield ContentDone(content=self._content, reasoning="")
+    def __call__(self, messages, **kwargs):
+        yield event(content=self._content, reasoning="")
 
 
 def test_find_relevant_filters_to_valid_filenames(tmp_path: Path):
@@ -40,8 +41,8 @@ def test_find_relevant_empty_on_bad_json(tmp_path: Path):
     write_memory_file("alpha", "about bun", "feedback", "x", directory=tmp_path)
 
     class BadLLM:
-        def __call__(self, messages):
-            yield ContentDone(content="not json", reasoning="")
+        def __call__(self, messages, **kwargs):
+            yield event(content="not json", reasoning="")
 
     assert find_relevant_memories("q", BadLLM(), directory=tmp_path) == []
 
