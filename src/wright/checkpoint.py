@@ -194,6 +194,7 @@ def _serialize_session(session: SessionState) -> dict[str, Any]:
             "agent_root_turn_id": session.agent_root_turn_id,
             "last_usage": _serialize_usage(session.last_usage),
             "total_usage": _serialize_usage(session.total_usage),
+            "task_usage_start": _serialize_usage(session.task_usage_start),
             "context_tokens": session.context_tokens,
             "step_count": session.step_count,
             "active_turn_start_step": session.active_turn_start_step,
@@ -327,11 +328,20 @@ def _deserialize_session(payload: Any) -> SessionState:
         last_usage=_deserialize_usage(data.get("last_usage"), "last_usage"),
         total_usage=_deserialize_usage(data.get("total_usage"), "total_usage")
         or UsageRecord(),
+        task_usage_start=_deserialize_usage(data.get("task_usage_start"), "task_usage_start")
+        or UsageRecord(),
         context_tokens=context_tokens,
         step_count=step_count,
         max_steps=max_steps,
         message_id_counter=message_id_counter,
     )
+    if "task_usage_start" not in data:
+        # Older checkpoints counted only main-loop turns.
+        for turn in session.turns:
+            if turn.step <= session.active_turn_start_step and turn.usage is not None:
+                for name, value in vars(turn.usage).items():
+                    setattr(session.task_usage_start, name,
+                            getattr(session.task_usage_start, name) + value)
     _recover_interrupted_tool_calls(session)
     return session
 

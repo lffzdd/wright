@@ -25,7 +25,9 @@ logger = get_logger(__name__)
 
 
 DEFAULT_CHILD_MAX_STEPS = 20
-DEFAULT_MAX_DEPTH = 2
+# Interactive default: root spawns leaves only. Nested spawn stays available
+# when a caller passes a higher max_depth (durable runs use 2).
+DEFAULT_MAX_DEPTH = 1
 DEFAULT_CHILD_TIMEOUT = 300.0
 
 
@@ -54,13 +56,17 @@ class SubAgentRenderer(Renderer):
             brief = brief[:77] + "..."
         self._line(f"🔧 子Agent(d{self.depth}) › {tool_call.name} {brief}", "yellow")
 
-    def on_tool_result(self, tool_result) -> None:
+    def on_tool_result(self, tool_call, tool_result) -> None:
+        name = getattr(tool_call, "name", None) or "tool"
         if hasattr(tool_result, "to_dict"):
             tool_result = tool_result.to_dict()
         if tool_result.get("ok"):
-            self._line("✅ 子工具完成", "green")
+            self._line(f"✅ 子Agent(d{self.depth}) › {name}", "green")
         else:
-            self._line(f"❌ 子工具失败: {tool_result.get('err')}", "red")
+            self._line(
+                f"❌ 子Agent(d{self.depth}) › {name}: {tool_result.get('err')}",
+                "red",
+            )
 
     def on_agent_event(self, event: dict[str, Any]) -> None:
         self._line(
@@ -76,6 +82,18 @@ class SubAgentRenderer(Renderer):
         if len(text) > 200:
             text = text[:197] + "..."
         self._line(f"🎯 子Agent(d{self.depth}) 收口: {text}", "green")
+
+    def on_completion_rejected(self, issues=()) -> None:
+        detail = ""
+        if issues:
+            first = issues[0]
+            detail = getattr(first, "message", None) or (
+                first.get("message") if isinstance(first, dict) else ""
+            )
+        self._line(
+            f"完成检查未通过: {detail or '未说明原因'}",
+            "yellow",
+        )
 
 
 SPAWN_AGENT_PARAMETERS = {

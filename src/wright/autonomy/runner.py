@@ -25,12 +25,15 @@ from ..renderer import SilentRenderer
 from ..services import RuntimeServices
 from ..session import SessionState, UsageRecord
 from ..subagent import (
-    DEFAULT_MAX_DEPTH,
     _child_base_tools,
     build_agent_tools,
 )
 from ..tools.base import Tool
 from .scheduler import AutonomyScheduler
+
+
+# Isolated workers start at depth=1 and may spawn one leaf helper.
+DURABLE_MAX_DEPTH = 2
 
 
 # Durable runs must not ask a human, spawn more schedules, or write memory.
@@ -185,7 +188,7 @@ def launch_durable_run(
     lifecycle: Any = None,
     services: RuntimeServices,
     max_steps: int = 50,
-    max_depth: int = DEFAULT_MAX_DEPTH,
+    max_depth: int = DURABLE_MAX_DEPTH,
 ) -> DurableLaunch | None:
     """Construct an isolated durable session on the REPL thread and return.
 

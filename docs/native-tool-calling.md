@@ -73,8 +73,9 @@ git worktree add --detach ../wright-legacy-study legacy-json-react
 工具执行前保存 pending checkpoint；恢复时补齐缺失的结果消息，
 未知结果标记为“需要先检查现场”，不自动重放可能已经完成的写操作。
 
-JSON mode 仍用于记忆选择、记忆提取和语义完成检查等明确需要结构化数据的查询，
-不会约束普通 Agent 的整轮回答。
+JSON mode 仍用于记忆选择、记忆提取等明确需要结构化数据的查询，
+不会约束普通 Agent 的整轮回答。完成门闩默认是结构化检查
+（计划、未完成工具、缺失写入产物），不额外调用评审模型。
 
 ## 验证
 

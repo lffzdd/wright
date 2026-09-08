@@ -33,6 +33,8 @@ class AgentControlError(ValueError):
 
 @dataclass(frozen=True)
 class AgentControlConfig:
+    # Plane ceiling, not the interactive product default. Root sessions use
+    # max_depth=1; durable workers may spawn one more level under this cap.
     max_depth: int = 2
     max_children_per_parent: int = 8
     max_tasks_per_turn: int = 32

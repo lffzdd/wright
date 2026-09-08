@@ -79,6 +79,8 @@ class Agent:
         self.checkpoint_store = checkpoint_store
         self.last_checkpoint_error: Exception | None = None
         self._usage_observer = usage_observer
+        if self.memory is not None:
+            self.memory.usage_observer = self._record_auxiliary_usage
         self.lifecycle = lifecycle
         self._memory_finalized_turns: set[str] = set()
         if max_verification_retries < 1:
@@ -147,7 +149,7 @@ class Agent:
         """喊 compactor 折叠旧工具结果;折叠后从 running total 扣减省下的 token。
 
         不再作废锚点:running total 被增量调整(减去折叠省下的),
-        下次 usage 回来时自然会精确校准。
+        下次 usage 回来时更新估算锚点。
         """
         context_tokens = self.session_state.context_tokens + transient_tokens
         should_compact = bool(
@@ -230,17 +232,20 @@ class Agent:
 
     def _run_turn(
         self,
-        extra_messages: Sequence[ChatCompletionMessageParam] | None = None,
+        reminders: Sequence[ChatCompletionMessageParam] = (),
     ) -> tuple[ContentDone, UsageRecord | None]:
-        """渲染事件流，返回包含正文和工具调用的完整响应。"""
+        """渲染事件流，返回包含正文和工具调用的完整响应。
+
+        ``reminders`` 只叠在本轮请求末尾，不写入 transcript。调用方先算
+        token 再传入同一份列表，用量校准才能扣掉这笔临时开销。
+        """
 
         response = ContentDone("", finish_reason="incomplete")
         usage_record: UsageRecord | None = None
+        self.renderer.on_turn_begin()
 
         wire_messages = self.session_state.wire_messages()
-        # 计划是运行期状态，不永久复制进 transcript。每轮临时放在 wire 尾部。
-        if extra_messages:
-            wire_messages.extend(extra_messages)
+        wire_messages.extend(reminders)
 
         self._emit_lifecycle("llm_start", {
             "model": str(getattr(self.llm, "model", "")),
@@ -248,7 +253,7 @@ class Agent:
             "context_tokens": self.session_state.context_tokens,
             "has_plan_reminder": any(
                 "<plan-state>" in str(message.get("content", ""))
-                for message in extra_messages or ()
+                for message in reminders
             ),
         })
         started = time.monotonic()
@@ -263,18 +268,21 @@ class Agent:
                 elif isinstance(event, UsageEvent):
                     usage_record = UsageRecord.from_usage(event.usage)
 
-                    self.renderer.on_usage(
-                        usage_record.prompt_tokens,
-                        usage_record.completion_tokens,
-                        usage_record.total_tokens,
-                        self.context_limit,
-                    )
         except Exception as exc:
+            if usage_record is not None:
+                self._record_auxiliary_usage(usage_record)
             self._emit_lifecycle("llm_error", {
                 "error": f"{type(exc).__name__}: {exc}",
                 "duration_ms": round((time.monotonic() - started) * 1_000, 3),
             })
             raise
+
+        self.renderer.on_usage(
+            usage_record.prompt_tokens if usage_record else None,
+            usage_record.completion_tokens if usage_record else None,
+            usage_record.total_tokens if usage_record else None,
+            self.context_limit,
+        )
 
         self._emit_lifecycle("llm_end", {
             "duration_ms": round((time.monotonic() - started) * 1_000, 3),
@@ -308,11 +316,24 @@ class Agent:
         self.session_state.mark_skill_catalog_sent()
 
     def _ephemeral_reminders(self) -> list[ChatCompletionMessageParam]:
+        """本轮才需要、不能落进会话记录的提醒。目前只有最新计划块。"""
         reminders: list[ChatCompletionMessageParam] = []
         plan = self._plan_reminder()
         if plan is not None:
             reminders.append(plan)
         return reminders
+
+    def _record_auxiliary_usage(self, usage: UsageRecord) -> None:
+        self.session_state.add_usage(usage)
+        self._notify_usage(usage)
+
+    def _render_usage_summary(self) -> None:
+        if self._has_live_agent_tasks(self.session_state.agent_root_turn_id):
+            return
+        usage = self.session_state.task_usage()
+        self.renderer.on_usage_summary(
+            usage.prompt_tokens, usage.completion_tokens, usage.total_tokens,
+        )
 
     def _record_usage_for_turn(
         self,
@@ -326,6 +347,9 @@ class Agent:
         self.session_state.context_tokens = max(
             0, self.session_state.context_tokens - transient_plan_tokens
         )
+        self._notify_usage(usage_record)
+
+    def _notify_usage(self, usage_record: UsageRecord) -> None:
         if self._usage_observer is not None:
             try:
                 self._usage_observer(usage_record)
@@ -420,6 +444,15 @@ class Agent:
         return self._run_loop(max_steps)
 
     def run_runtime_event(
+        self, event: dict, max_steps: int | None = None,
+    ) -> str | None:
+        try:
+            return self._run_runtime_event(event, max_steps)
+        finally:
+            self._render_usage_summary()
+            self._checkpoint()
+
+    def _run_runtime_event(
         self,
         event: dict,
         max_steps: int | None = None,
@@ -457,7 +490,7 @@ class Agent:
         self._emit_agent_start(
             str(event.get("type") or "runtime_event"), source="runtime_event"
         )
-        result = self._run_loop(budget, record_memory=False)
+        result = self._run_loop(budget, record_memory=False, render_summary=False)
         event_root_turn_id = str(
             (event.get("task") or {}).get("root_turn_id")
             if isinstance(event.get("task"), dict) else ""
@@ -471,6 +504,7 @@ class Agent:
             and not self._has_live_agent_tasks(current_turn_id)
         ):
             self._finalize_memory(result, extract_semantic=True)
+            self._checkpoint()
         return result
 
     def continue_run(
@@ -605,6 +639,7 @@ class Agent:
             )
             if not verification.approved:
                 counters.verifier += 1
+                self.renderer.on_completion_rejected(verification.issues)
                 self.session_state.append_message(
                     verification.feedback_message()
                 )
@@ -770,6 +805,17 @@ class Agent:
         return "retry"
 
     def _run_loop(
+        self, max_steps: int, *, record_memory: bool = True,
+        render_summary: bool = True,
+    ) -> str | None:
+        try:
+            return self._run_loop_impl(max_steps, record_memory=record_memory)
+        finally:
+            if render_summary:
+                self._render_usage_summary()
+            self._checkpoint()
+
+    def _run_loop_impl(
         self,
         max_steps: int,
         *,

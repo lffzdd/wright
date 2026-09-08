@@ -227,3 +227,20 @@ def test_file_write_locks_serialize_same_path_but_not_different_paths(
     for thread in different_path_threads:
         thread.join()
     assert max_active == 2
+
+
+def test_on_result_includes_the_tool_call(tmp_path):
+    seen = []
+
+    def ping(args, runtime):
+        return ToolResult.success("pong")
+
+    tool = Tool("ping", "", {}, ping)
+    executor = ToolExecutor({tool.name: tool}, workspace_dir=tmp_path)
+    call = ToolCall("ping", {}, "c1")
+    executor.execute([call], on_result=lambda tc, result: seen.append((tc, result)))
+
+    assert len(seen) == 1
+    assert seen[0][0].name == "ping"
+    assert seen[0][0].id == "c1"
+    assert seen[0][1].data == "pong"

@@ -14,6 +14,7 @@ from ..logger import get_logger
 from .episode import EpisodeRecord, EpisodeStore, episode_from_session
 from .extract import extract_and_save
 from .paths import memory_dir
+from .llm_util import metered_events
 from .prompt import build_memory_instructions
 from .recall import build_recall_block
 
@@ -35,12 +36,18 @@ class MemoryManager:
         selector_llm: LLMClient | None = None,
         directory: Path | None = None,
     ) -> None:
+        self.usage_observer = None
         self.llm = llm
         self.selector_llm = selector_llm or llm
         self.directory = (directory or memory_dir()).expanduser().resolve()
         # 必须创建实例实际绑定的目录，而不是 paths.memory_dir() 的默认目录。
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.episode_store = EpisodeStore(self.directory)
+
+    def _query(self, messages, **kwargs):
+        yield from metered_events(
+            self.selector_llm(messages, **kwargs), self.usage_observer
+        )
 
     def instructions(self) -> str:
         """注入 system prompt 的静态记忆指令段。"""
@@ -49,14 +56,14 @@ class MemoryManager:
     def recall_block(self, query: str) -> str:
         """针对本轮 query 的召回文本块(MEMORY.md 索引 + 相关记忆),无则 ""。"""
         try:
-            return build_recall_block(query, self.selector_llm, self.directory)
+            return build_recall_block(query, self._query, self.directory)
         except Exception as exc:  # recall is a sidecar, never a task dependency
             logger.debug("记忆召回失败: %s", exc)
             return ""
 
     def extract(self, session_state: Any) -> int:
         """会话收口后从 transcript 提取并落盘记忆,返回写入条数(best-effort)。"""
-        return extract_and_save(session_state, self.selector_llm, self.directory)
+        return extract_and_save(session_state, self._query, self.directory)
 
     def record_episode(
         self, session_state: Any, final_answer: str | None

@@ -187,18 +187,6 @@ def build_runtime(args: argparse.Namespace) -> WrightRuntime:
         else llm_client
     )
 
-    verifier_model = os.getenv("OPENAI_VERIFIER_MODEL")
-    verifier_llm = (
-        LLMClient(
-            base_url=base_url,
-            api_key=api_key,
-            model=verifier_model,
-            stream=False,
-        )
-        if verifier_model
-        else selector_llm
-    )
-
     renderer = ConsoleRenderer()
 
     workspace_dir = (args.workspace or Path.cwd()).expanduser().resolve()
@@ -319,7 +307,8 @@ def build_runtime(args: argparse.Namespace) -> WrightRuntime:
     )
 
     # 给主 Agent 装上"基础工具 + spawn_agent"的分层工具集:depth=0 是主 Agent,
-    # 它能委派出 depth=1 的子 Agent;到 max_depth 那层不再带 spawn,递归到底。
+    # 默认只委派叶子子 Agent（max_depth=1）。嵌套 spawn 仍由控制面支持，
+    # 无人值守 durable run 会显式打开第二层。
     # knowledge_search 是只读检索：启用后放进 base，让子 Agent 也能查知识库。
     knowledge_tools = optional_knowledge_tools()
     assembled_base = base_tools + mcp_tools + knowledge_tools
@@ -327,7 +316,7 @@ def build_runtime(args: argparse.Namespace) -> WrightRuntime:
         llm_client,
         assembled_base,
         depth=0,
-        max_depth=2,
+        max_depth=1,
         permission_resolver=permission_resolver,
         enable_autonomy=True,
     )
@@ -356,7 +345,7 @@ def build_runtime(args: argparse.Namespace) -> WrightRuntime:
         keep_recent_tool_results=3,
         permission_resolver=permission_resolver,
         memory=memory_manager,
-        verifier=Verifier(verifier_llm),
+        verifier=Verifier(),
         checkpoint_store=(None if args.no_session_persistence else checkpoint_store),
         on_shell_task_done=lambda task_id: event_queue.put(("TASK_DONE", task_id)),
         lifecycle=lifecycle,

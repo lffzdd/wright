@@ -43,6 +43,7 @@ class SelectorLLM:
 
     def __call__(self, messages, **kwargs):
         self.calls += 1
+        yield UsageEvent(_Usage())
         payload = {
             "selected_memories": ["user-likes-bun.md"],  # recall 取这个
             "memories": [  # extract 取这个
@@ -80,6 +81,8 @@ def test_agent_recall_injection_and_extraction(tmp_path: Path):
 
     answer = agent.run("我该用什么包管理器")
     assert answer == "done"
+    assert session.total_usage.total_tokens == 15 * (1 + selector.calls)
+    assert session.context_tokens == 15  # side-query usage must not alter context
 
     # 1) system prompt 含静态记忆指令段
     sys_msg = session.message_records[0].message

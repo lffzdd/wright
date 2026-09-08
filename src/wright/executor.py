@@ -331,7 +331,7 @@ class ToolExecutor:
     def _run_concurrent_batch(
         self,
         indexed_calls: list[tuple[int, ToolCall]],
-        on_result: Callable[[ToolResult], None] | None,
+        on_result: Callable[[ToolCall, ToolResult], None] | None,
         max_workers: int,
     ) -> dict[int, ToolExecutionOutcome]:
         """并发跑一批 (原始下标, ToolCall),返回 {下标: outcome}。
@@ -359,7 +359,7 @@ class ToolExecutor:
             for fut in as_completed(futures):
                 idx, outcome = fut.result()
                 if on_result:
-                    on_result(outcome.result)
+                    on_result(outcome.call, outcome.result)
                 out[idx] = outcome
 
         return out
@@ -384,7 +384,7 @@ class ToolExecutor:
         self,
         tool_calls: list[ToolCall],
         on_call: Callable[[ToolCall], None] | None = None,
-        on_result: Callable[[ToolResult], None] | None = None,
+        on_result: Callable[[ToolCall, ToolResult], None] | None = None,
         max_workers: int = 8,
     ) -> list[ToolExecutionOutcome]:
         """保持调用顺序切批执行,返回顺序恒等于输入。
@@ -431,7 +431,7 @@ class ToolExecutor:
                 },
             )
             if on_result:
-                on_result(error)
+                on_result(effective_call, error)
 
         for batch in self._partition_calls(runnable):
             for idx, slot in self._run_concurrent_batch(

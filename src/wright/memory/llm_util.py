@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from openai.types.chat import ChatCompletionMessageParam
 
-from ..events import ContentDone
+from ..events import ContentDone, UsageEvent
+from ..session import UsageRecord
 from ..llm import LLMClient
 
 
@@ -29,3 +30,16 @@ def side_query(llm: LLMClient, system: str, user: str) -> str:
                 raise ValueError(f"Side query did not complete: {event.finish_reason}")
             content = event.content
     return content
+
+
+def metered_events(events, observer):
+    """Record the final usage snapshot once, including when a stream fails."""
+    usage = None
+    try:
+        for event in events:
+            if isinstance(event, UsageEvent):
+                usage = UsageRecord.from_usage(event.usage)
+            yield event
+    finally:
+        if usage is not None and observer is not None:
+            observer(usage)

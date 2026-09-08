@@ -6,9 +6,8 @@ from .tools.base import ToolCall, ToolResult
 # 入站解析(模型输出 → 结构化回合)已搬到 protocol.py。
 # 本模块只留出站编码:把工具执行结果拼回喂给模型的 wire 消息。
 
-# 糙估系数:按英文/JSON 经验 ~4 字符/token,中文会偏小。它只用于"还没被服务端
-# usage 校准的那截尾巴"(running total 每轮会被 P+C 校准回真值),误差被限制在一轮
-# 工具输出内。要精确就换 tiktoken(OpenAI) 或 count_tokens 接口(Anthropic),接口不变。
+# 按英文/JSON 经验约 4 字符/token，中文可能偏小。
+# 服务端 P+C 提供每轮估算锚点；新增消息和折叠节省量仍是估算。
 CHARS_PER_TOKEN = 4
 
 

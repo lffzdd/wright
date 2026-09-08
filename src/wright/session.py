@@ -54,9 +54,10 @@ class SessionState:
     last_usage: UsageRecord | None = None
     total_usage: UsageRecord = field(default_factory=lambda: UsageRecord())
 
+    task_usage_start: UsageRecord = field(default_factory=lambda: UsageRecord())
+
     # 当前 messages 的预测 token 数(= 下次发送会有多大)。增量维护:追加时加、
-    # 折叠时减;每轮拿到 usage 后用 prompt+completion 校准回服务端真值
-    # (见 record_usage_for_turn),估算误差从不累积超过一轮的工具结果尾巴。
+    # 折叠时减；每轮用服务端 P+C 更新估算锚点，工具结果继续按字符估算。
     context_tokens: int = 0
 
     step_count: int = 0
@@ -117,6 +118,7 @@ class SessionState:
 
     def begin_user_turn(self, prompt: str) -> None:
         """记录当前任务目标及其证据边界。"""
+        self.task_usage_start = UsageRecord(**vars(self.total_usage))
         self.user_goal = prompt
         self.active_turn_start_step = self.step_count
         self.active_turn_start_message_index = len(self.message_records)
@@ -143,7 +145,7 @@ class SessionState:
 
         这是 wire 的【唯一追加入口】:context_tokens 要准,就不能让任何人绕过它
         直接改 message_records。追加时用估算累加;assistant 那条的估算会在
-        record_usage_for_turn 里被 prompt+completion 精确校准覆盖掉。
+        record_usage_for_turn 里被 prompt+completion 的估算锚点覆盖掉。
         """
         message_id = self._next_message_id()
         self.message_records.append(MessageRecord(id=message_id, message=message))
@@ -277,12 +279,28 @@ class SessionState:
         turn.usage = usage
         self.last_usage = usage
         # 校准 running total:此刻 assistant 已入队、工具结果尚未追加,
-        # prompt_tokens + completion_tokens 就是当前 wire 记录的精确大小——
-        # 用它覆盖 context_tokens,一次性消灭之前累积的估算误差。
+        # P+C 作为上下文估算锚点；供应商的推理计量和消息封装可能不同，
+        # 它不等于下一次请求的精确输入大小。
         self.context_tokens = usage.prompt_tokens + usage.completion_tokens
+        self.add_usage(usage)
+
+    def add_usage(self, usage: "UsageRecord") -> None:
+        """累计消费；辅助请求不改变主对话的上下文估算。"""
         self.total_usage.prompt_tokens += usage.prompt_tokens
         self.total_usage.completion_tokens += usage.completion_tokens
         self.total_usage.total_tokens += usage.total_tokens
+
+    def task_usage(self) -> "UsageRecord":
+        usage = UsageRecord(**{
+            name: max(0, value - getattr(self.task_usage_start, name))
+            for name, value in vars(self.total_usage).items()
+        })
+        if self.agent_task_id is None:
+            for task in self.control_plane.snapshot()["tasks"]:
+                if task["root_turn_id"] == self.agent_root_turn_id:
+                    for name, value in task["usage"].items():
+                        setattr(usage, name, getattr(usage, name) + value)
+        return usage
 
     def record_verification(
         self,

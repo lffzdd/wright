@@ -44,9 +44,17 @@ class Renderer(ABC):
     @abstractmethod
     def on_tool_call(self, tool_call: ToolCall | dict) -> None: ...
     @abstractmethod
-    def on_tool_result(self, tool_result: "ToolResult | dict") -> None: ...
+    def on_tool_result(
+        self, tool_call: ToolCall | dict, tool_result: "ToolResult | dict",
+    ) -> None: ...
     @abstractmethod
     def on_final(self, answer: Any) -> None: ...
+
+    def on_turn_begin(self) -> None:
+        """A new LLM turn is starting. Default: no-op."""
+
+    def on_completion_rejected(self, issues: Any = ()) -> None:
+        """Structural completion checks rejected this candidate. Default: no-op."""
 
     def on_usage(
         self,
@@ -56,6 +64,11 @@ class Renderer(ABC):
         context_limit: int | None,
     ) -> None:
         """本轮 token 用量回调(服务端精确值)。默认不输出，子类按需覆盖。"""
+
+    def on_usage_summary(
+        self, prompt_tokens: int, completion_tokens: int, total_tokens: int,
+    ) -> None:
+        """当前任务累计消费。"""
 
     def on_context_compact(
         self,
@@ -197,7 +210,7 @@ class ConsoleRenderer(Renderer):
         self._stream_piece(piece, prefix_style="dim bright_black", text_style="dim")
 
     def on_content_delta(self, piece: str) -> None:
-        self._start_phase("content", "🤖 模型响应", "bold dim white")
+        self._start_phase("content", "💬 回答", "bold dim white")
         self._stream_piece(piece, prefix_style="bold dim white", text_style="dim white")
 
     def on_tool_call(self, tool_call) -> None:
@@ -268,9 +281,10 @@ class ConsoleRenderer(Renderer):
                 line.append(f" {task}", style="dim")
             self._console.print(line)
 
-    def on_tool_result(self, tool_result) -> None:
+    def on_tool_result(self, tool_call, tool_result) -> None:
         with self._prompt_lock:
             self._end_stream()
+            name = _tool_call_name(tool_call)
             if hasattr(tool_result, "to_dict"):
                 tool_result = tool_result.to_dict()
 
@@ -284,7 +298,7 @@ class ConsoleRenderer(Renderer):
                 self._console.print(
                     Panel(
                         content,
-                        title="[bold]✅ 工具结果[/bold]",
+                        title=f"[bold]✅ {name}[/bold]",
                         title_align="left",
                         border_style="green",
                         padding=(0, 1),
@@ -295,7 +309,7 @@ class ConsoleRenderer(Renderer):
                 self._console.print(
                     Panel(
                         Text(err_text, style="red"),
-                        title="[bold]❌ 工具失败[/bold]",
+                        title=f"[bold]❌ {name}[/bold]",
                         title_align="left",
                         border_style="red",
                         padding=(0, 1),
@@ -315,22 +329,20 @@ class ConsoleRenderer(Renderer):
         out = completion_tokens if completion_tokens is not None else "?"
         tot = total_tokens if total_tokens is not None else "?"
 
-        # 上下文水位 = P+C:模型回复(C)已入队 messages,下次一定是输入的一部分,
-        # 所以当前上下文的精确大小 = 本轮输入(P) + 本轮输出(C),两者都是服务端真值。
-        if prompt_tokens is not None and completion_tokens is not None and context_limit:
-            ctx_size = prompt_tokens + completion_tokens
-            water = f"{ctx_size:,} / {context_limit:,} ({ctx_size / context_limit:.1%})"
-        else:
-            water = f"{inp} / ?"
-
         self._console.print()
         self._console.print(
-            f"[dark_orange bold]tokens[/] "
-            f"[dark_orange]输入 {inp} · 输出 {out} · 总计 {tot}[/]"
+            f"[dark_orange bold]tokens 本次请求[/] "
+            f"[dark_orange]输入 {inp} · 输出 {out} · 合计 {tot}[/]"
         )
+
+    def on_usage_summary(
+        self, prompt_tokens: int, completion_tokens: int, total_tokens: int,
+    ) -> None:
+        self._end_stream()
         self._console.print(
-            f"[dark_orange bold]context[/] "
-            f"[dark_orange]水位 {water}[/]"
+            f"[dark_orange bold]tokens 当前任务累计（已报告）[/] "
+            f"[dark_orange]输入 {prompt_tokens:,} · 输出 {completion_tokens:,} "
+            f"· 合计 {total_tokens:,}[/]"
         )
 
     def on_context_compact(
@@ -360,8 +372,21 @@ class ConsoleRenderer(Renderer):
         self._console.print()
         self._console.print(
             f"[{style} bold]context compact[/] "
-            f"[{style}]{msg} · 水位 {ctx_usage}{ctx_pct} · 阈值 {watermark}[/]"
+            f"[{style}]{msg} · 预计占用 {ctx_usage}{ctx_pct} · 阈值 {watermark}[/]"
         )
+
+    def on_completion_rejected(self, issues: Any = ()) -> None:
+        self._end_stream()
+        parts = []
+        for issue in issues or ():
+            message = getattr(issue, "message", None)
+            if message is None and isinstance(issue, dict):
+                message = issue.get("message")
+            if message:
+                parts.append(str(message))
+        detail = "；".join(parts) if parts else "未说明原因"
+        self._console.print()
+        self._console.print(f"[yellow]完成检查未通过，继续工作[/] [dim]{detail}[/]")
 
     def on_final(self, answer) -> None:
         self._end_stream()
@@ -655,11 +680,19 @@ class ConsoleRenderer(Renderer):
         else:
             _render_to(self._console)
 
+
+def _tool_call_name(tool_call) -> str:
+    name = getattr(tool_call, "name", None)
+    if not name and isinstance(tool_call, dict):
+        name = tool_call.get("name")
+    return str(name or "tool")
+
+
 class SilentRenderer(Renderer):
     """静默渲染器：什么都不输出。用于测试或批量任务。"""
 
     def on_reasoning_delta(self, piece: str) -> None: ...
     def on_content_delta(self, piece: str) -> None: ...
     def on_tool_call(self, tool_call) -> None: ...
-    def on_tool_result(self, tool_result) -> None: ...
+    def on_tool_result(self, tool_call, tool_result) -> None: ...
     def on_final(self, answer) -> None: ...
