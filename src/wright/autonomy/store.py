@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
 import os
-from pathlib import Path
 import secrets
 import sqlite3
 import threading
 import time
-from typing import Any, Iterable, Iterator
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any
 
 from .models import AutomationRecord, DurableRunRecord, TriggerSpec
 

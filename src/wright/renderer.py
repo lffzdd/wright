@@ -8,6 +8,7 @@
 这样同一套 Agent 逻辑可以配不同的 Renderer：
 
     ConsoleRenderer  → 主缓冲 Live 尾巴 + 收口后写入 scrollback
+    TUIRenderer      → 全屏 TUI（--ui tui），事件填进 widget
     SilentRenderer   → 什么都不打（跑测试 / 批量任务）
     （未来）JSONRenderer / WebRenderer → 把事件推给前端
 
@@ -32,6 +33,12 @@ from rich.panel import Panel
 from rich.rule import Rule
 from rich.text import Text
 
+from .interaction import (
+    PROMPT_INTERRUPTED,
+    InteractionHub,
+    InteractionKind,
+    InteractionRequest,
+)
 from .tools.base import ToolCall, ToolResult
 
 _COMMAND_OUTPUT_LINES = 24
@@ -92,6 +99,9 @@ class Renderer(ABC):
     def on_agent_event(self, event: dict[str, Any]) -> None:
         """子 Agent 控制面事件。默认不输出。"""
 
+    def on_system_notice(self, text: str) -> None:
+        """Host-level status line (slash feedback, durable run, autonomy). Default: no-op."""
+
     # ── 双向交互（子类按能力覆盖，默认 fail-closed） ──
 
     def prompt_permission(
@@ -122,9 +132,27 @@ class Renderer(ABC):
         """
         return None
 
-    def prompt_main_input(self, prompt_session: Any = None) -> str | None:
-        """主 REPL 循环展示输入提示并等待用户指令。返回 None 表示退出。"""
+    def prompt_main_input(
+        self, prompt_session: Any = None, *, queueing: bool = False,
+    ) -> str | None:
+        """主 REPL 循环展示输入提示并等待用户指令。返回 None 表示退出。
+
+        ``queueing=True`` 表示 Agent 仍在跑，这次输入会排队到当前任务之后。
+        """
         return None
+
+    def bind_interaction(self, hub: InteractionHub) -> None:
+        """可选。未绑定则 prompt_* 在当前线程直接读 stdin（测试/无 REPL）。"""
+
+    def interrupt_main_prompt(self) -> None:
+        """权限请求到达时打断正在进行的主输入。默认无操作。"""
+
+    def fulfill_interaction(self, request: InteractionRequest) -> None:
+        """收集线程处理一条交互请求。默认 fail-closed。"""
+        if request.kind == "ask_user":
+            request.reply.put(None)
+        else:
+            request.reply.put("n")
 
 
 @dataclass
@@ -148,16 +176,8 @@ class ConsoleRenderer(Renderer):
             highlight=False,
             force_terminal=True if sys.stdout.isatty() else None,
         )
-        # 全局终端写入锁：序列化所有终端输出，防止并发工具结果与权限确认框交叉。
-        #
-        # 哪些路径持锁：
-        #   prompt_permission / prompt_user / prompt_main_input
-        #     —— 用户交互期间持锁，其他输出排队等待。
-        #   on_tool_call / on_tool_result / on_command_output
-        #   on_checkpoint_error / on_agent_event
-        #     —— 可能从 ThreadPoolExecutor worker 或 reader 线程发起，
-        #        持锁保证不会插进权限确认框中间。
-        # streaming 回调也持锁：Live 刷新与 worker 输出会重叠。
+        # 全局终端写入锁：序列化绘制，不覆盖 stdin 等待。
+        # 读键盘只在 REPL 收集线程；Agent 线程通过 InteractionHub 等待回复。
         self._prompt_lock = threading.Lock()
         self._live: Live | None = None
         self._reasoning = ""
@@ -165,7 +185,8 @@ class ConsoleRenderer(Renderer):
         self._final_answer: Any = None
         self._usage_line: str | None = None
         self._tools: list[_LiveTool] = []
-        self._show_settled = False
+        self._hub: InteractionHub | None = None
+        self._main_prompt_session: Any = None
 
     def _can_live(self) -> bool:
         # StringIO / piped captures have no isatty; don't start Live there.
@@ -176,7 +197,7 @@ class ConsoleRenderer(Renderer):
         try:
             if not checker():
                 return False
-        except Exception:
+        except (OSError, ValueError):
             return False
         return bool(self._console.is_terminal)
 
@@ -187,11 +208,10 @@ class ConsoleRenderer(Renderer):
         return self._has_stream() or bool(self._tools)
 
     def _json_body(self, value: Any) -> Any:
-        body = json.dumps(value, ensure_ascii=False, indent=2)
         try:
-            return RichJSON(body)
-        except Exception:
-            return Text(body, style="dim")
+            return RichJSON.from_data(value)
+        except (TypeError, ValueError):
+            return Text(str(value), style="dim")
 
     def _answer_panel(self, answer: Any) -> Panel:
         if isinstance(answer, str):
@@ -278,14 +298,18 @@ class ConsoleRenderer(Renderer):
         self._live = None
         try:
             live.stop()
-        except Exception:
+        except Exception:  # Live 拆掉时终端可能已不可写
             pass
 
     def _ensure_live(self) -> None:
         if self._live is not None or not self._can_live() or not self._has_preview():
             return
+        # 把当前画面的快照交给 Live，不要传 get_renderable。
+        # Live 的 auto-refresh 在后台线程跑；回调里读 _reasoning/_tools 会和
+        # 持有 _prompt_lock 的主线程打架。回调里再加锁又会和 live.update()
+        # 形成死锁（主线程: prompt_lock→live._lock；刷新线程相反）。
         self._live = Live(
-            get_renderable=self._preview,
+            self._current_renderable(settled=False),
             console=self._console,
             auto_refresh=True,
             refresh_per_second=16,
@@ -304,7 +328,7 @@ class ConsoleRenderer(Renderer):
             return
         try:
             live.update(self._current_renderable(settled=False), refresh=False)
-        except Exception:
+        except Exception:  # 刷新失败就丢这一帧
             pass
 
     def _reset_stream(self) -> None:
@@ -323,23 +347,17 @@ class ConsoleRenderer(Renderer):
         self._console.print()
         self._console.print(renderable)
 
-    def _preview(self) -> Any:
-        return self._current_renderable(settled=self._show_settled)
-
     def _freeze(self, renderable: Any) -> None:
         """把当前尾巴定格进主缓冲历史：有 Live 就留最后一帧，否则直接打印。"""
         live = self._live
         if live is not None:
             try:
-                self._show_settled = True
                 live.update(renderable, refresh=True)
                 live.transient = False
                 self._suspend_live()
                 return
-            except Exception:
+            except Exception:  # 定格失败则改走普通 print
                 self._suspend_live()
-            finally:
-                self._show_settled = False
         self._print_settled(renderable)
 
     def _commit(self, *, settled: bool) -> None:
@@ -550,7 +568,42 @@ class ConsoleRenderer(Renderer):
             self._final_answer = answer
             self._commit(settled=True)
 
-    # ── 双向交互 ──
+    def on_system_notice(self, text: str) -> None:
+        with self._prompt_lock:
+            self._suspend_live()
+            self._console.print(text)
+            self._ensure_live()
+
+    def bind_interaction(self, hub: InteractionHub) -> None:
+        self._hub = hub
+
+    def interrupt_main_prompt(self) -> None:
+        session = self._main_prompt_session
+        app = getattr(session, "app", None)
+        if app is None or not getattr(app, "is_running", False):
+            return
+        try:
+            app.exit(result=PROMPT_INTERRUPTED)
+        except Exception:  # ptk 的 exit() 在 race 时抛 Exception
+            pass
+
+    def fulfill_interaction(self, request: InteractionRequest) -> None:
+        try:
+            if request.kind == "permission":
+                result: Any = self._collect_permission(**request.payload)
+            elif request.kind == "ask_user":
+                result = self._collect_user(**request.payload)
+            else:
+                result = "n"
+        except Exception:  # 必须给 reply 队列一个值，否则 Agent 线程会挂
+            result = None if request.kind == "ask_user" else "n"
+        request.reply.put(result)
+
+    def _route_prompt(self, kind: InteractionKind, payload: dict[str, Any], local):
+        hub = self._hub
+        if hub is not None and not hub.is_collector_thread():
+            return hub.request(kind, payload)
+        return local(**payload)
 
     def prompt_permission(
         self,
@@ -560,9 +613,38 @@ class ConsoleRenderer(Renderer):
         reason: str,
         offer_always: bool,
     ) -> str:
+        payload = {
+            "tool_name": tool_name,
+            "subject": subject,
+            "risk_flags": risk_flags,
+            "reason": reason,
+            "offer_always": offer_always,
+        }
+        return self._route_prompt("permission", payload, self._collect_permission)
+
+    def prompt_user(
+        self,
+        question: str,
+        context: str = "",
+        options: tuple[str, ...] = (),
+    ) -> str | None:
+        payload = {
+            "question": question,
+            "context": context,
+            "options": options,
+        }
+        return self._route_prompt("ask_user", payload, self._collect_user)
+
+    def _collect_permission(
+        self,
+        tool_name: str,
+        subject: str,
+        risk_flags: str,
+        reason: str,
+        offer_always: bool,
+    ) -> str:
         with self._prompt_lock:
             self._suspend_live()
-
             info = Text()
             info.append("工具: ", style="bold")
             info.append(f"{tool_name}\n")
@@ -573,7 +655,6 @@ class ConsoleRenderer(Renderer):
             info.append(f"{risk_flags}\n")
             info.append("说明: ", style="bold")
             info.append(reason)
-
             self._console.print()
             self._console.print(
                 Panel(
@@ -583,21 +664,21 @@ class ConsoleRenderer(Renderer):
                     padding=(0, 1),
                 )
             )
-
             choices = "  [bold]y[/]=允许一次  [bold]n[/]=拒绝"
             if offer_always:
                 choices += "  [bold]a[/]=本会话总是允许该工具"
             self._console.print(choices)
 
-            prompt_text = HTML("  <b><ansiyellow>允许执行? </ansiyellow></b>")
-            try:
-                return prompt(prompt_text).strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                return "n"
-            finally:
+        prompt_text = HTML("  <b><ansiyellow>允许执行? </ansiyellow></b>")
+        try:
+            return prompt(prompt_text).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return "n"
+        finally:
+            with self._prompt_lock:
                 self._ensure_live()
 
-    def prompt_user(
+    def _collect_user(
         self,
         question: str,
         context: str = "",
@@ -605,7 +686,6 @@ class ConsoleRenderer(Renderer):
     ) -> str | None:
         with self._prompt_lock:
             self._suspend_live()
-
             body = Text()
             body.append(question, style="cyan")
             if context:
@@ -614,7 +694,6 @@ class ConsoleRenderer(Renderer):
                 body.append("\n")
                 for idx, opt in enumerate(options, start=1):
                     body.append(f"\n  {idx}. {opt}", style="dim")
-
             self._console.print()
             self._console.print(
                 Panel(
@@ -625,52 +704,85 @@ class ConsoleRenderer(Renderer):
                 )
             )
 
-            prompt_text = HTML("<b><ansicyan>你的回答 ❯ </ansicyan></b>")
-            while True:
-                try:
-                    answer = prompt(prompt_text).strip()
-                except (EOFError, KeyboardInterrupt):
-                    self._console.print()
+        prompt_text = HTML("<b><ansicyan>你的回答 ❯ </ansicyan></b>")
+        while True:
+            try:
+                answer = prompt(prompt_text).strip()
+            except (EOFError, KeyboardInterrupt):
+                self._console.print()
+                with self._prompt_lock:
                     self._ensure_live()
-                    return None
-                if answer:
+                return None
+            if answer:
+                with self._prompt_lock:
                     self._ensure_live()
-                    return answer
-                self._console.print("回答不能为空，请重新输入。", style="yellow")
+                return answer
+            self._console.print("回答不能为空，请重新输入。", style="yellow")
 
-    def prompt_main_input(self, prompt_session: Any = None) -> str | None:
-        with self._prompt_lock:
-            self._commit(settled=True)
-            self._console.print()
-
+    def prompt_main_input(
+        self, prompt_session: Any = None, *, queueing: bool = False,
+    ) -> str | None:
+        self._main_prompt_session = prompt_session
+        if not queueing:
+            with self._prompt_lock:
+                self._commit(settled=True)
+                self._console.print()
             prompt_text = HTML(
                 "<b><ansicyan>╭─ 💬 你的指令 </ansicyan><ansibrightblack>(输入 /exit 退出)</ansibrightblack></b>\n"
                 "<b><ansicyan>╰─❯ </ansicyan></b>"
             )
+        else:
+            prompt_text = HTML(
+                "<b><ansibrightblack>排队 ❯ </ansibrightblack></b>"
+            )
 
+        def _abort_if_interaction_pending() -> None:
+            hub = self._hub
+            if hub is None or not hub.has_pending():
+                return
             try:
-                if prompt_session is not None:
-                    val = prompt_session.prompt(prompt_text).strip()
-                else:
-                    val = prompt(prompt_text).strip()
-            except (EOFError, KeyboardInterrupt):
-                self._console.print()
-                return None
+                from prompt_toolkit.application import get_app
+                get_app().exit(result=PROMPT_INTERRUPTED)
+            except Exception:  # ptk 无 running app 时抛 Exception
+                pass
 
-            if val and val not in ("/exit", "/quit"):
-                # 按下回车后：抹掉两行输入提示符，原地替换为与最终答案规格一致的舒适卡片
-                sys.stdout.write("\033[A\033[2K\033[A\033[2K\r")
-                sys.stdout.flush()
-                self._console.print(
-                    Panel(
-                        Markdown(val),
-                        title="[bold]🧑 你的提问[/bold]",
-                        title_align="left",
-                        border_style="cyan",
-                        padding=(1, 2),
-                    )
+        try:
+            if prompt_session is not None:
+                val = prompt_session.prompt(
+                    prompt_text, pre_run=_abort_if_interaction_pending,
                 )
-            return val
+            else:
+                val = prompt(prompt_text, pre_run=_abort_if_interaction_pending)
+        except (EOFError, KeyboardInterrupt):
+            self._console.print()
+            return None
+
+        if val is PROMPT_INTERRUPTED:
+            return PROMPT_INTERRUPTED  # type: ignore[return-value]
+        if not isinstance(val, str):
+            return None
+        val = val.strip()
+
+        if val and val not in ("/exit", "/quit"):
+            with self._prompt_lock:
+                if queueing:
+                    preview = val.replace("\n", " ")
+                    if len(preview) > 80:
+                        preview = preview[:77] + "..."
+                    self._console.print(f"[dim]已排队：{preview}[/]")
+                else:
+                    sys.stdout.write("\033[A\033[2K\033[A\033[2K\r")
+                    sys.stdout.flush()
+                    self._console.print(
+                        Panel(
+                            Markdown(val),
+                            title="[bold]🧑 你的提问[/bold]",
+                            title_align="left",
+                            border_style="cyan",
+                            padding=(1, 2),
+                        )
+                    )
+        return val
 
     def render_session_history(
         self,
@@ -684,73 +796,10 @@ class ConsoleRenderer(Renderer):
         pager=True：全量不截断，用 Rich pager（less 风格）包住，
                    用户可 j/k 滚动、/ 搜索、q 退出。
         """
-        # 只取 route="final" 的轮次（跳过纯工具调用轮和 invalid 轮）
         final_turns = [t for t in session_state.turns if t.route == "final"]
-        if not final_turns:
-            return
-
-        recent = final_turns if pager else final_turns[-max_turns:]
-
-        # 建立 message_id → index 的反查表，用于找 user 消息
-        id_to_idx: dict[str, int] = {
-            r.id: i for i, r in enumerate(session_state.message_records)
-        }
-
-        pairs: list[tuple[str, str]] = []  # (user_text, final_answer)
-        for turn in recent:
-            # 提取 final_answer
-            final_answer = turn.parsed.get("final_answer", "")
-            if not isinstance(final_answer, str):
-                try:
-                    final_answer = json.dumps(final_answer, ensure_ascii=False)
-                except Exception:
-                    final_answer = str(final_answer)
-            if not final_answer.strip():
-                continue
-
-            # 在 message_records 里找这轮 assistant 消息的前一条「真实用户输入」：
-            # 排除记忆系统注入（<system-reminder> 开头）和工具结果回注（JSON tool_results）
-            asst_idx = id_to_idx.get(turn.message_id, -1)
-            user_text = ""
-            for i in range(asst_idx - 1, -1, -1):
-                rec = session_state.message_records[i]
-                role = rec.message.get("role", "")
-                if role == "user":
-                    content = rec.message.get("content", "")
-                    if not isinstance(content, str):
-                        continue
-                    stripped = content.lstrip()
-                    # 跳过各类系统注入消息，只保留真实用户输入：
-                    #   - 记忆注入：<system-reminder> 开头
-                    #   - 工具结果回注：{"tool_results": ...}
-                    #   - 验证器反馈：{"verification_feedback": ...}
-                    #   - 子任务通知：<task-notification> 开头
-                    if stripped.startswith("<system-reminder>"):
-                        continue
-                    if stripped.startswith("<task-notification>"):
-                        continue
-                    if stripped.startswith("{") and any(
-                        k in stripped[:120]
-                        for k in ("tool_results", "verification_feedback")
-                    ):
-                        continue
-
-                    user_text = content
-                    break
-
-            if user_text or final_answer:
-                pairs.append((user_text.strip(), final_answer.strip()))
-
-        # 去重：同一 user 问题因验证重试产生多个 final turn 时，
-        # 只保留最后一次（最终通过验证的那条回答）
-        deduped: list[tuple[str, str]] = []
-        for user_text, answer_text in pairs:
-            if deduped and deduped[-1][0] == user_text:
-                deduped[-1] = (user_text, answer_text)  # 用最新的回答覆盖
-            else:
-                deduped.append((user_text, answer_text))
-        pairs = deduped
-
+        pairs = collect_history_pairs(
+            session_state, max_turns=None if pager else max_turns
+        )
         if not pairs:
             return
 
@@ -794,7 +843,7 @@ class ConsoleRenderer(Renderer):
                     truncated = True
                 try:
                     answer_renderable = Markdown(display_answer)
-                except Exception:
+                except Exception:  # Markdown 解析失败则退回纯文本
                     answer_renderable = Text(display_answer, style="dim")
 
                 con.print(
@@ -827,6 +876,66 @@ def _tool_call_name(tool_call) -> str:
     if not name and isinstance(tool_call, dict):
         name = tool_call.get("name")
     return str(name or "tool")
+
+
+def collect_history_pairs(
+    session_state: Any,
+    *,
+    max_turns: int | None = 5,
+) -> list[tuple[str, str]]:
+    """User/assistant pairs from final turns, newest-deduped.
+
+    ``max_turns=None`` keeps every final turn; otherwise the last N final turns
+    are considered before pairing.
+    """
+    final_turns = [t for t in session_state.turns if t.route == "final"]
+    if not final_turns:
+        return []
+    recent = final_turns if max_turns is None else final_turns[-max_turns:]
+    id_to_idx: dict[str, int] = {
+        r.id: i for i, r in enumerate(session_state.message_records)
+    }
+    pairs: list[tuple[str, str]] = []
+    for turn in recent:
+        final_answer = turn.parsed.get("final_answer", "")
+        if not isinstance(final_answer, str):
+            try:
+                final_answer = json.dumps(final_answer, ensure_ascii=False)
+            except (TypeError, ValueError):
+                final_answer = str(final_answer)
+        if not final_answer.strip():
+            continue
+        asst_idx = id_to_idx.get(turn.message_id, -1)
+        user_text = ""
+        for i in range(asst_idx - 1, -1, -1):
+            rec = session_state.message_records[i]
+            role = rec.message.get("role", "")
+            if role != "user":
+                continue
+            content = rec.message.get("content", "")
+            if not isinstance(content, str):
+                continue
+            stripped = content.lstrip()
+            if stripped.startswith("<system-reminder>"):
+                continue
+            if stripped.startswith("<task-notification>"):
+                continue
+            if stripped.startswith("{") and any(
+                k in stripped[:120]
+                for k in ("tool_results", "verification_feedback")
+            ):
+                continue
+            user_text = content
+            break
+        if user_text or final_answer:
+            pairs.append((user_text.strip(), final_answer.strip()))
+    deduped: list[tuple[str, str]] = []
+    for user_text, answer_text in pairs:
+        if deduped and deduped[-1][0] == user_text:
+            deduped[-1] = (user_text, answer_text)
+        else:
+            deduped.append((user_text, answer_text))
+    return deduped
 
 
 class SilentRenderer(Renderer):

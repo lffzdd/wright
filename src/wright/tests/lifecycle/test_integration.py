@@ -1,4 +1,5 @@
 import json
+
 import pytest
 
 from wright.tests.responses import event, response

@@ -10,8 +10,8 @@ from __future__ import annotations
 from openai.types.chat import ChatCompletionMessageParam
 
 from ..events import ContentDone, UsageEvent
-from ..session import UsageRecord
 from ..llm import LLMClient
+from ..session import UsageRecord
 
 
 def side_query(llm: LLMClient, system: str, user: str) -> str:

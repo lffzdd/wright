@@ -1,5 +1,5 @@
-import time
 import threading
+import time
 from pathlib import Path
 
 from ..executor import ToolExecutor

@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-
 MAX_HIT_CONTENT_CHARS = 2_000
 MAX_SEARCH_OUTPUT_CHARS = 8_000
 MAX_TOP_K = 10

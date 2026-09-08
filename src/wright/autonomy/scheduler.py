@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 import json
 import queue
 import threading
-from typing import Any, Callable
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 from .models import AutomationRecord, DurableRunRecord
 from .store import AutonomyStore, AutonomyStoreError
@@ -24,7 +25,7 @@ class AutonomyScheduler:
     def __init__(
         self,
         store: AutonomyStore,
-        event_queue: "queue.Queue[tuple[str, object]]",
+        event_queue: queue.Queue[tuple[str, object]],
         *,
         poll_interval: float = 0.5,
         web_probe: Callable[[str], dict[str, Any]] | None = None,
@@ -199,8 +200,8 @@ class AutonomyScheduler:
                 return
             self.event_queue.put((
                 "AUTONOMY_ERROR",
-                f"web trigger {automation.id} probe failed: "
-                f"{type(exc).__name__}: {exc}",
+                (f"web trigger {automation.id} probe failed: "
+                f"{type(exc).__name__}: {exc}"),
             ))
         finally:
             with self._lock:

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Sequence
 from pathlib import Path
-import threading
 
 from .store import load_skill_file, normalize_skill_id, scan_skills, skill_file_path
 from .types import SkillDefinition, SkillMeta, SkillNotFoundError, SkillStoreError

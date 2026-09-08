@@ -11,8 +11,8 @@ from .store import AutonomyNotFoundError, AutonomyStore, AutonomyStoreError
 
 __all__ = [
     "AutomationRecord",
-    "AutonomyScheduler",
     "AutonomyNotFoundError",
+    "AutonomyScheduler",
     "AutonomyStore",
     "AutonomyStoreError",
     "DurableRunRecord",

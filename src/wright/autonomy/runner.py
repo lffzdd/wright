@@ -6,9 +6,10 @@ thread still only writes the store and enqueues ``DURABLE_RUN_DUE``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
-from typing import Any, Sequence
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Any
 
 from ..agent import Agent
 from ..agent_background import AgentBackgroundRuntime
@@ -30,7 +31,6 @@ from ..subagent import (
 )
 from ..tools.base import Tool
 from .scheduler import AutonomyScheduler
-
 
 # Isolated workers start at depth=1 and may spawn one leaf helper.
 DURABLE_MAX_DEPTH = 2

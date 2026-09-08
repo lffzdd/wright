@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import time
-from typing import Callable
+from collections.abc import Callable
 
-from ..tasks.types import TaskNotFoundError, TaskWaitCancelled
-from ..tasks.types import RuntimeTask, TaskKind, TaskStatus
+from ..tasks.types import (
+    RuntimeTask,
+    TaskKind,
+    TaskNotFoundError,
+    TaskStatus,
+    TaskWaitCancelled,
+)
 from .models import DurableRunRecord
 from .store import AutonomyNotFoundError, AutonomyStore
 

@@ -13,15 +13,6 @@
 注意 re-export 顺序:types 必须最先,后面几个模块都依赖它。
 """
 
-from .types import PermissionCheckResult, PermissionDecision
-from .resolver import (
-    FallbackApprovalHandler,
-    PermissionApprovalHandler,
-    UserInteractionHandler,
-    PermissionPolicy,
-    PermissionRequest,
-    PermissionResolver,
-)
 from .config import (
     PermissionMode,
     PermissionRule,
@@ -32,22 +23,31 @@ from .config import (
     load_permission_settings,
 )
 from .interactive import InteractiveApprovalHandler
+from .resolver import (
+    FallbackApprovalHandler,
+    PermissionApprovalHandler,
+    PermissionPolicy,
+    PermissionRequest,
+    PermissionResolver,
+    UserInteractionHandler,
+)
+from .types import PermissionCheckResult, PermissionDecision
 
 __all__ = [
+    "FallbackApprovalHandler",
+    "InteractiveApprovalHandler",
+    "PermissionApprovalHandler",
     "PermissionCheckResult",
     "PermissionDecision",
-    "PermissionApprovalHandler",
-    "UserInteractionHandler",
+    "PermissionMode",
     "PermissionPolicy",
     "PermissionRequest",
     "PermissionResolver",
-    "FallbackApprovalHandler",
-    "PermissionMode",
     "PermissionRule",
     "PermissionSettings",
     "RuleBasedApprovalHandler",
+    "UserInteractionHandler",
     "append_allow_rule",
     "default_settings_path",
     "load_permission_settings",
-    "InteractiveApprovalHandler",
 ]

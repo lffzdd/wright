@@ -7,15 +7,16 @@ from .service import (
     TaskService,
 )
 from .types import (
+    TERMINAL_TASK_STATUSES,
     RuntimeTask,
     TaskKind,
     TaskNotFoundError,
     TaskStatus,
     TaskWaitCancelled,
-    TERMINAL_TASK_STATUSES,
 )
 
 __all__ = [
+    "TERMINAL_TASK_STATUSES",
     "AgentTaskBackend",
     "RuntimeTask",
     "ShellTaskBackend",
@@ -25,5 +26,4 @@ __all__ = [
     "TaskService",
     "TaskStatus",
     "TaskWaitCancelled",
-    "TERMINAL_TASK_STATUSES",
 ]

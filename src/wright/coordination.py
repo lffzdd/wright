@@ -8,11 +8,12 @@ tree view. Child transcripts remain isolated inside their own SessionState.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import secrets
 import threading
 import time
-from typing import Any, Callable, Literal
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any, Literal
 
 from .logger import get_logger
 
@@ -75,7 +76,7 @@ class AgentControlConfig:
         }
 
     @classmethod
-    def from_dict(cls, value: Any) -> "AgentControlConfig":
+    def from_dict(cls, value: Any) -> AgentControlConfig:
         if not isinstance(value, dict):
             raise AgentControlError("agent control config 必须是对象")
         defaults = cls()
@@ -156,7 +157,7 @@ class AgentTaskRecord:
         }
 
     @classmethod
-    def from_dict(cls, value: Any) -> "AgentTaskRecord":
+    def from_dict(cls, value: Any) -> AgentTaskRecord:
         if not isinstance(value, dict):
             raise AgentControlError("agent task 必须是对象")
         status = value.get("status")
@@ -505,7 +506,7 @@ class AgentControlPlane:
         value: Any,
         *,
         mark_interrupted: bool = False,
-    ) -> "AgentControlPlane":
+    ) -> AgentControlPlane:
         if value in (None, {}):
             return cls()
         if not isinstance(value, dict):

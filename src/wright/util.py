@@ -1,4 +1,5 @@
 import json
+
 from openai.types.chat import ChatCompletionMessageParam
 
 from .tools.base import ToolCall, ToolResult

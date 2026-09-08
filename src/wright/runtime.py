@@ -18,6 +18,7 @@ from .agent import Agent
 from .agent_background import AgentBackgroundRuntime
 from .autonomy import AutonomyScheduler, AutonomyStore
 from .checkpoint import CheckpointError, SessionCheckpointStore
+from .interaction import InteractionHub
 from .knowledge import optional_knowledge_tools
 from .lifecycle import LifecycleConfigError, load_lifecycle_manager
 from .llm import LLMClient
@@ -43,7 +44,7 @@ from .permission import (
     append_allow_rule,
     load_permission_settings,
 )
-from .renderer import ConsoleRenderer
+from .renderer import ConsoleRenderer, Renderer
 from .services import RuntimeServices
 from .session import SessionState
 from .skills import SkillRegistry, optional_skill_tools
@@ -55,7 +56,6 @@ from .tools.loop_tools import loop_tool
 from .tools.mcp_client import McpManager, load_mcp_configs
 from .verifier import Verifier
 
-
 logger = get_logger(__name__)
 
 
@@ -63,9 +63,9 @@ logger = get_logger(__name__)
 class WrightRuntime:
     agent: Agent
     session_state: SessionState
-    renderer: ConsoleRenderer
+    renderer: Renderer
     services: RuntimeServices
-    event_queue: "queue.Queue[tuple[str, object]]"
+    event_queue: queue.Queue[tuple[str, object]]
     agent_idle: threading.Event
     lifecycle: Any
     mcp_manager: McpManager
@@ -111,10 +111,16 @@ def parse_cli_args() -> argparse.Namespace:
         metavar="DIR",
         help="要编辑的项目目录 (默认: 当前工作目录)",
     )
+    parser.add_argument(
+        "--ui",
+        choices=("cli", "tui"),
+        default="cli",
+        help="界面：cli 为主缓冲经典终端（默认），tui 为全屏备用缓冲区",
+    )
     return parser.parse_args()
 
 
-def _make_interaction_handler(renderer: ConsoleRenderer):
+def _make_interaction_handler(renderer: Renderer):
     """ask_user 的交互 adapter 工厂：UI 委托给 renderer，这里只做「原始回答 → PermissionCheckResult」的翻译。"""
 
     def handler(request: PermissionRequest) -> PermissionCheckResult:
@@ -157,7 +163,11 @@ def _load_env() -> None:
     load_dotenv()
 
 
-def build_runtime(args: argparse.Namespace) -> WrightRuntime:
+def build_runtime(
+    args: argparse.Namespace,
+    *,
+    renderer: Renderer | None = None,
+) -> WrightRuntime:
     _load_env()
 
     base_url = os.getenv("OPENAI_BASE_URL")
@@ -187,7 +197,9 @@ def build_runtime(args: argparse.Namespace) -> WrightRuntime:
         else llm_client
     )
 
-    renderer = ConsoleRenderer()
+    if renderer is None:
+        renderer = ConsoleRenderer()
+        renderer.bind_interaction(InteractionHub())
 
     workspace_dir = (args.workspace or Path.cwd()).expanduser().resolve()
     if not workspace_dir.is_dir():
@@ -223,7 +235,7 @@ def build_runtime(args: argparse.Namespace) -> WrightRuntime:
                     try:
                         idx = int(choice_str) - 1
                     except ValueError:
-                        raise CheckpointError(f"无效的选择: {choice_str}")
+                        raise CheckpointError(f"无效的选择: {choice_str}") from None
                 if not (0 <= idx < len(recent)):
                     raise CheckpointError(f"选择超出范围: {choice_str}")
                 session_id = recent[idx]["session_id"]
@@ -238,8 +250,8 @@ def build_runtime(args: argparse.Namespace) -> WrightRuntime:
     except CheckpointError as exc:
         raise SystemExit(f"无法恢复会话: {exc}") from exc
 
-    event_queue: "queue.Queue[tuple[str, object]]" = queue.Queue()
-    # agent_idle 提前创建：loop 调度线程和输入线程都要等它。
+    event_queue: queue.Queue[tuple[str, object]] = queue.Queue()
+    # agent_idle：loop 调度与主输入框都等它；忙碌时不画「你的指令」。
     agent_idle = threading.Event()
     agent_idle.set()
     background_runtime = AgentBackgroundRuntime(event_queue)

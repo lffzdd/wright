@@ -9,7 +9,12 @@ from wright.tests.responses import event, response
 
 from ...agent import Agent
 from ...checkpoint import SessionCheckpointStore
-from ...looping import LoopError, SessionLoopRegistry, parse_interval, parse_loop_command
+from ...looping import (
+    LoopError,
+    SessionLoopRegistry,
+    parse_interval,
+    parse_loop_command,
+)
 from ...renderer import SilentRenderer
 from ...services import RuntimeServices
 from ...session import SessionState
@@ -46,7 +51,7 @@ def test_loop_tick_uses_runtime_event_without_resetting_goal_or_plan(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     session = SessionState.create("keep this goal", workspace)
-    events, idle, registry = _registry()
+    events, _idle, registry = _registry()
     agent = Agent(
         ScriptLLM(["initial answer", "loop result"]),
         [],
@@ -101,7 +106,7 @@ def test_busy_agent_coalesces_missed_loop_ticks():
 
 
 def test_close_stops_loop_thread():
-    events, idle, registry = _registry()
+    _events, _idle, registry = _registry()
     registry.start()
     registry.create(prompt="ping", interval_seconds=0.05)
     thread = registry._thread
@@ -116,7 +121,7 @@ def test_close_stops_loop_thread():
 
 
 def test_loop_rejects_short_interval_and_capacity():
-    events, idle, registry = _registry(min_interval=5)
+    _events, _idle, registry = _registry(min_interval=5)
     with pytest.raises(LoopError, match=">= 5"):
         registry.create(prompt="too fast", interval_seconds=4)
     for index in range(20):
@@ -137,7 +142,7 @@ def test_loop_state_is_absent_from_checkpoint(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     session = SessionState.create("goal", workspace)
-    events, idle, registry = _registry()
+    _events, _idle, registry = _registry()
     created = registry.create(
         name="secret-loop-name",
         prompt="UNIQUE_LOOP_PROMPT_xyz",
@@ -149,7 +154,7 @@ def test_loop_state_is_absent_from_checkpoint(tmp_path):
     assert created.id not in text
     assert "secret-loop-name" not in text
     assert "UNIQUE_LOOP_PROMPT_xyz" not in text
-    restored = store.load(session.session_id)
+    store.load(session.session_id)
     registry.close()
 
 

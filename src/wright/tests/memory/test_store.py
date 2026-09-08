@@ -2,12 +2,14 @@
 
 from pathlib import Path
 
+import pytest
+
 from ...memory.store import (
+    MAX_INDEX_LINES,
     MemoryAlreadyExistsError,
     MemoryNotFoundError,
     create_memory,
     delete_memory,
-    MAX_INDEX_LINES,
     dump_frontmatter,
     format_manifest,
     parse_frontmatter,
@@ -20,7 +22,6 @@ from ...memory.store import (
     update_memory,
     write_memory_file,
 )
-import pytest
 
 
 def test_frontmatter_round_trip():
@@ -47,7 +48,6 @@ def test_slugify():
 
 
 def test_scan_sorts_newest_first_and_skips_index(tmp_path: Path):
-    import os
     import time
 
     write_memory_file("old", "old one", "user", "x", directory=tmp_path)

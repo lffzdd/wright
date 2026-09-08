@@ -11,9 +11,9 @@ agent's job to substantiate with tool results.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
-from typing import Iterable
+from collections.abc import Iterable
+from dataclasses import dataclass
 
 from openai.types.chat import ChatCompletionMessageParam
 
@@ -35,13 +35,13 @@ class VerificationResult:
     issues: tuple[VerificationIssue, ...] = ()
 
     @classmethod
-    def approve(cls) -> "VerificationResult":
+    def approve(cls) -> VerificationResult:
         return cls(True)
 
     @classmethod
     def reject(
         cls, issues: Iterable[VerificationIssue]
-    ) -> "VerificationResult":
+    ) -> VerificationResult:
         normalized = tuple(issues)
         if not normalized:
             normalized = (

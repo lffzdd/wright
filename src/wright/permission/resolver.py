@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from .types import PermissionCheckResult
 
@@ -69,7 +70,7 @@ class FallbackApprovalHandler:
     def __init__(self, *handlers: PermissionApprovalHandler):
         self.handlers = handlers
 
-    def __call__(self, request: "PermissionRequest") -> PermissionCheckResult:
+    def __call__(self, request: PermissionRequest) -> PermissionCheckResult:
         for handler in self.handlers:
             result = handler(request)
             if result.decision in ("allow", "deny"):

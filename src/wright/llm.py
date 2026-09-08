@@ -13,15 +13,14 @@ LLM 传输层：屏蔽"流式 / 非流式"的差异，对外统一吐出事件�
     不需要知道也不关心底层走的是哪条路径。
 """
 
-import time
 import random
+import time
+from collections.abc import Callable, Iterator
 
-from typing import Iterator, Callable
-
-from openai import OpenAI, APIConnectionError, APIStatusError, omit
+from openai import APIConnectionError, APIStatusError, OpenAI, omit
 from openai.types.chat import ChatCompletionMessageParam
 
-from .events import LLMEvent, ReasoningDelta, ContentDelta, ContentDone, UsageEvent
+from .events import ContentDelta, ContentDone, LLMEvent, ReasoningDelta, UsageEvent
 
 
 class LLMClient:

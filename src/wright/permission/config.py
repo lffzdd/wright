@@ -42,7 +42,6 @@ from typing import Literal
 from .resolver import PermissionRequest
 from .types import PermissionCheckResult
 
-
 PermissionMode = Literal["default", "acceptEdits", "bypass", "plan"]
 _VALID_MODES = ("default", "acceptEdits", "bypass", "plan")
 
@@ -62,7 +61,7 @@ class PermissionRule:
     subject_glob: str | None = None
 
     @classmethod
-    def parse(cls, raw: str) -> "PermissionRule":
+    def parse(cls, raw: str) -> PermissionRule:
         raw = raw.strip()
         if raw.endswith(")") and "(" in raw:
             name, _, rest = raw.partition("(")
@@ -92,7 +91,7 @@ class PermissionSettings:
     ask: list[PermissionRule] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "PermissionSettings":
+    def from_dict(cls, data: dict) -> PermissionSettings:
         mode = data.get("mode", "default")
         if mode not in _VALID_MODES:
             raise ValueError(

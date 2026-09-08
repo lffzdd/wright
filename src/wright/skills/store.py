@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import re
 import tempfile
+from pathlib import Path
 from typing import Any
 
 from .types import (
@@ -22,7 +22,6 @@ from .types import (
     SkillStoreError,
 )
 
-
 _FRONTMATTER_RE = re.compile(
     r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*\r?\n?(.*)\Z",
     re.DOTALL,
@@ -31,8 +30,7 @@ _FRONTMATTER_RE = re.compile(
 
 def normalize_skill_id(skill_id: str) -> str:
     value = str(skill_id).strip()
-    if value.endswith("/SKILL.md"):
-        value = value[: -len("/SKILL.md")]
+    value = value.removesuffix("/SKILL.md")
     if "/" in value or "\\" in value or value in {".", ".."}:
         raise SkillStoreError("skill_id 必须是安全的目录名，不能包含路径")
     if not value or SAFE_SKILL_ID_RE.fullmatch(value) is None:

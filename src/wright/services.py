@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class RuntimeServices:
-    agent_background: "AgentBackgroundRuntime | None" = None
-    durable_store: "AutonomyStore | None" = None
-    autonomy_scheduler: "AutonomyScheduler | None" = None
-    loop_registry: "SessionLoopRegistry | None" = None
+    agent_background: AgentBackgroundRuntime | None = None
+    durable_store: AutonomyStore | None = None
+    autonomy_scheduler: AutonomyScheduler | None = None
+    loop_registry: SessionLoopRegistry | None = None

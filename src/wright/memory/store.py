@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import os
-from pathlib import Path
 import re
 import tempfile
 import threading
 import unicodedata
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 
 from .paths import MEMORY_INDEX, entrypoint_path, memory_dir
 from .types import MemoryType, parse_memory_type
@@ -152,8 +152,7 @@ def slugify(name: str) -> str:
 
 def normalize_memory_id(memory_id: str) -> str:
     value = str(memory_id).strip()
-    if value.endswith(".md"):
-        value = value[:-3]
+    value = value.removesuffix(".md")
     if not value or _SAFE_ID_RE.fullmatch(value) is None:
         raise MemoryStoreError("memory_id 必须是安全的记忆 id，不能包含路径")
     return value
@@ -215,7 +214,7 @@ def _atomic_write(path: Path, text: str) -> None:
 
 def _read_head(path: Path, max_lines: int) -> str:
     lines: list[str] = []
-    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+    with open(path, encoding="utf-8", errors="replace") as handle:
         for index, line in enumerate(handle):
             if index >= max_lines:
                 break
@@ -382,9 +381,7 @@ def search_memories(
             record = get_memory(header.id, directory)
         except MemoryStoreError:
             continue
-        haystack = "\n".join(
-            [record.id, record.name, record.description, record.type, record.content]
-        ).casefold()
+        haystack = f"{record.id}\n{record.name}\n{record.description}\n{record.type}\n{record.content}".casefold()
         if terms and not all(term in haystack for term in terms):
             continue
         score = sum(haystack.count(term) for term in terms) if terms else 0

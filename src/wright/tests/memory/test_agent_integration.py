@@ -4,9 +4,9 @@
 """
 
 import json
-from wright.tests.responses import event, response
-
 from pathlib import Path
+
+from wright.tests.responses import event, response
 
 from ...agent import Agent
 from ...events import UsageEvent

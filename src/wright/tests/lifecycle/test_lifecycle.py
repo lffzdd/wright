@@ -11,7 +11,6 @@ from ...lifecycle import (
     TraceRecorder,
     load_lifecycle_manager,
 )
-from ...session import SessionState
 from ...tools.base import Tool, ToolCall, ToolResult
 
 

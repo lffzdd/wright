@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import math
+from dataclasses import dataclass, field
 from typing import Any, Literal
 from urllib.parse import urlparse
-
 
 TriggerType = Literal[
     "once", "interval", "file_change", "web_change", "event"
@@ -80,9 +79,9 @@ class TriggerSpec:
         return value
 
     @classmethod
-    def from_dict(cls, value: Any) -> "TriggerSpec":
+    def from_dict(cls, value: Any) -> TriggerSpec:
         if not isinstance(value, dict):
-            raise ValueError("trigger must be an object")
+            raise TypeError("trigger must be an object")
         trigger_type = value.get("type")
         if trigger_type not in {
             "once", "interval", "file_change", "web_change", "event"
@@ -189,7 +188,7 @@ def _optional_float(value: Any) -> float | None:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError("trigger time values must be numbers")
+        raise TypeError("trigger time values must be numbers")
     return float(value)
 
 

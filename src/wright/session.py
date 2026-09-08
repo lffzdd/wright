@@ -1,18 +1,19 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from pathlib import Path
 import json
 import threading
 import time
-from typing import Any, Callable, Literal, TypeAlias
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Literal, TypeAlias
 from uuid import uuid4
 
 from openai.types.chat import ChatCompletionMessageParam
 
 from .coordination import AgentControlPlane
 from .planning import PlanManager
-from .tools.base import ToolResult, ToolCall
+from .tools.base import ToolCall, ToolResult
 from .util import estimate_message_tokens
 
 CallId: TypeAlias = str
@@ -96,15 +97,15 @@ class SessionState:
         with self._cwd_lock:
             self.cwd = cwd.resolve()
 
-    def register_background_task(self, task: "BackgroundTask") -> None:
+    def register_background_task(self, task: BackgroundTask) -> None:
         with self._background_tasks_lock:
             self.background_tasks[task.task_id] = task
 
-    def get_background_task(self, task_id: str) -> "BackgroundTask | None":
+    def get_background_task(self, task_id: str) -> BackgroundTask | None:
         with self._background_tasks_lock:
             return self.background_tasks.get(task_id)
 
-    def list_background_tasks(self) -> list["BackgroundTask"]:
+    def list_background_tasks(self) -> list[BackgroundTask]:
         """Return a stable registry snapshot; individual tasks remain live."""
         with self._background_tasks_lock:
             return list(self.background_tasks.values())
@@ -238,7 +239,7 @@ class SessionState:
         assistant_raw: str,
         error: str,
         parsed: dict | None = None,
-    ) -> "TurnRecord":
+    ) -> TurnRecord:
         """记录一轮无效 assistant 输出,比如 JSON 解析失败或 route 失败。"""
         step = self._next_step()
         message_id = self._append_assistant_message(assistant_raw)
@@ -275,7 +276,7 @@ class SessionState:
 
         return execution
 
-    def record_usage_for_turn(self, turn: "TurnRecord", usage: "UsageRecord") -> None:
+    def record_usage_for_turn(self, turn: TurnRecord, usage: UsageRecord) -> None:
         turn.usage = usage
         self.last_usage = usage
         # 校准 running total:此刻 assistant 已入队、工具结果尚未追加,
@@ -284,13 +285,13 @@ class SessionState:
         self.context_tokens = usage.prompt_tokens + usage.completion_tokens
         self.add_usage(usage)
 
-    def add_usage(self, usage: "UsageRecord") -> None:
+    def add_usage(self, usage: UsageRecord) -> None:
         """累计消费；辅助请求不改变主对话的上下文估算。"""
         self.total_usage.prompt_tokens += usage.prompt_tokens
         self.total_usage.completion_tokens += usage.completion_tokens
         self.total_usage.total_tokens += usage.total_tokens
 
-    def task_usage(self) -> "UsageRecord":
+    def task_usage(self) -> UsageRecord:
         usage = UsageRecord(**{
             name: max(0, value - getattr(self.task_usage_start, name))
             for name, value in vars(self.total_usage).items()
@@ -304,10 +305,10 @@ class SessionState:
 
     def record_verification(
         self,
-        turn: "TurnRecord",
+        turn: TurnRecord,
         approved: bool,
         issues: list[dict[str, str]],
-    ) -> "VerificationRecord":
+    ) -> VerificationRecord:
         if turn not in self.turns or turn.route != "final":
             raise ValueError("verification 只能关联已记录的 final turn")
         record = VerificationRecord(approved=approved, issues=issues)
@@ -352,7 +353,7 @@ class UsageRecord:
     total_tokens: int = 0
 
     @classmethod
-    def from_usage(cls, usage: Any) -> "UsageRecord":
+    def from_usage(cls, usage: Any) -> UsageRecord:
         """把 LLM 原始 usage 归一成 UsageRecord。
 
         原始 usage 形态不一:有的接口给 dict,有的给带属性的对象(SDK 模型),
@@ -385,7 +386,7 @@ class TurnRecord:
     error: str | None = None
 
     usage: UsageRecord | None = None
-    verification: "VerificationRecord | None" = None
+    verification: VerificationRecord | None = None
 
 
 @dataclass

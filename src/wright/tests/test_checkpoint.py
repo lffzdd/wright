@@ -98,7 +98,7 @@ def test_checkpoint_does_not_restore_live_autonomy_handles(tmp_path):
     store = SessionCheckpointStore(tmp_path / "checkpoints")
 
     store.save(session)
-    restored = store.load(session.session_id)
+    store.load(session.session_id)
     text = store.path_for(session.session_id).read_text(encoding="utf-8")
 
     assert "durable_task_store" not in text

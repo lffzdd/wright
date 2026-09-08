@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from rich.console import Console
 
@@ -17,8 +18,8 @@ from .logger import get_logger
 from .permission import PermissionResolver
 from .renderer import Renderer, SilentRenderer
 from .session import SessionState, UsageRecord
-from .tools.base import Tool, ToolResult, ToolRuntime
 from .tools.autonomy_tools import autonomy_tools
+from .tools.base import Tool, ToolResult, ToolRuntime
 from .tools.task_tools import task_tools
 
 logger = get_logger(__name__)
@@ -41,6 +42,13 @@ class SubAgentRenderer(Renderer):
         self._console = Console(highlight=False)
 
     def _line(self, text: str, style: str = "") -> None:
+        try:
+            from .tui.renderer import TUIRenderer
+
+            if TUIRenderer.is_active():
+                return
+        except Exception:
+            pass
         self._console.print(
             f"{self._prefix}{text}", style=style, highlight=False, markup=False
         )

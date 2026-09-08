@@ -9,12 +9,12 @@
 手里,渲染只是从插槽插话——不接也照跑(便于单测)。
 """
 
+import threading
+import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from pathlib import Path
-import threading
-import time
-from typing import Callable
 
 from .logger import get_logger
 from .permission import (
@@ -32,7 +32,6 @@ from .tools.base import (
     ToolRuntime,
 )
 from .tools.validation import validate_tool_arguments
-
 
 logger = get_logger(__name__)
 

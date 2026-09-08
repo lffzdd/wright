@@ -10,8 +10,8 @@ from ...autonomy import (
     TriggerSpec,
 )
 from ...autonomy.triggers import probe_public_web_page
-from ...session import SessionState
 from ...services import RuntimeServices
+from ...session import SessionState
 from ...tasks import TaskService
 
 
@@ -221,7 +221,7 @@ def test_web_probe_rejects_private_network_targets():
 
 def test_manual_recovery_marks_unknown_but_retry_policy_requeues(tmp_path):
     store = _store(tmp_path)
-    manual = store.create_automation(
+    store.create_automation(
         name="manual",
         prompt="unsafe work",
         trigger=TriggerSpec(type="once", run_at=0),

@@ -1,6 +1,7 @@
 # 文件操作工具链
-from pathlib import Path
 import threading
+from pathlib import Path
+
 from ..permission import PermissionCheckResult
 from .base import Tool, ToolResult, ToolRuntime
 
@@ -60,7 +61,7 @@ def read_file(
             max_chars = 8000  # 转不动(None、乱字符串)-> 回默认
         max_chars = max(0, min(max_chars, MAX_READ_CHARS))  # min 砍上限,max 托下限
 
-        with open(safe_path, "r", encoding="utf-8", errors="replace") as f:
+        with open(safe_path, encoding="utf-8", errors="replace") as f:
             content = f.read(max_chars + 1)
 
         truncated = len(content) > max_chars

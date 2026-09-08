@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import tempfile
 import threading
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Literal
 
 from .paths import memory_dir
-
 
 EpisodeStatus = Literal["completed", "failed", "max_steps"]
 EPISODES_DIRECTORY = "episodes"
@@ -72,7 +71,7 @@ class EpisodeRecord:
         }
 
     @classmethod
-    def from_dict(cls, value: Any) -> "EpisodeRecord":
+    def from_dict(cls, value: Any) -> EpisodeRecord:
         if not isinstance(value, dict):
             raise EpisodeStoreError("episode 必须是对象")
         episode_id = value.get("id")
@@ -319,7 +318,7 @@ def episode_from_session(session_state: Any, final_answer: str | None) -> Episod
     total_tokens = sum(
         turn.usage.total_tokens for turn in current_turns if turn.usage is not None
     )
-    agent_tree = getattr(session_state, "control_plane").tree_summary(
+    agent_tree = session_state.control_plane.tree_summary(
         getattr(session_state, "agent_root_turn_id", "")
     )
 
@@ -352,7 +351,7 @@ def episode_from_session(session_state: Any, final_answer: str | None) -> Episod
         started_step=start,
         ended_step=end,
         created_at=datetime.now(timezone.utc).isoformat(),
-        plan=getattr(session_state, "plan_manager").snapshot(),
+        plan=session_state.plan_manager.snapshot(),
         tools=tools,
         agents=agents,
         verification=verification,

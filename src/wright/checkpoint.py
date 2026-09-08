@@ -2,23 +2,28 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import os
-from pathlib import Path
 import re
 import tempfile
 import threading
-from typing import Any
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, TypeVar, cast
 
-from .planning import PlanManager
+from openai.types.chat import ChatCompletionMessageParam
+
 from .coordination import AgentControlError, AgentControlPlane
 from .logger import get_logger
+from .planning import PlanManager
 from .session import (
     MessageRecord,
     SessionState,
+    SessionStatus,
     ToolExecutionRecord,
+    ToolExecutionStatus,
     TurnRecord,
+    TurnRoute,
     UsageRecord,
     VerificationRecord,
 )
@@ -29,9 +34,15 @@ logger = get_logger(__name__)
 
 CHECKPOINT_VERSION = 2
 _SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,128}")
-_SESSION_STATUSES = {"running", "completed", "failed", "max_steps"}
-_TURN_ROUTES = {"tool_calls", "final", "invalid"}
-_EXECUTION_STATUSES = {"pending", "running", "succeeded", "failed", "timeout"}
+_T = TypeVar("_T", bound=str)
+_SESSION_STATUSES: frozenset[SessionStatus] = frozenset(
+    {"running", "completed", "failed", "max_steps"}
+)
+_TURN_ROUTES: frozenset[TurnRoute] = frozenset({"tool_calls", "final", "invalid"})
+_EXECUTION_STATUSES: frozenset[ToolExecutionStatus] = frozenset(
+    {"pending", "running", "succeeded", "failed", "timeout"}
+)
+_MESSAGE_ROLES = frozenset({"system", "user", "assistant", "tool", "developer"})
 
 
 class CheckpointError(ValueError):
@@ -248,9 +259,7 @@ def _deserialize_session(payload: Any) -> SessionState:
     session_id = _string(data.get("session_id"), "session_id")
     if _SESSION_ID_PATTERN.fullmatch(session_id) is None:
         raise CheckpointError("非法 session_id")
-    status = _string(data.get("status"), "status")
-    if status not in _SESSION_STATUSES:
-        raise CheckpointError(f"非法 session status: {status}")
+    status = _one_of(data.get("status"), _SESSION_STATUSES, "session status")
 
     workspace_dir = Path(
         _string(data.get("workspace_dir"), "workspace_dir")
@@ -308,7 +317,7 @@ def _deserialize_session(payload: Any) -> SessionState:
 
     session = SessionState(
         session_id=session_id,
-        status=status,  # type: ignore[arg-type]
+        status=status,
         user_goal=_string(data.get("user_goal"), "user_goal", allow_empty=True),
         workspace_dir=workspace_dir,
         cwd=cwd,
@@ -403,12 +412,9 @@ def _deserialize_messages(value: Any) -> list[MessageRecord]:
     for index, row in enumerate(rows):
         item = _object(row, f"message_records[{index}]")
         message = _object(item.get("message"), f"message_records[{index}].message")
-        role = message.get("role")
-        if role not in {"system", "user", "assistant", "tool", "developer"}:
-            raise CheckpointError(f"非法 message role: {role}")
         records.append(MessageRecord(
             _string(item.get("id"), f"message_records[{index}].id"),
-            message,  # type: ignore[arg-type]
+            _message_param(message),
         ))
     return records
 
@@ -418,9 +424,7 @@ def _deserialize_turns(value: Any) -> list[TurnRecord]:
     turns: list[TurnRecord] = []
     for index, row in enumerate(rows):
         item = _object(row, f"turns[{index}]")
-        route = _string(item.get("route"), f"turns[{index}].route")
-        if route not in _TURN_ROUTES:
-            raise CheckpointError(f"非法 turn route: {route}")
+        route = _one_of(item.get("route"), _TURN_ROUTES, f"turns[{index}].route")
         execution_ids = _array(
             item.get("tool_execution_ids"), f"turns[{index}].tool_execution_ids"
         )
@@ -450,7 +454,7 @@ def _deserialize_turns(value: Any) -> list[TurnRecord]:
                 item.get("message_id"), f"turns[{index}].message_id"
             ),
             parsed=_object(item.get("parsed"), f"turns[{index}].parsed"),
-            route=route,  # type: ignore[arg-type]
+            route=route,
             tool_execution_ids=list(execution_ids),
             error=_optional_string(item.get("error"), f"turns[{index}].error"),
             usage=_deserialize_usage(item.get("usage"), f"turns[{index}].usage"),
@@ -483,9 +487,9 @@ def _deserialize_executions(value: Any) -> dict[str, ToolExecutionRecord]:
                 err=_string(raw_result.get("err", ""), "tool result.err", allow_empty=True),
                 data=raw_result.get("data"),
             )
-        execution_status = _string(item.get("status"), "tool execution status")
-        if execution_status not in _EXECUTION_STATUSES:
-            raise CheckpointError(f"非法 tool execution status: {execution_status}")
+        execution_status = _one_of(
+            item.get("status"), _EXECUTION_STATUSES, "tool execution status"
+        )
         executions[call_id] = ToolExecutionRecord(
             call=ToolCall(
                 name=_string(raw_call.get("name"), "tool call name"),
@@ -494,7 +498,7 @@ def _deserialize_executions(value: Any) -> dict[str, ToolExecutionRecord]:
             ),
             result=result,
             step=_positive_int(item.get("step"), "tool execution step"),
-            status=execution_status,  # type: ignore[arg-type]
+            status=execution_status,
             started_at=_optional_number(item.get("started_at"), "started_at"),
             ended_at=_optional_number(item.get("ended_at"), "ended_at"),
         )
@@ -592,6 +596,19 @@ def _string(value: Any, field: str, *, allow_empty: bool = False) -> str:
     if not isinstance(value, str) or (not allow_empty and not value):
         raise CheckpointError(f"{field} 必须是字符串")
     return value
+
+
+def _one_of(value: Any, allowed: frozenset[_T], field: str) -> _T:
+    text = _string(value, field)
+    if text not in allowed:
+        raise CheckpointError(f"非法 {field}: {text}")
+    return cast(_T, text)
+
+
+def _message_param(value: dict[str, Any]) -> ChatCompletionMessageParam:
+    if value.get("role") not in _MESSAGE_ROLES:
+        raise CheckpointError(f"非法 message role: {value.get('role')}")
+    return cast(ChatCompletionMessageParam, value)
 
 
 def _optional_string(value: Any, field: str) -> str | None:

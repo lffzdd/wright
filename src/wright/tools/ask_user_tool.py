@@ -5,7 +5,6 @@ from __future__ import annotations
 from ..permission import PermissionCheckResult
 from .base import Tool, ToolResult, ToolRuntime
 
-
 MAX_QUESTION_LENGTH = 1_000
 MAX_CONTEXT_LENGTH = 1_000
 MAX_OPTIONS = 8
@@ -25,7 +24,7 @@ def _clean_options(values: object) -> tuple[str, ...]:
     if values is None:
         return ()
     if not isinstance(values, list):
-        raise ValueError("options 必须是字符串数组")
+        raise TypeError("options 必须是字符串数组")
     if len(values) > MAX_OPTIONS:
         raise ValueError(f"options 不能超过 {MAX_OPTIONS} 项")
 
@@ -54,7 +53,7 @@ def ask_user(
     try:
         question = _clean_text(question, "question", MAX_QUESTION_LENGTH)
         if not isinstance(context, str):
-            raise ValueError("context 必须是字符串")
+            raise TypeError("context 必须是字符串")
         context = context.strip()
         if len(context) > MAX_CONTEXT_LENGTH:
             raise ValueError(f"context 不能超过 {MAX_CONTEXT_LENGTH} 个字符")
@@ -78,11 +77,11 @@ def check_ask_user_permission(
         question = _clean_text(arguments.get("question"), "question", MAX_QUESTION_LENGTH)
         context = arguments.get("context", "")
         if not isinstance(context, str):
-            raise ValueError("context 必须是字符串")
+            raise TypeError("context 必须是字符串")
         if len(context.strip()) > MAX_CONTEXT_LENGTH:
             raise ValueError(f"context 不能超过 {MAX_CONTEXT_LENGTH} 个字符")
         _clean_options(arguments.get("options"))
-    except ValueError as e:
+    except (TypeError, ValueError) as e:
         return PermissionCheckResult(
             "deny", f"ask_user input invalid: {e}", source="tool_validation"
         )

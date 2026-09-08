@@ -3,8 +3,8 @@
 from wright.tests.responses import event, response
 
 from ...agent import Agent
-from ...renderer import SilentRenderer
 from ...permission import PermissionCheckResult, PermissionResolver
+from ...renderer import SilentRenderer
 from ...session import SessionState
 from ...tools.ask_user_tool import ask_user_tool
 

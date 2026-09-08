@@ -4,8 +4,9 @@ import tempfile
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from ..logger import get_logger
 from ..processes import terminate_process_tree
@@ -109,9 +110,8 @@ def execute_command(
         cwd = session.get_cwd()
 
         # 注入 cwd 追踪：用临时文件，和 Claude Code 的 claude-{id}-cwd 一致
-        tmp = tempfile.NamedTemporaryFile(prefix="wright-cwd-", delete=False)
-        cwd_file = Path(tmp.name)
-        tmp.close()
+        with tempfile.NamedTemporaryFile(prefix="wright-cwd-", delete=False) as tmp:
+            cwd_file = Path(tmp.name)
         cwd_file.unlink(missing_ok=True)
         # 末尾追加 `&& pwd -P > tmpfile`，无论命令成败都不影响返回码
         # （pwd -P 只在主命令成功时才写，和 Claude Code 的 &&  行为一致）

@@ -10,7 +10,6 @@ from urllib.error import HTTPError
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-
 MAX_WEB_PROBE_BYTES = 1_000_000
 
 

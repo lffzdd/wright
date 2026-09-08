@@ -5,7 +5,6 @@ from pathlib import Path
 from ..permission import PermissionCheckResult
 from .base import ToolRuntime
 
-
 _READ_ONLY_COMMANDS = {
     "cat",
     "cut",

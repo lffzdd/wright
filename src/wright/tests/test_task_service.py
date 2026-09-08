@@ -1,9 +1,9 @@
 import queue
 
 from ..agent import Agent
-from ..repl import _task_notification_event
 from ..renderer import SilentRenderer
 from ..session import SessionState
+from ..session_host import _task_notification_event
 from ..subagent import (
     build_agent_tools,
     cancel_agent_task_tool,

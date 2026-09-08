@@ -1,5 +1,5 @@
 from ...tools import tools as base_tools
-from ...tools.ask_user_tool import ask_user, ask_user_tool
+from ...tools.ask_user_tool import ask_user
 from ...tools.base import ToolRuntime
 
 

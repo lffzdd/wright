@@ -13,8 +13,8 @@ from ..llm import LLMClient
 from ..logger import get_logger
 from .episode import EpisodeRecord, EpisodeStore, episode_from_session
 from .extract import extract_and_save
-from .paths import memory_dir
 from .llm_util import metered_events
+from .paths import memory_dir
 from .prompt import build_memory_instructions
 from .recall import build_recall_block
 

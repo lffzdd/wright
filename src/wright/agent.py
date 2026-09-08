@@ -1,25 +1,25 @@
 import json
-from collections.abc import Sequence
-from dataclasses import dataclass
 import time
-from typing import TYPE_CHECKING, Callable
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, ClassVar
 
 from openai.types.chat import ChatCompletionMessageParam
 
 from .context import ContextCompactor
 from .events import ContentDelta, ContentDone, ReasoningDelta, UsageEvent
 from .executor import ToolExecutor
+from .llm import LLMClient
 from .logger import get_logger
 from .memory import MemoryManager
 from .permission import PermissionResolver
-from .llm import LLMClient
 from .prompt import build_system_prompt
+from .protocol import TurnAbort, encode_tools, parse_turn
 from .renderer import Renderer
 from .services import RuntimeServices
 from .session import SessionState, UsageRecord
 from .skills.prompt import catalog_reminder
 from .skills.registry import SkillRegistry
-from .protocol import TurnAbort, encode_tools, parse_turn
 from .tools.base import Tool, ToolResult
 from .util import build_tool_results_messages, estimate_message_tokens
 from .verifier import Verifier
@@ -38,7 +38,7 @@ class _RetryCounters:
 
 
 class Agent:
-    _TERMINAL_MARKERS = {
+    _TERMINAL_MARKERS: ClassVar[dict[str, str]] = {
         "failed": "mark_failed",
         "max_steps": "mark_max_steps",
     }
@@ -840,7 +840,9 @@ class Agent:
                     for call in turn.tool_calls
                 ):
                     raise TurnAbort("Provider reused a tool call ID from an earlier turn")
-                for call, recorded in zip(turn.tool_calls, turn.parsed["tool_calls"]):
+                for call, recorded in zip(
+                    turn.tool_calls, turn.parsed["tool_calls"], strict=True
+                ):
                     call.name = self._tool_names.get(call.name, call.name)
                     recorded["name"] = call.name
                 counters.invalid = 0

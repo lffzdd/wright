@@ -1,9 +1,9 @@
 """召回选择器(用假 LLM)+ 记忆工具的单测。"""
 
 import json
-from wright.tests.responses import event
-
 from pathlib import Path
+
+from wright.tests.responses import event
 
 from ...memory.recall import build_recall_block, find_relevant_memories
 from ...memory.store import write_memory_file

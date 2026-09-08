@@ -154,8 +154,37 @@ def test_console_reports_completion_rejection():
     assert "计划未完成" in text
 
 
+def test_console_live_takes_a_snapshot_not_a_callback(monkeypatch):
+    captured: dict = {}
+
+    class FakeLive:
+        def __init__(self, renderable=None, **kwargs):
+            captured["renderable"] = renderable
+            captured["get_renderable"] = kwargs.get("get_renderable")
+            captured["updates"] = []
+
+        def start(self):
+            captured["started"] = True
+
+        def update(self, renderable, *, refresh=False):
+            captured["updates"].append(renderable)
+
+        def stop(self):
+            captured["stopped"] = True
+
+    monkeypatch.setattr("wright.renderer.Live", FakeLive)
+    renderer = ConsoleRenderer()
+    renderer._can_live = lambda: True
+    renderer.on_content_delta("hello")
+    assert captured.get("started")
+    assert captured["get_renderable"] is None
+    assert captured["renderable"] is not None
+    renderer.on_content_delta(" world")
+    assert captured["updates"]
+
+
 def test_legacy_checkpoint_derives_task_boundary(tmp_path):
-    from wright.checkpoint import _serialize_session, _deserialize_session
+    from wright.checkpoint import _deserialize_session, _serialize_session
 
     session = SessionState.create('old', tmp_path)
     for goal, usage in [('old', UsageRecord(90, 10, 100)), ('new', UsageRecord(10, 5, 15))]:

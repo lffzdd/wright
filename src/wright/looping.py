@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import math
 import queue
 import secrets
 import threading
 import time
+from dataclasses import dataclass
 from typing import Any, Literal
-
 
 MAX_LOOPS = 20
 MIN_INTERVAL_SECONDS = 5.0
@@ -33,7 +33,7 @@ class LoopRecord:
     tick_count: int = 0
     pending: bool = False
 
-    def snapshot(self) -> "LoopRecord":
+    def snapshot(self) -> LoopRecord:
         return LoopRecord(
             id=self.id,
             name=self.name,
@@ -66,7 +66,7 @@ class SessionLoopRegistry:
 
     def __init__(
         self,
-        event_queue: "queue.Queue[tuple[str, object]]",
+        event_queue: queue.Queue[tuple[str, object]],
         agent_idle: threading.Event,
         *,
         max_loops: int = MAX_LOOPS,
@@ -302,7 +302,7 @@ def _finite_number(value: Any, field: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise LoopError(f"{field} must be a number")
     number = float(value)
-    if number != number or number in {float("inf"), float("-inf")}:
+    if not math.isfinite(number):
         raise LoopError(f"{field} must be a finite number")
     if number <= 0:
         raise LoopError(f"{field} must be > 0")

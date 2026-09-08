@@ -7,10 +7,11 @@ consumer that decides when to start the next root turn.
 
 from __future__ import annotations
 
-from concurrent.futures import Future, ThreadPoolExecutor, wait
 import queue
 import threading
-from typing import Any, Callable
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor, wait
+from typing import Any
 
 from .coordination import AgentControlPlane
 
@@ -18,7 +19,7 @@ from .coordination import AgentControlPlane
 class AgentBackgroundRuntime:
     """Session-scoped executor plus a thread-safe notification sink."""
 
-    def __init__(self, event_queue: "queue.Queue[tuple[str, Any]]", *, max_workers: int = 8) -> None:
+    def __init__(self, event_queue: queue.Queue[tuple[str, Any]], *, max_workers: int = 8) -> None:
         self.event_queue = event_queue
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="wright-agent")
         self._futures: dict[str, Future] = {}

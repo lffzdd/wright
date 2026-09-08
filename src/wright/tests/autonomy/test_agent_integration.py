@@ -11,13 +11,13 @@ from ...permission import PermissionSettings
 from ...renderer import SilentRenderer
 from ...services import RuntimeServices
 from ...session import SessionState
+from ...skills.registry import SkillRegistry
+from ...skills.store import write_skill
 from ...tools.ask_user_tool import ask_user_tool
 from ...tools.autonomy_tools import autonomy_tools
 from ...tools.knowledge_tools import build_knowledge_tools
 from ...tools.memory_tools import build_memory_tools
 from ...tools.skill_tools import build_skill_tools
-from ...skills.registry import SkillRegistry
-from ...skills.store import write_skill
 
 
 def _final(answer):
@@ -139,7 +139,7 @@ def test_durable_run_leaves_root_session_untouched(tmp_path):
 
 
 def test_durable_run_does_not_block_root_user_input(tmp_path):
-    workspace, store, session, scheduler, events, background, services = _runtime(tmp_path)
+    _workspace, store, session, scheduler, events, background, services = _runtime(tmp_path)
     run_id = _claim_run(store, prompt="slow work")
     started = time.monotonic()
     launch = launch_durable_run(
@@ -173,7 +173,7 @@ def test_durable_run_does_not_block_root_user_input(tmp_path):
 
 
 def test_durable_session_omits_ask_user_and_autonomy_tools(tmp_path):
-    workspace, store, session, scheduler, events, background, services = _runtime(tmp_path)
+    _workspace, store, session, scheduler, events, background, services = _runtime(tmp_path)
     run_id = _claim_run(store)
     memory_tools = build_memory_tools(
         tmp_path / "memory", include_legacy_save=True
@@ -230,7 +230,7 @@ def test_durable_session_omits_ask_user_and_autonomy_tools(tmp_path):
 
 
 def test_cancelled_dispatched_run_is_not_started(tmp_path):
-    workspace, store, session, scheduler, events, background, services = _runtime(tmp_path)
+    _workspace, store, session, scheduler, _events, background, services = _runtime(tmp_path)
     run_id = _claim_run(store, prompt="should not execute", name="cancel me")
     store.cancel_run(run_id, "external cancellation")
     launch = launch_durable_run(

@@ -4,8 +4,8 @@ ParsedTurn is an internal execution/trace record, never an output schema imposed
 on the model. Tool arguments are decoded strictly; truncated output is not repaired.
 """
 
-import json
 import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Literal

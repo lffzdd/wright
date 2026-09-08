@@ -7,8 +7,8 @@
 
 相比规则式,交互式多出三个新关注点,代码里都会点到:
 1. 状态:`a`(本会话总是允许)要被记住 → handler 实例持有一个 set(它第一次有记忆)。
-2. 并发:http_request 是 parallel 工具,可能多线程同时触发 ask;终端的并发保护由
-   Renderer 内部的锁负责(ConsoleRenderer._prompt_lock),handler 不再自己持锁。
+2. 并发:http_request 是 parallel 工具,可能多线程同时触发 ask;stdin 只由 REPL
+   收集线程读取,请求经 InteractionHub 排队,handler 不再碰终端锁。
 3. 可测:不能在测试里真等人敲键盘 → 注入一个覆盖了 prompt_permission 的 mock
    Renderer(比原来的 input_fn/output_fn 更贴近真实调用路径)。
 
@@ -17,7 +17,8 @@ fail-closed:空输入、看不懂的输入、读不到终端(EOF)一律当拒—
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from .resolver import PermissionRequest
 from .types import PermissionCheckResult

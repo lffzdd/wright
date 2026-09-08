@@ -12,12 +12,11 @@ PlanManager 不依赖 LLM、Tool 或 Renderer，只负责计划数据和状态�
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import re
 import threading
+from dataclasses import dataclass
 from typing import Literal
-
 
 PlanStepStatus = Literal[
     "pending",
@@ -205,7 +204,7 @@ class PlanManager:
             return self._snapshot_unlocked()
 
     @classmethod
-    def from_snapshot(cls, snapshot: dict) -> "PlanManager":
+    def from_snapshot(cls, snapshot: dict) -> PlanManager:
         manager = cls()
         manager.restore(snapshot)
         return manager

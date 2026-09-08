@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Callable, Protocol, Sequence, runtime_checkable
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from ..coordination import AgentControlError, AgentTaskRecord
 from ..processes import terminate_process_tree
@@ -213,8 +214,8 @@ class TaskService:
     def for_session(
         cls,
         session_state,
-        services: "RuntimeServices | None" = None,
-    ) -> "TaskService":
+        services: RuntimeServices | None = None,
+    ) -> TaskService:
         backends: list[TaskBackend] = [
             AgentTaskBackend(session_state.control_plane),
             ShellTaskBackend(session_state),

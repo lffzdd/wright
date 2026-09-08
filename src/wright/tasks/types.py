@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-
 TaskKind = Literal["agent", "shell", "durable"]
 TaskStatus = Literal[
     "pending", "running", "completed", "failed", "cancelled", "timed_out",

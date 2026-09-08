@@ -15,6 +15,7 @@ ReAct 事件类型定义（传输层与展示层之间的"中间结构"）
 from dataclasses import dataclass, field
 from typing import Any
 
+
 @dataclass
 class ReasoningDelta:
     """一段实时到达的推理内容（逐 token）。仅流式场景产生。"""

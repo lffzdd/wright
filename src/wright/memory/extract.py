@@ -83,7 +83,7 @@ def extract_and_save(
         )
         raw = side_query(llm, EXTRACT_SYSTEM_PROMPT, user_msg)
         memories = json.loads(raw).get("memories", [])
-    except Exception as e:  # noqa: BLE001 — 旁路,任何异常都不该冒泡
+    except Exception as e:  # 旁路,任何异常都不该冒泡
         logger.debug("记忆提取失败: %s", e)
         return 0
 

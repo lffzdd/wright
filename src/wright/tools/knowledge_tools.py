@@ -5,11 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 from ..knowledge.provider import (
-    KnowledgeProvider,
-    KnowledgeUnavailable,
     MAX_HIT_CONTENT_CHARS,
     MAX_SEARCH_OUTPUT_CHARS,
     MAX_TOP_K,
+    KnowledgeProvider,
+    KnowledgeUnavailable,
     truncate_hits,
 )
 from ..permission import PermissionCheckResult

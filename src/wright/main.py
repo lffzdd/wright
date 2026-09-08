@@ -10,6 +10,11 @@ from .runtime import build_runtime, parse_cli_args, shutdown_runtime
 
 def main() -> None:
     args = parse_cli_args()
+    if args.ui == "tui":
+        from .tui import run_tui
+
+        run_tui(args)
+        return
     rt = build_runtime(args)
     try:
         Repl(rt).run()

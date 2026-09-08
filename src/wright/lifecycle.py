@@ -8,16 +8,16 @@ or rewrite a tool input. Hook failures are recorded and fail open; only a valid
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from fnmatch import fnmatchcase
 import json
-from pathlib import Path
 import subprocess
 import threading
 import time
-from typing import Any, Callable, Literal, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from fnmatch import fnmatchcase
+from pathlib import Path
+from typing import Any, Literal
 from uuid import uuid4
-
 
 LifecycleEventName = Literal[
     "session_start",
@@ -40,26 +40,28 @@ LifecycleEventName = Literal[
     "hook_error",
 ]
 
-LIFECYCLE_EVENT_NAMES = frozenset({
-    "session_start",
-    "runtime_event",
-    "user_prompt_submit",
-    "agent_start",
-    "agent_stop",
-    "llm_start",
-    "llm_end",
-    "llm_error",
-    "pre_tool_use",
-    "permission_decision",
-    "post_tool_use",
-    "tool_failure",
-    "subagent_start",
-    "subagent_stop",
-    "pre_compact",
-    "post_compact",
-    "hook_result",
-    "hook_error",
-})
+LIFECYCLE_EVENT_NAMES = frozenset(
+    {
+        "session_start",
+        "runtime_event",
+        "user_prompt_submit",
+        "agent_start",
+        "agent_stop",
+        "llm_start",
+        "llm_end",
+        "llm_error",
+        "pre_tool_use",
+        "permission_decision",
+        "post_tool_use",
+        "tool_failure",
+        "subagent_start",
+        "subagent_stop",
+        "pre_compact",
+        "post_compact",
+        "hook_result",
+        "hook_error",
+    }
+)
 HOOKABLE_EVENT_NAMES = LIFECYCLE_EVENT_NAMES - {"hook_result", "hook_error"}
 
 BLOCKING_EVENTS = frozenset({"user_prompt_submit", "pre_tool_use", "agent_stop"})
@@ -81,7 +83,7 @@ class HookDecision:
     additional_context: str = ""
 
     @classmethod
-    def from_value(cls, value: Any) -> "HookDecision":
+    def from_value(cls, value: Any) -> HookDecision:
         if value is None:
             return cls()
         if isinstance(value, cls):
@@ -194,7 +196,9 @@ class HookRegistration:
 class CommandHook:
     """Run a configured argv command with the lifecycle event on stdin."""
 
-    def __init__(self, command: Sequence[str], *, cwd: Path, timeout: float = 5.0) -> None:
+    def __init__(
+        self, command: Sequence[str], *, cwd: Path, timeout: float = 5.0
+    ) -> None:
         if not command or not all(isinstance(part, str) and part for part in command):
             raise LifecycleConfigError("hook command must be a non-empty argv array")
         if timeout <= 0 or timeout > 60:
@@ -274,8 +278,10 @@ class LifecycleManager:
             if not registration.matches(current_payload):
                 continue
             try:
-                decision = HookDecision.from_value(registration.callback(lifecycle_event))
-            except Exception as exc:
+                decision = HookDecision.from_value(
+                    registration.callback(lifecycle_event)
+                )
+            except Exception as exc:  # hook 失败 fail-open，已记入 hook_error
                 self._record_hook_error(lifecycle_event, registration.name, exc)
                 continue
             self._record_hook_result(lifecycle_event, registration.name, decision)
@@ -422,16 +428,18 @@ def load_lifecycle_manager(
                 raise LifecycleConfigError(
                     f"hooks.{event}[{index}].timeout must be a number"
                 ) from exc
-            manager.register(HookRegistration(
-                event=event,
-                callback=CommandHook(
-                    command,
-                    cwd=workspace,
-                    timeout=timeout,
-                ),
-                matcher=str(row.get("matcher") or "*"),
-                name=name,
-            ))
+            manager.register(
+                HookRegistration(
+                    event=event,
+                    callback=CommandHook(
+                        command,
+                        cwd=workspace,
+                        timeout=timeout,
+                    ),
+                    matcher=str(row.get("matcher") or "*"),
+                    name=name,
+                )
+            )
     return manager
 
 
@@ -455,8 +463,15 @@ def _bounded_value(value: Any, *, depth: int = 0) -> Any:
             if any(
                 marker in name.lower()
                 for marker in (
-                    "api_key", "apikey", "password", "passwd", "secret",
-                    "authorization", "cookie", "access_token", "refresh_token",
+                    "api_key",
+                    "apikey",
+                    "password",
+                    "passwd",
+                    "secret",
+                    "authorization",
+                    "cookie",
+                    "access_token",
+                    "refresh_token",
                 )
             ):
                 bounded[name] = "[redacted]"
@@ -468,6 +483,6 @@ def _bounded_value(value: Any, *, depth: int = 0) -> Any:
     if hasattr(value, "to_dict"):
         try:
             return _bounded_value(value.to_dict(), depth=depth + 1)
-        except Exception:
+        except Exception:  # 脱敏失败则退回 repr
             pass
     return repr(value)[:2_000]

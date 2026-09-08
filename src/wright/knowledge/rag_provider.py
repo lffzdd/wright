@@ -8,9 +8,9 @@ RAG 实现不在本仓库内；通过 WRIGHT_RAG_DIR / WRIGHT_KNOWLEDGE_INDEX �
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import sys
 import threading
+from pathlib import Path
 
 from dotenv import dotenv_values
 
@@ -19,7 +19,6 @@ from .provider import (
     KnowledgeUnavailable,
     knowledge_hit_from_search_result,
 )
-
 
 _TRUTHY = {"1", "true", "yes", "on"}
 
