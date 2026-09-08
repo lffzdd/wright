@@ -93,6 +93,19 @@ class FinalAnswer(Message):
         self.text = text
 
 
+class RequestUsage(Message):
+    def __init__(self, text: str) -> None:
+        super().__init__()
+        self.text = text
+
+
+class TaskUsage(Message):
+    def __init__(self, summary: str, detail: str) -> None:
+        super().__init__()
+        self.summary = summary
+        self.detail = detail
+
+
 class TurnBegin(Message):
     pass
 
@@ -130,7 +143,13 @@ class TUIRenderer(Renderer):
         self.content = ""
         self.final_answer: Any = None
         self.tools: list[ToolView] = []
-        self.token_line = ""
+        # These are distinct views of usage. Context is the latest server-reported
+        # request input, never an estimate of the next request.
+        self.request_usage = ""
+        self.task_usage = ""
+        self._pending_request_usage = ""
+        self.context_tokens: int | None = None
+        self.context_limit: int | None = None
         self.notices: list[str] = []
 
     def attach(self, target: Any) -> None:
@@ -225,7 +244,15 @@ class TUIRenderer(Renderer):
             self.content = ""
             self.final_answer = None
             self._refresh_posted = False
+            self._pending_request_usage = ""
         self._emit(TurnBegin())
+
+    def _flush_request_usage(self) -> None:
+        with self._lock:
+            text = self._pending_request_usage
+            self._pending_request_usage = ""
+        if text:
+            self._emit(RequestUsage(text))
 
     def on_reasoning_delta(self, piece: str) -> None:
         if not piece:
@@ -258,6 +285,7 @@ class TUIRenderer(Renderer):
             self.tools.append(view)
         if freeze:
             self._emit(DraftFreeze(freeze))
+        self._flush_request_usage()
         self._emit(ToolUpsert(view))
 
     def on_command_output(self, line: str) -> None:
@@ -320,6 +348,7 @@ class TUIRenderer(Renderer):
             self.content = text
             self._refresh_posted = False
         self._emit(FinalAnswer(text))
+        self._flush_request_usage()
 
     def on_completion_rejected(self, issues: Any = ()) -> None:
         parts = []
@@ -338,6 +367,7 @@ class TUIRenderer(Renderer):
             self._refresh_posted = False
         if freeze:
             self._emit(DraftFreeze(freeze))
+        self._flush_request_usage()
         self.on_system_notice(f"完成检查未通过，继续工作  {detail}")
 
     def on_usage(
@@ -347,21 +377,32 @@ class TUIRenderer(Renderer):
         total_tokens: int | None,
         context_limit: int | None,
     ) -> None:
-        inp = prompt_tokens if prompt_tokens is not None else "?"
-        out = completion_tokens if completion_tokens is not None else "?"
-        tot = total_tokens if total_tokens is not None else "?"
+        inp = f"{prompt_tokens:,}" if prompt_tokens is not None else "?"
+        out = f"{completion_tokens:,}" if completion_tokens is not None else "?"
+        tot = f"{total_tokens:,}" if total_tokens is not None else "?"
         with self._lock:
-            self.token_line = f"in {inp} · out {out} · {tot}"
+            self.request_usage = f"{inp} in  ·  {out} out"
+            self._pending_request_usage = self.request_usage
+            self.context_tokens = prompt_tokens
+            self.context_limit = context_limit
         self._emit(StatusChanged())
 
     def on_usage_summary(
         self, prompt_tokens: int, completion_tokens: int, total_tokens: int,
     ) -> None:
         with self._lock:
-            self.token_line = (
-                f"task {prompt_tokens:,} + {completion_tokens:,} = {total_tokens:,}"
+            self.task_usage = (
+                f"task total  ·  {prompt_tokens:,} in  ·  "
+                f"{completion_tokens:,} out  ·  {total_tokens:,} total"
             )
-        self._emit(StatusChanged())
+            detail = (
+                "Task usage:\n"
+                f"{prompt_tokens:,} in\n"
+                f"{completion_tokens:,} out\n"
+                f"{total_tokens:,} total"
+            )
+        total_short = f"{total_tokens / 1_000:.1f}k" if total_tokens >= 1_000 else str(total_tokens)
+        self._emit(TaskUsage(f"usage  Σ {total_short}", detail))
 
     def on_context_compact(
         self,

@@ -16,7 +16,6 @@ from textual.widgets import Button, Collapsible, Input, Static
 
 from ..interaction import InteractionRequest
 from ..logger import get_logger
-from ..renderer import collect_history_pairs
 from ..runtime import WrightRuntime, build_runtime, shutdown_runtime
 from ..session_host import process_session_event
 from .renderer import (
@@ -26,6 +25,8 @@ from .renderer import (
     StatusChanged,
     StreamRefresh,
     SystemNotice,
+    RequestUsage,
+    TaskUsage,
     ToolUpsert,
     ToolView,
     TUIRenderer,
@@ -61,6 +62,34 @@ def _fail_interaction(request: InteractionRequest) -> None:
         pass
 
 
+def _context_ring(tokens: int | None, limit: int | None) -> tuple[str, str, str]:
+    """Format the current session context for a compact indicator and tooltip."""
+    if tokens is None or not limit:
+        return "○", "等待上下文", "Context window:\nWaiting for a context limit"
+    ratio = max(0.0, min(tokens / limit, 1.0))
+    ring = ("○", "◔", "◑", "◕", "●")[min(4, int(ratio * 4.999))]
+    compact = f"{ring}  {ratio:.0%}"
+    detail = (
+        f"Context window:\n{ratio:.0%} full\n"
+        f"{tokens:,} / {limit:,} tokens used\n\n"
+        "Current session context"
+    )
+    return compact, detail, "warning" if ratio >= 0.75 else "normal"
+
+
+def _short_tokens(tokens: int) -> str:
+    return f"{tokens / 1_000:.1f}k" if tokens >= 1_000 else str(tokens)
+
+
+def _task_usage_detail(prompt: int, completion: int, total: int) -> str:
+    return (
+        "Task usage:\n"
+        f"{prompt:,} in\n"
+        f"{completion:,} out\n"
+        f"{total:,} total"
+    )
+
+
 class UserBlock(Static):
     def __init__(self, text: str) -> None:
         super().__init__(text, classes="msg user")
@@ -80,9 +109,37 @@ class AssistantBlock(Static):
         self.update(text or "")
 
 
+class ReasoningBlock(Collapsible):
+    """A visible, in-place view of the model's streamed reasoning."""
+
+    def __init__(self, text: str = "", *, collapsed: bool = False) -> None:
+        self._body = Static(text or "…", classes="reasoning-body")
+        super().__init__(
+            self._body,
+            title="思考" if text else "思考中",
+            collapsed=collapsed,
+            classes="reasoning",
+        )
+
+    def update_reasoning(self, text: str) -> None:
+        self._body.update(text or "…")
+
+
 class SystemBlock(Static):
     def __init__(self, text: str) -> None:
         super().__init__(text, classes="msg system")
+
+
+class UsageBlock(Static):
+    def __init__(self, text: str, *, total: bool = False) -> None:
+        classes = "usage total" if total else "usage"
+        super().__init__(text, classes=classes)
+
+
+class TaskUsageBlock(UsageBlock):
+    def __init__(self, summary: str, detail: str) -> None:
+        super().__init__(summary, total=True)
+        self.tooltip = detail
 
 
 class ToolBlock(Collapsible):
@@ -247,58 +304,76 @@ class WrightTUI(App):
     ENABLE_COMMAND_PALETTE = False
     CSS = """
     Screen {
-        background: #161616;
-        color: #e8e8e8;
+        background: #14181d;
+        color: #dce3eb;
     }
 
     #status {
         dock: top;
-        height: 1;
-        background: #101010;
-        color: #8a8a8a;
-        padding: 0 1;
+        height: 3;
+        background: #191f27;
+        color: #9aa9ba;
+        padding: 1 2;
     }
 
     #brand {
         width: auto;
-        color: #d0d0d0;
+        color: #a9c7ee;
         text-style: bold;
     }
 
     #status-state {
         width: auto;
         padding: 0 2;
-        color: #8aa0b8;
+        color: #94b9ae;
     }
 
     #status-meta {
         width: 1fr;
-        color: #6e6e6e;
+        color: #9aa9ba;
         text-align: right;
+    }
+
+    #context {
+        width: auto;
+        padding-left: 2;
+        color: #94c9b2;
+    }
+
+    #context.warning {
+        color: #c4a35a;
     }
 
     #transcript {
         height: 1fr;
-        padding: 1 2;
+        padding: 1 3;
         scrollbar-size: 1 1;
+        scrollbar-background: #14181d;
+        scrollbar-color: #354456;
+        scrollbar-color-hover: #6682a1;
     }
 
     #composer-wrap {
         dock: bottom;
         height: auto;
-        background: #101010;
-        padding: 0 1 1 1;
-        border-top: solid #2a2a2a;
+        background: #14181d;
+        padding: 0 2 1 2;
     }
 
     #composer {
-        background: #101010;
-        border: none;
+        background: #191f27;
+        border: round #354456;
         padding: 0 1;
     }
 
     #composer:focus {
-        border: none;
+        border: round #83a9d4;
+    }
+
+    #composer-hint {
+        height: 1;
+        padding: 0 2;
+        color: #8091a5;
     }
 
     .msg {
@@ -308,48 +383,86 @@ class WrightTUI(App):
     }
 
     .user {
-        color: #9bbcff;
-        border-left: thick #3d6ea8;
+        color: #c3d8f2;
+        background: #1c2734;
+        border-left: thick #83a9d4;
+        padding: 1 2;
     }
 
     .assistant {
-        color: #e8e8e8;
-        border-left: thick #3d8a5a;
+        color: #dce3eb;
+        border-left: solid #527767;
+        padding: 0 2;
     }
 
     .assistant.draft {
-        color: #9a9a9a;
-        border-left: thick #4a4a4a;
+        color: #bdcbdc;
+        border-left: solid #6682a1;
+    }
+
+    .reasoning {
+        height: auto;
+        margin: 0 0 1 1;
+        color: #a4afc2;
+        background: #191f27;
+        border: none;
+        border-left: solid #696b88;
+        padding: 0;
+    }
+
+    .reasoning-body {
+        color: #a4afc2;
+        padding: 0 1 1 1;
     }
 
     .system {
-        color: #7a7a7a;
-        border-left: thick #444444;
+        color: #94a2b3;
+        border-left: solid #354456;
         text-style: italic;
+    }
+
+    .usage {
+        height: auto;
+        margin: 0 0 1 2;
+        color: #8999ad;
+    }
+
+    .usage.total {
+        color: #a1bbd8;
+        width: auto;
+        padding: 0 1;
+        background: #202c39;
+        margin: 0 0 1 2;
+    }
+
+    .usage.total:hover {
+        background: #2b3c4e;
+        color: #dce3eb;
     }
 
     .tool {
         height: auto;
         margin: 0 0 1 1;
-        background: #1b1b1b;
-        border-top: none;
+        background: #191f27;
+        border: none;
+        border-left: solid #354456;
         padding: 0;
     }
 
     .tool.running {
-        color: #c4a35a;
+        color: #d7bb82;
     }
 
     .tool.done {
-        color: #7dba8a;
+        color: #94c9b2;
     }
 
     .tool.error {
-        color: #d08080;
+        color: #e49b9b;
     }
 
     .tool-body {
-        color: #8a8a8a;
+        color: #b0bdcc;
         padding: 0 1 1 1;
     }
 
@@ -359,10 +472,11 @@ class WrightTUI(App):
 
     #dialog {
         width: 72;
+        max-width: 95%;
         height: auto;
         max-height: 80%;
-        background: #1c1c1c;
-        border: solid #3d6ea8;
+        background: #191f27;
+        border: round #83a9d4;
         padding: 1 2;
     }
 
@@ -400,6 +514,14 @@ class WrightTUI(App):
         height: auto;
         margin: 1 0;
     }
+
+    Tooltip {
+        background: #253241;
+        color: #e0e8f2;
+        border: round #6682a1;
+        padding: 1 2;
+        max-width: 60;
+    }
     """
     BINDINGS: ClassVar[list[Binding]] = [
         Binding("ctrl+q", "quit", "Quit"),
@@ -414,6 +536,7 @@ class WrightTUI(App):
         self.renderer = rt.renderer
         self.session_thread: threading.Thread | None = None
         self._draft: AssistantBlock | None = None
+        self._reasoning: ReasoningBlock | None = None
         self._tools: dict[str, ToolBlock] = {}
         self._draining = False
         self._active_request: InteractionRequest | None = None
@@ -424,12 +547,14 @@ class WrightTUI(App):
             yield Static("wright", id="brand")
             yield Static("idle", id="status-state")
             yield Static("", id="status-meta")
+            yield Static("○", id="context")
         yield VerticalScroll(id="transcript")
         with Vertical(id="composer-wrap"):
             yield Input(
-                placeholder="message  ·  /exit to quit",
+                placeholder="Message Wright…",
                 id="composer",
             )
+            yield Static("enter send  ·  ctrl+q quit", id="composer-hint")
 
     def on_mount(self) -> None:
         self.renderer.attach(self)
@@ -462,15 +587,91 @@ class WrightTUI(App):
             sid = self.rt.session_state.session_id
             status = self.rt.session_state.status
             transcript.mount(SystemBlock(f"resumed {sid}  ({status})"))
-        pairs = collect_history_pairs(self.rt.session_state, max_turns=8)
-        for user_text, answer_text in pairs:
-            if user_text:
+        session = self.rt.session_state
+        records = session.message_records
+        positions = {record.id: index for index, record in enumerate(records)}
+        shown_user = ""
+        restored = False
+        for turn in session.turns:
+            assistant_index = positions.get(turn.message_id)
+            if assistant_index is None:
+                continue
+            user_text = self._history_user_before(records, assistant_index)
+            if user_text and user_text != shown_user:
                 transcript.mount(UserBlock(user_text))
-            if answer_text:
-                transcript.mount(AssistantBlock(answer_text))
-        if pairs:
+                shown_user = user_text
+                restored = True
+
+            assistant = records[assistant_index].message
+            reasoning = assistant.get("reasoning_content") or turn.parsed.get("reasoning")
+            if isinstance(reasoning, str) and reasoning.strip():
+                transcript.mount(ReasoningBlock(reasoning, collapsed=True))
+                restored = True
+
+            for call_id in turn.tool_execution_ids:
+                execution = session.tool_executions.get(call_id)
+                if execution is None:
+                    continue
+                result = execution.result.to_dict() if execution.result else None
+                if result is None:
+                    status = "running"
+                else:
+                    status = "done" if result.get("ok") else "error"
+                transcript.mount(ToolBlock(ToolView(
+                    key=call_id,
+                    name=execution.call.name,
+                    arguments=execution.call.arguments,
+                    status=status,
+                    result=result.get("data") if result and result.get("ok") else None,
+                    error=str(result.get("err", "")) if result and not result.get("ok") else "",
+                )))
+                restored = True
+
+            answer = turn.parsed.get("final_answer")
+            if answer is not None:
+                transcript.mount(AssistantBlock(_json_text(answer)))
+                restored = True
+            if turn.usage is not None:
+                usage = turn.usage
+                transcript.mount(UsageBlock(
+                    f"{usage.prompt_tokens:,} in  ·  "
+                    f"{usage.completion_tokens:,} out",
+                ))
+                restored = True
+        if restored:
+            if session.status != "running":
+                usage = session.task_usage()
+                if usage.total_tokens:
+                    transcript.mount(TaskUsageBlock(
+                        f"usage  Σ {_short_tokens(usage.total_tokens)}",
+                        _task_usage_detail(
+                            usage.prompt_tokens,
+                            usage.completion_tokens,
+                            usage.total_tokens,
+                        ),
+                    ))
             transcript.mount(SystemBlock("earlier turns above  ·  new messages follow"))
         self._scroll_to_end()
+
+    @staticmethod
+    def _history_user_before(records: list[Any], assistant_index: int) -> str:
+        for record in reversed(records[:assistant_index]):
+            message = record.message
+            if message.get("role") != "user":
+                continue
+            content = message.get("content")
+            if not isinstance(content, str):
+                continue
+            stripped = content.lstrip()
+            if stripped.startswith(("<system-reminder>", "<task-notification>")):
+                continue
+            if stripped.startswith("{") and any(
+                key in stripped[:120]
+                for key in ("tool_results", "verification_feedback")
+            ):
+                continue
+            return content.strip()
+        return ""
 
     def _session_loop(self) -> None:
         rt = self.rt
@@ -514,15 +715,24 @@ class WrightTUI(App):
             self._scroll_to_end()
         return self._draft
 
+    def _ensure_reasoning(self) -> ReasoningBlock:
+        if self._reasoning is None:
+            self._reasoning = ReasoningBlock()
+            self._transcript().mount(self._reasoning)
+        return self._reasoning
+
     def _scroll_to_end(self) -> None:
         self._transcript().scroll_end(animate=False, immediate=True)
 
     def on_turn_begin(self, _event: TurnBegin) -> None:
         self._close_draft()
+        self._reasoning = None
         self._refresh_status()
 
     def on_stream_refresh(self, _event: StreamRefresh) -> None:
-        _reasoning, content = self.renderer.consume_stream()
+        reasoning, content = self.renderer.consume_stream()
+        if reasoning:
+            self._ensure_reasoning().update_reasoning(reasoning)
         if content:
             self._ensure_draft().set_draft(content)
             self._scroll_to_end()
@@ -540,6 +750,14 @@ class WrightTUI(App):
             self._close_draft(event.text)
         self._scroll_to_end()
         self._refresh_status()
+
+    def on_request_usage(self, event: RequestUsage) -> None:
+        self._transcript().mount(UsageBlock(event.text))
+        self._scroll_to_end()
+
+    def on_task_usage(self, event: TaskUsage) -> None:
+        self._transcript().mount(TaskUsageBlock(event.summary, event.detail))
+        self._scroll_to_end()
 
     def on_tool_upsert(self, event: ToolUpsert) -> None:
         tool = event.tool
@@ -670,19 +888,22 @@ class WrightTUI(App):
             state = "idle" if idle else "running"
             composer = self.query_one("#composer", Input)
             composer.placeholder = (
-                "message  ·  /exit to quit" if idle else "queue a follow-up"
+                "Message Wright…" if idle else "Queue a follow-up…"
             )
-            sid = self.rt.session_state.session_id
-            short = sid[:8] if sid else "?"
-            tokens = self.renderer.token_line
+            context_limit = getattr(self.rt.agent, "context_limit", None)
+            context, tooltip, context_class = _context_ring(
+                self.rt.session_state.context_tokens, context_limit,
+            )
             plan = _plan_brief(self.rt.session_state)
-            meta_parts = [short]
-            if tokens:
-                meta_parts.append(tokens)
+            meta_parts = []
             if plan:
                 meta_parts.append(plan)
             self.query_one("#status-state", Static).update(state)
             self.query_one("#status-meta", Static).update("  ·  ".join(meta_parts))
+            indicator = self.query_one("#context", Static)
+            indicator.update(context)
+            indicator.tooltip = tooltip
+            indicator.set_class(context_class == "warning", "warning")
         except Exception:
             pass
 

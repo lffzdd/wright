@@ -8,14 +8,14 @@ from wright.renderer import SilentRenderer, collect_history_pairs
 from wright.runtime import parse_cli_args
 from wright.session_host import dispatch_slash, process_session_event
 from wright.tools.base import ToolCall, ToolResult
-from wright.tui.app import require_interactive_tty
+from wright.tui.app import _context_ring, require_interactive_tty
 from wright.tui.renderer import TUIRenderer
 
 
-def test_cli_ui_flag_defaults_to_cli(monkeypatch):
+def test_cli_ui_flag_defaults_to_tui(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["wright"])
     args = parse_cli_args()
-    assert args.ui == "cli"
+    assert args.ui == "tui"
 
 
 def test_cli_ui_flag_accepts_tui(monkeypatch):
@@ -97,6 +97,27 @@ def test_tui_renderer_completion_rejected_is_a_notice():
     assert renderer.content == ""
     assert any("完成检查未通过" in item for item in renderer.notices)
     assert any("计划未完成" in item for item in renderer.notices)
+
+
+def test_tui_usage_separates_request_task_and_context():
+    renderer = TUIRenderer()
+    renderer.on_usage(12_000, 800, 12_800, 128_000)
+    renderer.on_usage_summary(20_000, 2_000, 22_000)
+    assert renderer.request_usage == "12,000 in  ·  800 out"
+    assert renderer.task_usage == "task total  ·  20,000 in  ·  2,000 out  ·  22,000 total"
+    assert (renderer.context_tokens, renderer.context_limit) == (12_000, 128_000)
+
+
+def test_context_ring_uses_current_session_context():
+    assert _context_ring(None, 128_000) == (
+        "○", "等待上下文", "Context window:\nWaiting for a context limit",
+    )
+    assert _context_ring(64_000, 128_000) == (
+        "◑  50%",
+        "Context window:\n50% full\n64,000 / 128,000 tokens used\n\n"
+        "Current session context",
+        "normal",
+    )
 
 
 def test_tui_attach_flag_tracks_lifecycle():

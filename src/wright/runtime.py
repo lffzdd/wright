@@ -114,8 +114,8 @@ def parse_cli_args() -> argparse.Namespace:
     parser.add_argument(
         "--ui",
         choices=("cli", "tui"),
-        default="cli",
-        help="界面：cli 为主缓冲经典终端（默认），tui 为全屏备用缓冲区",
+        default="tui",
+        help="界面：tui 为全屏工作界面（默认），cli 为主缓冲经典终端",
     )
     return parser.parse_args()
 
