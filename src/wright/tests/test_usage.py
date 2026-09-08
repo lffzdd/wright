@@ -111,9 +111,24 @@ def test_console_streams_then_panels_the_final_answer():
     output = StringIO()
     renderer._console = Console(file=output, width=200, color_system=None)
     renderer.on_content_delta("hello world")
+    assert output.getvalue() == ""
     renderer.on_final("hello world")
     text = output.getvalue()
-    assert "hello world" in text
+    assert text.count("hello world") == 1
+    assert "╭" in text
+
+
+def test_console_tool_card_settles_once():
+    renderer = ConsoleRenderer()
+    output = StringIO()
+    renderer._console = Console(file=output, width=200, color_system=None)
+    call = ToolCall("list_files", {"directory": "."}, "c1")
+    renderer.on_tool_call(call)
+    assert output.getvalue() == ""
+    renderer.on_tool_result(call, ToolResult.success({"files": ["a.py"]}))
+    text = output.getvalue()
+    assert "list_files" in text
+    assert "🔧" not in text
     assert "╭" in text
 
 

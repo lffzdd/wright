@@ -7,7 +7,7 @@
 主循环只跟 Renderer 接口打交道，不关心具体怎么展示/收集输入。
 这样同一套 Agent 逻辑可以配不同的 Renderer：
 
-    ConsoleRenderer  → 终端实时输出 + 终端交互（当前默认）
+    ConsoleRenderer  → 主缓冲 Live 尾巴 + 收口后写入 scrollback
     SilentRenderer   → 什么都不打（跑测试 / 批量任务）
     （未来）JSONRenderer / WebRenderer → 把事件推给前端
 
@@ -19,18 +19,22 @@ import json
 import sys
 import threading
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any
 
 from prompt_toolkit import prompt
 from prompt_toolkit.formatted_text import HTML
-from rich.console import Console
+from rich.console import Console, Group
 from rich.json import JSON as RichJSON
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.rule import Rule
 from rich.text import Text
 
 from .tools.base import ToolCall, ToolResult
+
+_COMMAND_OUTPUT_LINES = 24
 
 
 class Renderer(ABC):
@@ -123,25 +127,27 @@ class Renderer(ABC):
         return None
 
 
+@dataclass
+class _LiveTool:
+    call: Any
+    result: dict | None = None
+    output: str = ""
+
+
 class ConsoleRenderer(Renderer):
-    """终端渲染器（Rich 版）：用 Panel / JSON / Markdown / Rule 对
-    "思考 / 回答 / 工具 / 结论"做视觉分层。
+    """主缓冲交互渲染器：当前这一轮在可见尾巴里原地更新，收口后固化进 scrollback。
 
-    内部用 _phase 记住当前处于哪个流式阶段（reasoning / content / idle），
-    只在阶段切换时打印小标题，避免逐 token 重复打标题。
-
-    Rich 自动处理 Windows 终端兼容性和颜色降级（256 → 16 → 无色），
-    不再需要手写 ANSI 转义序列。
+    不进入备用缓冲区。TTY 上用 Rich Live 刷新预览；非 TTY 只在收口时打印定稿。
     """
 
     def __init__(self) -> None:
-        self._phase = "idle"  # "idle" | "reasoning" | "content"
-        self._line_started = False
-        self._pending_newlines = 0  # 惰性换行计数，_stream_piece 使用
         # highlight=False: 关闭 Rich 对纯文本的自动高亮（数字/URL 等），
         # 避免流式输出时把部分 token 误判为可高亮对象。
         # RichJSON / Markdown 等 Renderable 有自己的高亮逻辑，不受此影响。
-        self._console = Console(highlight=False)
+        self._console = Console(
+            highlight=False,
+            force_terminal=True if sys.stdout.isatty() else None,
+        )
         # 全局终端写入锁：序列化所有终端输出，防止并发工具结果与权限确认框交叉。
         #
         # 哪些路径持锁：
@@ -151,105 +157,271 @@ class ConsoleRenderer(Renderer):
         #   on_checkpoint_error / on_agent_event
         #     —— 可能从 ThreadPoolExecutor worker 或 reader 线程发起，
         #        持锁保证不会插进权限确认框中间。
-        # streaming 回调（on_reasoning_delta / on_content_delta）不持锁：
-        #   它们始终在主线程的 LLM 流式阶段调用，与 executor 并发窗口不重叠。
+        # streaming 回调也持锁：Live 刷新与 worker 输出会重叠。
         self._prompt_lock = threading.Lock()
+        self._live: Live | None = None
+        self._reasoning = ""
+        self._content = ""
+        self._final_answer: Any = None
+        self._usage_line: str | None = None
+        self._tools: list[_LiveTool] = []
+        self._show_settled = False
 
-    # ----- 流式阶段管理 -----
+    def _can_live(self) -> bool:
+        # StringIO / piped captures have no isatty; don't start Live there.
+        stream = getattr(self._console, "file", None)
+        checker = getattr(stream, "isatty", None)
+        if checker is None:
+            return False
+        try:
+            if not checker():
+                return False
+        except Exception:
+            return False
+        return bool(self._console.is_terminal)
 
-    def _start_phase(self, phase: str, title: str, title_style: str) -> None:
-        """进入一个流式阶段：若是新阶段，先收尾上一个，再打标题。"""
-        if self._phase == phase:
+    def _has_stream(self) -> bool:
+        return bool(self._reasoning or self._content or self._final_answer is not None)
+
+    def _has_preview(self) -> bool:
+        return self._has_stream() or bool(self._tools)
+
+    def _json_body(self, value: Any) -> Any:
+        body = json.dumps(value, ensure_ascii=False, indent=2)
+        try:
+            return RichJSON(body)
+        except Exception:
+            return Text(body, style="dim")
+
+    def _answer_panel(self, answer: Any) -> Panel:
+        if isinstance(answer, str):
+            content: Any = Markdown(answer)
+        else:
+            content = self._json_body(answer)
+        return Panel(
+            content,
+            title="[bold]💬 回答[/bold]",
+            title_align="left",
+            border_style="green",
+            padding=(1, 1),
+        )
+
+    def _draft_text(self, text: str) -> Text:
+        prefixed = "\n".join(
+            f"│ {line}" if line else "│" for line in text.split("\n")
+        )
+        return Text(prefixed, style="dim white")
+
+    def _tool_panel(self, block: _LiveTool) -> Panel:
+        name = _tool_call_name(block.call)
+        if block.result is None:
+            arguments = getattr(block.call, "arguments", None)
+            if arguments is None and isinstance(block.call, dict):
+                arguments = block.call.get("arguments")
+            body: Any = (
+                Text("(无参数)", style="dim italic")
+                if not arguments
+                else self._json_body(arguments)
+            )
+            if block.output:
+                lines = block.output.splitlines()
+                clipped = lines[-_COMMAND_OUTPUT_LINES:]
+                prefix = "" if len(lines) <= _COMMAND_OUTPUT_LINES else "…\n"
+                body = Group(body, Text(prefix + "\n".join(clipped), style="dim"))
+            return Panel(
+                body,
+                title=f"[bold]🔧 {name}[/bold]",
+                title_align="left",
+                border_style="yellow",
+                padding=(0, 1),
+            )
+        if block.result.get("ok"):
+            return Panel(
+                self._json_body(block.result.get("data")),
+                title=f"[bold]✅ {name}[/bold]",
+                title_align="left",
+                border_style="green",
+                padding=(0, 1),
+            )
+        return Panel(
+            Text(str(block.result.get("err", "未知错误")), style="red"),
+            title=f"[bold]❌ {name}[/bold]",
+            title_align="left",
+            border_style="red",
+            padding=(0, 1),
+        )
+
+    def _current_renderable(self, *, settled: bool) -> Any:
+        parts: list[Any] = []
+        if self._reasoning:
+            parts.append(Text("💭 思考过程", style="bold dim bright_black"))
+            parts.append(Text(self._reasoning, style="dim"))
+        if self._final_answer is not None and settled:
+            parts.append(self._answer_panel(self._final_answer))
+        elif self._content:
+            parts.append(Text("💬 回答", style="bold dim white"))
+            parts.append(self._draft_text(self._content))
+        for block in self._tools:
+            parts.append(self._tool_panel(block))
+        if self._usage_line:
+            parts.append(Text.from_markup(self._usage_line))
+        if not parts:
+            return Text("")
+        if len(parts) == 1:
+            return parts[0]
+        return Group(*parts)
+
+    def _suspend_live(self) -> None:
+        live = self._live
+        if live is None:
             return
-        if self._phase in ("reasoning", "content"):
-            self._console.print()  # 换行收尾上一个阶段的流式输出
-        self._console.print()  # 空行分隔
-        self._console.print(title, style=title_style)
-        sys.stdout.flush()
-        self._phase = phase
-        self._line_started = False
+        self._live = None
+        try:
+            live.stop()
+        except Exception:
+            pass
 
-    def _end_stream(self) -> None:
-        """结束流式阶段（工具调用 / 最终回答前调用）。"""
-        if self._phase in ("reasoning", "content"):
-            self._console.print()  # 换行收尾
-        self._phase = "idle"
-        self._line_started = False
-        self._pending_newlines = 0  # 清空惰性换行计数
+    def _ensure_live(self) -> None:
+        if self._live is not None or not self._can_live() or not self._has_preview():
+            return
+        self._live = Live(
+            get_renderable=self._preview,
+            console=self._console,
+            auto_refresh=True,
+            refresh_per_second=16,
+            transient=True,  # 权限确认要能擦掉预览；收口前改成 False 把最后一帧冻进 scrollback
+            redirect_stdout=False,
+            redirect_stderr=False,
+            vertical_overflow="ellipsis",
+            screen=False,
+        )
+        self._live.start()
 
-    def _stream_piece(self, piece: str, prefix_style: str, text_style: str) -> None:
-        """流式逐块打印，自动在每行开头插入竖线引导符。
+    def _refresh_live(self) -> None:
+        live = self._live
+        if live is None:
+            self._ensure_live()
+            return
+        try:
+            live.update(self._current_renderable(settled=False), refresh=False)
+        except Exception:
+            pass
 
-        用 pending_newlines 惰性处理换行：收到 \\n 时先计数，
-        等到下一段有实际内容时才把积累的换行统一打出来。
-        这样纯 \\n chunk（split 后全是空字符串）不会产生没有
-        │ 前缀的孤立空行，避免看起来像"模型在返回空白"。
-        """
-        lines = piece.split("\n")
-        for i, line in enumerate(lines):
-            if i > 0:
-                # 先把换行计入待处理队列，有内容时再一起刷出
-                self._pending_newlines += 1
-                self._line_started = False
-            if line:
-                # 有实际内容时才把积累的换行打出来
-                for _ in range(self._pending_newlines):
-                    self._console.print()
-                self._pending_newlines = 0
-                if not self._line_started:
-                    self._console.print("│ ", end="", style=prefix_style, markup=False)
-                    self._line_started = True
-                self._console.print(line, end="", style=text_style, markup=False)
-        sys.stdout.flush()
+    def _reset_stream(self) -> None:
+        self._reasoning = ""
+        self._content = ""
+        self._final_answer = None
+        self._usage_line = None
 
+    def _reset_all(self) -> None:
+        self._reset_stream()
+        self._tools = []
+
+    def _print_settled(self, renderable: Any) -> None:
+        if isinstance(renderable, Text) and not renderable.plain:
+            return
+        self._console.print()
+        self._console.print(renderable)
+
+    def _preview(self) -> Any:
+        return self._current_renderable(settled=self._show_settled)
+
+    def _freeze(self, renderable: Any) -> None:
+        """把当前尾巴定格进主缓冲历史：有 Live 就留最后一帧，否则直接打印。"""
+        live = self._live
+        if live is not None:
+            try:
+                self._show_settled = True
+                live.update(renderable, refresh=True)
+                live.transient = False
+                self._suspend_live()
+                return
+            except Exception:
+                self._suspend_live()
+            finally:
+                self._show_settled = False
+        self._print_settled(renderable)
+
+    def _commit(self, *, settled: bool) -> None:
+        if not self._has_preview():
+            self._suspend_live()
+            return
+        self._freeze(self._current_renderable(settled=settled))
+        self._reset_all()
+
+    def _commit_stream_if_any(self) -> None:
+        if not self._has_stream() or self._tools:
+            return
+        self._freeze(self._current_renderable(settled=False))
+        self._reset_stream()
+
+    def _commit_tools_if_done(self) -> None:
+        if not self._tools or any(block.result is None for block in self._tools):
+            return
+        self._commit(settled=True)
+
+    def _find_tool(self, tool_call) -> _LiveTool | None:
+        call_id = getattr(tool_call, "id", None)
+        if not call_id and isinstance(tool_call, dict):
+            call_id = tool_call.get("id")
+        if call_id:
+            for block in self._tools:
+                block_id = getattr(block.call, "id", None)
+                if not block_id and isinstance(block.call, dict):
+                    block_id = block.call.get("id")
+                if block_id == call_id:
+                    return block
+        name = _tool_call_name(tool_call)
+        running = [
+            block for block in self._tools
+            if block.result is None and _tool_call_name(block.call) == name
+        ]
+        return running[-1] if running else None
+
+    def _running_command(self) -> _LiveTool | None:
+        running = [
+            block for block in self._tools
+            if block.result is None and _tool_call_name(block.call) == "execute_command"
+        ]
+        return running[-1] if running else None
 
     # ----- Renderer 接口实现 -----
 
+    def on_turn_begin(self) -> None:
+        with self._prompt_lock:
+            self._commit(settled=False)
+
     def on_reasoning_delta(self, piece: str) -> None:
-        self._start_phase("reasoning", "💭 思考过程", "bold dim bright_black")
-        self._stream_piece(piece, prefix_style="dim bright_black", text_style="dim")
+        if not piece:
+            return
+        with self._prompt_lock:
+            self._reasoning += piece
+            self._refresh_live()
 
     def on_content_delta(self, piece: str) -> None:
-        self._start_phase("content", "💬 回答", "bold dim white")
-        self._stream_piece(piece, prefix_style="bold dim white", text_style="dim white")
+        if not piece:
+            return
+        with self._prompt_lock:
+            self._content += piece
+            self._refresh_live()
 
     def on_tool_call(self, tool_call) -> None:
         with self._prompt_lock:
-            self._end_stream()
-            name = tool_call.name
-            arguments = tool_call.arguments
-
-            if arguments:
-                body = json.dumps(arguments, ensure_ascii=False, indent=2)
-                try:
-                    content = RichJSON(body)
-                except Exception:
-                    content = Text(body, style="dim")
-            else:
-                content = Text("(无参数)", style="dim italic")
-
-            self._console.print()
-            self._console.print(
-                Panel(
-                    content,
-                    title=f"[bold]🔧 {name}[/bold]",
-                    title_align="left",
-                    border_style="yellow",
-                    padding=(0, 1),
-                )
-            )
-
-            if name == "execute_command":
-                self._console.print(Rule("输出", style="dim"))
+            self._commit_stream_if_any()
+            self._tools.append(_LiveTool(call=tool_call))
+            self._refresh_live()
 
     def on_command_output(self, line: str) -> None:
         with self._prompt_lock:
-            self._console.print(line, end="", style="dim", markup=False)
-            sys.stdout.flush()
+            block = self._running_command()
+            if block is None:
+                return
+            block.output += line
+            self._refresh_live()
 
     def on_checkpoint_error(self, error: str) -> None:
         with self._prompt_lock:
-            self._end_stream()
+            self._suspend_live()
             self._console.print()
             self._console.print(
                 Panel(
@@ -259,10 +431,11 @@ class ConsoleRenderer(Renderer):
                     padding=(0, 1),
                 )
             )
+            self._ensure_live()
 
     def on_agent_event(self, event: dict[str, Any]) -> None:
         with self._prompt_lock:
-            self._end_stream()
+            self._suspend_live()
             status = str(event.get("status", "unknown"))
             task_id = str(event.get("task_id", "?"))
             depth = event.get("depth", "?")
@@ -280,42 +453,19 @@ class ConsoleRenderer(Renderer):
             if task:
                 line.append(f" {task}", style="dim")
             self._console.print(line)
+            self._ensure_live()
 
     def on_tool_result(self, tool_call, tool_result) -> None:
         with self._prompt_lock:
-            self._end_stream()
-            name = _tool_call_name(tool_call)
             if hasattr(tool_result, "to_dict"):
                 tool_result = tool_result.to_dict()
-
-            if tool_result.get("ok"):
-                data = tool_result.get("data")
-                body = json.dumps(data, ensure_ascii=False, indent=2)
-                try:
-                    content = RichJSON(body)
-                except Exception:
-                    content = Text(body, style="dim")
-                self._console.print(
-                    Panel(
-                        content,
-                        title=f"[bold]✅ {name}[/bold]",
-                        title_align="left",
-                        border_style="green",
-                        padding=(0, 1),
-                    )
-                )
-            else:
-                err_text = str(tool_result.get("err", "未知错误"))
-                self._console.print(
-                    Panel(
-                        Text(err_text, style="red"),
-                        title=f"[bold]❌ {name}[/bold]",
-                        title_align="left",
-                        border_style="red",
-                        padding=(0, 1),
-                    )
-                )
-
+            block = self._find_tool(tool_call)
+            if block is None:
+                block = _LiveTool(call=tool_call)
+                self._tools.append(block)
+            block.result = tool_result
+            self._refresh_live()
+            self._commit_tools_if_done()
 
     def on_usage(
         self,
@@ -324,26 +474,33 @@ class ConsoleRenderer(Renderer):
         total_tokens: int | None,
         context_limit: int | None,
     ) -> None:
-        self._end_stream()
         inp = prompt_tokens if prompt_tokens is not None else "?"
         out = completion_tokens if completion_tokens is not None else "?"
         tot = total_tokens if total_tokens is not None else "?"
-
-        self._console.print()
-        self._console.print(
+        line = (
             f"[dark_orange bold]tokens 本次请求[/] "
             f"[dark_orange]输入 {inp} · 输出 {out} · 合计 {tot}[/]"
         )
+        with self._prompt_lock:
+            attached = self._has_preview()
+            self._usage_line = line
+            if attached:
+                self._refresh_live()
+            else:
+                self._console.print()
+                self._console.print(line)
+                self._usage_line = None
 
     def on_usage_summary(
         self, prompt_tokens: int, completion_tokens: int, total_tokens: int,
     ) -> None:
-        self._end_stream()
-        self._console.print(
-            f"[dark_orange bold]tokens 当前任务累计（已报告）[/] "
-            f"[dark_orange]输入 {prompt_tokens:,} · 输出 {completion_tokens:,} "
-            f"· 合计 {total_tokens:,}[/]"
-        )
+        with self._prompt_lock:
+            self._commit(settled=True)
+            self._console.print(
+                f"[dark_orange bold]tokens 当前任务累计（已报告）[/] "
+                f"[dark_orange]输入 {prompt_tokens:,} · 输出 {completion_tokens:,} "
+                f"· 合计 {total_tokens:,}[/]"
+            )
 
     def on_context_compact(
         self,
@@ -352,31 +509,29 @@ class ConsoleRenderer(Renderer):
         context_limit: int | None,
         context_watermark: float,
     ) -> None:
-        self._end_stream()
-
-        if prompt_tokens is not None and context_limit:
-            ctx_usage = f"{prompt_tokens:,} / {context_limit:,}"
-            ctx_pct = f" ({prompt_tokens / context_limit:.1%})"
-        else:
-            ctx_usage = "? / ?"
-            ctx_pct = ""
-        watermark = f"{context_watermark:.0%}"
-
-        if folded_count > 0:
-            msg = f"已折叠 {folded_count} 条旧工具结果"
-            style = "dark_orange"
-        else:
-            msg = "上下文已超水位,但暂无可折叠旧工具结果"
-            style = "yellow"
-
-        self._console.print()
-        self._console.print(
-            f"[{style} bold]context compact[/] "
-            f"[{style}]{msg} · 预计占用 {ctx_usage}{ctx_pct} · 阈值 {watermark}[/]"
-        )
+        with self._prompt_lock:
+            self._suspend_live()
+            if prompt_tokens is not None and context_limit:
+                ctx_usage = f"{prompt_tokens:,} / {context_limit:,}"
+                ctx_pct = f" ({prompt_tokens / context_limit:.1%})"
+            else:
+                ctx_usage = "? / ?"
+                ctx_pct = ""
+            watermark = f"{context_watermark:.0%}"
+            if folded_count > 0:
+                msg = f"已折叠 {folded_count} 条旧工具结果"
+                style = "dark_orange"
+            else:
+                msg = "上下文已超水位,但暂无可折叠旧工具结果"
+                style = "yellow"
+            self._console.print()
+            self._console.print(
+                f"[{style} bold]context compact[/] "
+                f"[{style}]{msg} · 预计占用 {ctx_usage}{ctx_pct} · 阈值 {watermark}[/]"
+            )
+            self._ensure_live()
 
     def on_completion_rejected(self, issues: Any = ()) -> None:
-        self._end_stream()
         parts = []
         for issue in issues or ():
             message = getattr(issue, "message", None)
@@ -385,33 +540,15 @@ class ConsoleRenderer(Renderer):
             if message:
                 parts.append(str(message))
         detail = "；".join(parts) if parts else "未说明原因"
-        self._console.print()
-        self._console.print(f"[yellow]完成检查未通过，继续工作[/] [dim]{detail}[/]")
+        with self._prompt_lock:
+            self._commit(settled=False)
+            self._console.print()
+            self._console.print(f"[yellow]完成检查未通过，继续工作[/] [dim]{detail}[/]")
 
     def on_final(self, answer) -> None:
-        self._end_stream()
-        self._console.print()
-
-        # 字符串 → Markdown 渲染（LLM 回答通常是 Markdown 格式）
-        # 非字符串（dict/list）→ JSON 语法高亮
-        if isinstance(answer, str):
-            content = Markdown(answer)
-        else:
-            body = json.dumps(answer, ensure_ascii=False, indent=2)
-            try:
-                content = RichJSON(body)
-            except Exception:
-                content = Text(body)
-
-        self._console.print(
-            Panel(
-                content,
-                title="[bold]💬 回答[/bold]",
-                title_align="left",
-                border_style="green",
-                padding=(1, 1),
-            )
-        )
+        with self._prompt_lock:
+            self._final_answer = answer
+            self._commit(settled=True)
 
     # ── 双向交互 ──
 
@@ -424,7 +561,7 @@ class ConsoleRenderer(Renderer):
         offer_always: bool,
     ) -> str:
         with self._prompt_lock:
-            self._end_stream()
+            self._suspend_live()
 
             info = Text()
             info.append("工具: ", style="bold")
@@ -457,6 +594,8 @@ class ConsoleRenderer(Renderer):
                 return prompt(prompt_text).strip().lower()
             except (EOFError, KeyboardInterrupt):
                 return "n"
+            finally:
+                self._ensure_live()
 
     def prompt_user(
         self,
@@ -465,7 +604,7 @@ class ConsoleRenderer(Renderer):
         options: tuple[str, ...] = (),
     ) -> str | None:
         with self._prompt_lock:
-            self._end_stream()
+            self._suspend_live()
 
             body = Text()
             body.append(question, style="cyan")
@@ -492,14 +631,16 @@ class ConsoleRenderer(Renderer):
                     answer = prompt(prompt_text).strip()
                 except (EOFError, KeyboardInterrupt):
                     self._console.print()
+                    self._ensure_live()
                     return None
                 if answer:
+                    self._ensure_live()
                     return answer
                 self._console.print("回答不能为空，请重新输入。", style="yellow")
 
     def prompt_main_input(self, prompt_session: Any = None) -> str | None:
         with self._prompt_lock:
-            self._end_stream()
+            self._commit(settled=True)
             self._console.print()
 
             prompt_text = HTML(
