@@ -124,6 +124,13 @@ class StatusChanged(Message):
     pass
 
 
+class AgentEventNotice(Message):
+    def __init__(self, data: dict[str, Any], text: str) -> None:
+        super().__init__()
+        self.data = data
+        self.text = text
+
+
 class TUIRenderer(Renderer):
     """Projects Agent `on_*` callbacks into Textual messages.
 
@@ -379,7 +386,6 @@ class TUIRenderer(Renderer):
     ) -> None:
         inp = f"{prompt_tokens:,}" if prompt_tokens is not None else "?"
         out = f"{completion_tokens:,}" if completion_tokens is not None else "?"
-        tot = f"{total_tokens:,}" if total_tokens is not None else "?"
         with self._lock:
             self.request_usage = f"{inp} in  ·  {out} out"
             self._pending_request_usage = self.request_usage
@@ -434,7 +440,9 @@ class TUIRenderer(Renderer):
         line = f"agent {task_id[:8]} · d{depth} · {status}"
         if task:
             line += f"  {task}"
-        self.on_system_notice(line)
+        with self._lock:
+            self.notices.append(line)
+        self._emit(AgentEventNotice(event, line))
 
     def on_system_notice(self, text: str) -> None:
         with self._lock:

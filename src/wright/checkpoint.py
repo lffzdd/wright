@@ -156,6 +156,12 @@ class SessionCheckpointStore:
                     "saved_at": saved_at_str,
                     "status": session_info.get("status", "unknown"),
                     "user_goal": session_info.get("user_goal", ""),
+                    "environment": session_info.get("environment", "local"),
+                    "execution_root": session_info.get("workspace_dir", ""),
+                    "recoverable": bool(
+                        session_info.get("workspace_dir")
+                        and Path(session_info["workspace_dir"]).is_dir()
+                    ),
                 })
             except Exception:
                 logger.debug("skip unreadable checkpoint %s", path, exc_info=True)
@@ -174,6 +180,10 @@ def _serialize_session(session: SessionState) -> dict[str, Any]:
             "user_goal": session.user_goal,
             "workspace_dir": str(session.workspace_dir),
             "cwd": str(session.get_cwd()),
+            "project_root": str(session.project_root or session.workspace_dir),
+            "environment": session.environment,
+            "base_commit": session.base_commit,
+            "branch_name": session.branch_name,
             "message_records": [
                 {"id": record.id, "message": _json_safe(record.message)}
                 for record in session.message_records
@@ -206,6 +216,7 @@ def _serialize_session(session: SessionState) -> dict[str, Any]:
             "last_usage": _serialize_usage(session.last_usage),
             "total_usage": _serialize_usage(session.total_usage),
             "task_usage_start": _serialize_usage(session.task_usage_start),
+            "model_name": session.model_name,
             "context_tokens": session.context_tokens,
             "step_count": session.step_count,
             "active_turn_start_step": session.active_turn_start_step,
@@ -268,6 +279,17 @@ def _deserialize_session(payload: Any) -> SessionState:
         raise CheckpointError(f"workspace_dir 不存在: {workspace_dir}")
     saved_cwd = Path(_string(data.get("cwd"), "cwd")).resolve()
     cwd = saved_cwd if saved_cwd.is_dir() else workspace_dir
+    project_root_value = data.get("project_root")
+    project_root = (
+        Path(_string(project_root_value, "project_root")).resolve()
+        if project_root_value is not None
+        else workspace_dir
+    )
+    environment = data.get("environment", "local")
+    if environment not in {"local", "worktree"}:
+        raise CheckpointError("environment 必须是 local 或 worktree")
+    base_commit = _optional_string(data.get("base_commit"), "base_commit")
+    branch_name = _optional_string(data.get("branch_name"), "branch_name")
 
     message_records = _deserialize_messages(data.get("message_records"))
     turns = _deserialize_turns(data.get("turns"))
@@ -321,6 +343,10 @@ def _deserialize_session(payload: Any) -> SessionState:
         user_goal=_string(data.get("user_goal"), "user_goal", allow_empty=True),
         workspace_dir=workspace_dir,
         cwd=cwd,
+        project_root=project_root,
+        environment=environment,
+        base_commit=base_commit,
+        branch_name=branch_name,
         turns=turns,
         message_records=message_records,
         tool_executions=tool_executions,
@@ -339,6 +365,7 @@ def _deserialize_session(payload: Any) -> SessionState:
         or UsageRecord(),
         task_usage_start=_deserialize_usage(data.get("task_usage_start"), "task_usage_start")
         or UsageRecord(),
+        model_name=_optional_string(data.get("model_name"), "model_name"),
         context_tokens=context_tokens,
         step_count=step_count,
         max_steps=max_steps,

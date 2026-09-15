@@ -2,36 +2,51 @@
 
 from __future__ import annotations
 
+import difflib
 import json
 import sys
 import threading
+from pathlib import Path
 from queue import Full
 from typing import Any, ClassVar
 
+from rich.console import Group
+from rich.json import JSON as RichJSON
+from rich.markdown import Markdown as RichMarkdown
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.events import Key
+from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, Collapsible, Input, Static
+from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
 from ..interaction import InteractionRequest
 from ..logger import get_logger
 from ..runtime import WrightRuntime, build_runtime, shutdown_runtime
 from ..session_host import process_session_event
 from .renderer import (
+    AgentEventNotice,
     DraftFreeze,
     FinalAnswer,
     InteractionNeeded,
+    RequestUsage,
     StatusChanged,
     StreamRefresh,
     SystemNotice,
-    RequestUsage,
     TaskUsage,
     ToolUpsert,
     ToolView,
     TUIRenderer,
     TurnBegin,
 )
+from .session_control import (
+    SessionControlRequest,
+    available_models,
+    runtime_args_for_transition,
+)
+from .slash import SlashCompletion, tui_help_text
 
 logger = get_logger(__name__)
 
@@ -92,21 +107,35 @@ def _task_usage_detail(prompt: int, completion: int, total: int) -> str:
 
 class UserBlock(Static):
     def __init__(self, text: str) -> None:
-        super().__init__(text, classes="msg user")
+        content = Text()
+        content.append("❯ ", style="bold cyan")
+        content.append(text)
+        super().__init__(content, classes="msg user")
+
+
+def _format_assistant_text(text: str, *, draft: bool) -> Any:
+    if not text:
+        return "…" if draft else ""
+    if draft:
+        return text
+    try:
+        return RichMarkdown(text)
+    except Exception:
+        return text
 
 
 class AssistantBlock(Static):
     def __init__(self, text: str = "", *, draft: bool = False) -> None:
         classes = "msg assistant draft" if draft else "msg assistant"
-        super().__init__(text or "…", classes=classes)
+        super().__init__(_format_assistant_text(text, draft=draft), classes=classes)
 
     def set_draft(self, text: str) -> None:
         self.set_classes("msg assistant draft")
-        self.update(text or "…")
+        self.update(_format_assistant_text(text, draft=True))
 
     def set_final(self, text: str) -> None:
         self.set_classes("msg assistant")
-        self.update(text or "")
+        self.update(_format_assistant_text(text, draft=False))
 
 
 class ReasoningBlock(Collapsible):
@@ -123,6 +152,30 @@ class ReasoningBlock(Collapsible):
 
     def update_reasoning(self, text: str) -> None:
         self._body.update(text or "…")
+
+
+class SubagentBlock(Static):
+    def __init__(self, data: dict[str, Any], text: str) -> None:
+        status = str(data.get("status", "unknown"))
+        depth = data.get("depth", "?")
+        task_id = str(data.get("task_id", "?"))[:8]
+        task = str(data.get("task", ""))
+        if len(task) > 80:
+            task = task[:77] + "…"
+
+        line = Text()
+        line.append("🤖 SubAgent ", style="bold magenta")
+        line.append(f"[{task_id}] ", style="bold white")
+        line.append(f"d{depth} ", style="dim")
+        status_style = {
+            "running": "cyan bold",
+            "completed": "green bold",
+            "failed": "red bold",
+        }.get(status, "yellow")
+        line.append(f"· {status}", style=status_style)
+        if task:
+            line.append(f"  {task}", style="dim")
+        super().__init__(line, classes=f"subagent {status}")
 
 
 class SystemBlock(Static):
@@ -144,9 +197,9 @@ class TaskUsageBlock(UsageBlock):
 
 class ToolBlock(Collapsible):
     def __init__(self, tool: ToolView) -> None:
-        body = Static(_tool_body(tool), classes="tool-body")
+        self._body = Static(_tool_body(tool), classes="tool-body")
         super().__init__(
-            body,
+            self._body,
             title=_tool_title(tool),
             collapsed=True,
             classes=f"tool {_tool_class(tool)}",
@@ -157,11 +210,7 @@ class ToolBlock(Collapsible):
         self.tool_key = tool.key
         self.title = _tool_title(tool)
         self.set_classes(f"tool {_tool_class(tool)}")
-        try:
-            body = self.query_one(".tool-body", Static)
-            body.update(_tool_body(tool))
-        except Exception:
-            pass
+        self._body.update(_tool_body(tool))
 
 
 def _tool_class(tool: ToolView) -> str:
@@ -172,24 +221,106 @@ def _tool_class(tool: ToolView) -> str:
     return "running"
 
 
+def _tool_arg_summary(name: str, args: Any) -> str:
+    if not isinstance(args, dict):
+        if isinstance(args, str) and args.strip():
+            return args.strip()[:36]
+        return ""
+    if "command" in args and isinstance(args["command"], str):
+        cmd = args["command"].strip().replace("\n", " ")
+        return f"$ {cmd[:36]}…" if len(cmd) > 36 else f"$ {cmd}"
+    for key in ("path", "file_path", "file", "TargetFile", "AbsolutePath", "SearchDirectory"):
+        if key in args and isinstance(args[key], str):
+            p = args[key].strip()
+            parts = p.split("/")
+            return "/".join(parts[-2:]) if len(parts) > 2 else p
+    for key in ("query", "Query", "pattern", "Pattern"):
+        if key in args and isinstance(args[key], str):
+            q = args[key].strip()
+            return f'"{q[:30]}…"' if len(q) > 30 else f'"{q}"'
+    for key in ("task", "instruction", "Instruction", "prompt"):
+        if key in args and isinstance(args[key], str):
+            s = args[key].strip().replace("\n", " ")
+            return s[:36] + "…" if len(s) > 36 else s
+    for v in args.values():
+        if isinstance(v, str) and v.strip():
+            s = v.strip().replace("\n", " ")
+            return s[:32] + "…" if len(s) > 32 else s
+    return ""
+
+
 def _tool_title(tool: ToolView) -> str:
-    return f"{tool.name}  ·  {tool.status}"
+    icon = "⏳" if tool.status == "running" else ("✓" if tool.status == "done" else "✗")
+    summary = _tool_arg_summary(tool.name, tool.arguments)
+    if summary:
+        return f"{icon} {tool.name} · {summary}"
+    return f"{icon} {tool.name} · {tool.status}"
 
 
-def _tool_body(tool: ToolView) -> str:
-    parts: list[str] = []
-    if tool.arguments:
-        parts.append(_json_text(tool.arguments))
+def _format_diff(diff_text: str) -> Text:
+    t = Text()
+    for line in diff_text.splitlines():
+        if line.startswith("+") and not line.startswith("+++"):
+            t.append(line + "\n", style="green")
+        elif line.startswith("-") and not line.startswith("---"):
+            t.append(line + "\n", style="red")
+        elif line.startswith("@@"):
+            t.append(line + "\n", style="cyan")
+        else:
+            t.append(line + "\n", style="dim")
+    return t
+
+
+def _tool_body(tool: ToolView) -> Any:
+    parts: list[Any] = []
+    args = tool.arguments
+    if args:
+        if isinstance(args, dict) and "command" in args and isinstance(args["command"], str):
+            parts.append(Text(f"$ {args['command']}", style="bold cyan"))
+        elif isinstance(args, dict) and tool.name == "edit_file" and "old_text" in args and "new_text" in args:
+            filename = str(args.get("file", "file"))
+            old = str(args["old_text"])
+            new = str(args["new_text"])
+            udiff = list(difflib.unified_diff(
+                old.splitlines(), new.splitlines(),
+                fromfile=f"a/{filename}", tofile=f"b/{filename}", lineterm="",
+            ))
+            if udiff:
+                parts.append(_format_diff("\n".join(udiff)))
+            else:
+                parts.append(Text("(no changes)", style="dim italic"))
+        else:
+            try:
+                parts.append(Group(Text("参数:", style="bold dim"), RichJSON.from_data(args)))
+            except Exception:
+                parts.append(Text(_json_text(args), style="dim"))
+
     if tool.output:
         lines = tool.output.splitlines()
         clipped = lines[-_COMMAND_OUTPUT_LINES:]
         prefix = "" if len(lines) <= _COMMAND_OUTPUT_LINES else "…\n"
-        parts.append(prefix + "\n".join(clipped))
+        body_txt = prefix + "\n".join(clipped)
+        if any(l.startswith("@@") or (l.startswith("+") and not l.startswith("+++")) or (l.startswith("-") and not l.startswith("---")) for l in clipped):
+            parts.append(_format_diff(body_txt))
+        else:
+            parts.append(Text(body_txt, style="dim"))
+
     if tool.status == "error" and tool.error:
-        parts.append(tool.error)
+        parts.append(Text(f"错误: {tool.error}", style="bold red"))
     elif tool.result is not None:
-        parts.append(_json_text(tool.result))
-    return "\n\n".join(part for part in parts if part) or "(no payload)"
+        if isinstance(tool.result, (dict, list)):
+            try:
+                parts.append(Group(Text("返回结果:", style="bold dim"), RichJSON.from_data(tool.result)))
+            except Exception:
+                parts.append(Text(_json_text(tool.result), style="dim"))
+        else:
+            parts.append(Text(str(tool.result), style="dim"))
+
+    if not parts:
+        return Text("(no payload)", style="dim italic")
+    if len(parts) == 1:
+        return parts[0]
+    return Group(*parts)
 
 
 class PermissionModal(ModalScreen[str]):
@@ -297,6 +428,167 @@ class AskUserModal(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+class ResumeModal(ModalScreen[str | None]):
+    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "Cancel", show=False)]
+
+    def __init__(self, sessions: list[dict[str, Any]]) -> None:
+        super().__init__()
+        self.sessions = sessions
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static("resume", classes="dialog-kicker")
+            yield Static("Saved sessions", classes="dialog-title")
+            with Vertical(classes="dialog-options"):
+                for index, session in enumerate(self.sessions):
+                    goal = str(session.get("user_goal") or "(no goal)").replace("\n", " ")
+                    label = f"{session['session_id']}  ·  {goal[:52]}"
+                    yield Button(label, id=f"session-{index}", variant="primary")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        ident = event.button.id or ""
+        if not ident.startswith("session-"):
+            return
+        try:
+            session = self.sessions[int(ident.removeprefix("session-"))]
+        except (ValueError, IndexError):
+            return
+        self.dismiss(str(session["session_id"]))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class ModelModal(ModalScreen[str | None]):
+    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "Cancel", show=False)]
+
+    def __init__(self, models: tuple[str, ...], current: str) -> None:
+        super().__init__()
+        self.models = models
+        self.current = current
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static("model", classes="dialog-kicker")
+            yield Static(f"Current: {self.current}", classes="dialog-title")
+            if self.models:
+                with Vertical(classes="dialog-options"):
+                    for index, model in enumerate(self.models):
+                        yield Button(model, id=f"model-{index}", variant="primary")
+            yield Input(placeholder="type a model ID", id="model-input")
+
+    def on_mount(self) -> None:
+        self.query_one("#model-input", Input).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        ident = event.button.id or ""
+        if not ident.startswith("model-"):
+            return
+        try:
+            self.dismiss(self.models[int(ident.removeprefix("model-"))])
+        except (ValueError, IndexError):
+            return
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        value = event.value.strip()
+        if value:
+            self.dismiss(value)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class MultilineComposer(TextArea):
+    """A chat composer that grows with its content and submits on Enter."""
+
+    _MIN_VISIBLE_ROWS = 3
+    _MAX_VISIBLE_ROWS = 6
+    _FRAME_ROWS = 2
+
+    class Submitted(Message):
+        def __init__(self, value: str) -> None:
+            super().__init__()
+            self.value = value
+
+    class SlashChanged(Message):
+        def __init__(self, text: str) -> None:
+            super().__init__()
+            self.text = text
+
+    class SlashNavigate(Message):
+        def __init__(self, offset: int) -> None:
+            super().__init__()
+            self.offset = offset
+
+    class SlashComplete(Message):
+        pass
+
+    class SlashDismissed(Message):
+        pass
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(show_line_numbers=False, **kwargs)
+        self._slash_menu_open = False
+
+    def set_slash_menu_open(self, value: bool) -> None:
+        self._slash_menu_open = value
+
+    def on_mount(self) -> None:
+        self._fit_height()
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        if event.text_area is self:
+            self._fit_height()
+            self.post_message(self.SlashChanged(self.text))
+
+    def _fit_height(self) -> None:
+        rows = min(
+            self._MAX_VISIBLE_ROWS,
+            max(self._MIN_VISIBLE_ROWS, self.wrapped_document.height),
+        )
+        self.styles.height = rows + self._FRAME_ROWS
+
+    def on_key(self, event: Key) -> None:
+        # iTerm2's xterm modifyOtherKeys protocol represents Shift+Enter as
+        # ``shift+\\r``; Textual's Kitty protocol calls it ``shift+enter``.
+        if event.key in {"shift+enter", "shift+\r", "ctrl+j"}:
+            event.prevent_default()
+            event.stop()
+            start, end = self.selection
+            self.replace("\n", start, end, maintain_selection_offset=False)
+            return
+        if self._slash_menu_open:
+            if event.key == "up":
+                event.prevent_default()
+                event.stop()
+                self.post_message(self.SlashNavigate(-1))
+                return
+            if event.key == "down":
+                event.prevent_default()
+                event.stop()
+                self.post_message(self.SlashNavigate(1))
+                return
+            if event.key == "tab":
+                event.prevent_default()
+                event.stop()
+                self.post_message(self.SlashComplete())
+                return
+            if event.key == "escape":
+                event.prevent_default()
+                event.stop()
+                self.post_message(self.SlashDismissed())
+                return
+        if event.key != "enter":
+            return
+        event.prevent_default()
+        event.stop()
+        value = self.text.strip()
+        if not value:
+            return
+        self.clear()
+        self.post_message(self.Submitted(value))
+
+
 class WrightTUI(App):
     """Fullscreen Wright session. Input stays pinned; Agent runs off-thread."""
 
@@ -322,10 +614,27 @@ class WrightTUI(App):
         text-style: bold;
     }
 
+    #status-model {
+        width: auto;
+        padding: 0 1;
+        color: #bfa8e6;
+    }
+
+    #status-workspace {
+        width: auto;
+        padding: 0 1;
+        color: #8da4be;
+    }
+
     #status-state {
         width: auto;
-        padding: 0 2;
+        padding: 0 1;
         color: #94b9ae;
+    }
+
+    #status-state.running {
+        color: #d7bb82;
+        text-style: bold;
     }
 
     #status-meta {
@@ -361,6 +670,9 @@ class WrightTUI(App):
     }
 
     #composer {
+        height: 5;
+        min-height: 5;
+        max-height: 8;
         background: #191f27;
         border: round #354456;
         padding: 0 1;
@@ -374,6 +686,17 @@ class WrightTUI(App):
         height: 1;
         padding: 0 2;
         color: #8091a5;
+    }
+
+    #slash-suggestions {
+        display: none;
+        height: auto;
+        max-height: 8;
+        margin: 0 1;
+        padding: 0 1;
+        background: #202a35;
+        border: round #52718f;
+        color: #b9c8d8;
     }
 
     .msg {
@@ -413,6 +736,26 @@ class WrightTUI(App):
     .reasoning-body {
         color: #a4afc2;
         padding: 0 1 1 1;
+    }
+
+    .subagent {
+        height: auto;
+        margin: 0 0 1 1;
+        background: #171d26;
+        border-left: solid #7c6f9e;
+        padding: 0 1;
+    }
+
+    .subagent.running {
+        border-left: solid #68a0cf;
+    }
+
+    .subagent.completed {
+        border-left: solid #5da984;
+    }
+
+    .subagent.failed {
+        border-left: solid #cf6868;
     }
 
     .system {
@@ -526,6 +869,8 @@ class WrightTUI(App):
     BINDINGS: ClassVar[list[Binding]] = [
         Binding("ctrl+q", "quit", "Quit"),
         Binding("ctrl+c", "quit", "Quit", show=False),
+        Binding("ctrl+e", "toggle_tools", "Toggle tools", show=False),
+        Binding("ctrl+l", "scroll_end", "Scroll to bottom", show=False),
     ]
 
     def __init__(self, rt: WrightRuntime) -> None:
@@ -541,20 +886,25 @@ class WrightTUI(App):
         self._draining = False
         self._active_request: InteractionRequest | None = None
         self._stop = threading.Event()
+        self._scroll_pending = False
+        self._slash_completion = SlashCompletion()
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="status"):
             yield Static("wright", id="brand")
-            yield Static("idle", id="status-state")
+            yield Static("", id="status-model")
+            yield Static("", id="status-workspace")
+            yield Static("● idle", id="status-state")
             yield Static("", id="status-meta")
             yield Static("○", id="context")
         yield VerticalScroll(id="transcript")
         with Vertical(id="composer-wrap"):
-            yield Input(
+            yield Static("", id="slash-suggestions")
+            yield MultilineComposer(
                 placeholder="Message Wright…",
                 id="composer",
             )
-            yield Static("enter send  ·  ctrl+q quit", id="composer-hint")
+            yield Static("enter send  ·  shift+enter newline  ·  / for commands", id="composer-hint")
 
     def on_mount(self) -> None:
         self.renderer.attach(self)
@@ -570,7 +920,7 @@ class WrightTUI(App):
             daemon=True,
         )
         self.session_thread.start()
-        self.query_one("#composer", Input).focus()
+        self.query_one("#composer", MultilineComposer).focus()
 
     def on_unmount(self) -> None:
         self._stop.set()
@@ -722,6 +1072,13 @@ class WrightTUI(App):
         return self._reasoning
 
     def _scroll_to_end(self) -> None:
+        if self._scroll_pending:
+            return
+        self._scroll_pending = True
+        self.call_after_refresh(self._scroll_to_end_after_refresh)
+
+    def _scroll_to_end_after_refresh(self) -> None:
+        self._scroll_pending = False
         self._transcript().scroll_end(animate=False, immediate=True)
 
     def on_turn_begin(self, _event: TurnBegin) -> None:
@@ -774,6 +1131,10 @@ class WrightTUI(App):
         self._transcript().mount(SystemBlock(event.text))
         self._scroll_to_end()
 
+    def on_agent_event_notice(self, event: AgentEventNotice) -> None:
+        self._transcript().mount(SubagentBlock(event.data, event.text))
+        self._scroll_to_end()
+
     def on_status_changed(self, _event: StatusChanged) -> None:
         self._refresh_status()
 
@@ -819,7 +1180,7 @@ class WrightTUI(App):
                     exit_on_error=False,
                 )
             try:
-                self.query_one("#composer", Input).focus()
+                self.query_one("#composer", MultilineComposer).focus()
             except Exception:
                 pass
 
@@ -859,20 +1220,147 @@ class WrightTUI(App):
                 break
             _fail_interaction(request)
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id != "composer":
-            return
+    def on_multiline_composer_submitted(self, event: MultilineComposer.Submitted) -> None:
         value = event.value.strip()
-        event.input.value = ""
         if not value:
             return
         if value in {"/exit", "/quit"}:
             self.action_quit()
             return
+        if value == "/help":
+            self.renderer.on_system_notice(tui_help_text())
+            return
+        if value == "/new":
+            self._transition(SessionControlRequest.new())
+            return
+        if value == "/resume":
+            self.run_worker(self._choose_resume(), group="session-control")
+            return
+        if value.startswith("/resume "):
+            self._transition(SessionControlRequest.resume(value.removeprefix("/resume ").strip()))
+            return
+        if value == "/model":
+            self.run_worker(self._choose_model(), group="session-control")
+            return
+        if value.startswith("/model "):
+            self._set_model(value.removeprefix("/model ").strip())
+            return
+        if value == "/clear":
+            self._transcript().remove_children()
+            return
         self._transcript().mount(UserBlock(value))
         self._scroll_to_end()
         self.rt.event_queue.put(("USER_INPUT", value))
         self._refresh_status()
+
+    def _control_available(self) -> bool:
+        if self.rt.agent_idle.is_set():
+            return True
+        self.renderer.on_system_notice("session controls are available when Wright is idle")
+        return False
+
+    def _transition(self, request: SessionControlRequest) -> None:
+        if not self._control_available():
+            return
+        store = self.rt.agent.checkpoint_store
+        if store is not None:
+            try:
+                store.save(self.rt.session_state)
+            except Exception as exc:
+                self.renderer.on_system_notice(f"checkpoint failed: {exc}")
+                return
+        self._stop.set()
+        try:
+            self.rt.event_queue.put_nowait(("EXIT", None))
+        except Exception:
+            pass
+        self.exit(result=request)
+
+    async def _choose_resume(self) -> None:
+        if not self._control_available():
+            return
+        sessions = self.rt.checkpoint_store.list_recent_sessions(limit=12)
+        if not sessions:
+            self.renderer.on_system_notice("no saved sessions")
+            return
+        session_id = await self.push_screen_wait(ResumeModal(sessions))
+        if session_id:
+            self._transition(SessionControlRequest.resume(session_id))
+
+    async def _choose_model(self) -> None:
+        if not self._control_available():
+            return
+        current = str(self.rt.llm.model)
+        model = await self.push_screen_wait(ModelModal(available_models(current), current))
+        if model:
+            self._set_model(model)
+
+    def _set_model(self, model: str) -> None:
+        if not self._control_available() or not model:
+            return
+        current = str(self.rt.llm.model)
+        if model == current:
+            return
+        self.rt.llm.model = model
+        if self.rt.agent.llm is not self.rt.llm:
+            self.rt.agent.llm.model = model
+        previous_session_model = self.rt.session_state.model_name
+        self.rt.session_state.model_name = model
+        store = self.rt.agent.checkpoint_store
+        if store is not None:
+            try:
+                store.save(self.rt.session_state)
+            except Exception as exc:
+                self.rt.llm.model = current
+                if self.rt.agent.llm is not self.rt.llm:
+                    self.rt.agent.llm.model = current
+                self.rt.session_state.model_name = previous_session_model
+                self.renderer.on_system_notice(f"checkpoint failed: {exc}")
+                return
+        self.renderer.on_system_notice(f"model  {current}  →  {model}")
+        self._refresh_status()
+
+    def on_multiline_composer_slash_changed(
+        self, event: MultilineComposer.SlashChanged,
+    ) -> None:
+        self._slash_completion.update(event.text)
+        self._render_slash_suggestions()
+
+    def on_multiline_composer_slash_navigate(
+        self, event: MultilineComposer.SlashNavigate,
+    ) -> None:
+        self._slash_completion.move(event.offset)
+        self._render_slash_suggestions()
+
+    def on_multiline_composer_slash_complete(
+        self, _event: MultilineComposer.SlashComplete,
+    ) -> None:
+        command = self._slash_completion.selected
+        if command is None:
+            return
+        composer = self.query_one("#composer", MultilineComposer)
+        composer.load_text(f"{command.name} ")
+        composer.focus()
+
+    def on_multiline_composer_slash_dismissed(
+        self, _event: MultilineComposer.SlashDismissed,
+    ) -> None:
+        self._slash_completion.update("")
+        self._render_slash_suggestions()
+
+    def _render_slash_suggestions(self) -> None:
+        suggestions = self.query_one("#slash-suggestions", Static)
+        matches = self._slash_completion.matches
+        self.query_one("#composer", MultilineComposer).set_slash_menu_open(bool(matches))
+        suggestions.display = bool(matches)
+        if not matches:
+            suggestions.update("")
+            return
+        lines = []
+        for index, command in enumerate(matches):
+            marker = "❯" if index == self._slash_completion.selected_index else " "
+            lines.append(f"{marker} {command.name:<10} {command.description}")
+        suggestions.update("\n".join(lines) + "\n  ↑↓ navigate  ·  tab complete  ·  esc close")
 
     def action_quit(self) -> None:
         self._stop.set()
@@ -882,11 +1370,32 @@ class WrightTUI(App):
             pass
         self.exit()
 
+    def action_toggle_tools(self) -> None:
+        tools = list(self.query(ToolBlock))
+        if not tools:
+            return
+        any_collapsed = any(t.collapsed for t in tools)
+        for t in tools:
+            t.collapsed = not any_collapsed
+
+    def action_scroll_end(self) -> None:
+        self._scroll_to_end()
+
+    def on_key(self, event: Key) -> None:
+        focused = self.focused
+        if focused is not None and getattr(focused, "id", None) == "transcript":
+            if event.key in ("i", "enter"):
+                event.prevent_default()
+                event.stop()
+                try:
+                    self.query_one("#composer", MultilineComposer).focus()
+                except Exception:
+                    pass
+
     def _refresh_status(self) -> None:
         try:
             idle = self.rt.agent_idle.is_set()
-            state = "idle" if idle else "running"
-            composer = self.query_one("#composer", Input)
+            composer = self.query_one("#composer", MultilineComposer)
             composer.placeholder = (
                 "Message Wright…" if idle else "Queue a follow-up…"
             )
@@ -898,7 +1407,21 @@ class WrightTUI(App):
             meta_parts = []
             if plan:
                 meta_parts.append(plan)
-            self.query_one("#status-state", Static).update(state)
+
+            model = getattr(getattr(self.rt, "llm", None), "model", "") or ""
+            if model:
+                self.query_one("#status-model", Static).update(f"🤖 {model}")
+
+            ws_dir = getattr(self.rt.session_state, "workspace_dir", None)
+            ws_name = Path(ws_dir).name if ws_dir else Path.cwd().name
+            self.query_one("#status-workspace", Static).update(f"📁 {ws_name}")
+
+            state_icon = "●" if idle else "⏳"
+            state_text = f"{state_icon} idle" if idle else f"{state_icon} running"
+            status_state = self.query_one("#status-state", Static)
+            status_state.update(state_text)
+            status_state.set_class(not idle, "running")
+
             self.query_one("#status-meta", Static).update("  ·  ".join(meta_parts))
             indicator = self.query_one("#context", Static)
             indicator.update(context)
@@ -931,19 +1454,27 @@ def run_tui(args: Any) -> None:
 
     renderer = TUIRenderer()
     renderer.bind_interaction(InteractionHub())
-    rt = build_runtime(args, renderer=renderer)
-    app = WrightTUI(rt)
-    try:
-        app.run()
-        if rt.agent.checkpoint_store:
-            print(f"💾 会话已保存 (session_id: {rt.session_state.session_id})")
-    finally:
-        app._stop.set()
+    active_args = args
+    while True:
+        rt = build_runtime(active_args, renderer=renderer)
+        app = WrightTUI(rt)
+        transition: SessionControlRequest | None = None
         try:
-            rt.event_queue.put_nowait(("EXIT", None))
-        except Exception:
-            pass
-        thread = app.session_thread
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=2.0)
-        shutdown_runtime(rt)
+            result = app.run()
+            if isinstance(result, SessionControlRequest):
+                transition = result
+            elif rt.agent.checkpoint_store:
+                print(f"💾 会话已保存 (session_id: {rt.session_state.session_id})")
+        finally:
+            app._stop.set()
+            try:
+                rt.event_queue.put_nowait(("EXIT", None))
+            except Exception:
+                pass
+            thread = app.session_thread
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=2.0)
+            shutdown_runtime(rt)
+        if transition is None:
+            return
+        active_args = runtime_args_for_transition(active_args, transition)

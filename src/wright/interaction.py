@@ -12,7 +12,11 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from queue import Queue
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+from uuid import uuid4
+
+if TYPE_CHECKING:
+    from .ui_events import EventPublisher
 
 InteractionKind = Literal["permission", "ask_user"]
 
@@ -69,3 +73,70 @@ class InteractionHub:
         """Agent 忙碌时不画主输入框，但仍能被权限请求唤醒。"""
         while not idle.is_set() and not self.has_pending():
             idle.wait(timeout=0.1)
+
+
+@dataclass
+class _BrokerRequest:
+    kind: InteractionKind
+    payload: dict[str, Any]
+    reply: Queue = field(default_factory=lambda: Queue(maxsize=1))
+
+
+class InteractionBroker:
+    """Browser-safe interaction rendezvous keyed by stable request ids."""
+
+    def __init__(self, publisher: EventPublisher) -> None:
+        self.publisher = publisher
+        self._lock = threading.RLock()
+        self._pending: dict[str, _BrokerRequest] = {}
+        self._closed = False
+
+    def request(self, kind: InteractionKind, payload: dict[str, Any]) -> Any:
+        request_id = uuid4().hex
+        item = _BrokerRequest(kind=kind, payload=dict(payload))
+        with self._lock:
+            if self._closed:
+                return "n" if kind == "permission" else None
+            self._pending[request_id] = item
+        self.publisher.publish(
+            "interaction.requested",
+            {"request_id": request_id, "kind": kind, **payload},
+        )
+        answer = item.reply.get()
+        with self._lock:
+            self._pending.pop(request_id, None)
+        return answer
+
+    def resolve(self, request_id: str, answer: Any) -> bool:
+        with self._lock:
+            item = self._pending.get(request_id)
+            if item is None or item.reply.full():
+                return False
+            item.reply.put_nowait(answer)
+        self.publisher.publish(
+            "interaction.resolved",
+            {"request_id": request_id, "kind": item.kind},
+        )
+        return True
+
+    def snapshot(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return [
+                {"request_id": request_id, "kind": item.kind, **item.payload}
+                for request_id, item in self._pending.items()
+            ]
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            pending = list(self._pending.values())
+            self._pending.clear()
+        for item in pending:
+            item.reply.put_nowait("n" if item.kind == "permission" else None)
+
+    def cancel_pending(self) -> None:
+        with self._lock:
+            pending = list(self._pending.values())
+            self._pending.clear()
+        for item in pending:
+            item.reply.put_nowait("n" if item.kind == "permission" else None)

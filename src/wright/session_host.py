@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from .autonomy import AutonomyStore, AutonomyStoreError
 from .autonomy.runner import launch_durable_run
@@ -19,6 +20,16 @@ from .tasks import RuntimeTask, TaskNotFoundError, TaskService
 logger = get_logger(__name__)
 
 SlashHandler = Callable[[str, WrightRuntime], None]
+
+
+@dataclass(frozen=True)
+class SlashCommand:
+    """A command's shared execution and presentation contract."""
+
+    name: str
+    description: str
+    usage: str
+    handler: SlashHandler | None = None
 
 
 def _task_notification_event(task: RuntimeTask) -> dict:
@@ -42,7 +53,7 @@ def _task_notification_event(task: RuntimeTask) -> dict:
 
 
 def _notice(rt: WrightRuntime, text: str) -> None:
-    rt.renderer.on_system_notice(text)
+    getattr(rt, "event_renderer", rt.renderer).on_system_notice(text)
 
 
 def _render_durable_run_finished(store: AutonomyStore, run_id: str, rt: WrightRuntime) -> None:
@@ -115,6 +126,29 @@ def _cmd_history(text: str, rt: WrightRuntime) -> None:
         render(rt.session_state)
 
 
+def _cmd_help(_text: str, rt: WrightRuntime) -> None:
+    lines = ["Commands:"]
+    for command in SLASH_COMMANDS.values():
+        lines.append(f"  {command.usage:<24} {command.description}")
+    _notice(rt, "\n".join(lines))
+
+
+def _cmd_status(_text: str, rt: WrightRuntime) -> None:
+    session = rt.session_state
+    usage = session.task_usage()
+    _notice(
+        rt,
+        "\n".join((
+            f"session  {session.session_id}  ({session.status})",
+            f"workspace  {session.workspace_dir}",
+            (
+                f"task usage  {usage.prompt_tokens:,} in  ·  "
+                f"{usage.completion_tokens:,} out  ·  {usage.total_tokens:,} total"
+            ),
+        )),
+    )
+
+
 def _cmd_event(text: str, rt: WrightRuntime) -> None:
     event_name, event_payload = _parse_external_event_command(text)
     scheduler = rt.services.autonomy_scheduler
@@ -131,11 +165,25 @@ def _cmd_loop(text: str, rt: WrightRuntime) -> None:
     _handle_loop_command(text, registry, rt)
 
 
-SLASH_COMMANDS: dict[str, SlashHandler] = {
-    "/history": _cmd_history,
-    "/event": _cmd_event,
-    "/loop": _cmd_loop,
+SLASH_COMMANDS: dict[str, SlashCommand] = {
+    "/help": SlashCommand("/help", "show available commands", "/help", _cmd_help),
+    "/status": SlashCommand("/status", "show session and task usage", "/status", _cmd_status),
+    "/history": SlashCommand("/history", "show prior turns", "/history [all|N]", _cmd_history),
+    "/loop": SlashCommand("/loop", "create, list, or stop a loop", "/loop <interval|list|stop>", _cmd_loop),
+    "/event": SlashCommand("/event", "emit an external event", "/event <name> [JSON]", _cmd_event),
 }
+
+
+def slash_command_matches(
+    text: str,
+    extra_commands: tuple[SlashCommand, ...] = (),
+) -> tuple[SlashCommand, ...]:
+    """Return commands matching a slash-command prefix, in display order."""
+    if not text.startswith("/") or any(char.isspace() for char in text):
+        return ()
+    prefix = text.lower()
+    commands = (*SLASH_COMMANDS.values(), *extra_commands)
+    return tuple(command for command in commands if command.name.startswith(prefix))
 
 
 def dispatch_slash(text: str, rt: WrightRuntime) -> bool:
@@ -144,11 +192,13 @@ def dispatch_slash(text: str, rt: WrightRuntime) -> bool:
     if not stripped:
         return False
     head = stripped.split(maxsplit=1)[0].lower()
-    handler = SLASH_COMMANDS.get(head)
-    if handler is None:
+    command = SLASH_COMMANDS.get(head)
+    if command is None:
         return False
     try:
-        handler(text, rt)
+        if command.handler is None:
+            return False
+        command.handler(text, rt)
     except Exception as exc:
         _notice(rt, f"{head} rejected: {exc}")
     return True
@@ -175,12 +225,48 @@ def process_session_event(
 
     if event_type == "USER_INPUT":
         agent_idle.clear()
-        user_input = str(payload)
+        rt.cancellation_event.clear()
+        if isinstance(payload, dict):
+            user_input = str(payload.get("prompt", ""))
+            command_id = str(payload.get("command_id", ""))
+        else:
+            user_input = str(payload)
+            command_id = ""
         if dispatch_slash(user_input, rt):
             agent_idle.set()
             return False
+        turn_id = f"{session_state.session_id}:{len(session_state.message_records)}"
+        rt.publisher.publish(
+            "turn.started",
+            {"prompt": user_input, "command_id": command_id},
+            turn_id=turn_id,
+        )
         try:
-            rt.agent.run(user_input)
+            rt.agent.run(
+                user_input,
+                cancellation_check=rt.cancellation_event.is_set,
+            )
+            if rt.cancellation_event.is_set():
+                rt.publisher.publish(
+                    "turn.cancelled", {"command_id": command_id}, turn_id=turn_id
+                )
+            elif session_state.status == "completed":
+                rt.publisher.publish(
+                    "turn.completed", {"command_id": command_id}, turn_id=turn_id
+                )
+            else:
+                rt.publisher.publish(
+                    "turn.failed",
+                    {"command_id": command_id, "status": session_state.status},
+                    turn_id=turn_id,
+                )
+        except Exception as exc:
+            rt.publisher.publish(
+                "turn.failed",
+                {"command_id": command_id, "error": str(exc)},
+                turn_id=turn_id,
+            )
+            raise
         finally:
             agent_idle.set()
         return False

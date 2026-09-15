@@ -9,18 +9,25 @@ import sys
 
 from .repl import Repl
 from .runtime import build_runtime, parse_cli_args, shutdown_runtime
+from .terminal import configure_terminal
 
 
 def main() -> None:
     args = parse_cli_args()
+    if args.ui == "web":
+        try:
+            from .web.server import run_web
+        except ImportError as exc:
+            raise SystemExit(
+                "Web UI 依赖未安装；请运行 `uv sync --extra web` "
+                "或 `pip install 'wright[web]'`。"
+            ) from exc
+        run_web(args)
+        return
     # A fullscreen app only makes sense on an interactive terminal. Keep the
     # default pleasant for people while preserving text behavior for scripts.
     if args.ui == "tui" and sys.stdin.isatty() and sys.stdout.isatty():
-        # Textual's Kitty keyboard protocol may report macOS IME candidate keys
-        # as ordinary printable keys. Prefer reliable system input methods over
-        # that optional enhanced-key protocol in every macOS terminal.
-        if sys.platform == "darwin":
-            os.environ.setdefault("TEXTUAL_DISABLE_KITTY_KEY", "1")
+        configure_terminal(os.environ, sys.platform)
         from .tui import run_tui
 
         run_tui(args)

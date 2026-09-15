@@ -13,6 +13,7 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from .coordination import AgentControlPlane
 from .planning import PlanManager
+from .project import ExecutionEnvironment
 from .tools.base import ToolCall, ToolResult
 from .util import estimate_message_tokens
 
@@ -41,6 +42,12 @@ class SessionState:
     tool_executions: dict[CallId, ToolExecutionRecord]
     background_tasks: dict[str, BackgroundTask]
     plan_manager: PlanManager
+    # Durable state is grouped by project_root. workspace_dir remains the
+    # actual execution directory for compatibility with existing tools.
+    project_root: Path | None = None
+    environment: ExecutionEnvironment = "local"
+    base_commit: str | None = None
+    branch_name: str | None = None
     # 目录只往 transcript 写一次。正文走 skill 工具的 tool_result，不另建激活表。
     skill_catalog_sent: bool = False
     # Root 与所有子 Agent 共享同一个控制面；子 session 用 agent_task_id
@@ -56,6 +63,9 @@ class SessionState:
     total_usage: UsageRecord = field(default_factory=lambda: UsageRecord())
 
     task_usage_start: UsageRecord = field(default_factory=lambda: UsageRecord())
+
+    # The active main-model choice is session state so /model survives resume.
+    model_name: str | None = None
 
     # 当前 messages 的预测 token 数(= 下次发送会有多大)。增量维护:追加时加、
     # 折叠时减；每轮用服务端 P+C 更新估算锚点，工具结果继续按字符估算。
@@ -73,14 +83,28 @@ class SessionState:
 
     @classmethod
     def create(
-        cls, user_goal: str, workspace_dir: Path, max_steps: int = 50
+        cls,
+        user_goal: str,
+        workspace_dir: Path,
+        max_steps: int = 50,
+        *,
+        session_id: str | None = None,
+        project_root: Path | None = None,
+        environment: ExecutionEnvironment = "local",
+        base_commit: str | None = None,
+        branch_name: str | None = None,
     ) -> SessionState:
+        execution_root = workspace_dir.resolve()
         return cls(
-            session_id=uuid4().hex[:6],
+            session_id=session_id or uuid4().hex[:6],
             status="running",
             user_goal=user_goal,
-            workspace_dir=workspace_dir.resolve(),
-            cwd=workspace_dir.resolve(),
+            workspace_dir=execution_root,
+            cwd=execution_root,
+            project_root=(project_root or execution_root).resolve(),
+            environment=environment,
+            base_commit=base_commit,
+            branch_name=branch_name,
             turns=[],
             message_records=[],
             tool_executions={},

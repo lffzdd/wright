@@ -118,6 +118,7 @@ class Agent:
             {tool.name: tool for tool in tools},
             tool_timeout=tool_timeout,
             on_command_output=renderer.on_command_output,
+            on_tool_output=renderer.on_tool_output,
             on_progress=renderer.on_agent_event,
             on_shell_task_done=on_shell_task_done,
             permission_resolver=permission_resolver,
@@ -390,7 +391,13 @@ class Agent:
         self._emit_agent_stop("cancelled", reason="agent cancellation requested")
         return True
 
-    def run(self, prompt: str, max_steps: int | None = None) -> str | None:
+    def run(
+        self,
+        prompt: str,
+        max_steps: int | None = None,
+        *,
+        cancellation_check: Callable[[], bool] | None = None,
+    ) -> str | None:
         """执行新任务。"""
         max_steps = self.session_state.max_steps if max_steps is None else max_steps
         if max_steps <= 0:
@@ -441,7 +448,11 @@ class Agent:
         self._checkpoint()
         self._emit_agent_start(prompt)
 
-        return self._run_loop(max_steps)
+        return self._run_with_cancellation(
+            max_steps,
+            cancellation_check=cancellation_check,
+            record_memory=True,
+        )
 
     def run_runtime_event(
         self, event: dict, max_steps: int | None = None,

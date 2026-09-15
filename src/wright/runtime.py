@@ -28,6 +28,7 @@ from .memory import MemoryManager
 from .paths import (
     ensure_project_state,
     mcp_config_paths,
+    project_id,
     session_dir,
     skill_directories,
     task_db_path,
@@ -44,6 +45,7 @@ from .permission import (
     append_allow_rule,
     load_permission_settings,
 )
+from .project import ProjectContext
 from .renderer import ConsoleRenderer, Renderer
 from .services import RuntimeServices
 from .session import SessionState
@@ -54,6 +56,7 @@ from .tools.ask_user_tool import ask_user_tool
 from .tools.base import Tool
 from .tools.loop_tools import loop_tool
 from .tools.mcp_client import McpManager, load_mcp_configs
+from .ui_events import EventPublisher, PublishingRenderer
 from .verifier import Verifier
 
 logger = get_logger(__name__)
@@ -64,6 +67,9 @@ class WrightRuntime:
     agent: Agent
     session_state: SessionState
     renderer: Renderer
+    event_renderer: PublishingRenderer
+    publisher: EventPublisher
+    project_context: ProjectContext
     services: RuntimeServices
     event_queue: queue.Queue[tuple[str, object]]
     agent_idle: threading.Event
@@ -75,6 +81,8 @@ class WrightRuntime:
     assembled_base_tools: list[Tool]
     llm: LLMClient
     resumed: bool
+    cancellation_event: threading.Event
+    interaction_broker: Any = None
 
 
 def parse_cli_args() -> argparse.Namespace:
@@ -113,9 +121,33 @@ def parse_cli_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--ui",
-        choices=("cli", "tui"),
+        choices=("cli", "tui", "web"),
         default="tui",
-        help="界面：tui 为全屏工作界面（默认），cli 为主缓冲经典终端",
+        help="界面：tui（默认）、cli 或本机 Web 控制台",
+    )
+    parser.add_argument(
+        "--model",
+        metavar="MODEL",
+        help="覆盖 OPENAI_MODEL；TUI 的 /model 使用同一配置",
+    )
+    parser.add_argument(
+        "--web-port",
+        type=int,
+        default=0,
+        metavar="PORT",
+        help="Web 控制台端口（默认 0：自动选择空闲端口）",
+    )
+    parser.add_argument(
+        "--web-capacity",
+        type=int,
+        default=4,
+        metavar="N",
+        help="Web 活跃 session 上限（默认 4）",
+    )
+    parser.add_argument(
+        "--no-open",
+        action="store_true",
+        help="启动 Web 控制台时不自动打开浏览器",
     )
     return parser.parse_args()
 
@@ -167,55 +199,44 @@ def build_runtime(
     args: argparse.Namespace,
     *,
     renderer: Renderer | None = None,
+    project_context: ProjectContext | None = None,
+    publisher: EventPublisher | None = None,
+    interaction_broker: Any = None,
+    session_id: str | None = None,
 ) -> WrightRuntime:
     _load_env()
 
     base_url = os.getenv("OPENAI_BASE_URL")
     api_key = os.getenv("OPENAI_API_KEY")
-    model = os.getenv("OPENAI_MODEL")
+    requested_model = getattr(args, "model", None)
+    configured_model = os.getenv("OPENAI_MODEL")
     context_limit_raw = os.getenv("OPENAI_CONTEXT_LIMIT")
     context_limit = int(context_limit_raw) if context_limit_raw else None
-
-    llm_client = LLMClient(
-        base_url=base_url,
-        api_key=api_key,
-        model=model,
-        context_limit=context_limit or 128000,
-    )
-
-    # 记忆的召回/提取 side-query 可选用更便宜的模型省钱(对标 memdir 用 Sonnet 选记忆)。
-    # 配了 OPENAI_MEMORY_MODEL 就单独建个非流式 client,否则复用主 client。
-    memory_model = os.getenv("OPENAI_MEMORY_MODEL")
-    selector_llm = (
-        LLMClient(
-            base_url=base_url,
-            api_key=api_key,
-            model=memory_model,
-            stream=False,
-        )
-        if memory_model
-        else llm_client
-    )
 
     if renderer is None:
         renderer = ConsoleRenderer()
         renderer.bind_interaction(InteractionHub())
 
-    workspace_dir = (args.workspace or Path.cwd()).expanduser().resolve()
+    requested_workspace = (getattr(args, "workspace", None) or Path.cwd()).expanduser().resolve()
+    project_context = project_context or ProjectContext.local(requested_workspace)
+    workspace_dir = project_context.execution_root
+    project_root = project_context.project_root
     if not workspace_dir.is_dir():
         raise SystemExit(f"workspace 不存在: {workspace_dir}")
-    ensure_project_state(workspace_dir)
+    ensure_project_state(project_root)
     logger.info("workspace=%s", workspace_dir)
-    logger.info("state=%s", session_dir(workspace_dir).parent)
+    logger.info("state=%s", session_dir(project_root).parent)
 
     # 多轮对话:session 整段存活,每轮把用户输入 append 进同一条历史；Agent.run 会把
     # user_goal 更新为当前任务，供 Verifier 和 checkpoint 使用。
-    checkpoint_store = SessionCheckpointStore(session_dir(workspace_dir))
-    resumed = bool(args.resume is not None or args.continue_latest)
+    checkpoint_store = SessionCheckpointStore(session_dir(project_root))
+    resume_arg = getattr(args, "resume", None)
+    continue_latest = bool(getattr(args, "continue_latest", False))
+    resumed = bool(resume_arg is not None or continue_latest)
     try:
-        if args.resume is not None:
-            session_id = args.resume.strip()
-            if not session_id:
+        if resume_arg is not None:
+            resume_id = resume_arg.strip()
+            if not resume_id:
                 recent = checkpoint_store.list_recent_sessions(limit=5)
                 if not recent:
                     raise CheckpointError("没有找到任何可恢复的历史 checkpoint")
@@ -238,25 +259,58 @@ def build_runtime(
                         raise CheckpointError(f"无效的选择: {choice_str}") from None
                 if not (0 <= idx < len(recent)):
                     raise CheckpointError(f"选择超出范围: {choice_str}")
-                session_id = recent[idx]["session_id"]
-            session_state = checkpoint_store.load(session_id)
-        elif args.continue_latest:
+                resume_id = recent[idx]["session_id"]
+            session_state = checkpoint_store.load(resume_id)
+        elif continue_latest:
             session_state = checkpoint_store.load_latest()
         else:
             session_state = SessionState.create(
                 user_goal="(interactive session)",
                 workspace_dir=workspace_dir,
+                session_id=session_id,
+                project_root=project_root,
+                environment=project_context.environment,
+                base_commit=project_context.base_commit,
+                branch_name=project_context.branch_name,
             )
     except CheckpointError as exc:
         raise SystemExit(f"无法恢复会话: {exc}") from exc
 
+    # An explicit --model wins. Otherwise resuming retains the model selected
+    # in that session, falling back to OPENAI_MODEL for new/legacy sessions.
+    model = requested_model or session_state.model_name or configured_model
+    if not model:
+        raise ValueError("OPENAI_MODEL 或 --model 不能为空")
+    session_state.model_name = model
+    llm_client = LLMClient(
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        context_limit=context_limit or 128000,
+    )
+
+    # 记忆的召回/提取 side-query 可选用更便宜的模型省钱(对标 memdir 用 Sonnet 选记忆)。
+    # 配了 OPENAI_MEMORY_MODEL 就单独建个非流式 client,否则复用主 client。
+    memory_model = os.getenv("OPENAI_MEMORY_MODEL")
+    selector_llm = (
+        LLMClient(
+            base_url=base_url,
+            api_key=api_key,
+            model=memory_model,
+            stream=False,
+        )
+        if memory_model
+        else llm_client
+    )
+
     event_queue: queue.Queue[tuple[str, object]] = queue.Queue()
+    cancellation_event = threading.Event()
     # agent_idle：loop 调度与主输入框都等它；忙碌时不画「你的指令」。
     agent_idle = threading.Event()
     agent_idle.set()
     background_runtime = AgentBackgroundRuntime(event_queue)
     autonomy_store = AutonomyStore(
-        task_db_path(workspace_dir),
+        task_db_path(project_root),
         session_id=session_state.session_id,
         workspace_dir=workspace_dir,
     )
@@ -272,8 +326,12 @@ def build_runtime(
         lifecycle = load_lifecycle_manager(
             workspace_dir,
             session_state.session_id,
-            config_path=(Path(args.hooks_config) if args.hooks_config else None),
-            trace_dir=trace_dir(workspace_dir),
+            config_path=(
+                Path(args.hooks_config)
+                if getattr(args, "hooks_config", None)
+                else None
+            ),
+            trace_dir=trace_dir(project_root),
         )
     except LifecycleConfigError as exc:
         raise SystemExit(f"无法加载 lifecycle hooks: {exc}") from exc
@@ -288,6 +346,16 @@ def build_runtime(
     mcp_manager = McpManager(load_mcp_configs(mcp_config_paths(workspace_dir)))
     mcp_tools = mcp_manager.start()
 
+    publisher = publisher or EventPublisher(
+        project_id=project_id(project_root),
+        session_id=session_state.session_id,
+    )
+    event_renderer = PublishingRenderer(
+        publisher,
+        interaction=interaction_broker,
+        direct_renderer=renderer,
+    )
+
     # 权限裁决:加载持久化配置(模式 + allow/deny 规则),按"要不要人"两种装配。
     #
     # 要不要人,默认看有没有真终端,不用记环境变量(env 仍可强制覆盖):
@@ -299,23 +367,23 @@ def build_runtime(
     # 主 Agent 与所有子 Agent 共用这同一份 resolver,规则/记忆全树一致。
     settings = load_permission_settings()
     env_interactive = os.getenv("WRIGHT_PERMISSION_INTERACTIVE")
-    interactive = (
-        env_interactive == "1"
-        if env_interactive is not None
-        else sys.stdin.isatty()
+    interactive = interaction_broker is not None or (
+        env_interactive == "1" if env_interactive is not None else sys.stdin.isatty()
     )
     if interactive:
         approval_handler = FallbackApprovalHandler(
             RuleBasedApprovalHandler(settings, on_no_match="ask"),
             # on_remember:用户选"别再问"时把规则写回 settings.json,下次同工具在规则层
             # 就自动放行(连这个交互 handler 都到不了)——对标 Claude Code 的"Yes, don't ask again"。
-            InteractiveApprovalHandler(renderer=renderer, on_remember=append_allow_rule),
+            InteractiveApprovalHandler(renderer=event_renderer, on_remember=append_allow_rule),
         )
     else:
         approval_handler = RuleBasedApprovalHandler(settings)
     permission_resolver = PermissionResolver(
         approval_handler=approval_handler,
-        interaction_handler=_make_interaction_handler(renderer) if interactive else None,
+        interaction_handler=(
+            _make_interaction_handler(event_renderer) if interactive else None
+        ),
     )
 
     # 给主 Agent 装上"基础工具 + spawn_agent"的分层工具集:depth=0 是主 Agent,
@@ -353,12 +421,16 @@ def build_runtime(
         llm_client,
         tools,
         session_state,
-        renderer,
+        event_renderer,
         keep_recent_tool_results=3,
         permission_resolver=permission_resolver,
         memory=memory_manager,
         verifier=Verifier(),
-        checkpoint_store=(None if args.no_session_persistence else checkpoint_store),
+        checkpoint_store=(
+            None
+            if getattr(args, "no_session_persistence", False)
+            else checkpoint_store
+        ),
         on_shell_task_done=lambda task_id: event_queue.put(("TASK_DONE", task_id)),
         lifecycle=lifecycle,
         skills=skill_registry if skill_tools else None,
@@ -372,6 +444,9 @@ def build_runtime(
         agent=agent,
         session_state=session_state,
         renderer=renderer,
+        event_renderer=event_renderer,
+        publisher=publisher,
+        project_context=project_context,
         services=services,
         event_queue=event_queue,
         agent_idle=agent_idle,
@@ -383,10 +458,20 @@ def build_runtime(
         assembled_base_tools=assembled_base,
         llm=llm_client,
         resumed=resumed,
+        cancellation_event=cancellation_event,
+        interaction_broker=interaction_broker,
     )
 
 
 def shutdown_runtime(rt: WrightRuntime) -> None:
+    rt.cancellation_event.set()
+    if rt.interaction_broker is not None:
+        rt.interaction_broker.close()
+    if rt.agent.checkpoint_store is not None:
+        try:
+            rt.agent.checkpoint_store.save(rt.session_state)
+        except Exception as exc:
+            rt.event_renderer.on_checkpoint_error(str(exc))
     if rt.services.loop_registry is not None:
         rt.services.loop_registry.close()
     if rt.services.autonomy_scheduler is not None:
@@ -397,3 +482,4 @@ def shutdown_runtime(rt: WrightRuntime) -> None:
         rt.services.durable_store.close()
     # 关闭 MCP session / stdio 子进程,避免残留进程。
     rt.mcp_manager.shutdown()
+    rt.publisher.close()

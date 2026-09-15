@@ -49,6 +49,7 @@ class ToolExecutor:
         tool_registry: dict[str, Tool],
         tool_timeout: float = 30,
         on_command_output: Callable[[str], None] | None = None,
+        on_tool_output: Callable[[str, str], None] | None = None,
         on_progress: Callable[[dict], None] | None = None,
         on_shell_task_done: Callable[[str], None] | None = None,
         permission_policy: PermissionPolicy | None = None,
@@ -85,6 +86,7 @@ class ToolExecutor:
             )
         )
         self.cancellation_check = cancellation_check
+        self.on_tool_output = on_tool_output
         self.lifecycle = lifecycle
         self.runtime = ToolRuntime(
             workspace_dir=self.workspace_dir,
@@ -180,6 +182,11 @@ class ToolExecutor:
                     if self.cancellation_check and self.cancellation_check()
                     else ""
                 )
+            ),
+            emit_output=(
+                (lambda line: self.on_tool_output(tool_call.id, line))
+                if self.on_tool_output is not None
+                else self.runtime.emit_output
             ),
         )
 

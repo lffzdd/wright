@@ -50,6 +50,7 @@ def _populated_session(tmp_path):
 
 def test_checkpoint_round_trips_complete_session_state(tmp_path):
     original = _populated_session(tmp_path)
+    original.model_name = "selected-model"
     store = SessionCheckpointStore(tmp_path / "checkpoints")
 
     path = store.save(original)
@@ -68,6 +69,9 @@ def test_checkpoint_round_trips_complete_session_state(tmp_path):
         == original.active_turn_start_message_index
     )
     assert restored.total_usage == original.total_usage
+    assert restored.model_name == "selected-model"
+    assert restored.project_root == original.workspace_dir
+    assert restored.environment == "local"
     assert restored.plan_manager.snapshot() == original.plan_manager.snapshot()
     assert restored.plan_manager.create_plan is not None
 
@@ -79,6 +83,23 @@ def test_checkpoint_round_trips_complete_session_state(tmp_path):
     assert restored.turns[-1].verification.approved is True
     assert restored.assistant_raw(restored.turns[-1]) == "done"
     assert not list(store.directory.glob("*.tmp"))
+
+
+def test_checkpoint_v2_without_project_fields_defaults_to_local(tmp_path):
+    original = _populated_session(tmp_path)
+    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    path = store.save(original)
+    payload = json.loads(path.read_text())
+    for key in ("project_root", "environment", "base_commit", "branch_name"):
+        payload["session"].pop(key)
+    path.write_text(json.dumps(payload))
+
+    restored = store.load(original.session_id)
+
+    assert restored.project_root == original.workspace_dir
+    assert restored.environment == "local"
+    assert restored.base_commit is None
+    assert restored.branch_name is None
 
 
 def test_restored_plan_continues_step_ids_without_collision(tmp_path):

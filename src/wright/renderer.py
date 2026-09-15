@@ -93,6 +93,10 @@ class Renderer(ABC):
     def on_command_output(self, line: str) -> None:
         """命令流式输出回调。默认不输出，子类按需覆盖。"""
 
+    def on_tool_output(self, call_id: str, line: str) -> None:
+        """Stable-id tool output hook; legacy renderers receive the same line."""
+        self.on_command_output(line)
+
     def on_checkpoint_error(self, error: str) -> None:
         """Checkpoint 持久化失败。默认不输出，交互渲染器应明确告警。"""
 

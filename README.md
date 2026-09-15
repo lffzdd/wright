@@ -20,6 +20,12 @@ cd wright
 uv sync --group dev
 ```
 
+Install the optional local Web console dependencies when needed:
+
+```bash
+uv sync --group dev --extra web
+```
+
 Copy `.env.example` to `.env` and set an OpenAI-compatible endpoint and model
 that support native function calling:
 
@@ -27,6 +33,8 @@ that support native function calling:
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-4.1
+# Optional comma-separated choices offered by TUI /model.
+WRIGHT_MODELS=gpt-4.1,gpt-4.1-mini
 ```
 
 ## Run
@@ -49,6 +57,10 @@ Resume with `wright --continue` or `wright --resume`. Native sessions use checkp
 version 2; version 1 sessions must be opened with `legacy-json-react`. Start a new
 session after upgrading; existing checkpoint files are not converted or deleted.
 
+The TUI also offers `/new`, `/resume`, and `/model`. `/new` and `/resume` rebuild
+the session runtime cleanly; `/model` switches the active OpenAI-compatible model
+for subsequent requests. Configure optional model choices with `WRIGHT_MODELS`.
+
 ```bash
 cd /path/to/your/project
 uv run --directory /path/to/wright wright
@@ -56,6 +68,32 @@ uv run --directory /path/to/wright wright
 wright
 wright --workspace /path/to/your/project
 ```
+
+### Local Web console
+
+The TUI remains the default. Start the optional, localhost-only Web console
+explicitly:
+
+```bash
+wright --ui web --workspace /path/to/your/project
+wright --ui web --web-port 8765 --web-capacity 4 --no-open
+```
+
+Wright binds only to `127.0.0.1`. At startup it creates a one-time bootstrap
+token in the URL fragment, exchanges it for an HttpOnly SameSite cookie, and
+removes the fragment in the browser.
+
+For Git projects, new Web sessions use independent worktrees by default under
+`~/.wright/worktrees/<project-id>/<session-id>` on branches named
+`wright/<session-id>`. They start from the current checkout's `HEAD`; uncommitted
+checkout changes are not copied. Choose **Current checkout** explicitly to use
+those existing changes. Only one local-checkout session can be active at once.
+Non-Git projects use that local mode automatically.
+
+Closing a session saves its checkpoint and stops its runtime while retaining
+the execution directory. Archiving removes a worktree only when it is clean and
+has no commits after its recorded base; otherwise Wright retains the branch and
+path for manual review. The Changes inspector is read-only and Git-only.
 
 ## Tests
 
@@ -75,12 +113,15 @@ RAG package. Wright does not vendor that stack.
 |------|------|
 | cwd / `--workspace` | Project files the agent may edit |
 | `~/.wright/projects/<id>/` | Sessions, traces, autonomy task DB |
+| `~/.wright/worktrees/<id>/<session-id>/` | Isolated Web-session worktrees |
 | `~/.wright/memory/` | Long-term memory |
 | `~/.wright/mcp.json` | User MCP servers |
 | `{project}/.wright/mcp.json` | Project MCP servers (override user on the same name) |
 | `{project}/.wright/skills/` | Project skills (override user skills) |
 | `~/.wright/skills/` | User skills |
 | `src/wright/` | Agent runtime |
+| `web/` | React + TypeScript Web console source |
+| `src/wright/web/static/` | Prebuilt Web assets included in the Python package |
 | `src/wright/tests/` | pytest suite |
 | `examples/` | Sample skills and an `mcp.json` template |
 | `docs/` | Design notes |
