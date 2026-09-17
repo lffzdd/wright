@@ -19,8 +19,8 @@ UI_EVENT_VERSION = 1
 UI_EVENT_TYPES = frozenset({
     "session.snapshot", "session.status_changed", "turn.started",
     "turn.completed", "turn.failed", "turn.cancelled", "reasoning.delta",
-    "content.delta", "content.final", "tool.started", "tool.output",
-    "tool.finished", "interaction.requested", "interaction.resolved",
+    "content.delta", "content.final", "tool.planned", "tool.awaiting_approval",
+    "tool.running", "tool.output", "tool.finished", "interaction.requested", "interaction.resolved",
     "task.updated", "usage.request", "usage.task", "system.notice",
     "system.checkpoint_error", "command.accepted", "command.rejected",
 })
@@ -192,14 +192,17 @@ class RendererEventSubscriber:
             self.renderer.on_content_delta(str(payload.get("piece", "")))
         elif event.type == "content.final":
             self.renderer.on_final(payload.get("content"))
-        elif event.type == "tool.started":
+        elif event.type in {"tool.planned", "tool.awaiting_approval", "tool.running"}:
             call = ToolCall(
                 name=str(payload.get("name", "tool")),
                 arguments=dict(payload.get("arguments") or {}),
                 id=str(payload.get("call_id", "")),
             )
             self._calls[call.id] = call
-            self.renderer.on_tool_call(call)
+            if event.type == "tool.planned":
+                self.renderer.on_tool_call(call)
+            else:
+                self.renderer.on_tool_phase(call, event.type.removeprefix("tool."))
         elif event.type == "tool.output":
             self.renderer.on_tool_output(
                 str(payload.get("call_id", "")),
@@ -279,8 +282,24 @@ class PublishingRenderer(Renderer):
             id=str(tool_call.get("id", "")),
         )
         self._active_call_id = call.id
-        self.publisher.publish("tool.started", {
+        self.publisher.publish("tool.planned", {
             "call_id": call.id, "name": call.name, "arguments": call.arguments,
+            "phase": "planned",
+        })
+
+    def on_tool_phase(self, tool_call: ToolCall | dict, phase: str) -> None:
+        if phase not in {"awaiting_approval", "running"}:
+            raise ValueError(f"unknown tool phase: {phase}")
+        call = tool_call if isinstance(tool_call, ToolCall) else ToolCall(
+            name=str(tool_call.get("name", "tool")),
+            arguments=dict(tool_call.get("arguments") or {}),
+            id=str(tool_call.get("id", "")),
+        )
+        self.publisher.publish(f"tool.{phase}", {
+            "call_id": call.id,
+            "name": call.name,
+            "arguments": call.arguments,
+            "phase": phase,
         })
 
     def on_tool_output(self, call_id: str, line: str) -> None:
@@ -366,10 +385,16 @@ class PublishingRenderer(Renderer):
         risk_flags: str,
         reason: str,
         offer_always: bool,
+        remember_rule: str = "",
+        remember_persists: bool = False,
+        revoke_hint: str = "",
     ) -> str:
         payload = {
             "tool_name": tool_name, "subject": subject, "risk_flags": risk_flags,
             "reason": reason, "offer_always": offer_always,
+            "remember_rule": remember_rule,
+            "remember_persists": remember_persists,
+            "revoke_hint": revoke_hint,
         }
         if self.interaction is not None:
             return str(self.interaction.request("permission", payload))

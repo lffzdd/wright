@@ -17,9 +17,14 @@ fail-closed:空输入、看不懂的输入、读不到终端(EOF)一律当拒—
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
+from glob import escape
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
+from ..paths import user_permission_settings_path
 from .resolver import PermissionRequest
 from .types import PermissionCheckResult
 
@@ -41,34 +46,45 @@ class InteractiveApprovalHandler:
         # 做成回调而非在 handler 里直接写文件——handler 不该知道"配置存在哪、什么格式",
         # 那是装配层的事;不接这个钩子时 a 就只在本会话内存里生效。
         self._on_remember = on_remember
-        # "总是允许"的记忆:按工具名记。本会话恒在内存里(下次同工具直接放行);
-        # 若接了 on_remember,则同时落盘,跨会话也生效。
-        # 粒度选工具名而非"工具+具体参数":后者几乎不会复用,工具名级才真正省事。
-        # 代价是 a execute_command 等于放行该工具任意命令,所以只在低风险时给 a 选项。
+        # Remember scoped rules, never a bare capability name.  A single
+        # approval must not silently authorize every future URL or file.
         self._always_allow: set[str] = set()
 
     def __call__(self, request: PermissionRequest) -> PermissionCheckResult:
         tool_name = request.tool.name
+        remembered_rule = _remember_rule(request)
 
-        if tool_name in self._always_allow:
-            return self._allow(request, f"本会话已记住:总是允许 {tool_name}")
+        if remembered_rule is not None and remembered_rule in self._always_allow:
+            return self._allow(request, f"本会话已记住:允许 {remembered_rule}")
 
-        offer_always = self._allow_always_offered(request)
+        offer_always = remembered_rule is not None and self._allow_always_offered(request)
+        try:
+            self._renderer.on_tool_phase(request.tool_call, "awaiting_approval")
+        except Exception:
+            # Rendering a state hint must not change the permission outcome.
+            pass
         answer = self._renderer.prompt_permission(
             tool_name=tool_name,
             subject=_subject_line(request.arguments),
             risk_flags=", ".join(request.check.risk_flags) or "无",
             reason=request.check.reason,
             offer_always=offer_always,
+            remember_rule=remembered_rule or "",
+            remember_persists=bool(offer_always and self._on_remember is not None),
+            revoke_hint=(
+                f"Remove this rule from {_permission_settings_path()}."
+                if offer_always and self._on_remember is not None
+                else ""
+            ),
         )
 
         if answer == "a" and offer_always:
-            self._always_allow.add(tool_name)
+            assert remembered_rule is not None
+            self._always_allow.add(remembered_rule)
             if self._on_remember is not None:
-                # 落盘成一条 allow 规则;工具名级记忆 → 规则就是裸工具名。
-                self._on_remember(tool_name)
+                self._on_remember(remembered_rule)
             scope = "并已写入配置(跨会话生效)" if self._on_remember else "本会话内"
-            return self._allow(request, f"用户批准,记住总是允许 {tool_name}({scope})")
+            return self._allow(request, f"用户批准,记住允许 {remembered_rule}({scope})")
         if answer == "y":
             return self._allow(request, "用户批准本次执行")
         return self._deny(request, f"用户拒绝(输入 {answer!r})")
@@ -78,7 +94,10 @@ class InteractiveApprovalHandler:
     @staticmethod
     def _allow_always_offered(request: PermissionRequest) -> bool:
         """高风险副作用不提供"总是允许":别让一次回车把整类危险操作永久放行。"""
-        heavy = {"executes_shell", "deletes_files", "modifies_git_state"}
+        heavy = {
+            "executes_shell", "deletes_files", "modifies_git_state",
+            "mutates_remote_state",
+        }
         return not (heavy & set(request.check.risk_flags))
 
     # ── 判定构造 ──────────────────────────────────────────────────────────────
@@ -103,3 +122,28 @@ def _subject_line(arguments: dict) -> str:
             return f"{key}={value}"
     return ""
 
+
+def _remember_rule(request: PermissionRequest) -> str | None:
+    """Return a useful, bounded scope for the UI's persistent approval."""
+    tool_name = request.tool.name
+    arguments = request.arguments
+    file_value = arguments.get("file")
+    if isinstance(file_value, str) and file_value:
+        parent = PurePosixPath(file_value).parent.as_posix()
+        subject = escape(file_value) if parent == "." else f"{escape(parent)}/*"
+        return f"{tool_name}({subject})"
+    url_value = arguments.get("url")
+    if isinstance(url_value, str) and url_value:
+        parsed = urlsplit(url_value)
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            return f"{tool_name}({escape(parsed.scheme + '://' + parsed.netloc)}*)"
+    return None
+
+
+def _permission_settings_path() -> Path:
+    configured = os.getenv("WRIGHT_PERMISSION_CONFIG", "").strip()
+    return (
+        Path(configured).expanduser().resolve()
+        if configured
+        else user_permission_settings_path()
+    )

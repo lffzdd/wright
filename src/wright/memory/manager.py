@@ -97,6 +97,6 @@ class MemoryManager:
         from ..tools.memory_tools import build_memory_tools
 
         return [
-            *build_memory_tools(self.directory, include_legacy_save=False),
+            *build_memory_tools(self.directory),
             *build_episode_tools(self.directory),
         ]

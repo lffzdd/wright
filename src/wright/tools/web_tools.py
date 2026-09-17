@@ -69,10 +69,25 @@ def http_request(
 
 
 def _ask_http_request(args: dict, runtime) -> PermissionCheckResult:
-    flags = ("accesses_network",)
+    method = str(args.get("method", "GET")).upper()
+    flags = (
+        ("accesses_network",)
+        if method in {"GET", "HEAD", "OPTIONS"}
+        else ("accesses_network", "mutates_remote_state")
+    )
     return PermissionCheckResult(
         "ask",
         f"{runtime.tool_name}: requires user approval by web tool policy; risks={', '.join(flags)}",
+        flags,
+        source="tool",
+    )
+
+
+def _ask_web_search(args: dict, runtime) -> PermissionCheckResult:
+    flags = ("accesses_network",)
+    return PermissionCheckResult(
+        "ask",
+        f"{runtime.tool_name}: sends a query to the configured search provider; risks={', '.join(flags)}",
         flags,
         source="tool",
     )
@@ -93,6 +108,7 @@ web_search_tool = Tool(
         "required": ["query", "max_results"],
     },
     call=lambda args, runtime: web_search(**args),
+    check_permission=_ask_web_search,
     is_concurrency_safe=lambda args: True,
 )
 

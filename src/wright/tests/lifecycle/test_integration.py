@@ -9,7 +9,7 @@ from ...lifecycle import HookRegistration, LifecycleManager, TraceRecorder
 from ...renderer import SilentRenderer
 from ...session import SessionState
 from ...subagent import make_spawn_agent_tool
-from ...tools.base import ToolRuntime
+from ...tools.base import Tool, ToolResult, ToolRuntime
 
 
 def _final(answer):
@@ -53,9 +53,17 @@ def test_agent_emits_root_lifecycle_and_compaction_events(tmp_path):
     recorder = TraceRecorder(tmp_path / "trace.jsonl")
     lifecycle = LifecycleManager("session", recorder)
     session = SessionState.create("goal", tmp_path)
+    session.active_deferred_tools = ["specialized_tool"]
+    specialized = Tool(
+        name="specialized_tool",
+        description="Specialized test capability",
+        parameters={"type": "object", "properties": {}},
+        call=lambda args, runtime: ToolResult.success(),
+        defer_to_model=True,
+    )
     agent = Agent(
         ScriptLLM([_final("done")]),
-        [],
+        [specialized],
         session,
         SilentRenderer(),
         lifecycle=lifecycle,
@@ -69,6 +77,7 @@ def test_agent_emits_root_lifecycle_and_compaction_events(tmp_path):
     session.context_tokens = 80
 
     assert agent.run("do it") == "done"
+    assert session.active_deferred_tools == []
 
     events = [row["event"] for row in recorder.read()]
     assert events == [

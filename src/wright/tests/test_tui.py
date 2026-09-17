@@ -5,14 +5,14 @@ import pytest
 
 from wright.interaction import InteractionHub
 from wright.renderer import SilentRenderer, collect_history_pairs
-from wright.runtime import parse_cli_args
+from wright.runtime import _trusted_mcp_config_paths, parse_cli_args
 from wright.session_host import (
     dispatch_slash,
     process_session_event,
     slash_command_matches,
 )
 from wright.tools.base import ToolCall, ToolResult
-from wright.tui.app import _context_ring, require_interactive_tty
+from wright.tui.app import WrightTUI, _context_ring, require_interactive_tty
 from wright.tui.renderer import TUIRenderer
 
 
@@ -20,6 +20,10 @@ def test_cli_ui_flag_defaults_to_tui(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["wright"])
     args = parse_cli_args()
     assert args.ui == "tui"
+
+
+def test_tui_exposes_a_visible_stop_binding():
+    assert any(binding.key == "ctrl+x" and binding.action == "stop_turn" for binding in WrightTUI.BINDINGS)
 
 
 def test_cli_ui_flag_accepts_tui(monkeypatch):
@@ -39,6 +43,35 @@ def test_cli_ui_flag_accepts_web(monkeypatch):
     assert args.ui == "web"
     assert args.web_port == 0
     assert args.web_capacity == 4
+
+
+def test_project_mcp_is_not_trusted_by_default(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["wright"])
+    assert parse_cli_args().trust_project_mcp is False
+
+    monkeypatch.setattr(sys, "argv", ["wright", "--trust-project-mcp"])
+    assert parse_cli_args().trust_project_mcp is True
+
+
+def test_trusted_mcp_paths_exclude_project_config_until_opted_in(tmp_path, monkeypatch):
+    monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("WRIGHT_TRUST_PROJECT_MCP", raising=False)
+    workspace = tmp_path / "workspace"
+    project_config = workspace / ".wright" / "mcp.json"
+    project_config.parent.mkdir(parents=True)
+    project_config.write_text("{}", encoding="utf-8")
+
+    paths, ignored = _trusted_mcp_config_paths(
+        workspace, SimpleNamespace(trust_project_mcp=False)
+    )
+    trusted_paths, trusted_ignored = _trusted_mcp_config_paths(
+        workspace, SimpleNamespace(trust_project_mcp=True)
+    )
+
+    assert paths == [tmp_path / "home" / "mcp.json"]
+    assert ignored == project_config
+    assert trusted_paths[-1] == project_config
+    assert trusted_ignored is None
 
 
 def test_tui_requires_tty(monkeypatch):
@@ -100,9 +133,13 @@ def test_tui_renderer_streams_without_app():
 
 def test_tui_renderer_tracks_tools_without_app():
     renderer = TUIRenderer()
-    call = ToolCall("list_files", {"directory": "."}, "c1")
+    call = ToolCall("list_directory", {"directory": "."}, "c1")
     renderer.on_tool_call(call)
-    assert renderer.tools[0].name == "list_files"
+    assert renderer.tools[0].name == "list_directory"
+    assert renderer.tools[0].status == "planned"
+    renderer.on_tool_phase(call, "awaiting_approval")
+    assert renderer.tools[0].status == "awaiting_approval"
+    renderer.on_tool_phase(call, "running")
     assert renderer.tools[0].status == "running"
     renderer.on_tool_result(call, ToolResult.success({"files": ["a.py"]}))
     assert renderer.tools[0].status == "done"
@@ -336,7 +373,7 @@ def test_tool_title_formats_icons_and_arguments():
     assert _tool_title(err) == '✗ web_search · "python"'
 
 
-def test_tool_body_renders_diff_for_file_edit():
+def test_tool_body_renders_edit_file_replacement():
     from rich.console import Group
 
     from wright.tui.app import _tool_body
@@ -345,13 +382,12 @@ def test_tool_body_renders_diff_for_file_edit():
     tool = ToolView(
         key="1",
         name="edit_file",
-        arguments={"file": "app.py", "old_text": "line1\n", "new_text": "line2\n"},
+        arguments={"file": "app.py", "old_text": "line1", "new_text": "line2"},
         status="done",
         result={"message": "File updated"},
     )
     body = _tool_body(tool)
     assert isinstance(body, Group)
-    # The diff should contain +line2 and -line1
     rendered_text = "".join(str(r) for r in body.renderables)
     assert "line1" in rendered_text
     assert "line2" in rendered_text

@@ -43,7 +43,7 @@ DURABLE_MAX_DEPTH = 2
 # 无人值守任务应把流程写进 prompt，而不是现场发现并加载。
 _DURABLE_EXCLUDED_TOOLS = frozenset({
     "ask_user",
-    "create_task",
+    "schedule_task",
     "get_schedule",
     "list_schedules",
     "pause_schedule",
@@ -55,12 +55,11 @@ _DURABLE_EXCLUDED_TOOLS = frozenset({
     "update_memory",
     "delete_memory",
     "search_memory",
-    "save_memory",
     "search_episodes",
     "get_episode",
     "delete_episode",
     "knowledge_search",
-    "skill",
+    "load_skill",
 })
 
 _UNATTENDED_DENY_NOTE = (

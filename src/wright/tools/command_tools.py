@@ -54,31 +54,6 @@ def _make_background_task(
     return task
 
 
-def get_task_output(task_id: str, runtime: ToolRuntime | None = None) -> ToolResult:
-    """Compatibility adapter for the old shell-only task query."""
-    try:
-        from ..tasks import TaskNotFoundError, TaskService
-
-        task = TaskService.for_session(
-            _session(runtime),
-            runtime.services if runtime is not None else None,
-        ).get(task_id)
-        if task.kind != "shell":
-            return ToolResult.fail(f"Task is not a shell task: {task_id}")
-    except TaskNotFoundError as e:
-        return ToolResult.fail(str(e))
-    except Exception as e:
-        return ToolResult.fail(str(e))
-    return ToolResult.success(
-        {
-            "task_id": task_id,
-            "done": task.terminal,
-            "returncode": task.returncode,
-            "output": task.output,
-        }
-    )
-
-
 # ── execute_command ───────────────────────────────────────────────────────────
 
 MAX_OUTPUT_CHARS = 8000
@@ -101,12 +76,21 @@ def execute_command(
     """
     try:
         session = _session(runtime)
+
+        def result_data(payload: dict | None = None) -> dict:
+            data = dict(payload or {})
+            data["cwd"] = _format_cwd(session, runtime)
+            return data
+
         if (
             run_in_background
             and runtime is not None
             and not runtime.allow_background_tasks
         ):
-            return ToolResult.fail("This Agent cannot create background tasks")
+            return ToolResult.fail(
+                "This Agent cannot create background tasks",
+                data=result_data(),
+            )
         cwd = session.get_cwd()
 
         # 注入 cwd 追踪：用临时文件，和 Claude Code 的 claude-{id}-cwd 一致
@@ -196,12 +180,10 @@ def execute_command(
         session.register_background_task(background)
         if done_event.is_set():
             _notify_background_done()
-        return ToolResult.success(
-            {
-                "task_id": task_id,
-                "message": f"Command is running in the background; use get_task for {task_id}.",
-            }
-        )
+        return ToolResult.success(result_data({
+            "task_id": task_id,
+            "message": f"Command is running in the background; use get_task for {task_id}.",
+        }))
 
     deadline = time.monotonic() + timeout
     finished = False
@@ -223,7 +205,7 @@ def execute_command(
                 output_so_far = "".join(output_lines)[-MAX_OUTPUT_CHARS:]
             return ToolResult.fail(
                 f"Command exceeded {timeout}s; this Agent cannot convert it to a background task",
-                data={"timed_out": True, "output_so_far": output_so_far},
+                data=result_data({"timed_out": True, "output_so_far": output_so_far}),
             )
         # 超时：不 kill，转后台
         task_id = f"task_{uuid.uuid4().hex[:8]}"
@@ -240,14 +222,12 @@ def execute_command(
             _notify_background_done()
         with output_lock:
             output_so_far = "".join(output_lines)[-MAX_OUTPUT_CHARS:]
-        return ToolResult.success(
-            {
-                "task_id": task_id,
-                "timed_out": True,
-                "message": f"Command exceeded {timeout}s; moved to background task {task_id}.",
-                "output_so_far": output_so_far,
-            }
-        )
+        return ToolResult.success(result_data({
+            "task_id": task_id,
+            "timed_out": True,
+            "message": f"Command exceeded {timeout}s; moved to background task {task_id}.",
+            "output_so_far": output_so_far,
+        }))
 
     if cwd_result:
         session.set_cwd(cwd_result[0])
@@ -258,11 +238,23 @@ def execute_command(
         output = f"[...truncated, showing tail]\n{output[-MAX_OUTPUT_CHARS:]}"
 
     returncode = proc.returncode
-    data = {"returncode": returncode, "output": output}
+    data = result_data({"returncode": returncode, "output": output})
 
     if returncode == 0:
         return ToolResult.success(data)
     return ToolResult.fail(err=f"Command exited with code {returncode}", data=data)
+
+
+def _format_cwd(session: Any, runtime: ToolRuntime | None) -> str:
+    cwd = session.get_cwd().resolve()
+    workspace = runtime.workspace_dir.resolve() if runtime and runtime.workspace_dir else None
+    if workspace is not None:
+        try:
+            relative = cwd.relative_to(workspace)
+            return str(relative) if str(relative) != "." else "."
+        except ValueError:
+            pass
+    return str(cwd)
 
 
 def _consume_cwd_file(cwd_file: Path) -> Path | None:
@@ -289,7 +281,8 @@ execute_command_tool = Tool(
     name="execute_command",
     description=(
         "Execute a shell command in the workspace. "
-        "The working directory persists across calls (cd works). "
+        "The working directory persists across calls (cd works) and is returned as cwd "
+        "on every result — do not cd into the directory you are already in. "
         "Long-running commands auto-background after timeout and return a task_id. "
         "Set run_in_background=true to background immediately."
     ),
@@ -318,25 +311,4 @@ execute_command_tool = Tool(
     is_concurrency_safe=is_execute_command_concurrency_safe,
     # shell 自己负责前台 timeout → 后台 task 的语义。
     timeout_owner="tool",
-)
-
-get_task_output_tool = Tool(
-    name="get_task_output",
-    description=(
-        "Compatibility alias for shell tasks. Prefer get_task, which also supports "
-        "Agent tasks and returns the unified lifecycle model."
-    ),
-    parameters={
-        "type": "object",
-        "properties": {
-            "task_id": {
-                "type": "string",
-                "description": "The task_id returned by execute_command",
-            },
-        },
-        "required": ["task_id"],
-    },
-    call=lambda args, runtime: get_task_output(**args, runtime=runtime),
-    is_concurrency_safe=lambda args: True,
-    expose_to_model=False,
 )

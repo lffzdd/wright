@@ -1,21 +1,11 @@
 import queue
 
-from ..agent import Agent
-from ..renderer import SilentRenderer
 from ..session import SessionState
 from ..session_host import _task_notification_event
-from ..subagent import (
-    build_agent_tools,
-    cancel_agent_task_tool,
-    get_agent_task_tool,
-)
+from ..subagent import build_agent_tools
 from ..tasks import TaskService
 from ..tools.base import ToolRuntime
-from ..tools.command_tools import (
-    execute_command,
-    get_task_output,
-    get_task_output_tool,
-)
+from ..tools.command_tools import execute_command
 from ..tools.task_tools import (
     cancel_task_tool,
     get_task_tool,
@@ -78,7 +68,7 @@ def test_service_projects_agent_and_shell_without_copying_ownership(tmp_path):
     }
 
 
-def test_unified_tools_query_wait_list_and_keep_legacy_aliases(tmp_path):
+def test_unified_tools_query_wait_and_list(tmp_path):
     session = _session(tmp_path)
     record = _agent_task(session, status="completed")
     runtime = ToolRuntime(session_state=session, workspace_dir=tmp_path)
@@ -86,12 +76,10 @@ def test_unified_tools_query_wait_list_and_keep_legacy_aliases(tmp_path):
     queried = get_task_tool.call({"task_id": record.id}, runtime)
     waited = wait_task_tool.call({"task_id": record.id, "timeout": 0}, runtime)
     listed = list_tasks_tool.call({}, runtime)
-    legacy = get_agent_task_tool.call({"task_id": record.id}, runtime)
 
     assert queried.ok and queried.data["kind"] == "agent"
     assert waited.ok and waited.data["wait_completed"] is True
     assert listed.ok and listed.data["tasks"][0]["id"] == record.id
-    assert legacy.ok and legacy.data["result"] == "agent result"
 
 
 def test_wait_timeout_observes_without_cancelling_shell_task(tmp_path):
@@ -117,7 +105,7 @@ def test_wait_timeout_observes_without_cancelling_shell_task(tmp_path):
     assert cancelled.data["status"] == "cancelled"
 
 
-def test_unified_cancel_routes_agent_and_shell_with_legacy_views(tmp_path):
+def test_unified_cancel_routes_agent_and_shell(tmp_path):
     session = _session(tmp_path)
     agent_record = _agent_task(session)
     runtime = ToolRuntime(session_state=session, workspace_dir=tmp_path)
@@ -138,11 +126,7 @@ def test_unified_cancel_routes_agent_and_shell_with_legacy_views(tmp_path):
     assert agent.data["status"] == "running"  # cooperative cancellation
     assert agent.data["cancel_requested"] is True
     assert shell.ok and shell.data["status"] == "cancelled"
-    assert get_task_output(launched.data["task_id"], runtime).data["done"] is True
-    legacy_cancel = cancel_agent_task_tool.call(
-        {"task_id": agent_record.id, "reason": "again"}, runtime
-    )
-    assert legacy_cancel.ok and legacy_cancel.data["cancel_requested"] is True
+    assert TaskService.for_session(session).get(launched.data["task_id"]).terminal
 
 
 def test_agent_and_shell_completion_share_runtime_event_shape(tmp_path):
@@ -172,27 +156,6 @@ def test_agent_and_shell_completion_share_runtime_event_shape(tmp_path):
     assert shell_event["task"]["kind"] == "shell"
 
 
-def test_legacy_alias_stays_executable_but_is_hidden_from_new_prompt(tmp_path):
-    class UnusedLLM:
-        context_limit = 128_000
-
-        def __call__(self, messages, **kwargs):
-            raise AssertionError("not called")
-
-    session = _session(tmp_path)
-    agent = Agent(
-        UnusedLLM(),
-        [get_task_tool, get_task_output_tool],
-        session,
-        SilentRenderer(),
-    )
-    schema_names = {item["function"]["name"] for item in agent.tool_schemas}
-
-    assert "get_task" in schema_names
-    assert "get_task_output" not in schema_names
-    assert get_task_output_tool.expose_to_model is False
-
-
 def test_unified_task_control_is_root_only():
     class UnusedLLM:
         context_limit = 128_000
@@ -210,7 +173,7 @@ def test_unified_task_control_is_root_only():
 
     unified = {"get_task", "wait_task", "cancel_task", "list_tasks"}
     autonomy = {
-        "create_task", "get_schedule", "list_schedules", "pause_schedule",
+        "schedule_task", "get_schedule", "list_schedules", "pause_schedule",
         "resume_schedule", "cancel_schedule", "list_task_runs",
     }
     assert unified <= root_names

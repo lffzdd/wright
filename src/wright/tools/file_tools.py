@@ -1,11 +1,23 @@
 # 文件操作工具链
+import json
+import subprocess
 import threading
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Literal
 
 from ..permission import PermissionCheckResult
 from .base import Tool, ToolResult, ToolRuntime
 
 MAX_READ_CHARS = 1_000_000  # 单次最多读 100 万字符,够用又不撑爆内存
+FILE_UNCHANGED = "File unchanged since last read."
+_EDIT_OCCURRENCE_LIMIT = 5
+_EDIT_PREVIEW_RADIUS = 2
+_EDIT_PREVIEW_LINE_CHARS = 200
+_FILE_VIEWS_KEY = "file_views"
+_MAX_FILE_VIEWS = 100
+_MAX_FILE_VIEW_CHARS = 8_000_000
+FileViewOrigin = Literal["read", "write"]
 
 _path_locks_guard = threading.Lock()
 _path_locks: dict[Path, threading.RLock] = {}
@@ -19,7 +31,17 @@ def _workspace(runtime: ToolRuntime) -> Path:
 
 def _safe_path(path: str, runtime: ToolRuntime) -> Path:
     workspace = _workspace(runtime)
-    safe_path = (workspace / path).resolve()
+    base = workspace
+    try:
+        if runtime.cwd_provider is not None:
+            base = runtime.cwd_provider().resolve()
+        elif runtime.session_state is not None and hasattr(runtime.session_state, "get_cwd"):
+            base = runtime.session_state.get_cwd().resolve()
+    except Exception:
+        base = workspace
+    if not base.is_relative_to(workspace):
+        raise ValueError("Current working directory is outside the workspace")
+    safe_path = (base / path).resolve()
     if not safe_path.is_relative_to(workspace):
         raise ValueError("Unsafe path")
     return safe_path
@@ -30,20 +52,340 @@ def _path_lock(path: Path) -> threading.RLock:
         return _path_locks.setdefault(path, threading.RLock())
 
 
-def list_files(directory: str = ".", runtime: ToolRuntime | None = None):
+def _relative_file(path: Path, runtime: ToolRuntime) -> str:
+    return str(path.relative_to(_workspace(runtime))) or "."
+
+
+@dataclass(frozen=True)
+class FileView:
+    """Process-local snapshot of a file the model has already seen or written."""
+
+    mtime_ns: int
+    size: int
+    content: str
+    origin: FileViewOrigin
+    start_line: int | None = None
+    start_column: int | None = None
+    end_line: int | None = None
+    max_chars: int | None = None
+    truncated: bool = False
+    last_line: int | None = None
+    next_start_line: int | None = None
+    next_start_column: int | None = None
+
+    @property
+    def is_complete(self) -> bool:
+        if self.origin == "write":
+            return True
+        return (
+            self.start_line == 1
+            and (self.start_column or 1) == 1
+            and self.end_line is None
+            and not self.truncated
+        )
+
+
+def _file_views(runtime: ToolRuntime) -> dict[str, FileView]:
+    views = runtime.scratch.get(_FILE_VIEWS_KEY)
+    if views is None:
+        views = {}
+        runtime.scratch[_FILE_VIEWS_KEY] = views
+    return views
+
+
+def _remember_file_view(runtime: ToolRuntime, path: Path, view: FileView) -> None:
+    key = str(path.resolve())
+    with runtime.scratch_lock:
+        views = _file_views(runtime)
+        views.pop(key, None)
+        views[key] = view
+        total = sum(len(item.content) for item in views.values())
+        while len(views) > _MAX_FILE_VIEWS or (
+            total > _MAX_FILE_VIEW_CHARS and len(views) > 1
+        ):
+            oldest_key, evicted = next(iter(views.items()))
+            if oldest_key == key:
+                break
+            del views[oldest_key]
+            total -= len(evicted.content)
+
+
+def _remembered_file_view(runtime: ToolRuntime, path: Path) -> FileView | None:
+    with runtime.scratch_lock:
+        views = runtime.scratch.get(_FILE_VIEWS_KEY)
+        if not views:
+            return None
+        return views.get(str(path.resolve()))
+
+
+def _stamp_read_view(
+    path: Path,
+    runtime: ToolRuntime,
+    *,
+    content: str,
+    start_line: int,
+    start_column: int,
+    end_line: int | None,
+    max_chars: int,
+    truncated: bool,
+    last_line: int,
+    next_start_line: int | None,
+    next_start_column: int | None,
+) -> None:
+    stat = path.stat()
+    _remember_file_view(
+        runtime,
+        path,
+        FileView(
+            mtime_ns=stat.st_mtime_ns,
+            size=stat.st_size,
+            content=content,
+            origin="read",
+            start_line=start_line,
+            start_column=start_column,
+            end_line=end_line,
+            max_chars=max_chars,
+            truncated=truncated,
+            last_line=last_line,
+            next_start_line=next_start_line,
+            next_start_column=next_start_column,
+        ),
+    )
+
+
+def _stamp_write_view(path: Path, runtime: ToolRuntime, content: str) -> None:
+    stat = path.stat()
+    _remember_file_view(
+        runtime,
+        path,
+        FileView(
+            mtime_ns=stat.st_mtime_ns,
+            size=stat.st_size,
+            content=content,
+            origin="write",
+        ),
+    )
+
+
+def _unread_or_stale(path: Path, runtime: ToolRuntime) -> ToolResult | None:
+    relative = _relative_file(path, runtime)
+    viewed = _remembered_file_view(runtime, path)
+    if viewed is None:
+        return ToolResult.fail(
+            "read_file this path before edit_file",
+            data={"reason": "not_read", "file": relative},
+        )
+    stat = path.stat()
+    if stat.st_mtime_ns == viewed.mtime_ns and stat.st_size == viewed.size:
+        return None
+    if viewed.is_complete and path.read_text(encoding="utf-8") == viewed.content:
+        return None
+    return ToolResult.fail(
+        "file changed since last read_file; read it again",
+        data={"reason": "stale", "file": relative},
+    )
+
+
+def _numbered_content(content: str, start_line: int) -> str:
+    if not content:
+        return ""
+    parts: list[str] = []
+    line_no = start_line
+    start = 0
+    while start < len(content):
+        newline = content.find("\n", start)
+        if newline < 0:
+            parts.append(f"{line_no}|{content[start:]}")
+            break
+        parts.append(f"{line_no}|{content[start:newline]}\n")
+        line_no += 1
+        start = newline + 1
+    return "".join(parts)
+
+
+def _unchanged_read_view(
+    viewed: FileView | None,
+    *,
+    mtime_ns: int,
+    size: int,
+    start_line: int,
+    start_column: int,
+    end_line: int | None,
+    max_chars: int,
+) -> bool:
+    return (
+        viewed is not None
+        and viewed.origin == "read"
+        and viewed.mtime_ns == mtime_ns
+        and viewed.size == size
+        and viewed.start_line == start_line
+        and (viewed.start_column or 1) == start_column
+        and viewed.end_line == end_line
+        and viewed.max_chars == max_chars
+    )
+
+
+def list_directory(
+    directory: str = ".",
+    include_hidden: bool = False,
+    max_entries: int = 200,
+    runtime: ToolRuntime | None = None,
+):
     try:
         assert runtime is not None
         runtime.raise_if_cancelled()
         safe_directory = _safe_path(directory, runtime)
-        files = [entry.name for entry in safe_directory.iterdir() if entry.is_file()]
-        dirs = [entry.name for entry in safe_directory.iterdir() if entry.is_dir()]
-        return ToolResult.success({"files": files, "dirs": dirs})
+        if not safe_directory.is_dir():
+            return ToolResult.fail("Not a directory", data={"entries": []})
+        max_entries = max(1, min(int(max_entries), 2_000))
+        entries = []
+        for entry in sorted(safe_directory.iterdir(), key=lambda item: item.name.lower()):
+            runtime.raise_if_cancelled()
+            if not include_hidden and entry.name.startswith("."):
+                continue
+            kind = "directory" if entry.is_dir() else "file" if entry.is_file() else "other"
+            entries.append({
+                "name": entry.name,
+                "path": str(entry.relative_to(_workspace(runtime))),
+                "type": kind,
+                "size": entry.stat().st_size if kind == "file" else None,
+            })
+            if len(entries) > max_entries:
+                break
+        truncated = len(entries) > max_entries
+        entries = entries[:max_entries]
+        return ToolResult.success({
+            "directory": str(safe_directory.relative_to(_workspace(runtime))) or ".",
+            "entries": entries,
+            "truncated": truncated,
+        })
     except Exception as e:
-        return ToolResult.fail(str(e), data={"files": [], "dirs": []})
+        return ToolResult.fail(str(e), data={"entries": []})
+
+
+def glob_files(
+    pattern: str,
+    directory: str = ".",
+    include_hidden: bool = False,
+    max_results: int = 200,
+    runtime: ToolRuntime | None = None,
+):
+    """Find workspace paths by name/path pattern without invoking a shell."""
+    try:
+        assert runtime is not None
+        runtime.raise_if_cancelled()
+        if not pattern or Path(pattern).is_absolute() or ".." in Path(pattern).parts:
+            return ToolResult.fail("pattern must be a non-empty workspace-relative glob")
+        root = _safe_path(directory, runtime)
+        if not root.is_dir():
+            return ToolResult.fail("Not a directory", data={"matches": []})
+        max_results = max(1, min(int(max_results), 2_000))
+        matches: list[dict[str, Any]] = []
+        for path in root.glob(pattern):
+            runtime.raise_if_cancelled()
+            if not path.resolve().is_relative_to(_workspace(runtime)):
+                continue
+            relative = path.relative_to(_workspace(runtime))
+            if not include_hidden and any(part.startswith(".") for part in relative.parts):
+                continue
+            matches.append({
+                "path": str(relative),
+                "type": "directory" if path.is_dir() else "file" if path.is_file() else "other",
+            })
+        matches.sort(key=lambda item: item["path"])
+        truncated = len(matches) > max_results
+        return ToolResult.success({
+            "matches": matches[:max_results],
+            "truncated": truncated,
+        })
+    except Exception as e:
+        return ToolResult.fail(str(e), data={"matches": []})
+
+
+def grep_files(
+    pattern: str,
+    path: str = ".",
+    glob: str | None = None,
+    case_sensitive: bool = False,
+    fixed_string: bool = False,
+    max_results: int = 100,
+    runtime: ToolRuntime | None = None,
+):
+    """Search file contents with ripgrep and return structured locations."""
+    try:
+        assert runtime is not None
+        runtime.raise_if_cancelled()
+        if not pattern:
+            return ToolResult.fail("pattern cannot be empty", data={"matches": []})
+        target = _safe_path(path, runtime)
+        if not target.exists():
+            return ToolResult.fail("Path does not exist", data={"matches": []})
+        max_results = max(1, min(int(max_results), 2_000))
+        command = ["rg", "--json", "--color", "never"]
+        if not case_sensitive:
+            command.append("--ignore-case")
+        if fixed_string:
+            command.append("--fixed-strings")
+        if glob:
+            command.extend(["--glob", glob])
+        command.extend([pattern, str(target)])
+        completed = subprocess.run(
+            command,
+            cwd=_workspace(runtime),
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        if completed.returncode not in {0, 1}:
+            return ToolResult.fail(
+                completed.stderr.strip() or f"ripgrep exited with {completed.returncode}",
+                data={"matches": []},
+            )
+        matches: list[dict[str, Any]] = []
+        truncated = False
+        for raw_line in completed.stdout.splitlines():
+            runtime.raise_if_cancelled()
+            event = json.loads(raw_line)
+            if event.get("type") != "match":
+                continue
+            data = event["data"]
+            match_path = Path(data["path"]["text"])
+            try:
+                relative = match_path.resolve().relative_to(_workspace(runtime))
+            except ValueError:
+                continue
+            line_number = int(data["line_number"])
+            line_text = str(data["lines"]["text"]).rstrip("\r\n")
+            submatches = data.get("submatches") or [{}]
+            for submatch in submatches:
+                matches.append({
+                    "path": str(relative),
+                    "line": line_number,
+                    "column": int(submatch.get("start", 0)) + 1,
+                    "text": line_text,
+                })
+                if len(matches) >= max_results:
+                    truncated = True
+                    break
+            if truncated:
+                break
+        return ToolResult.success({"matches": matches, "truncated": truncated})
+    except FileNotFoundError:
+        return ToolResult.fail("ripgrep (rg) is not installed", data={"matches": []})
+    except subprocess.TimeoutExpired:
+        return ToolResult.fail("grep timed out after 20 seconds", data={"matches": []})
+    except Exception as e:
+        return ToolResult.fail(str(e), data={"matches": []})
 
 
 def read_file(
-    file: str, max_chars: int = 8000, runtime: ToolRuntime | None = None
+    file: str,
+    start_line: int = 1,
+    start_column: int = 1,
+    end_line: int | None = None,
+    max_chars: int = 8000,
+    runtime: ToolRuntime | None = None,
 ):
     try:
         assert runtime is not None
@@ -61,14 +403,91 @@ def read_file(
             max_chars = 8000  # 转不动(None、乱字符串)-> 回默认
         max_chars = max(0, min(max_chars, MAX_READ_CHARS))  # min 砍上限,max 托下限
 
-        with open(safe_path, encoding="utf-8", errors="replace") as f:
-            content = f.read(max_chars + 1)
+        start_line = max(1, int(start_line))
+        start_column = max(1, int(start_column))
+        if end_line is not None:
+            end_line = int(end_line)
+            if end_line < start_line:
+                return ToolResult.fail("end_line must be greater than or equal to start_line")
 
-        truncated = len(content) > max_chars
-        if truncated:
-            content = content[:max_chars]
+        viewed = _remembered_file_view(runtime, safe_path)
+        stat = safe_path.stat()
+        if _unchanged_read_view(
+            viewed,
+            mtime_ns=stat.st_mtime_ns,
+            size=stat.st_size,
+            start_line=start_line,
+            start_column=start_column,
+            end_line=end_line,
+            max_chars=max_chars,
+        ):
+            assert viewed is not None
+            _remember_file_view(runtime, safe_path, viewed)
+            return ToolResult.success({
+                "content": FILE_UNCHANGED,
+                "unchanged": True,
+                "start_line": start_line,
+                "start_column": start_column,
+                "end_line": viewed.last_line,
+                "next_start_line": viewed.next_start_line,
+                "next_start_column": viewed.next_start_column,
+                "truncated": viewed.truncated,
+            })
 
-        return ToolResult.success({"content": content, "truncated": truncated})
+        selected: list[str] = []
+        total_chars = 0
+        truncated = False
+        last_line = start_line - 1
+        next_start_line: int | None = None
+        next_start_column: int | None = None
+        with open(safe_path, encoding="utf-8", errors="replace") as source:
+            for line_number, line in enumerate(source, 1):
+                runtime.raise_if_cancelled()
+                if line_number < start_line:
+                    continue
+                if end_line is not None and line_number > end_line:
+                    break
+                visible_line = line[start_column - 1:] if line_number == start_line else line
+                remaining = max_chars - total_chars
+                if len(visible_line) > remaining:
+                    selected.append(visible_line[:remaining])
+                    total_chars = max_chars
+                    last_line = line_number
+                    truncated = True
+                    consumed_column = (
+                        start_column + remaining
+                        if line_number == start_line
+                        else 1 + remaining
+                    )
+                    next_start_line = line_number
+                    next_start_column = consumed_column
+                    break
+                selected.append(visible_line)
+                total_chars += len(visible_line)
+                last_line = line_number
+        content = "".join(selected)
+        _stamp_read_view(
+            safe_path,
+            runtime,
+            content=content,
+            start_line=start_line,
+            start_column=start_column,
+            end_line=end_line,
+            max_chars=max_chars,
+            truncated=truncated,
+            last_line=last_line,
+            next_start_line=next_start_line,
+            next_start_column=next_start_column,
+        )
+        return ToolResult.success({
+            "content": _numbered_content(content, start_line),
+            "start_line": start_line,
+            "start_column": start_column,
+            "end_line": last_line,
+            "next_start_line": next_start_line,
+            "next_start_column": next_start_column,
+            "truncated": truncated,
+        })
     except Exception as e:
         return ToolResult.fail(str(e), data={"content": ""})
 
@@ -94,6 +513,7 @@ def write_file(
 
             safe_path.parent.mkdir(parents=True, exist_ok=True)
             safe_path.write_text(content, encoding="utf-8")
+            _stamp_write_view(safe_path, runtime, content)
 
         return ToolResult.success(
             {
@@ -106,10 +526,78 @@ def write_file(
         return ToolResult.fail(str(e))
 
 
+def _line_count(content: str) -> int:
+    if not content:
+        return 0
+    return content.count("\n") + (0 if content.endswith("\n") else 1)
+
+
+def _preview_lines(lines: list[str], line_no: int) -> str:
+    start = max(0, line_no - 1 - _EDIT_PREVIEW_RADIUS)
+    end = min(len(lines), line_no + _EDIT_PREVIEW_RADIUS)
+    rows = []
+    for index in range(start, end):
+        text = lines[index]
+        if len(text) > _EDIT_PREVIEW_LINE_CHARS:
+            text = text[:_EDIT_PREVIEW_LINE_CHARS] + "…"
+        rows.append(f"{index + 1}|{text}")
+    return "\n".join(rows)
+
+
+def _occurrences(
+    content: str, needle: str, *, limit: int = _EDIT_OCCURRENCE_LIMIT
+) -> tuple[list[dict[str, Any]], bool]:
+    if not needle:
+        return [], False
+    lines = content.splitlines()
+    found: list[dict[str, Any]] = []
+    start = 0
+    step = max(len(needle), 1)
+    truncated = False
+    while True:
+        index = content.find(needle, start)
+        if index < 0:
+            break
+        if len(found) >= limit:
+            truncated = True
+            break
+        line_no = content.count("\n", 0, index) + 1
+        found.append({"line": line_no, "preview": _preview_lines(lines, line_no)})
+        start = index + step
+    return found, truncated
+
+
+def _not_found_data(content: str, old_text: str) -> dict[str, Any]:
+    stripped = old_text.strip()
+    whitespace_differs = bool(
+        stripped and stripped != old_text and content.count(stripped)
+    )
+    needle = stripped if whitespace_differs else ""
+    occurrences, truncated = _occurrences(content, needle) if needle else ([], False)
+    return {
+        "reason": "not_found",
+        "line_count": _line_count(content),
+        "whitespace_differs": whitespace_differs,
+        "occurrences": occurrences,
+        "truncated": truncated,
+    }
+
+
+def _ambiguous_data(content: str, old_text: str, count: int) -> dict[str, Any]:
+    occurrences, truncated = _occurrences(content, old_text)
+    return {
+        "reason": "ambiguous",
+        "count": count,
+        "occurrences": occurrences,
+        "truncated": truncated,
+    }
+
+
 def edit_file(
     file: str,
     old_text: str,
     new_text: str,
+    replace_all: bool = False,
     runtime: ToolRuntime | None = None,
 ):
     try:
@@ -121,22 +609,34 @@ def edit_file(
             runtime.raise_if_cancelled()
             if not safe_path.is_file():
                 return ToolResult.fail("Not a file")
+            if not old_text:
+                return ToolResult.fail("old_text must be non-empty")
+            unread = _unread_or_stale(safe_path, runtime)
+            if unread is not None:
+                return unread
 
-            # 必须在锁内重读，避免等待锁期间文件内容已被其他 Agent 改变。
             content = safe_path.read_text(encoding="utf-8")
-
             count = content.count(old_text)
             if count == 0:
-                return ToolResult.fail("old_text not found")
-            if count > 1:
                 return ToolResult.fail(
-                    f"old_text found {count} times, replacement is ambiguous"
+                    "old_text not found", data=_not_found_data(content, old_text)
+                )
+            if count > 1 and not replace_all:
+                return ToolResult.fail(
+                    f"old_text found {count} times, replacement is ambiguous",
+                    data=_ambiguous_data(content, old_text, count),
                 )
 
-            updated = content.replace(old_text, new_text, 1)
+            replacements = count if replace_all else 1
+            updated = content.replace(old_text, new_text, replacements)
             safe_path.write_text(updated, encoding="utf-8")
+            _stamp_write_view(safe_path, runtime, updated)
 
-        return ToolResult.success({"message": "File updated"})
+        return ToolResult.success({
+            "message": "File updated",
+            "file": str(safe_path.relative_to(_workspace(runtime))),
+            "replacements": replacements,
+        })
     except Exception as e:
         return ToolResult.fail(str(e))
 
@@ -161,33 +661,78 @@ def _ask_file_edit(args: dict, runtime) -> PermissionCheckResult:
     )
 
 
-list_files_tool = Tool(
-    name="list_files",
-    description="List all files in a specified directory.",
+list_directory_tool = Tool(
+    name="list_directory",
+    description="List the immediate children of a known directory. Use glob to find paths recursively and grep to search file contents.",
     parameters={
         "type": "object",
         "properties": {
             "directory": {
                 "type": "string",
-                "description": "The directory to list files in",
+                "description": "Directory relative to the session's current working directory (default: .)",
             },
+            "include_hidden": {"type": "boolean", "default": False},
+            "max_entries": {"type": "integer", "minimum": 1, "maximum": 2000, "default": 200},
         },
-        "required": ["directory"],
     },
-    call=lambda args, runtime: list_files(**args, runtime=runtime),
+    call=lambda args, runtime: list_directory(**args, runtime=runtime),
+    is_concurrency_safe=lambda args: True,
+)
+
+glob_tool = Tool(
+    name="glob",
+    description="Find files or directories by a workspace-relative glob pattern. Use list_directory for one known directory and grep for content.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "pattern": {"type": "string", "description": "Glob such as **/*.py"},
+            "directory": {"type": "string", "default": "."},
+            "include_hidden": {"type": "boolean", "default": False},
+            "max_results": {"type": "integer", "minimum": 1, "maximum": 2000, "default": 200},
+        },
+        "required": ["pattern"],
+    },
+    call=lambda args, runtime: glob_files(**args, runtime=runtime),
+    is_concurrency_safe=lambda args: True,
+)
+
+grep_tool = Tool(
+    name="grep",
+    description="Search file contents with ripgrep and return path, line, column, and matching text.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "pattern": {"type": "string"},
+            "path": {"type": "string", "default": "."},
+            "glob": {"type": "string", "description": "Optional file filter such as *.py"},
+            "case_sensitive": {"type": "boolean", "default": False},
+            "fixed_string": {"type": "boolean", "default": False},
+            "max_results": {"type": "integer", "minimum": 1, "maximum": 2000, "default": 100},
+        },
+        "required": ["pattern"],
+    },
+    call=lambda args, runtime: grep_files(**args, runtime=runtime),
     is_concurrency_safe=lambda args: True,
 )
 
 read_file_tool = Tool(
     name="read_file",
-    description="Read the content of a file in the workspace. Returns the text content of the file.",
+    description=(
+        "Read a workspace file. Each returned line is prefixed with N| for reference; "
+        "do not copy those prefixes into edit_file. An identical unchanged re-read "
+        "returns a short stub."
+    ),
     parameters={
         "type": "object",
         "properties": {
             "file": {
                 "type": "string",
-                "description": "The relative path of the file to read",
+                "description": "Path relative to the session's current working directory",
             },
+            "start_line": {"type": "integer", "minimum": 1, "default": 1},
+            "start_column": {"type": "integer", "minimum": 1, "default": 1},
+            "end_line": {"type": "integer", "minimum": 1},
+            "max_chars": {"type": "integer", "minimum": 0, "maximum": MAX_READ_CHARS, "default": 8000},
         },
         "required": ["file"],
     },
@@ -203,7 +748,7 @@ write_file_tool = Tool(
         "properties": {
             "file": {
                 "type": "string",
-                "description": "The relative path of the file to write",
+                "description": "Path relative to the session's current working directory",
             },
             "content": {
                 "type": "string",
@@ -224,21 +769,33 @@ write_file_tool = Tool(
 
 edit_file_tool = Tool(
     name="edit_file",
-    description="Replace exact text in a file inside the workspace.",
+    description=(
+        "Replace exact text in an existing file. old_text must occur exactly once "
+        "unless replace_all is true, and must not include the N| prefixes from "
+        "read_file. Call read_file on this path first; if the file changed since "
+        "that view, read it again. Failed matches return nearby file context in "
+        "data.occurrences so you can widen old_text or re-read. Prefer this for "
+        "in-place edits. Use write_file to create a file or rewrite it whole."
+    ),
     parameters={
         "type": "object",
         "properties": {
             "file": {
                 "type": "string",
-                "description": "The file path inside the workspace",
+                "description": "Path relative to the session's current working directory",
             },
             "old_text": {
                 "type": "string",
-                "description": "The exact text to replace",
+                "description": "The exact text to replace; must match once unless replace_all is true",
             },
             "new_text": {
                 "type": "string",
                 "description": "The replacement text",
+            },
+            "replace_all": {
+                "type": "boolean",
+                "default": False,
+                "description": "Replace every occurrence instead of requiring a unique match",
             },
         },
         "required": ["file", "old_text", "new_text"],

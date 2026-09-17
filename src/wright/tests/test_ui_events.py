@@ -49,12 +49,17 @@ def test_tool_events_merge_by_stable_call_id():
 
     renderer.on_tool_call(first)
     renderer.on_tool_call(second)
+    renderer.on_tool_phase(first, "awaiting_approval")
+    renderer.on_tool_phase(first, "running")
     renderer.on_tool_output("call-a", "one")
     renderer.on_tool_result(second, ToolResult.success({"count": 2}))
 
     events = publisher.retained_events()
     assert [event.payload["call_id"] for event in events] == [
-        "call-a", "call-b", "call-a", "call-b"
+        "call-a", "call-b", "call-a", "call-a", "call-a", "call-b"
+    ]
+    assert [event.type for event in events[:4]] == [
+        "tool.planned", "tool.planned", "tool.awaiting_approval", "tool.running"
     ]
 
 
@@ -87,3 +92,5 @@ def test_interaction_broker_accepts_only_first_answer_and_closes_fail_closed():
     broker.close()
     thread.join(timeout=1)
     assert cancelled == [None]
+    resolved = [event for event in publisher.retained_events() if event.type == "interaction.resolved"]
+    assert resolved[-1].payload["cancelled"] is True

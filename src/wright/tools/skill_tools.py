@@ -1,4 +1,4 @@
-"""把 SkillRegistry 暴露成一个 skill 工具。调用即把正文写入 tool_result。"""
+"""把 SkillRegistry 暴露成 load_skill 工具。调用即把正文写入 tool_result。"""
 
 from __future__ import annotations
 
@@ -40,9 +40,8 @@ def build_skill_tools(registry: SkillRegistry) -> list[Tool]:
             **args, runtime=runtime, registry=registry
         )
 
-    return [
-        Tool(
-            name="skill",
+    load_skill = Tool(
+            name="load_skill",
             description=(
                 "Load a skill into this conversation: fetch full steps by id into this tool result. "
                 "If the user task matches a skill in the catalog, call this tool before starting work. "
@@ -64,5 +63,5 @@ def build_skill_tools(registry: SkillRegistry) -> list[Tool]:
             },
             call=bind(invoke_skill),
             is_concurrency_safe=lambda args: True,
-        ),
-    ]
+        )
+    return [load_skill]

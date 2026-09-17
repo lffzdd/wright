@@ -36,6 +36,10 @@ class _MockRenderer(SilentRenderer):
         super().__init__()
         self._answers = list(answers)
         self.prompts: list[dict] = []  # 记录每次 prompt 的参数
+        self.phases: list[tuple[str, str]] = []
+
+    def on_tool_phase(self, tool_call, phase: str) -> None:
+        self.phases.append((tool_call.id, phase))
 
     def prompt_permission(
         self,
@@ -44,6 +48,9 @@ class _MockRenderer(SilentRenderer):
         risk_flags: str,
         reason: str,
         offer_always: bool,
+        remember_rule: str = "",
+        remember_persists: bool = False,
+        revoke_hint: str = "",
     ) -> str:
         self.prompts.append({
             "tool_name": tool_name,
@@ -51,6 +58,9 @@ class _MockRenderer(SilentRenderer):
             "risk_flags": risk_flags,
             "reason": reason,
             "offer_always": offer_always,
+            "remember_rule": remember_rule,
+            "remember_persists": remember_persists,
+            "revoke_hint": revoke_hint,
         })
         return self._answers.pop(0) if self._answers else "n"
 
@@ -75,6 +85,23 @@ def test_yes_allows(tmp_path):
     handler = InteractiveApprovalHandler(renderer)
     executor = _executor(_ask_tool("write_file", ("writes_files",)), handler, tmp_path)
     assert _run(executor, ToolCall("write_file", {"file": "a.txt"}, "c1")).ok
+    assert renderer.phases == [("c1", "awaiting_approval")]
+
+
+def test_execution_starts_only_after_permission_resolution(tmp_path):
+    renderer = _MockRenderer("y")
+    handler = InteractiveApprovalHandler(renderer)
+    executor = _executor(_ask_tool("write_file", ("writes_files",)), handler, tmp_path)
+    phases: list[tuple[str, str]] = []
+
+    outcome = executor.execute(
+        [ToolCall("write_file", {"file": "a.txt"}, "c1")],
+        on_phase=lambda call, phase: phases.append((call.id, phase)),
+    )[0]
+
+    assert outcome.result.ok
+    assert renderer.phases == [("c1", "awaiting_approval")]
+    assert phases == [("c1", "running")]
 
 
 def test_no_denies(tmp_path):
@@ -99,7 +126,7 @@ def test_always_remembers_for_session(tmp_path):
     executor = _executor(_ask_tool("write_file", ("writes_files",)), handler, tmp_path)
 
     first = _run(executor, ToolCall("write_file", {"file": "a.txt"}, "c1"))
-    second = _run(executor, ToolCall("write_file", {"file": "b.txt"}, "c2"))
+    second = _run(executor, ToolCall("write_file", {"file": "a.txt"}, "c2"))
 
     assert first.ok and second.ok
     # 第二次直接命中记忆,没有再产生提问
@@ -115,8 +142,20 @@ def test_always_calls_on_remember_to_persist(tmp_path):
     executor = _executor(_ask_tool("write_file", ("writes_files",)), handler, tmp_path)
 
     assert _run(executor, ToolCall("write_file", {"file": "a.txt"}, "c1")).ok
-    # 选 a → 落盘钩子收到工具名级规则
-    assert remembered == ["write_file"]
+    # 选 a → 落盘钩子只收到当前目录范围，不会放行整个工具。
+    assert remembered == ["write_file(a.txt)"]
+    assert renderer.prompts[0]["remember_rule"] == "write_file(a.txt)"
+    assert renderer.prompts[0]["remember_persists"] is True
+
+
+def test_always_scope_does_not_cover_a_different_directory(tmp_path):
+    renderer = _MockRenderer("a", "n")
+    handler = InteractiveApprovalHandler(renderer)
+    executor = _executor(_ask_tool("write_file", ("writes_files",)), handler, tmp_path)
+
+    assert _run(executor, ToolCall("write_file", {"file": "src/a.txt"}, "c1")).ok
+    assert not _run(executor, ToolCall("write_file", {"file": "tests/b.txt"}, "c2")).ok
+    assert len(renderer.prompts) == 2
 
 
 # ── 高风险不提供 a;输 a 当作未知输入被拒 ─────────────────────────────────────
@@ -176,4 +215,3 @@ def test_fallback_rule_deny_short_circuits(tmp_path):
     )
     assert not _run(executor, ToolCall("execute_command", {"command": "ls"}, "c1")).ok
     assert renderer.prompts == []
-

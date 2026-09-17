@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from ..ui_events import EventPublisher
 from ..web.auth import BootstrapAuth
+from ..web.runtime_manager import RuntimeManagerError
 from ..web.server import COOKIE_NAME, create_app
 
 
@@ -29,6 +30,17 @@ class FakeManager:
         if session_id != "session":
             raise RuntimeError("missing")
         return self.handle
+
+    def set_model(self, session_id, model):
+        if session_id != "session":
+            raise RuntimeManagerError(
+                f"active session not found: {session_id}",
+                status_code=404,
+            )
+        cleaned = str(model).strip()
+        if not cleaned:
+            raise RuntimeManagerError("model name cannot be empty")
+        return {"session_id": session_id, "model": cleaned}
 
     def shutdown(self):
         pass
@@ -96,3 +108,36 @@ def test_websocket_replays_events_after_authenticated_connect(tmp_path):
         event = websocket.receive_json()
         assert event["type"] == "system.notice"
         assert event["seq"] == 1
+
+
+def test_set_model_endpoint(tmp_path):
+    client, _auth = _authenticated_client(tmp_path)
+    response = client.post(
+        "/api/v1/sessions/session/model",
+        json={"model": "gpt-4o-mini"},
+        headers={"origin": "http://testserver"},
+    )
+    assert response.status_code == 200
+    assert response.json()["model"] == "gpt-4o-mini"
+
+
+def test_set_model_missing_session_is_404(tmp_path):
+    client, _auth = _authenticated_client(tmp_path)
+    response = client.post(
+        "/api/v1/sessions/missing/model",
+        json={"model": "gpt-4o-mini"},
+        headers={"origin": "http://testserver"},
+    )
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"]
+
+
+def test_set_model_empty_name_is_409(tmp_path):
+    client, _auth = _authenticated_client(tmp_path)
+    response = client.post(
+        "/api/v1/sessions/session/model",
+        json={"model": "   "},
+        headers={"origin": "http://testserver"},
+    )
+    assert response.status_code == 409
+    assert "cannot be empty" in response.json()["detail"]

@@ -4,9 +4,10 @@ from pathlib import Path
 
 from ..executor import ToolExecutor
 from ..session import SessionState
+from ..tasks import TaskNotFoundError, TaskService
 from ..tools.base import Tool, ToolCall, ToolResult, ToolRuntime
 from ..tools.command_permissions import is_execute_command_concurrency_safe
-from ..tools.command_tools import execute_command, get_task_output
+from ..tools.command_tools import execute_command
 from ..tools.file_tools import read_file, write_file
 from ..tools.web_tools import http_request_tool
 
@@ -86,13 +87,15 @@ def test_command_cwd_is_isolated_per_session(tmp_path):
 
     assert first.get_cwd() == first_dir
     assert second.get_cwd() == second_dir
+    listed = execute_command("pwd", runtime=first_runtime)
+    assert listed.ok
+    assert listed.data["cwd"] == "first"
 
 
 def test_background_tasks_belong_to_their_session(tmp_path):
     first = SessionState.create("first", tmp_path)
     second = SessionState.create("second", tmp_path)
     first_runtime = ToolRuntime(workspace_dir=tmp_path, session_state=first)
-    second_runtime = ToolRuntime(workspace_dir=tmp_path, session_state=second)
 
     result = execute_command(
         "sleep 0.05 && echo done",
@@ -101,8 +104,13 @@ def test_background_tasks_belong_to_their_session(tmp_path):
     )
     task_id = result.data["task_id"]
 
-    assert get_task_output(task_id, runtime=first_runtime).ok
-    assert not get_task_output(task_id, runtime=second_runtime).ok
+    assert TaskService.for_session(first).get(task_id).id == task_id
+    try:
+        TaskService.for_session(second).get(task_id)
+    except TaskNotFoundError:
+        pass
+    else:
+        raise AssertionError("background task leaked into another session")
 
 
 def test_explicit_background_command_does_not_update_session_cwd(tmp_path):
@@ -120,12 +128,12 @@ def test_explicit_background_command_does_not_update_session_cwd(tmp_path):
 
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
-        task = get_task_output(task_id, runtime=runtime)
-        if task.data["done"]:
+        task = TaskService.for_session(session).get(task_id)
+        if task.terminal:
             break
         time.sleep(0.01)
 
-    assert task.data["done"]
+    assert task.terminal
     assert session.get_cwd() == tmp_path
 
 
@@ -148,12 +156,12 @@ def test_timed_out_background_command_does_not_overwrite_later_cwd(tmp_path):
 
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
-        task = get_task_output(task_id, runtime=runtime)
-        if task.data["done"]:
+        task = TaskService.for_session(session).get(task_id)
+        if task.terminal:
             break
         time.sleep(0.01)
 
-    assert task.data["done"]
+    assert task.terminal
     assert session.get_cwd() == later_dir
 
 
@@ -165,7 +173,7 @@ def test_file_tools_use_runtime_workspace(tmp_path):
     result = read_file("nested/a.txt", runtime=runtime)
 
     assert result.ok
-    assert result.data["content"] == "hello"
+    assert result.data["content"] == "1|hello"
     assert (tmp_path / "nested" / "a.txt").is_file()
 
 

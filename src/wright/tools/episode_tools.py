@@ -107,6 +107,7 @@ def build_episode_tools(directory: Path | None = None) -> list[Tool]:
             },
             call=bind(search_episodes),
             is_concurrency_safe=lambda args: True,
+            defer_to_model=True,
         ),
         Tool(
             name="get_episode",
@@ -119,6 +120,7 @@ def build_episode_tools(directory: Path | None = None) -> list[Tool]:
             },
             call=bind(get_episode),
             is_concurrency_safe=lambda args: True,
+            defer_to_model=True,
         ),
         Tool(
             name="delete_episode",
@@ -131,5 +133,6 @@ def build_episode_tools(directory: Path | None = None) -> list[Tool]:
             },
             call=bind(delete_episode),
             check_permission=_delete_permission,
+            defer_to_model=True,
         ),
     ]

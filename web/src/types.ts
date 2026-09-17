@@ -21,6 +21,7 @@ export type ToolState = {
   ok?: boolean;
   err?: string;
   data?: unknown;
+  phase?: "planned" | "awaiting_approval" | "running" | "succeeded" | "failed";
 };
 
 export type ActiveTurn = {
@@ -40,7 +41,20 @@ export type Interaction = {
   tool_name?: string;
   subject?: string;
   reason?: string;
+  risk_flags?: string;
   offer_always?: boolean;
+  remember_rule?: string;
+  remember_persists?: boolean;
+  revoke_hint?: string;
+};
+
+export type QueuedCommand = { command_id: string; prompt: string };
+
+export type Notice = {
+  id: string;
+  type: string;
+  text: string;
+  kind?: string;
 };
 
 export type Snapshot = {
@@ -51,7 +65,19 @@ export type Snapshot = {
   active_turn: ActiveTurn | null;
   plan: { objective?: string; status?: string; steps?: Array<{ id: string; title: string; status: string; note?: string }> };
   pending_interactions: Interaction[];
-  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; context_tokens: number; context_limit: number };
+  notices: Notice[];
+  queued_commands: QueuedCommand[];
+  queue_depth: number;
+  usage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    request_prompt_tokens: number;
+    request_completion_tokens: number;
+    request_total_tokens: number;
+    context_tokens: number;
+    context_limit: number;
+  };
 };
 
 export type UiEvent = {

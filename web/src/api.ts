@@ -28,6 +28,7 @@ export const api = {
   create: (body: Record<string, unknown>) => json<Snapshot>("/api/v1/sessions", { method: "POST", body: JSON.stringify(body) }),
   close: (id: string) => json(`/api/v1/sessions/${id}/close`, { method: "POST", body: "{}" }),
   archive: (id: string) => json(`/api/v1/sessions/${id}/archive`, { method: "POST", body: "{}" }),
+  setModel: (id: string, model: string) => json(`/api/v1/sessions/${id}/model`, { method: "POST", body: JSON.stringify({ model }) }),
   changes: (id: string) => json<{ local_warning: boolean; baseline: string; changes: Array<{ path: string; status: string }> }>(`/api/v1/sessions/${id}/changes`),
   patch: (id: string, path: string) => json<{ path: string; patch: string; truncated: boolean; binary: boolean }>(`/api/v1/sessions/${id}/changes/${path.split("/").map(encodeURIComponent).join("/")}`),
 };

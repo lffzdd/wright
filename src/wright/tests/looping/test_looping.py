@@ -19,7 +19,7 @@ from ...renderer import SilentRenderer
 from ...services import RuntimeServices
 from ...session import SessionState
 from ...tools.base import ToolRuntime
-from ...tools.loop_tools import loop_tool
+from ...tools.loop_tools import manage_loop_tool
 
 
 def _final(answer):
@@ -130,7 +130,7 @@ def test_loop_rejects_short_interval_and_capacity():
         registry.create(prompt="one more", interval_seconds=5)
 
     runtime = ToolRuntime(services=RuntimeServices(loop_registry=registry))
-    failed = loop_tool.call(
+    failed = manage_loop_tool.call(
         {"action": "create", "interval_seconds": 1, "prompt": "nope"},
         runtime,
     )

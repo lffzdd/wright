@@ -164,6 +164,7 @@ class ToolExecutor:
         local_cancel: threading.Event,
         effective_timeout: float,
         on_call_start: Callable[[], None] | None = None,
+        timings: dict[str, float] | None = None,
     ) -> ToolResult:
         """查找并执行【单个】工具，返回标准化 tool_result。"""
         arguments = dict(tool_call.arguments)
@@ -196,6 +197,7 @@ class ToolExecutor:
             return ToolResult.fail(str(e))
 
         effective_call = ToolCall(tool_call.name, arguments, tool_call.id)
+        permission_started = time.monotonic()
         permission = self.permission_resolver.resolve(
             effective_call,
             tool,
@@ -203,6 +205,9 @@ class ToolExecutor:
             cwd=self._current_cwd(),
             workspace_dir=self.workspace_dir,
         )
+        approval_wait_ms = (time.monotonic() - permission_started) * 1_000
+        if timings is not None:
+            timings["approval_wait_ms"] = approval_wait_ms
         self._emit_lifecycle("permission_decision", {
             "tool_name": tool_call.name,
             "tool_call_id": tool_call.id,
@@ -210,6 +215,7 @@ class ToolExecutor:
             "reason": permission.reason,
             "risk_flags": list(permission.risk_flags),
             "source": permission.source,
+            "approval_wait_ms": round(approval_wait_ms, 3),
         })
         if permission.decision != "allow":
             return ToolResult.fail(
@@ -239,15 +245,24 @@ class ToolExecutor:
         if isinstance(arguments.get("timeout"), (int, float)):
             arguments["timeout"] = min(arguments["timeout"], effective_timeout)
 
+        execution_started: float | None = None
         try:
             runtime.raise_if_cancelled()
             if on_call_start is not None:
                 on_call_start()
+            execution_started = time.monotonic()
             tool_result = tool.call(arguments, runtime)
         except ToolCancelledError as e:
             tool_result = ToolResult.fail(str(e))
         except Exception as e:
             tool_result = ToolResult.fail(f"{type(e).__name__}: {e}")
+        finally:
+            if timings is not None:
+                timings["execution_ms"] = (
+                    (time.monotonic() - execution_started) * 1_000
+                    if execution_started is not None
+                    else 0.0
+                )
 
         return tool_result
 
@@ -268,7 +283,12 @@ class ToolExecutor:
         except Exception:
             return False
 
-    def _run_one(self, idx: int, tool_call: ToolCall) -> tuple[int, ToolExecutionOutcome]:
+    def _run_one(
+        self,
+        idx: int,
+        tool_call: ToolCall,
+        on_phase: Callable[[ToolCall, str], None] | None = None,
+    ) -> tuple[int, ToolExecutionOutcome]:
         tool = self.tool_registry.get(tool_call.name)
         if tool is None:
             result = ToolResult.fail(err=f"Unknown tool: {tool_call.name}")
@@ -285,6 +305,7 @@ class ToolExecutor:
         if effective_timeout <= 0:
             effective_timeout = self.tool_timeout
         started = time.monotonic()
+        timings: dict[str, float] = {}
 
         def start_deadline() -> None:
             nonlocal timer
@@ -292,17 +313,23 @@ class ToolExecutor:
             timer.daemon = True
             timer.start()
 
+        def start_execution() -> None:
+            if on_phase is not None:
+                try:
+                    on_phase(tool_call, "running")
+                except Exception:
+                    logger.debug("tool phase observer failed", exc_info=True)
+            if tool.timeout_owner == "executor":
+                start_deadline()
+
         try:
             result = self._invoke_tool(
                 tool,
                 tool_call,
                 local_cancel,
                 effective_timeout,
-                on_call_start=(
-                    start_deadline
-                    if tool.timeout_owner == "executor"
-                    else None
-                ),
+                on_call_start=start_execution,
+                timings=timings,
             )
         finally:
             if timer is not None:
@@ -323,7 +350,9 @@ class ToolExecutor:
                 "tool_name": tool_call.name,
                 "tool_call_id": tool_call.id,
                 "status": status,
-                "duration_ms": round((time.monotonic() - started) * 1_000, 3),
+                "total_duration_ms": round((time.monotonic() - started) * 1_000, 3),
+                "approval_wait_ms": round(timings.get("approval_wait_ms", 0.0), 3),
+                "execution_ms": round(timings.get("execution_ms", 0.0), 3),
                 "result": result.to_dict(),
             },
         )
@@ -339,6 +368,7 @@ class ToolExecutor:
         indexed_calls: list[tuple[int, ToolCall]],
         on_result: Callable[[ToolCall, ToolResult], None] | None,
         max_workers: int,
+        on_phase: Callable[[ToolCall, str], None] | None = None,
     ) -> dict[int, ToolExecutionOutcome]:
         """并发跑一批 (原始下标, ToolCall),返回 {下标: outcome}。
 
@@ -360,7 +390,8 @@ class ToolExecutor:
         # 所以 deadline 通过 ToolRuntime 的取消信号协作完成，绝不遗弃后台线程。
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = [
-                pool.submit(self._run_one, idx, tc) for idx, tc in indexed_calls
+                pool.submit(self._run_one, idx, tc, on_phase)
+                for idx, tc in indexed_calls
             ]
             for fut in as_completed(futures):
                 idx, outcome = fut.result()
@@ -391,6 +422,7 @@ class ToolExecutor:
         tool_calls: list[ToolCall],
         on_call: Callable[[ToolCall], None] | None = None,
         on_result: Callable[[ToolCall, ToolResult], None] | None = None,
+        on_phase: Callable[[ToolCall, str], None] | None = None,
         max_workers: int = 8,
     ) -> list[ToolExecutionOutcome]:
         """保持调用顺序切批执行,返回顺序恒等于输入。
@@ -441,7 +473,7 @@ class ToolExecutor:
 
         for batch in self._partition_calls(runnable):
             for idx, slot in self._run_concurrent_batch(
-                batch, on_result, min(max_workers, len(batch))
+                batch, on_result, min(max_workers, len(batch)), on_phase
             ).items():
                 slots[idx] = slot
 

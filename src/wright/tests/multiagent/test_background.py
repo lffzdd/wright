@@ -7,12 +7,9 @@ from ...agent_background import AgentBackgroundRuntime
 from ...events import ContentDone
 from ...services import RuntimeServices
 from ...session import SessionState
-from ...subagent import (
-    cancel_agent_task_tool,
-    get_agent_task_tool,
-    make_spawn_agent_tool,
-)
+from ...subagent import make_spawn_agent_tool
 from ...tools.base import ToolRuntime
+from ...tools.task_tools import cancel_task_tool, get_task_tool
 
 
 def _final(answer: str) -> ContentDone:
@@ -66,7 +63,7 @@ def test_background_agent_returns_immediately_and_notifies_once(tmp_path):
     background.shutdown(session.control_plane)
 
 
-def test_get_agent_task_reads_background_terminal_record(tmp_path):
+def test_get_task_reads_background_terminal_record(tmp_path):
     events = queue.Queue()
     background = AgentBackgroundRuntime(events, max_workers=1)
     session = SessionState.create("root", tmp_path)
@@ -80,14 +77,14 @@ def test_get_agent_task_reads_background_terminal_record(tmp_path):
     )
     events.get(timeout=1)
 
-    result = get_agent_task_tool.call(
+    result = get_task_tool.call(
         {"task_id": launched.data["task_id"]},
         ToolRuntime(workspace_dir=tmp_path, session_state=session),
     )
     assert result.ok
     assert result.data["status"] == "completed"
     assert result.data["result"] == "background done"
-    unknown = get_agent_task_tool.call(
+    unknown = get_task_tool.call(
         {"task_id": "missing"}, ToolRuntime(session_state=session)
     )
     assert not unknown.ok
@@ -110,7 +107,7 @@ def test_child_agent_cannot_launch_background_agent(tmp_path):
     background.shutdown(session.control_plane)
 
 
-def test_cancel_agent_task_requests_cooperative_cancellation(tmp_path):
+def test_cancel_task_requests_cooperative_cancellation(tmp_path):
     session = SessionState.create("root", tmp_path)
     session.begin_user_turn("root")
     record = session.control_plane.begin_task(
@@ -122,7 +119,7 @@ def test_cancel_agent_task_requests_cooperative_cancellation(tmp_path):
         requested_steps=5,
     )
 
-    result = cancel_agent_task_tool.call(
+    result = cancel_task_tool.call(
         {"task_id": record.id, "reason": "no longer needed"},
         ToolRuntime(session_state=session),
     )

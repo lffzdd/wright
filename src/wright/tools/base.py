@@ -1,6 +1,7 @@
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
+from threading import RLock
 from typing import TYPE_CHECKING, Any, Literal
 
 from ..permission import PermissionCheckResult
@@ -43,6 +44,10 @@ class ToolRuntime:
     # Live process-local services. Same isolation as lifecycle: not in schemas
     # or checkpoints, and not derived from SessionState.
     services: "RuntimeServices | None" = None
+    # Process-local bag shared across replace()d per-call runtimes.
+    # Not in schemas or checkpoints. Tools store their own records here.
+    scratch_lock: RLock = field(default_factory=RLock, repr=False)
+    scratch: dict[str, Any] = field(default_factory=dict)
 
     # 文本流式输出:例如 shell stdout。命名保持通用,不绑定 command 工具。
     emit_output: Callable[[str], None] | None = None
@@ -102,9 +107,11 @@ class Tool:
     # 可选的工具专属 executor deadline。None 使用 Agent 的通用 tool_timeout；
     # 子 Agent 这类长任务需要比普通文件/网络工具更长的独立预算。
     execution_timeout: float | None = None
-    # Compatibility aliases may remain executable for resumed/old transcripts
-    # without teaching new model turns a duplicate API surface.
+    # Some internal tools remain executable without being sent to the model.
     expose_to_model: bool = True
+    # Specialized tools stay executable but can be omitted from the baseline
+    # schema payload until tool_search activates them for this Agent session.
+    defer_to_model: bool = False
 
     def to_dict(self):
         # 并发与超时策略是系统调度元数据,不喂给模型。
@@ -113,6 +120,22 @@ class Tool:
             "description": self.description,
             "parameters": self.parameters,
         }
+
+
+def split_tool_catalog(tools: Sequence[Tool]) -> tuple[list[str], list[str]]:
+    """Baseline vs deferred names, in assembly order."""
+    baseline: list[str] = []
+    deferred: list[str] = []
+    seen: set[str] = set()
+    for tool in tools:
+        if not tool.expose_to_model or tool.name in seen:
+            continue
+        seen.add(tool.name)
+        if tool.defer_to_model:
+            deferred.append(tool.name)
+        else:
+            baseline.append(tool.name)
+    return baseline, deferred
 
 
 @dataclass

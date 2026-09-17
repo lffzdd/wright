@@ -43,13 +43,13 @@ def _must_not_run_tool(name: str, risk_flags: tuple[str, ...] = ()) -> Tool:
     )
 
 
-def test_read_file_and_list_files_are_allowed(tmp_path):
+def test_read_file_and_list_directory_are_allowed(tmp_path):
     read_executor = _executor(
         _success_tool("read_file"),
         tmp_path,
     )
     list_executor = _executor(
-        _success_tool("list_files"),
+        _success_tool("list_directory"),
         tmp_path,
     )
 
@@ -57,7 +57,7 @@ def test_read_file_and_list_files_are_allowed(tmp_path):
         ToolCall("read_file", {"file": "a.txt"}, "c1")
     ])[0].result
     list_result = list_executor.execute([
-        ToolCall("list_files", {"directory": "."}, "c2")
+        ToolCall("list_directory", {"directory": "."}, "c2")
     ])[0].result
 
     assert read_result.ok
@@ -233,5 +233,6 @@ def test_cwd_outside_workspace_is_generic_policy_risk(tmp_path):
     ])[0].result
 
     assert not result.ok
-    assert result.data["permission"]["decision"] == "ask"
+    assert result.data["permission"]["decision"] == "deny"
     assert "cwd_outside_workspace" in result.data["permission"]["risk_flags"]
+    assert result.data["permission"]["source"] == "system_policy"

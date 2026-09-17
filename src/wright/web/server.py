@@ -42,6 +42,10 @@ class SessionRequest(BaseModel):
     resume_session_id: str | None = None
 
 
+class ModelRequest(BaseModel):
+    model: str
+
+
 def _origin_for(request: Request) -> str:
     return f"{request.url.scheme}://{request.headers.get('host', '')}"
 
@@ -133,6 +137,17 @@ def create_app(
             return manager.get(session_id).snapshot()
         except RuntimeManagerError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/v1/sessions/{session_id}/model")
+    def set_session_model(session_id: str, body: ModelRequest, request: Request) -> dict[str, Any]:
+        _require_auth(request, auth)
+        try:
+            return manager.set_model(session_id, body.model)
+        except RuntimeManagerError as exc:
+            raise HTTPException(
+                status_code=exc.status_code or 409,
+                detail=str(exc),
+            ) from exc
 
     @app.post("/api/v1/sessions/{session_id}/close")
     def close_session(session_id: str, request: Request) -> dict[str, Any]:
@@ -241,6 +256,11 @@ def create_app(
                             handle.submit(str(command.get("prompt", "")), command_id)
                         elif command_type == "turn.cancel":
                             handle.cancel(command_id)
+                        elif command_type == "turn.cancel_queued":
+                            handle.cancel_queued(
+                                command_id,
+                                str(command.get("target_command_id", "")),
+                            )
                         elif command_type == "interaction.respond":
                             handle.respond(
                                 command_id,

@@ -80,6 +80,28 @@ def test_explicit_pre_tool_deny_blocks_execution(tmp_path):
     assert called == []
 
 
+def test_tool_trace_splits_permission_and_execution_time(tmp_path):
+    recorder = TraceRecorder(tmp_path / "trace.jsonl")
+    manager = LifecycleManager("session", recorder)
+
+    def run(arguments, runtime):
+        time.sleep(0.01)
+        return ToolResult.success(arguments)
+
+    executor = ToolExecutor(
+        {"sample": _tool(run)}, workspace_dir=tmp_path, lifecycle=manager
+    )
+    outcome = executor.execute([ToolCall("sample", {"value": 1}, "call_1")])[0]
+
+    assert outcome.result.ok
+    rows = recorder.read()
+    permission = next(row for row in rows if row["event"] == "permission_decision")
+    finished = next(row for row in rows if row["event"] == "post_tool_use")
+    assert permission["payload"]["approval_wait_ms"] >= 0
+    assert finished["payload"]["approval_wait_ms"] >= 0
+    assert finished["payload"]["execution_ms"] >= 5
+
+
 def test_hook_rewrite_is_revalidated_and_does_not_mutate_recorded_call(tmp_path):
     received = []
     manager = LifecycleManager("session")

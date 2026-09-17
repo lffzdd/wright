@@ -14,12 +14,20 @@ from .events import ContentDone
 from .tools.base import Tool, ToolCall
 
 
-def encode_tools(tools: list[Tool]) -> tuple[list[dict], dict[str, str]]:
+def encode_tools(
+    tools: list[Tool], *, active_deferred: set[str] | None = None
+) -> tuple[list[dict], dict[str, str]]:
     """Give MCP names API-safe aliases without changing executor/permission names."""
     schemas = []
     names = {}
     for tool in tools:
         if not tool.expose_to_model:
+            continue
+        if (
+            active_deferred is not None
+            and tool.defer_to_model
+            and tool.name not in active_deferred
+        ):
             continue
         name = tool.name
         if re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", name) is None:

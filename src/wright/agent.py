@@ -21,6 +21,7 @@ from .session import SessionState, UsageRecord
 from .skills.prompt import catalog_reminder
 from .skills.registry import SkillRegistry
 from .tools.base import Tool, ToolResult
+from .tools.tool_search import MAX_ACTIVE_DEFERRED_TOOLS, make_tool_search_tool
 from .util import build_tool_results_messages, estimate_message_tokens
 from .verifier import Verifier
 
@@ -72,7 +73,7 @@ class Agent:
         # 长期记忆协作者:只主 Agent 注入,子 Agent 传 None(保持纯净隔离上下文)。
         # Agent 只在主循环里喊它三声:构造时取指令、每轮注入召回、收口后提取落盘。
         self.memory = memory
-        # Skill 目录只写入 transcript 一次；正文走 skill 工具的 tool_result。
+        # Skill 目录只写入 transcript 一次；正文走 load_skill 的 tool_result。
         self.skills = skills
         self.verifier = verifier
         self.max_verification_retries = max_verification_retries
@@ -103,19 +104,42 @@ class Agent:
         )
 
         # Schemas are request-local: parent and child agents may share one client.
-        self.tool_schemas, self._tool_names = encode_tools(tools)
+        # Specialized capabilities are activated on demand by tool_search.
+        runtime_tools = list(tools)
+        deferred_names = {
+            tool.name
+            for tool in runtime_tools
+            if tool.expose_to_model and tool.defer_to_model
+        }
+        restored_active = [
+            name
+            for name in self.session_state.active_deferred_tools
+            if name in deferred_names
+        ][-MAX_ACTIVE_DEFERRED_TOOLS:]
+        self.session_state.active_deferred_tools[:] = restored_active
+        self._active_deferred_tools = self.session_state.active_deferred_tools
+        if any(tool.expose_to_model and tool.defer_to_model for tool in runtime_tools):
+            runtime_tools.append(
+                make_tool_search_tool(runtime_tools, self._active_deferred_tools)
+            )
+        self._schema_tools = runtime_tools
+        self.tool_schemas, self._tool_names = encode_tools(
+            runtime_tools, active_deferred=set(self._active_deferred_tools)
+        )
         if not self.session_state.message_records:
             memory_section = self.memory.instructions() if self.memory else ""
             self.session_state.append_message({
                 "role": "system",
-                "content": build_system_prompt(memory_section=memory_section),
+                "content": build_system_prompt(
+                    tools, memory_section=memory_section
+                ),
             })
 
         # 工具调度执行独立成 collaborator:Agent 只在主循环里把这一轮的 tool_calls
         # 交给它,查表/钳超时/并发分流/异常兜底都归 ToolExecutor。
         # registry 存整个 Tool:执行要 call,调度要 concurrency 等元数据。
         self.executor = ToolExecutor(
-            {tool.name: tool for tool in tools},
+            {tool.name: tool for tool in runtime_tools},
             tool_timeout=tool_timeout,
             on_command_output=renderer.on_command_output,
             on_tool_output=renderer.on_tool_output,
@@ -171,10 +195,16 @@ class Agent:
         if token_savings:
             self.session_state.context_tokens -= token_savings
         if should_compact:
+            deactivated_tools = (
+                self.session_state.clear_active_deferred_tools()
+                if folded_count
+                else 0
+            )
             self._emit_lifecycle("post_compact", {
                 "folded_count": folded_count,
                 "token_savings": token_savings,
                 "context_tokens": self.session_state.context_tokens,
+                "deactivated_tools": deactivated_tools,
             })
         return folded_count
 
@@ -241,6 +271,11 @@ class Agent:
         token 再传入同一份列表，用量校准才能扣掉这笔临时开销。
         """
 
+        # A preceding tool_search call may have activated specialized schemas.
+        self.tool_schemas, self._tool_names = encode_tools(
+            self._schema_tools, active_deferred=set(self._active_deferred_tools)
+        )
+        self._ensure_skill_catalog()
         response = ContentDone("", finish_reason="incomplete")
         usage_record: UsageRecord | None = None
         self.renderer.on_turn_begin()
@@ -309,6 +344,18 @@ class Agent:
 
     def _ensure_skill_catalog(self) -> None:
         """会话里只把 skill 目录写入 transcript 一次。"""
+        # load_skill 走按需发现时，普通对话不应背整个技能目录；它被 tool_search
+        # 激活后的下一次模型调用，才需要目录来选择具体 skill_id。
+        load_skill = next(
+            (tool for tool in self._schema_tools if tool.name == "load_skill"),
+            None,
+        )
+        if (
+            load_skill is not None
+            and load_skill.defer_to_model
+            and "load_skill" not in self._active_deferred_tools
+        ):
+            return
         if self.skills is None or self.session_state.skill_catalog_sent:
             return
         catalog = catalog_reminder(self.skills.list_metas())
@@ -533,6 +580,17 @@ class Agent:
             raise ValueError(
                 f"只能继续 status=running 的会话，当前为 {self.session_state.status}"
             )
+        # A checkpoint may have been copied while an older writer still showed
+        # status=running.  The commit ledger is authoritative: never call the
+        # model again for a turn whose final result was already committed.
+        if self.session_state.is_turn_committed():
+            self.session_state.status = "completed"
+            self._checkpoint()
+            for turn in reversed(self.session_state.turns):
+                answer = turn.parsed.get("final_answer")
+                if answer is not None:
+                    return str(answer)
+            return None
         budget = self.session_state.max_steps if max_steps is None else max_steps
         if budget <= 0:
             raise ValueError("max_steps 必须 > 0")
@@ -666,11 +724,19 @@ class Agent:
                 return None, "retry"
             counters.verifier = 0
 
+        # Persist the terminal state before advertising completion.  If the
+        # process closes immediately after agent_stop, resume must observe a
+        # completed root turn instead of replaying the same prompt.  A rejecting
+        # lifecycle hook rolls the candidate back to running below.
+        self.session_state.mark_completed()
+        self._checkpoint()
         stop_decision = self._emit_agent_stop(
             "completed", final_answer=turn.final_answer
         )
         if stop_decision is not None and stop_decision.decision == "deny":
             counters.hook += 1
+            self.session_state.status = "running"
+            self.session_state.revoke_turn_commit()
             self.session_state.append_message({
                 "role": "user",
                 "content": json.dumps(
@@ -694,7 +760,6 @@ class Agent:
         counters.hook = 0
 
         self.renderer.on_final(turn.final_answer)
-        self.session_state.mark_completed()
         # 每个终态都记录 episode；只有成功回合才提取长期语义记忆。
         # 若同 turn 仍有后台 Agent，等最后一条 runtime notification
         # 收口后再一次性写 episode，避免把 running 摘要永久固化。
@@ -750,6 +815,7 @@ class Agent:
         outcomes = self.executor.execute(
             turn.tool_calls,
             on_call=self.renderer.on_tool_call,
+            on_phase=self.renderer.on_tool_phase,
             on_result=self.renderer.on_tool_result,
         )
 
@@ -854,7 +920,13 @@ class Agent:
                 for call, recorded in zip(
                     turn.tool_calls, turn.parsed["tool_calls"], strict=True
                 ):
-                    call.name = self._tool_names.get(call.name, call.name)
+                    wire_name = call.name
+                    if wire_name not in self._tool_names:
+                        raise TurnAbort(
+                            f"Tool is not available this turn: {wire_name}"
+                        )
+                    call.name = self._tool_names[wire_name]
+                    self.session_state.touch_active_deferred_tool(call.name)
                     recorded["name"] = call.name
                 counters.invalid = 0
                 if turn.kind == "final":

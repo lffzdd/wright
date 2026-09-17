@@ -128,7 +128,7 @@ SPAWN_AGENT_PARAMETERS = {
 }
 
 SPAWN_AGENT_DESCRIPTION = (
-    "Hand a self-contained subtask to a child Agent with an isolated context. "
+    "Hand a self-contained subtask to a child subagent with an isolated context. "
     "Consecutive spawn_agent calls may run concurrently; the control plane "
     "records task_id, parent/child links, status, budget, and usage. "
     "Child Agents share the workspace and permission boundary, but not parent "
@@ -156,12 +156,11 @@ def _child_base_tools(base_tools: Sequence[Tool]) -> list[Tool]:
     child_tools: list[Tool] = []
     for tool in base_tools:
         if tool.name in {
-            "get_task_output", "get_agent_task", "cancel_agent_task",
             "get_task", "wait_task", "cancel_task", "list_tasks",
-            "create_task", "get_schedule", "list_schedules",
+            "schedule_task", "get_schedule", "list_schedules",
             "pause_schedule", "resume_schedule", "cancel_schedule",
             "list_task_runs",
-            "skill",
+            "load_skill",
         }:
             continue
         if tool.name == "execute_command":
@@ -415,88 +414,6 @@ get_agent_tree_tool = Tool(
 )
 
 
-def _get_agent_task(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
-    session = runtime.session_state
-    if session is None:
-        return ToolResult.fail("get_agent_task requires SessionState runtime")
-    task_id = str(arguments["task_id"])
-    try:
-        from .tasks import TaskNotFoundError, TaskService
-
-        task = TaskService.for_session(session, runtime.services).get(task_id)
-    except TaskNotFoundError as exc:
-        return ToolResult.fail(str(exc))
-    if task.kind != "agent":
-        return ToolResult.fail(f"Task is not an Agent task: {task_id}")
-    return ToolResult.success(dict(task.details))
-
-
-get_agent_task_tool = Tool(
-    name="get_agent_task",
-    description=(
-        "Compatibility alias for Agent tasks. Prefer get_task, which supports "
-        "both Agent and shell tasks."
-    ),
-    parameters={
-        "type": "object",
-        "properties": {
-            "task_id": {"type": "string", "minLength": 1},
-        },
-        "required": ["task_id"],
-        "additionalProperties": False,
-    },
-    call=_get_agent_task,
-    is_concurrency_safe=lambda args: True,
-    expose_to_model=False,
-)
-
-
-def _cancel_agent_task(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
-    session = runtime.session_state
-    if session is None:
-        return ToolResult.fail("cancel_agent_task requires SessionState runtime")
-    task_id = str(arguments["task_id"])
-    reason = str(arguments.get("reason") or "Root Agent requested cancellation")[:1_000]
-    try:
-        from .tasks import TaskNotFoundError, TaskService
-
-        service = TaskService.for_session(session, runtime.services)
-        before = service.get(task_id)
-        if before.kind != "agent":
-            return ToolResult.fail(f"Task is not an Agent task: {task_id}")
-        task = service.cancel(task_id, reason=reason)
-    except TaskNotFoundError as exc:
-        return ToolResult.fail(str(exc))
-    return ToolResult.success({
-        "task_id": task_id,
-        "status": task.status,
-        "cancel_requested": task.cancel_requested,
-        "reason": task.cancel_reason,
-        "already_terminal": before.terminal,
-    })
-
-
-cancel_agent_task_tool = Tool(
-    name="cancel_agent_task",
-    description=(
-        "Compatibility alias for Agent tasks. Prefer cancel_task, which routes "
-        "both Agent and shell cancellation through the unified task service."
-    ),
-    parameters={
-        "type": "object",
-        "properties": {
-            "task_id": {"type": "string", "minLength": 1},
-            "reason": {"type": "string", "maxLength": 1_000},
-        },
-        "required": ["task_id"],
-        "additionalProperties": False,
-    },
-    call=_cancel_agent_task,
-    is_concurrency_safe=lambda args: True,
-    expose_to_model=False,
-)
-
-
 def build_agent_tools(
     llm: LLMClient,
     base_tools: Sequence[Tool],
@@ -513,23 +430,22 @@ def build_agent_tools(
         raise ValueError("需要满足 0 <= depth <= max_depth 且 max_depth >= 1")
     tools = list(base_tools)
     if depth < max_depth:
-        tools.append(make_spawn_agent_tool(
-            llm,
-            base_tools,
-            depth=depth,
-            max_depth=max_depth,
-            child_max_steps=child_max_steps,
-            child_timeout=child_timeout,
-            render_subagents=render_subagents,
-            permission_resolver=permission_resolver,
-        ))
+        tools.append(
+            make_spawn_agent_tool(
+                llm,
+                base_tools,
+                depth=depth,
+                max_depth=max_depth,
+                child_max_steps=child_max_steps,
+                child_timeout=child_timeout,
+                render_subagents=render_subagents,
+                permission_resolver=permission_resolver,
+            )
+        )
     # 只有 root 读取全树；子 Agent 只通过自己的 spawn 结果观察直接孩子。
     if depth == 0:
-        tools.extend([
-            *task_tools,
-            *(autonomy_tools if enable_autonomy else []),
-            get_agent_tree_tool,
-            get_agent_task_tool,
-            cancel_agent_task_tool,
-        ])
+        tools.extend(task_tools)
+        if enable_autonomy:
+            tools.extend(replace(tool, defer_to_model=True) for tool in autonomy_tools)
+        tools.append(get_agent_tree_tool)
     return tools

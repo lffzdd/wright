@@ -27,7 +27,7 @@ def test_skill_returns_full_body_and_rejects_unknown(tmp_path: Path):
         allowed_tools=["execute_command"],
     )
     _session, tools, runtime = _runtime(tmp_path)
-    skill = {tool.name: tool for tool in tools}["skill"]
+    skill = {tool.name: tool for tool in tools}["load_skill"]
 
     loaded = skill.call({"skill_id": "release-check"}, runtime)
     assert loaded.ok
@@ -43,7 +43,7 @@ def test_skill_returns_full_body_and_rejects_unknown(tmp_path: Path):
 
 def test_skill_tool_schema_is_valid():
     tools = build_skill_tools(SkillRegistry(Path(".")))
-    assert [tool.name for tool in tools] == ["skill"]
+    assert [tool.name for tool in tools] == ["load_skill"]
     tool = tools[0]
     validator_cls = validators.validator_for(tool.parameters)
     validator_cls.check_schema(tool.parameters)

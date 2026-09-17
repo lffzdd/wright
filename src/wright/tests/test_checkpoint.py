@@ -51,6 +51,7 @@ def _populated_session(tmp_path):
 def test_checkpoint_round_trips_complete_session_state(tmp_path):
     original = _populated_session(tmp_path)
     original.model_name = "selected-model"
+    original.active_deferred_tools = ["web_search", "schedule_task"]
     store = SessionCheckpointStore(tmp_path / "checkpoints")
 
     path = store.save(original)
@@ -70,8 +71,10 @@ def test_checkpoint_round_trips_complete_session_state(tmp_path):
     )
     assert restored.total_usage == original.total_usage
     assert restored.model_name == "selected-model"
+    assert restored.active_deferred_tools == ["web_search", "schedule_task"]
     assert restored.project_root == original.workspace_dir
     assert restored.environment == "local"
+    assert restored.committed_turn_ids == [original.agent_root_turn_id]
     assert restored.plan_manager.snapshot() == original.plan_manager.snapshot()
     assert restored.plan_manager.create_plan is not None
 
@@ -83,6 +86,36 @@ def test_checkpoint_round_trips_complete_session_state(tmp_path):
     assert restored.turns[-1].verification.approved is True
     assert restored.assistant_raw(restored.turns[-1]) == "done"
     assert not list(store.directory.glob("*.tmp"))
+
+
+def test_committed_turn_marker_prevents_stale_running_checkpoint_replay(tmp_path):
+    original = _populated_session(tmp_path)
+    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    path = store.save(original)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["session"]["status"] = "running"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    restored = store.load(original.session_id)
+
+    class NoReplayLLM:
+        context_limit = 128_000
+
+        def __call__(self, messages, *, tools):
+            raise AssertionError("committed turn must not be replayed")
+
+    agent = Agent(NoReplayLLM(), [], restored, SilentRenderer(), checkpoint_store=store)
+
+    assert agent.continue_run() == "done"
+    assert restored.status == "completed"
+
+
+def test_reopened_turn_revokes_its_commit_marker(tmp_path):
+    session = _populated_session(tmp_path)
+    assert session.is_turn_committed()
+
+    session.revoke_turn_commit()
+
+    assert not session.is_turn_committed()
 
 
 def test_checkpoint_v2_without_project_fields_defaults_to_local(tmp_path):

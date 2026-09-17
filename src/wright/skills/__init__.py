@@ -12,7 +12,7 @@ from .types import (
 
 
 def optional_skill_tools(registry: SkillRegistry):
-    """目录为空或不存在时不把 skill 工具写进 system prompt。"""
+    """目录为空或不存在时不把 load_skill 工具写进 system prompt。"""
     if not registry.has_skills():
         return []
     from ..tools.skill_tools import build_skill_tools

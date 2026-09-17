@@ -1,14 +1,7 @@
 {
   "mode": "default",
   "permissions": {
-    "allow": [
-      "execute_command(ls*)",
-      "execute_command(pwd*)",
-      "execute_command(cat *)",
-      "execute_command(echo *)",
-      "write_file",
-      "edit_file"
-    ],
+    "allow": [],
     "deny": [
       "execute_command(rm *)",
       "execute_command(sudo *)",

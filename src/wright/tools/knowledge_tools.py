@@ -107,5 +107,6 @@ def build_knowledge_tools(provider: KnowledgeProvider) -> list[Tool]:
             call=call,
             check_permission=_ask_network,
             is_concurrency_safe=lambda args: True,
+            defer_to_model=True,
         )
     ]

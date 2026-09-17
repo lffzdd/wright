@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path
@@ -73,6 +74,11 @@ class PermissionRule:
             return False
         if self.subject_glob is None:
             return True
+        # A prefix glob is not a shell parser.  Without this guard a rule such as
+        # execute_command(ls*) also matches `ls; rm -rf ...` or `ls $(...)`.
+        # Scoped shell rules deliberately cover one simple command only.
+        if tool_name == "execute_command" and _has_shell_composition(subject):
+            return False
         return fnmatch(subject, self.subject_glob)
 
 
@@ -225,7 +231,7 @@ class RuleBasedApprovalHandler:
         # 4. 模式特判。
         if mode == "bypass":
             return self._allow(request, "bypass 模式放行")
-        if mode == "plan":
+        if mode == "plan" and flags:
             return self._deny(request, "plan 模式:计划阶段不执行任何副作用操作")
         if mode == "acceptEdits" and flags and set(flags) <= _EDIT_ONLY_FLAGS:
             return self._allow(request, "acceptEdits 模式:本地文件编辑自动放行")
@@ -233,6 +239,12 @@ class RuleBasedApprovalHandler:
         # 5. allow 规则命中。
         if self._any_match(self.settings.allow, tool_name, subject):
             return self._allow(request, f"命中 allow 规则: {tool_name}({subject})")
+
+        # Tool-level allow is only a capability classification, not a way to
+        # skip global policy.  Once deny/ask/mode rules have had their say, a
+        # genuinely read-only/default-allowed tool keeps that decision.
+        if request.check.decision == "allow":
+            return request.check
 
         # 6. 没有任何规则命中:按 on_no_match 收口——独立用就 fail-closed 拒,
         #    组合用就返回 ask"弃权",让链上后一个 handler(如交互式)接手。
@@ -269,3 +281,10 @@ def _subject_of(tool_name: str, arguments: dict) -> str:
         if isinstance(value, str) and value:
             return value
     return json.dumps(arguments, ensure_ascii=False, sort_keys=True)
+
+
+def _has_shell_composition(command: str) -> bool:
+    """Conservatively reject compound/dynamic shell syntax in scoped allows."""
+    return bool(
+        re.search(r"(?:\n|\r|&&|\|\||[;|`]|\$\(|[<>]\(|(?:^|\s)[0-9&]*>{1,2})", command)
+    )

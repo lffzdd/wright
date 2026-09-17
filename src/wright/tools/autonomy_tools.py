@@ -62,7 +62,7 @@ def _trigger(arguments: dict[str, Any]) -> TriggerSpec:
     raise ValueError(f"unsupported trigger type: {trigger_type}")
 
 
-def create_task(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
+def schedule_task(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
     try:
         record = _store(runtime).create_automation(
             name=arguments["name"],
@@ -216,8 +216,8 @@ _TRIGGER_SCHEMA = {
 }
 
 
-create_task_tool = Tool(
-    name="create_task",
+schedule_task_tool = Tool(
+    name="schedule_task",
     description=(
         "Create a durable autonomous task that runs in an isolated session. "
         "It cannot see the current conversation, user goal, plan, or transcript. "
@@ -226,7 +226,7 @@ create_task_tool = Tool(
         "interval, file_change inside workspace, web_change for a public HTTP(S) "
         "page, or named external event. Recovery defaults to manual/no blind replay. "
         "For recurring checks that should see the current conversation and die "
-        "with this session, use the loop tool or /loop instead."
+        "with this session, use manage_loop or /loop instead."
     ),
     parameters={
         "type": "object",
@@ -249,8 +249,9 @@ create_task_tool = Tool(
         "required": ["name", "prompt", "trigger"],
         "additionalProperties": False,
     },
-    call=create_task,
+    call=schedule_task,
     check_permission=_persistent_mutation_permission,
+    defer_to_model=True,
 )
 
 
@@ -265,6 +266,7 @@ get_schedule_tool = Tool(
     },
     call=get_schedule,
     is_concurrency_safe=lambda args: True,
+    defer_to_model=True,
 )
 
 
@@ -284,6 +286,7 @@ list_schedules_tool = Tool(
     },
     call=list_schedules,
     is_concurrency_safe=lambda args: True,
+    defer_to_model=True,
 )
 
 
@@ -304,6 +307,7 @@ def _schedule_mutation_tool(name: str, description: str, call) -> Tool:
         },
         call=call,
         check_permission=_persistent_mutation_permission,
+        defer_to_model=True,
     )
 
 
@@ -334,11 +338,12 @@ list_task_runs_tool = Tool(
     },
     call=list_task_runs,
     is_concurrency_safe=lambda args: True,
+    defer_to_model=True,
 )
 
 
 autonomy_tools = [
-    create_task_tool,
+    schedule_task_tool,
     get_schedule_tool,
     list_schedules_tool,
     pause_schedule_tool,

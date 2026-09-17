@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import difflib
 import json
 import sys
 import threading
@@ -218,6 +217,8 @@ def _tool_class(tool: ToolView) -> str:
         return "error"
     if tool.status == "done":
         return "done"
+    if tool.status == "awaiting_approval":
+        return "awaiting"
     return "running"
 
 
@@ -229,6 +230,8 @@ def _tool_arg_summary(name: str, args: Any) -> str:
     if "command" in args and isinstance(args["command"], str):
         cmd = args["command"].strip().replace("\n", " ")
         return f"$ {cmd[:36]}…" if len(cmd) > 36 else f"$ {cmd}"
+    if name == "edit_file" and isinstance(args.get("file"), str):
+        return args["file"]
     for key in ("path", "file_path", "file", "TargetFile", "AbsolutePath", "SearchDirectory"):
         if key in args and isinstance(args[key], str):
             p = args[key].strip()
@@ -250,7 +253,13 @@ def _tool_arg_summary(name: str, args: Any) -> str:
 
 
 def _tool_title(tool: ToolView) -> str:
-    icon = "⏳" if tool.status == "running" else ("✓" if tool.status == "done" else "✗")
+    icon = {
+        "planned": "○",
+        "awaiting_approval": "⚠",
+        "running": "⏳",
+        "done": "✓",
+        "error": "✗",
+    }.get(tool.status, "○")
     summary = _tool_arg_summary(tool.name, tool.arguments)
     if summary:
         return f"{icon} {tool.name} · {summary}"
@@ -277,16 +286,17 @@ def _tool_body(tool: ToolView) -> Any:
     if args:
         if isinstance(args, dict) and "command" in args and isinstance(args["command"], str):
             parts.append(Text(f"$ {args['command']}", style="bold cyan"))
-        elif isinstance(args, dict) and tool.name == "edit_file" and "old_text" in args and "new_text" in args:
-            filename = str(args.get("file", "file"))
-            old = str(args["old_text"])
-            new = str(args["new_text"])
-            udiff = list(difflib.unified_diff(
-                old.splitlines(), new.splitlines(),
-                fromfile=f"a/{filename}", tofile=f"b/{filename}", lineterm="",
-            ))
-            if udiff:
-                parts.append(_format_diff("\n".join(udiff)))
+        elif isinstance(args, dict) and tool.name == "edit_file":
+            old_text = str(args.get("old_text") or "")
+            new_text = str(args.get("new_text") or "")
+            diff = "\n".join(
+                [
+                    *(f"-{line}" for line in old_text.splitlines() or [""]),
+                    *(f"+{line}" for line in new_text.splitlines() or [""]),
+                ]
+            )
+            if old_text or new_text:
+                parts.append(_format_diff(diff))
             else:
                 parts.append(Text("(no changes)", style="dim italic"))
         else:
@@ -338,6 +348,9 @@ class PermissionModal(ModalScreen[str]):
         risk_flags: str,
         reason: str,
         offer_always: bool,
+        remember_rule: str = "",
+        remember_persists: bool = False,
+        revoke_hint: str = "",
     ) -> None:
         super().__init__()
         self.tool_name = tool_name
@@ -345,6 +358,9 @@ class PermissionModal(ModalScreen[str]):
         self.risk_flags = risk_flags
         self.reason = reason
         self.offer_always = offer_always
+        self.remember_rule = remember_rule
+        self.remember_persists = remember_persists
+        self.revoke_hint = revoke_hint
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
@@ -354,6 +370,14 @@ class PermissionModal(ModalScreen[str]):
                 yield Static(self.subject, classes="dialog-subject")
             yield Static(f"risk  {self.risk_flags}", classes="dialog-meta")
             yield Static(self.reason, classes="dialog-reason")
+            if self.offer_always and self.remember_rule:
+                persistence = "cross-session" if self.remember_persists else "this session"
+                yield Static(
+                    f"scope  {self.remember_rule}\npersistence  {persistence}",
+                    classes="dialog-meta",
+                )
+                if self.revoke_hint:
+                    yield Static(f"revoke  {self.revoke_hint}", classes="dialog-reason")
             with Horizontal(classes="dialog-actions"):
                 yield Button("allow", id="allow", variant="success")
                 yield Button("deny", id="deny", variant="error")
@@ -869,6 +893,7 @@ class WrightTUI(App):
     BINDINGS: ClassVar[list[Binding]] = [
         Binding("ctrl+q", "quit", "Quit"),
         Binding("ctrl+c", "quit", "Quit", show=False),
+        Binding("ctrl+x", "stop_turn", "Stop", priority=True),
         Binding("ctrl+e", "toggle_tools", "Toggle tools", show=False),
         Binding("ctrl+l", "scroll_end", "Scroll to bottom", show=False),
     ]
@@ -904,7 +929,10 @@ class WrightTUI(App):
                 placeholder="Message Wright…",
                 id="composer",
             )
-            yield Static("enter send  ·  shift+enter newline  ·  / for commands", id="composer-hint")
+            yield Static(
+                "enter send  ·  shift+enter newline  ·  ctrl+x stop  ·  / commands",
+                id="composer-hint",
+            )
 
     def on_mount(self) -> None:
         self.renderer.attach(self)
@@ -1194,6 +1222,9 @@ class WrightTUI(App):
                     risk_flags=str(payload.get("risk_flags", "")),
                     reason=str(payload.get("reason", "")),
                     offer_always=bool(payload.get("offer_always")),
+                    remember_rule=str(payload.get("remember_rule", "")),
+                    remember_persists=bool(payload.get("remember_persists")),
+                    revoke_hint=str(payload.get("revoke_hint", "")),
                 )
             )
         if request.kind == "ask_user":
@@ -1225,7 +1256,7 @@ class WrightTUI(App):
         if not value:
             return
         if value in {"/exit", "/quit"}:
-            self.action_quit()
+            self._request_quit()
             return
         if value == "/help":
             self.renderer.on_system_notice(tui_help_text())
@@ -1362,13 +1393,30 @@ class WrightTUI(App):
             lines.append(f"{marker} {command.name:<10} {command.description}")
         suggestions.update("\n".join(lines) + "\n  ↑↓ navigate  ·  tab complete  ·  esc close")
 
-    def action_quit(self) -> None:
+    def _request_quit(self) -> None:
         self._stop.set()
         try:
             self.rt.event_queue.put_nowait(("EXIT", None))
         except Exception:
             pass
         self.exit()
+
+    async def action_quit(self) -> None:
+        self._request_quit()
+
+    def action_stop_turn(self) -> None:
+        if self.rt.agent_idle.is_set():
+            self.renderer.on_system_notice("no running task to stop")
+            return
+        self.rt.cancellation_event.set()
+        self._fail_pending_interactions()
+        screen = self.screen
+        if isinstance(screen, PermissionModal):
+            screen.dismiss("n")
+        elif isinstance(screen, AskUserModal):
+            screen.dismiss(None)
+        self.renderer.on_system_notice("stopping current task…")
+        self._refresh_status()
 
     def action_toggle_tools(self) -> None:
         tools = list(self.query(ToolBlock))

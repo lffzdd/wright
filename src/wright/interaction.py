@@ -129,14 +129,22 @@ class InteractionBroker:
     def close(self) -> None:
         with self._lock:
             self._closed = True
-            pending = list(self._pending.values())
+            pending = list(self._pending.items())
             self._pending.clear()
-        for item in pending:
+        for request_id, item in pending:
             item.reply.put_nowait("n" if item.kind == "permission" else None)
+            self.publisher.publish(
+                "interaction.resolved",
+                {"request_id": request_id, "kind": item.kind, "cancelled": True},
+            )
 
     def cancel_pending(self) -> None:
         with self._lock:
-            pending = list(self._pending.values())
+            pending = list(self._pending.items())
             self._pending.clear()
-        for item in pending:
+        for request_id, item in pending:
             item.reply.put_nowait("n" if item.kind == "permission" else None)
+            self.publisher.publish(
+                "interaction.resolved",
+                {"request_id": request_id, "kind": item.kind, "cancelled": True},
+            )

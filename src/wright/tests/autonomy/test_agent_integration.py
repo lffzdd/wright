@@ -175,9 +175,7 @@ def test_durable_run_does_not_block_root_user_input(tmp_path):
 def test_durable_session_omits_ask_user_and_autonomy_tools(tmp_path):
     _workspace, store, session, scheduler, events, background, services = _runtime(tmp_path)
     run_id = _claim_run(store)
-    memory_tools = build_memory_tools(
-        tmp_path / "memory", include_legacy_save=True
-    )
+    memory_tools = build_memory_tools(tmp_path / "memory")
     write_skill(
         tmp_path / "skills",
         "release-check",
@@ -210,6 +208,7 @@ def test_durable_session_omits_ask_user_and_autonomy_tools(tmp_path):
     names = set(launch.tool_names)
     assert "ask_user" not in names
     assert "create_task" not in names
+    assert "schedule_task" not in names
     assert "pause_schedule" not in names
     assert "resume_schedule" not in names
     assert "cancel_schedule" not in names
@@ -218,7 +217,6 @@ def test_durable_session_omits_ask_user_and_autonomy_tools(tmp_path):
     assert "list_task_runs" not in names
     assert "create_memory" not in names
     assert "search_memory" not in names
-    assert "save_memory" not in names
     assert "knowledge_search" not in names
     assert "skill" not in names
     assert "list_skills" not in names

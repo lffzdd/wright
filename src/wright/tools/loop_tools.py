@@ -1,4 +1,4 @@
-"""Root-only in-session loop tool. Not persisted; not given to sub-agents."""
+"""Root-only in-session loop management. Not persisted; not given to sub-agents."""
 
 from __future__ import annotations
 
@@ -44,15 +44,15 @@ def loop_tool_call(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResul
         return ToolResult.fail(str(exc))
 
 
-loop_tool = Tool(
-    name="loop",
+manage_loop_tool = Tool(
+    name="manage_loop",
     description=(
         "Create or manage an in-session recurring prompt (like /loop). "
         "Each tick runs in THIS conversation via a runtime event: it sees the "
         "current user goal, plan, and transcript. Loops are memory-only — they "
         "vanish when the session ends and do not survive restart. "
         "Do not use this for work that must outlive the session or run without "
-        "the current conversation; use create_task for isolated durable runs. "
+        "the current conversation; use schedule_task for isolated durable runs. "
         "Interval must be at least 5 seconds; at most 20 loops per session."
     ),
     parameters={
@@ -89,4 +89,5 @@ loop_tool = Tool(
         "additionalProperties": False,
     },
     call=loop_tool_call,
+    defer_to_model=True,
 )

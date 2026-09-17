@@ -34,7 +34,7 @@ def build_memory_instructions(directory: Path | None = None) -> str:
 第 2 步——在 `MEMORY.md` 里加一行指向该文件的指针。`MEMORY.md` 是索引不是记忆,
 每条一行、不带 frontmatter。绝不要把记忆正文直接写进 `MEMORY.md`。
 
-(用 `create_memory` / `update_memory` 工具保存时,以上两步会自动完成：
+(用 `create_memory` / `update_memory` 工具保存时，以上两步会自动完成：
 记忆文件和索引会作为一次存储操作一起维护。)
 
 - 按主题(语义)组织记忆,而非按时间顺序。
@@ -50,7 +50,7 @@ def build_memory_instructions(directory: Path | None = None) -> str:
         ("随着时间推移把它建设起来,让未来的对话能完整了解:用户是谁、他希望你如何协作、"
         "哪些行为该避免或重复、以及他交给你的工作背后的来龙去脉。"),
         "",
-        "如果用户明确要你记住某事,立刻按最贴合的类型保存。要你忘记某事,就找到并删除对应条目。",
+        "如果用户明确要你记住某事,立刻按最贴合的类型保存。要你忘记某事,就找到并用 `delete_memory` 删除对应条目。",
         "",
         TYPES_SECTION,
         WHAT_NOT_TO_SAVE,

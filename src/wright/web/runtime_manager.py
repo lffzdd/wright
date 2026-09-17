@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import threading
 from collections import deque
 from pathlib import Path
@@ -16,12 +17,15 @@ from ..project import ProjectContext
 from ..renderer import SilentRenderer, collect_history_pairs
 from ..runtime import WrightRuntime, build_runtime, shutdown_runtime
 from ..session_host import process_session_event
+from ..tui.session_control import available_models
 from ..ui_events import EventPublisher
 from ..worktrees import ArchiveResult, WorktreeManager
 
 
 class RuntimeManagerError(RuntimeError):
-    pass
+    def __init__(self, message: str = "", *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class SessionHandle:
@@ -33,6 +37,9 @@ class SessionHandle:
         self._commands: set[str] = set()
         self._command_order: deque[str] = deque(maxlen=2_000)
         self._command_lock = threading.Lock()
+        self._queued_turns: dict[str, str] = {}
+        self._cancelled_turns: set[str] = set()
+        self._active_turn_command: str | None = None
         self.thread = threading.Thread(
             target=self._worker,
             name=f"wright-web-{runtime.session_state.session_id}",
@@ -52,6 +59,30 @@ class SessionHandle:
         event_queue = self.runtime.event_queue
         while not self._closed.is_set():
             event_type, payload = event_queue.get()
+            command_id = (
+                str(payload.get("command_id", ""))
+                if event_type == "USER_INPUT" and isinstance(payload, dict)
+                else ""
+            )
+            if command_id:
+                with self._command_lock:
+                    self._queued_turns.pop(command_id, None)
+                    if command_id in self._cancelled_turns:
+                        self._cancelled_turns.discard(command_id)
+                        cancelled_before_start = True
+                    else:
+                        self._active_turn_command = command_id
+                        cancelled_before_start = False
+                if cancelled_before_start:
+                    self.publisher.publish(
+                        "command.rejected",
+                        {
+                            "command_id": command_id,
+                            "command": "turn.submit",
+                            "reason": "queued instruction cancelled before start",
+                        },
+                    )
+                    continue
             try:
                 if process_session_event(self.runtime, event_type, payload):
                     return
@@ -60,6 +91,11 @@ class SessionHandle:
                 self.publisher.publish(
                     "system.notice", {"text": f"session worker error: {exc}"}
                 )
+            finally:
+                if command_id:
+                    with self._command_lock:
+                        if self._active_turn_command == command_id:
+                            self._active_turn_command = None
 
     def _remember_command(self, command_id: str) -> bool:
         with self._command_lock:
@@ -83,13 +119,21 @@ class SessionHandle:
         fresh = self._remember_command(command_id)
         queued = not self.runtime.agent_idle.is_set() or not self.runtime.event_queue.empty()
         if fresh:
+            with self._command_lock:
+                self._queued_turns[command_id] = cleaned
             self.runtime.event_queue.put((
                 "USER_INPUT",
                 {"prompt": cleaned, "command_id": command_id},
             ))
         event = self.publisher.publish(
             "command.accepted",
-            {"command_id": command_id, "command": "turn.submit", "queued": queued, "duplicate": not fresh},
+            {
+                "command_id": command_id,
+                "command": "turn.submit",
+                "prompt": cleaned,
+                "queued": queued,
+                "duplicate": not fresh,
+            },
         )
         return event.to_dict()
 
@@ -100,10 +144,35 @@ class SessionHandle:
         if fresh:
             self.runtime.cancellation_event.set()
             self.interactions.cancel_pending()
+            with self._command_lock:
+                self._cancelled_turns.update(self._queued_turns)
         event = self.publisher.publish(
             "command.accepted",
-            {"command_id": command_id, "command": "turn.cancel", "duplicate": not fresh},
+            {
+                "command_id": command_id,
+                "command": "turn.cancel",
+                "duplicate": not fresh,
+                "cancelled_queued": len(self._cancelled_turns) if fresh else 0,
+            },
         )
+        return event.to_dict()
+
+    def cancel_queued(self, command_id: str, target_command_id: str) -> dict[str, Any]:
+        if not command_id or not target_command_id:
+            raise RuntimeManagerError("command_id and target_command_id are required")
+        fresh = self._remember_command(command_id)
+        with self._command_lock:
+            queued = target_command_id in self._queued_turns
+            if fresh and queued:
+                self._cancelled_turns.add(target_command_id)
+        event_type = "command.accepted" if queued or not fresh else "command.rejected"
+        event = self.publisher.publish(event_type, {
+            "command_id": command_id,
+            "command": "turn.cancel_queued",
+            "target_command_id": target_command_id,
+            "duplicate": not fresh,
+            "reason": "" if queued or not fresh else "queued instruction is no longer pending",
+        })
         return event.to_dict()
 
     def respond(self, command_id: str, request_id: str, answer: Any) -> dict[str, Any]:
@@ -140,7 +209,7 @@ class SessionHandle:
                     active["content"] += str(event.payload.get("piece", ""))
                 elif event.type == "content.final":
                     active["content"] = event.payload.get("content", "")
-                elif event.type == "tool.started":
+                elif event.type in {"tool.planned", "tool.awaiting_approval", "tool.running"}:
                     active["tools"][event.payload.get("call_id", "")] = dict(event.payload)
                 elif event.type == "tool.output":
                     tool = active["tools"].setdefault(event.payload.get("call_id", ""), {})
@@ -152,6 +221,12 @@ class SessionHandle:
         if active is not None:
             active["tools"] = list(active["tools"].values())
         usage = state.task_usage()
+        with self._command_lock:
+            queued_commands = [
+                {"command_id": command_id, "prompt": prompt}
+                for command_id, prompt in self._queued_turns.items()
+                if command_id not in self._cancelled_turns
+            ]
         return {
             "stream_id": self.publisher.stream_id,
             "last_seq": self.publisher.latest_seq,
@@ -163,10 +238,20 @@ class SessionHandle:
             "active_turn": active,
             "plan": state.plan_manager.snapshot(),
             "pending_interactions": self.interactions.snapshot(),
+            "notices": [
+                {"id": event.event_id, "type": event.type, **event.payload}
+                for event in self.publisher.retained_events()
+                if event.type in {"system.notice", "system.checkpoint_error", "command.rejected"}
+            ][-50:],
+            "queued_commands": queued_commands,
+            "queue_depth": len(queued_commands),
             "usage": {
                 "prompt_tokens": usage.prompt_tokens,
                 "completion_tokens": usage.completion_tokens,
                 "total_tokens": usage.total_tokens,
+                "request_prompt_tokens": 0,
+                "request_completion_tokens": 0,
+                "request_total_tokens": 0,
                 "context_tokens": state.context_tokens,
                 "context_limit": self.runtime.llm.context_limit,
             },
@@ -189,6 +274,38 @@ class SessionHandle:
             "active": not self.closed,
             "recoverable": True,
         }
+
+    def set_model(self, model: str) -> dict[str, Any]:
+        if self.closed:
+            raise RuntimeManagerError("session is closed")
+        if not self.runtime.agent_idle.is_set():
+            raise RuntimeManagerError("cannot change model while turn is running")
+        cleaned = model.strip()
+        if not cleaned:
+            raise RuntimeManagerError("model name cannot be empty")
+        current = str(self.runtime.llm.model)
+        agent_llm = getattr(self.runtime.agent, "llm", None)
+        previous_session_model = self.runtime.session_state.model_name
+        if cleaned != current:
+            self.runtime.llm.model = cleaned
+            if agent_llm is not None and agent_llm is not self.runtime.llm:
+                agent_llm.model = cleaned
+            self.runtime.session_state.model_name = cleaned
+            store = getattr(self.runtime.agent, "checkpoint_store", None)
+            if store is not None:
+                try:
+                    store.save(self.runtime.session_state)
+                except Exception as exc:
+                    self.runtime.llm.model = current
+                    if agent_llm is not None and agent_llm is not self.runtime.llm:
+                        agent_llm.model = current
+                    self.runtime.session_state.model_name = previous_session_model
+                    raise RuntimeManagerError(f"checkpoint failed: {exc}") from exc
+            self.publisher.publish(
+                "session.status_changed",
+                {"session_id": self.session_id, "model": cleaned},
+            )
+        return self.summary()
 
     def close(self) -> None:
         if self._closed.is_set():
@@ -216,6 +333,8 @@ class RuntimeManager:
         self._lock = threading.RLock()
 
     def project(self) -> dict[str, Any]:
+        base_model = getattr(self.base_args, "model", None) or os.environ.get("OPENAI_MODEL", "gpt-4o")
+        models = list(available_models(base_model))
         return {
             "project_id": project_id(self.project_root),
             "name": self.project_root.name,
@@ -228,7 +347,19 @@ class RuntimeManager:
                 self.worktrees.is_git
                 and self.worktrees.inspect(ProjectContext.local(self.project_root))["dirty"]
             ),
+            "default_model": base_model,
+            "models": models,
         }
+
+    def set_model(self, session_id: str, model: str) -> dict[str, Any]:
+        with self._lock:
+            handle = self._handles.get(session_id)
+            if handle is None:
+                raise RuntimeManagerError(
+                    f"active session not found: {session_id}",
+                    status_code=404,
+                )
+            return handle.set_model(model)
 
     def _args(self, *, context: ProjectContext, model: str | None, resume: str | None) -> argparse.Namespace:
         values = vars(self.base_args).copy()

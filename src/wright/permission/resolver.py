@@ -41,6 +41,15 @@ class PermissionPolicy:
             risk_flags.append("cwd_outside_workspace")
 
         merged_flags = tuple(dict.fromkeys(risk_flags))
+        if "cwd_outside_workspace" in merged_flags:
+            return PermissionCheckResult(
+                "deny",
+                self._format_reason(
+                    "working directory is outside the workspace", merged_flags
+                ),
+                merged_flags,
+                source="system_policy",
+            )
         if merged_flags == check.risk_flags:
             return check
 
@@ -85,11 +94,11 @@ class FallbackApprovalHandler:
 
 
 class PermissionRequest:
-    """需要外部裁决的权限请求。
+    """可交给全局策略或交互层复核的权限请求。
 
-    类似 Claude Code 的 canUseTool/permission dialog 边界:工具只能判断
-    "需要问",真正是否允许由这里的 handler 决定。当前项目还没有交互 UI,
-    所以没有 handler 时 ask 会 fail closed。
+    类似 Claude Code 的 canUseTool/permission dialog 边界:工具先做能力与风险分类，
+    全局 handler 仍可用模式和 deny/ask 规则收紧 allow。没有 handler 时，工具自己的
+    ask 会由执行层 fail closed。
     """
 
     def __init__(
@@ -150,7 +159,7 @@ class PermissionResolver:
             )
 
         check = self.policy.apply(tool_check, cwd, workspace_dir)
-        if check.decision != "ask":
+        if check.decision == "deny":
             return check
 
         # 对标 Claude Code 的 requiresUserInteraction：即便一般权限规则会放行，

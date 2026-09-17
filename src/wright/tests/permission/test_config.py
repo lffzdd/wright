@@ -56,6 +56,15 @@ def test_glob_rule_matches_subject():
     assert not rule.matches("execute_command", "git push origin")
 
 
+def test_scoped_shell_allow_rejects_composition_and_substitution():
+    rule = PermissionRule.parse("execute_command(ls*)")
+    assert rule.matches("execute_command", "ls -la")
+    assert not rule.matches("execute_command", "ls; rm -rf victim")
+    assert not rule.matches("execute_command", "ls && curl https://example.com")
+    assert not rule.matches("execute_command", "ls $(touch victim)")
+    assert not rule.matches("execute_command", "ls > victim")
+
+
 # ── default 模式:allow 命中放行,未命中 fail-closed ─────────────────────────
 
 def test_default_allow_rule_permits(tmp_path):
@@ -74,6 +83,42 @@ def test_default_no_rule_denies(tmp_path):
     assert not result.ok
     assert result.data["permission"]["decision"] == "deny"
     assert result.data["permission"]["source"] == "rule_config"
+
+
+def test_global_deny_applies_to_tool_level_allow(tmp_path):
+    settings = PermissionSettings.from_dict(
+        {"mode": "default", "permissions": {"deny": ["read_file(secrets/*)"]}}
+    )
+    executor = _executor(
+        Tool(
+            name="read_file",
+            description="",
+            parameters={},
+            call=lambda args, runtime: ToolResult.success({"called": True}),
+        ),
+        settings,
+        tmp_path,
+    )
+
+    result = _run(executor, ToolCall("read_file", {"file": "secrets/key"}, "c1"))
+    assert not result.ok
+    assert result.data["permission"]["decision"] == "deny"
+
+
+def test_plan_mode_applies_to_side_effectful_tool_level_allow(tmp_path):
+    settings = PermissionSettings.from_dict({"mode": "plan", "permissions": {}})
+    tool = Tool(
+        name="network_probe",
+        description="",
+        parameters={},
+        call=lambda args, runtime: ToolResult.success({"called": True}),
+        check_permission=lambda args, runtime: PermissionCheckResult(
+            "allow", "legacy tool allow", ("accesses_network",), source="tool"
+        ),
+    )
+    result = _run(_executor(tool, settings, tmp_path), ToolCall(tool.name, {}, "c1"))
+    assert not result.ok
+    assert result.data["permission"]["decision"] == "deny"
 
 
 def test_deny_rule_overrides_allow(tmp_path):

@@ -19,17 +19,132 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DiffViewer } from "./DiffViewer";
+import { MarkdownContent } from "./Markdown";
 import { api, bootstrap } from "./api";
 import { applyEvent } from "./reducer";
 import type { Interaction, SessionSummary, Snapshot, UiEvent, ViewState } from "./types";
 
 type InspectorTab = "changes" | "plan" | "details";
 
-const initialView = (snapshot: Snapshot): ViewState => ({ ...snapshot, seen: [], connection: "connecting" });
+const initialView = (snapshot: Snapshot): ViewState => ({
+  ...snapshot,
+  notices: snapshot.notices ?? [],
+  queued_commands: snapshot.queued_commands ?? [],
+  queue_depth: (snapshot.queued_commands ?? []).length,
+  usage: {
+    ...snapshot.usage,
+    request_prompt_tokens: snapshot.usage.request_prompt_tokens ?? 0,
+    request_completion_tokens: snapshot.usage.request_completion_tokens ?? 0,
+    request_total_tokens: snapshot.usage.request_total_tokens ?? 0,
+  },
+  seen: [],
+  connection: "connecting",
+});
 const commandId = () => crypto.randomUUID();
+
+export function visibleModels(models: string[], currentModel: string, extras: string[] = []): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const model of [...models, ...extras, currentModel]) {
+    const cleaned = model.trim();
+    if (!cleaned || seen.has(cleaned)) continue;
+    seen.add(cleaned);
+    result.push(cleaned);
+  }
+  return result;
+}
 
 function StatusDot({ status }: { status: string }) {
   return <span className={`status-dot status-${status}`} aria-hidden="true" />;
+}
+
+function ModelSelector({
+  currentModel,
+  models,
+  running,
+  onSelect,
+}: {
+  currentModel: string;
+  models: string[];
+  running: boolean;
+  onSelect: (model: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [custom, setCustom] = useState("");
+  const [extras, setExtras] = useState<string[]>([]);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const options = visibleModels(models, currentModel, extras);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", handleClick);
+    return () => window.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  return (
+    <div className="model-selector-wrap" ref={dropdownRef}>
+      <button
+        type="button"
+        className="model-selector-btn"
+        disabled={running}
+        onClick={() => setOpen(!open)}
+        title={running ? "Cannot change model while turn is running" : "Change session model"}
+      >
+        <span>{currentModel || "configured model"}</span>
+        <CaretDown size={11} className={open ? "rotated" : ""} />
+      </button>
+      {open && (
+        <div className="model-dropdown">
+          <div className="model-dropdown-title">SELECT MODEL</div>
+          <div className="model-dropdown-list">
+            {options.map((m) => (
+              <button
+                key={m}
+                type="button"
+                className={`model-option ${m === currentModel ? "selected" : ""}`}
+                onClick={() => {
+                  onSelect(m);
+                  setOpen(false);
+                }}
+              >
+                <span>{m}</span>
+                {m === currentModel && <Check size={13} />}
+              </button>
+            ))}
+          </div>
+          <form
+            className="model-custom-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const next = custom.trim();
+              if (next) {
+                setExtras((current) => current.includes(next) ? current : [...current, next]);
+                onSelect(next);
+                setCustom("");
+                setOpen(false);
+              }
+            }}
+          >
+            <input
+              type="text"
+              placeholder="Custom model…"
+              value={custom}
+              onChange={(e) => setCustom(e.target.value)}
+            />
+            <button type="submit" className="button subtle" disabled={!custom.trim()}>
+              Set
+            </button>
+          </form>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function SessionRail({
@@ -53,7 +168,10 @@ function SessionRail({
     <aside className={`session-rail ${open ? "responsive-open" : ""}`}>
       <div className="rail-heading">
         <span>SESSIONS</span>
-        <div className="rail-buttons"><button className="icon-button responsive-only" onClick={onClose} title="Close sessions" aria-label="Close sessions"><X size={16} /></button><button className="icon-button" onClick={onCreate} title="New session" aria-label="New session"><Plus size={16} /></button></div>
+        <div className="rail-buttons">
+          <button className="icon-button responsive-only" onClick={onClose} title="Close sessions (Esc)" aria-label="Close sessions"><X size={16} /></button>
+          <button className="icon-button" onClick={onCreate} title="New session (⌘K)" aria-label="New session (⌘K)"><Plus size={16} /></button>
+        </div>
       </div>
       <div className="session-list">
         {active.map((session) => (
@@ -94,15 +212,17 @@ function SessionRail({
 function ToolCard({ tool }: { tool: NonNullable<ViewState["active_turn"]>["tools"][number] }) {
   const [open, setOpen] = useState(false);
   const done = tool.ok !== undefined;
+  const phase = done ? (tool.ok ? "succeeded" : "failed") : (tool.phase ?? "planned");
+  const phaseLabel = phase.replace("_", " ");
   return (
     <section className="tool-card">
       <button className="tool-summary" onClick={() => setOpen(!open)} aria-expanded={open}>
-        <span className={`tool-icon ${done ? (tool.ok ? "success" : "danger") : "running"}`}>
-          {done ? (tool.ok ? <Check size={14} /> : <X size={14} />) : <CircleNotch className="spin" size={14} />}
+        <span className={`tool-icon ${done ? (tool.ok ? "success" : "danger") : phase}`}>
+          {done ? (tool.ok ? <Check size={14} /> : <X size={14} />) : phase === "running" ? <CircleNotch className="spin" size={14} /> : <Warning size={14} />}
         </span>
         <Code size={16} />
         <strong>{tool.name}</strong>
-        <span>{done ? (tool.ok ? "completed" : "failed") : "running"}</span>
+        <span>{phaseLabel}</span>
         <CaretDown size={14} className={open ? "rotated" : ""} />
       </button>
       {open && <div className="tool-detail">
@@ -122,11 +242,17 @@ function InteractionCard({ interaction, respond }: { interaction: Interaction; r
     <section className="interaction-card" role="alert">
       <div className="interaction-title"><Warning size={18} weight="fill" /><strong>{isPermission ? `Permission · ${interaction.tool_name}` : "Wright needs input"}</strong></div>
       <p>{isPermission ? interaction.subject || interaction.reason : interaction.question}</p>
+      {isPermission && interaction.risk_flags && <small>Risk: {interaction.risk_flags}</small>}
+      {isPermission && interaction.offer_always && interaction.remember_rule && <div className="permission-scope">
+        <small><strong>Scope:</strong> <code>{interaction.remember_rule}</code></small>
+        <small><strong>Persistence:</strong> {interaction.remember_persists ? "Across sessions" : "This session only"}</small>
+        {interaction.revoke_hint && <small><strong>Revoke:</strong> {interaction.revoke_hint}</small>}
+      </div>}
       {interaction.context && <small>{interaction.context}</small>}
       {isPermission ? <div className="interaction-actions">
         <button className="button secondary" onClick={() => respond(interaction.request_id, "n")}>Deny</button>
         <button className="button primary" onClick={() => respond(interaction.request_id, "y")}>Allow once</button>
-        {interaction.offer_always && <button className="button subtle" onClick={() => respond(interaction.request_id, "a")}>Always allow</button>}
+        {interaction.offer_always && <button className="button subtle" onClick={() => respond(interaction.request_id, "a")}>Allow this scope</button>}
       </div> : <form className="ask-form" onSubmit={(event) => { event.preventDefault(); if (answer.trim()) respond(interaction.request_id, answer.trim()); }}>
         {interaction.options?.map((option) => <button type="button" className="option-button" key={option} onClick={() => respond(interaction.request_id, option)}>{option}</button>)}
         <input aria-label="Answer" value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="Type an answer…" />
@@ -136,7 +262,7 @@ function InteractionCard({ interaction, respond }: { interaction: Interaction; r
   );
 }
 
-function Timeline({ state, respond }: { state: ViewState; respond: (requestId: string, answer: unknown) => void }) {
+function Timeline({ state, respond, cancelQueued }: { state: ViewState; respond: (requestId: string, answer: unknown) => void; cancelQueued: (commandId: string) => void }) {
   const bottom = useRef<HTMLDivElement>(null);
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
@@ -150,7 +276,7 @@ function Timeline({ state, respond }: { state: ViewState; respond: (requestId: s
       </div>}
       {state.history.map((turn, index) => <div className="turn" key={`${index}-${turn.user.slice(0, 20)}`}>
         <div className="message user-message"><span>You</span><p>{turn.user}</p></div>
-        <div className="message assistant-message"><span>Wright</span><div className="answer-copy">{turn.assistant}</div></div>
+        <div className="message assistant-message"><span>Wright</span><MarkdownContent content={turn.assistant} /></div>
       </div>)}
       {state.active_turn && <div className="turn active-turn">
         <div className="message user-message"><span>You</span><p>{state.active_turn.prompt}</p></div>
@@ -159,9 +285,17 @@ function Timeline({ state, respond }: { state: ViewState; respond: (requestId: s
           <div>{state.active_turn.reasoning}</div>
         </details>}
         {state.active_turn.tools.map((tool) => <ToolCard key={tool.call_id} tool={tool} />)}
-        <div className="message assistant-message streaming"><span>Wright</span><div className="answer-copy">{state.active_turn.content || <span className="thinking"><i />Working…</span>}</div></div>
+        <div className="message assistant-message streaming"><span>Wright</span>{state.active_turn.content ? <MarkdownContent content={state.active_turn.content} /> : <span className="thinking"><i />Working…</span>}</div>
       </div>}
       {state.pending_interactions.map((item) => <InteractionCard key={item.request_id} interaction={item} respond={respond} />)}
+      {state.queued_commands.length > 0 && <section className="queue-list" aria-label="Queued instructions">
+        <strong>{state.queued_commands.length} queued instruction{state.queued_commands.length === 1 ? "" : "s"}</strong>
+        {state.queued_commands.map((item) => <div className="queue-item" key={item.command_id}>
+          <span>{item.prompt}</span>
+          <button type="button" className="button subtle" onClick={() => cancelQueued(item.command_id)}>Remove</button>
+        </div>)}
+      </section>}
+      {state.notices.slice(-5).map((notice) => <div className="system-notice" role="status" key={notice.id}>{notice.text}</div>)}
       <div ref={bottom} />
     </div>
   );
@@ -209,7 +343,7 @@ function Inspector({ state, sessionId, open, close }: { state: ViewState; sessio
       <div className="section-title"><span><FileCode size={16} />{changes.length} file{changes.length === 1 ? "" : "s"} changed</span><button className="icon-button" title="Refresh changes" onClick={refresh}><ArrowClockwise size={15} /></button></div>
       {warning && <div className="local-warning"><Warning size={15} />Local mode may include changes from before this session.</div>}
       <div className="change-list">{changes.map((change) => <button key={change.path} className={selected === change.path ? "selected" : ""} onClick={() => openPatch(change.path)}><b>{change.status}</b><span>{change.path}</span></button>)}</div>
-      {selected && <div className="patch"><div className="patch-title">{selected}</div>{truncated ? <p>Binary or patch larger than 1 MiB. Metadata only.</p> : <pre>{patch || "No textual diff."}</pre>}</div>}
+      {selected && <div className="patch">{truncated ? <p className="empty-small">Binary or patch larger than 1 MiB. Metadata only.</p> : <DiffViewer patch={patch} filename={selected} />}</div>}
       {!changes.length && <p className="empty-small">Working tree is clean.</p>}
     </div>}
     {tab === "plan" && <div className="inspector-body">
@@ -223,28 +357,66 @@ function Inspector({ state, sessionId, open, close }: { state: ViewState; sessio
       <label>Environment</label><span>{state.session.environment}</span>
       <label>Branch</label><code>{state.session.branch_name || "current checkout"}</code>
       <label>Execution root</label><code>{state.session.execution_root}</code>
-      <label>Request usage</label><span>{state.usage.prompt_tokens.toLocaleString()} in · {state.usage.completion_tokens.toLocaleString()} out</span>
-      <label>Task total</label><span>{state.usage.total_tokens.toLocaleString()} tokens</span>
+      <label>Request usage</label><span>{state.usage.request_prompt_tokens.toLocaleString()} in · {state.usage.request_completion_tokens.toLocaleString()} out</span>
+      <label>Task total</label><span>{state.usage.prompt_tokens.toLocaleString()} in · {state.usage.completion_tokens.toLocaleString()} out · {state.usage.total_tokens.toLocaleString()} total</span>
     </div>}
   </aside>;
 }
 
-function NewSessionDialog({ project, close, create }: { project: Record<string, unknown>; close: () => void; create: (environment: string, prompt: string) => Promise<void> }) {
-  const defaultEnvironment = String(project.default_environment ?? "local");
+export function NewSessionDialog({
+  project,
+  close,
+  create,
+}: {
+  project: Record<string, unknown>;
+  close: () => void;
+  create: (environment: string, prompt: string, model?: string) => Promise<void>;
+}) {
+  const dirtyCheckout = Boolean(project.dirty_checkout);
+  const defaultEnvironment = dirtyCheckout
+    ? "local"
+    : String(project.default_environment ?? "local");
+  const models = Array.isArray(project.models) ? (project.models as string[]) : [];
+  const defaultModel = String(project.default_model ?? (models[0] || ""));
   const [environment, setEnvironment] = useState(defaultEnvironment);
+  const [model, setModel] = useState(defaultModel);
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  return <div className="dialog-backdrop" role="presentation"><section className="dialog" role="dialog" aria-modal="true" aria-labelledby="new-session-title">
-    <div className="dialog-head"><div><span>NEW SESSION</span><h2 id="new-session-title">Choose an execution environment</h2></div><button className="icon-button" onClick={close} aria-label="Close"><X size={18} /></button></div>
-    <div className="environment-grid">
-      <button className={environment === "worktree" ? "selected" : ""} disabled={!project.git} onClick={() => setEnvironment("worktree")}><GitBranch size={22} /><strong>Isolated worktree</strong><span>Starts from current HEAD. Uncommitted checkout changes are not copied.</span><em>Recommended</em></button>
-      <button className={environment === "local" ? "selected" : ""} onClick={() => setEnvironment("local")}><TerminalWindow size={22} /><strong>Current checkout</strong><span>Uses existing files, including current uncommitted changes. One active session max.</span></button>
+  const dialogRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const trap = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); close(); return; }
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), select:not([disabled]), textarea:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ));
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", trap);
+    return () => { document.removeEventListener("keydown", trap); previous?.focus(); };
+  }, [close]);
+  return <div className="dialog-backdrop" role="presentation"><section ref={dialogRef} className="dialog" role="dialog" aria-modal="true" aria-labelledby="new-session-title">
+    <div className="dialog-head"><div><span>NEW SESSION</span><h2 id="new-session-title">Choose an execution environment</h2></div><button className="icon-button" onClick={close} title="Close (Esc)" aria-label="Close"><X size={18} /></button></div>
+    <div className="environment-grid" role="group" aria-label="Execution environment">
+      <button aria-pressed={environment === "worktree"} className={environment === "worktree" ? "selected" : ""} disabled={!project.git} onClick={() => setEnvironment("worktree")}><GitBranch size={22} /><strong>Isolated worktree</strong><span>Starts from current HEAD. Uncommitted checkout changes are not copied.</span>{!dirtyCheckout && <em>Recommended</em>}</button>
+      <button aria-pressed={environment === "local"} className={environment === "local" ? "selected" : ""} onClick={() => setEnvironment("local")}><TerminalWindow size={22} /><strong>Current checkout</strong><span>Uses existing files, including current uncommitted changes. One active session max.</span>{dirtyCheckout && <em>Recommended for current changes</em>}</button>
     </div>
+    {models.length > 0 && <div className="dialog-field">
+      <label className="field-label" htmlFor="first-model">Model <span>optional</span></label>
+      <select id="first-model" className="dialog-select" value={model} onChange={(event) => setModel(event.target.value)}>
+        {models.map((m) => <option key={m} value={m}>{m}</option>)}
+      </select>
+    </div>}
     <label className="field-label" htmlFor="first-prompt">First instruction <span>optional</span></label>
-    <textarea id="first-prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="What should Wright work on?" rows={3} />
+    <textarea autoFocus id="first-prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="What should Wright work on?" rows={3} />
     {error && <p className="form-error">{error}</p>}
-    <div className="dialog-actions"><button className="button secondary" onClick={close}>Cancel</button><button className="button primary" disabled={busy} onClick={() => { setBusy(true); setError(""); create(environment, prompt).catch((reason) => { setError(String(reason)); setBusy(false); }); }}>{busy ? <CircleNotch className="spin" size={15} /> : <Plus size={15} />}Create session</button></div>
+    <div className="dialog-actions"><button className="button secondary" onClick={close}>Cancel</button><button className="button primary" disabled={busy} onClick={() => { setBusy(true); setError(""); create(environment, prompt, model).catch((reason) => { setError(String(reason)); setBusy(false); }); }}>{busy ? <CircleNotch className="spin" size={15} /> : <Plus size={15} />}Create session</button></div>
   </section></div>;
 }
 
@@ -266,6 +438,27 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setDialog(true);
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        setRailOpen((prev) => !prev);
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
+        e.preventDefault();
+        setInspectorOpen((prev) => !prev);
+      } else if (e.key === "Escape") {
+        setDialog(false);
+        setRailOpen(false);
+        setInspectorOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  useEffect(() => {
     bootstrap().then(async () => {
       const [projectData, items] = await Promise.all([api.project(), refreshSessions()]);
       setProject(projectData);
@@ -278,14 +471,24 @@ export default function App() {
     if (!selected) { setState(null); return; }
     socket.current?.close();
     let disposed = false;
-    api.snapshot(selected).then((snapshot) => {
+    let retryTimer: number | undefined;
+    const connect = (snapshot: Snapshot, attempt = 0) => {
       if (disposed) return;
-      setState(initialView(snapshot));
       const protocol = location.protocol === "https:" ? "wss" : "ws";
       const ws = new WebSocket(`${protocol}://${location.host}/api/v1/sessions/${selected}/stream?stream_id=${snapshot.stream_id}&last_seq=${snapshot.last_seq}`);
       socket.current = ws;
       ws.onopen = () => setState((current) => current ? { ...current, connection: "connected" } : current);
-      ws.onclose = () => setState((current) => current ? { ...current, connection: "disconnected" } : current);
+      ws.onclose = () => {
+        if (disposed) return;
+        setState((current) => current ? { ...current, connection: "disconnected" } : current);
+        retryTimer = window.setTimeout(() => {
+          api.snapshot(selected).then((fresh) => {
+            if (disposed) return;
+            setState(initialView(fresh));
+            connect(fresh, attempt + 1);
+          }).catch(() => connect(snapshot, attempt + 1));
+        }, Math.min(10_000, 500 * (2 ** Math.min(attempt, 5))));
+      };
       ws.onmessage = (message) => {
         const event = JSON.parse(message.data) as UiEvent | { type: "snapshot_required"; snapshot: Snapshot };
         if ("snapshot" in event) {
@@ -301,19 +504,47 @@ export default function App() {
           }
         }
       };
+    };
+    api.snapshot(selected).then((snapshot) => {
+      if (disposed) return;
+      setState(initialView(snapshot));
+      connect(snapshot);
     }).catch((error) => setFatal(String(error)));
-    return () => { disposed = true; socket.current?.close(); };
+    return () => { disposed = true; if (retryTimer !== undefined) window.clearTimeout(retryTimer); socket.current?.close(); };
   }, [selected, refreshSessions]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => refreshSessions().catch(() => undefined), 5_000);
+    return () => window.clearInterval(timer);
+  }, [refreshSessions]);
 
   const send = (payload: Record<string, unknown>) => {
     if (socket.current?.readyState !== WebSocket.OPEN) { setFatal("Session stream is disconnected. Refresh to reconnect."); return; }
     socket.current.send(JSON.stringify(payload));
   };
-  const create = async (environment: string, prompt: string) => {
-    const snapshot = await api.create({ environment, prompt: prompt || undefined });
+  const create = async (environment: string, prompt: string, model?: string) => {
+    const snapshot = await api.create({ environment, prompt: prompt || undefined, model: model || undefined });
     await refreshSessions();
     setSelected(snapshot.session.session_id);
     setDialog(false);
+  };
+  const changeModel = async (newModel: string) => {
+    if (!selected) return;
+    try {
+      await api.setModel(selected, newModel);
+      setState((current) => current ? { ...current, session: { ...current.session, model: newModel } } : current);
+      refreshSessions().catch(() => undefined);
+    } catch (error) {
+      setFatal(String(error));
+    }
+  };
+  const archiveSession = async () => {
+    if (!state) return;
+    if (!window.confirm("Archive this session? A clean isolated worktree may be removed.")) return;
+    await api.archive(state.session.session_id);
+    setSelected(null);
+    setState(null);
+    await refreshSessions();
   };
   const selectSession = async (session: SessionSummary) => {
     if (session.recoverable === false) {
@@ -336,18 +567,27 @@ export default function App() {
       <div className="brand"><span className="brand-mark">W</span><div><strong>Wright</strong><small>{String(project?.name ?? "Local Web")}</small></div></div>
       <div className="top-status">
         <span className={`connection ${state?.connection ?? "connecting"}`}><StatusDot status={state?.connection ?? "connecting"} />{state?.connection ?? "connecting"}</span>
-        <span>{state?.session.model ?? "configured model"}</span>
+        <ModelSelector
+          currentModel={state?.session.model ?? String(project?.default_model ?? "configured model")}
+          models={Array.isArray(project?.models) ? (project.models as string[]) : []}
+          running={Boolean(running)}
+          onSelect={changeModel}
+        />
         <span className="context-meter" title={`${state?.usage.context_tokens ?? 0} / ${state?.usage.context_limit ?? 0} context tokens`}><i style={{ width: `${contextPercent}%` }} />Context {contextPercent}%</span>
         <span>{sessions.filter((item) => item.active).length}/{project?.capacity as number ?? 0} active</span>
       </div>
-      <button className="icon-button mobile-sessions" onClick={() => setRailOpen(true)} aria-label="Open sessions"><SidebarSimple size={18} /></button>
+      <button className="icon-button mobile-sessions" onClick={() => setRailOpen(true)} title="Open sessions (⌘B)" aria-label="Open sessions"><SidebarSimple size={18} /></button>
     </header>
     <div className="workspace-grid">
       <SessionRail sessions={sessions} selected={selected} onSelect={(session) => selectSession(session).catch((error) => setFatal(String(error)))} onCreate={() => setDialog(true)} open={railOpen} onClose={() => setRailOpen(false)} />
       <main className="conversation">
         {state ? <>
-          <div className="conversation-head"><div><span className="eyebrow">{state.session.environment === "worktree" ? "ISOLATED WORKTREE" : "CURRENT CHECKOUT"}</span><h1>{state.session.user_goal && state.session.user_goal !== "(interactive session)" ? state.session.user_goal : `Session ${state.session.session_id.slice(0, 6)}`}</h1></div><div className="session-actions"><button className="icon-button inspector-trigger" title="Open inspector" onClick={() => setInspectorOpen(true)}><FileCode size={17} /></button><button className="icon-button" title="Close session" onClick={() => api.close(state.session.session_id).then(() => { setSelected(null); setState(null); refreshSessions(); }).catch((error) => setFatal(String(error)))}><SidebarSimple size={17} /></button><button className="icon-button" title="Archive session" onClick={() => api.archive(state.session.session_id).then(() => { setSelected(null); setState(null); refreshSessions(); }).catch((error) => setFatal(String(error)))}><Archive size={17} /></button></div></div>
-          <Timeline state={state} respond={(requestId, answer) => send({ type: "interaction.respond", command_id: commandId(), request_id: requestId, answer })} />
+          <div className="conversation-head"><div><span className="eyebrow">{state.session.environment === "worktree" ? "ISOLATED WORKTREE" : "CURRENT CHECKOUT"}</span><h1>{state.session.user_goal && state.session.user_goal !== "(interactive session)" ? state.session.user_goal : `Session ${state.session.session_id.slice(0, 6)}`}</h1></div><div className="session-actions"><button className="icon-button inspector-trigger" title="Open inspector (⌘J)" onClick={() => setInspectorOpen(true)}><FileCode size={17} /></button><button className="icon-button" title="Close session" onClick={() => api.close(state.session.session_id).then(() => { setSelected(null); setState(null); refreshSessions(); }).catch((error) => setFatal(String(error)))}><SidebarSimple size={17} /></button><button className="icon-button" title="Archive session" onClick={() => archiveSession().catch((error) => setFatal(String(error)))}><Archive size={17} /></button></div></div>
+          <Timeline
+            state={state}
+            respond={(requestId, answer) => send({ type: "interaction.respond", command_id: commandId(), request_id: requestId, answer })}
+            cancelQueued={(targetCommandId) => send({ type: "turn.cancel_queued", command_id: commandId(), target_command_id: targetCommandId })}
+          />
           <Composer running={Boolean(running)} submit={(prompt) => send({ type: "turn.submit", command_id: commandId(), prompt })} cancel={() => send({ type: "turn.cancel", command_id: commandId() })} />
         </> : <div className="no-session"><TerminalWindow size={36} weight="duotone" /><h2>No session selected</h2><p>Create an isolated task or resume a saved checkpoint.</p><button className="button primary" onClick={() => setDialog(true)}><Plus size={15} />New session</button></div>}
       </main>

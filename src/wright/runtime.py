@@ -7,7 +7,7 @@ import os
 import queue
 import sys
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -27,12 +27,13 @@ from .looping import SessionLoopRegistry
 from .memory import MemoryManager
 from .paths import (
     ensure_project_state,
-    mcp_config_paths,
     project_id,
+    project_mcp_config_path,
     session_dir,
     skill_directories,
     task_db_path,
     trace_dir,
+    user_mcp_config_path,
 )
 from .permission import (
     FallbackApprovalHandler,
@@ -54,7 +55,7 @@ from .subagent import build_agent_tools
 from .tools import tools as base_tools
 from .tools.ask_user_tool import ask_user_tool
 from .tools.base import Tool
-from .tools.loop_tools import loop_tool
+from .tools.loop_tools import manage_loop_tool
 from .tools.mcp_client import McpManager, load_mcp_configs
 from .ui_events import EventPublisher, PublishingRenderer
 from .verifier import Verifier
@@ -149,6 +150,11 @@ def parse_cli_args() -> argparse.Namespace:
         action="store_true",
         help="启动 Web 控制台时不自动打开浏览器",
     )
+    parser.add_argument(
+        "--trust-project-mcp",
+        action="store_true",
+        help="允许启动项目 .wright/mcp.json 中声明的进程或远程连接",
+    )
     return parser.parse_args()
 
 
@@ -193,6 +199,21 @@ def _load_env() -> None:
             load_dotenv(path)
             return
     load_dotenv()
+
+
+def _trusted_mcp_config_paths(
+    workspace: Path, args: argparse.Namespace
+) -> tuple[list[Path], Path | None]:
+    """Return executable MCP configs and any ignored project config."""
+    paths = [user_mcp_config_path()]
+    project = project_mcp_config_path(workspace)
+    trusted = bool(getattr(args, "trust_project_mcp", False)) or os.getenv(
+        "WRIGHT_TRUST_PROJECT_MCP"
+    ) == "1"
+    if trusted:
+        paths.append(project)
+        return paths, None
+    return paths, project if project.is_file() else None
 
 
 def build_runtime(
@@ -341,9 +362,16 @@ def build_runtime(
         root_turn_id=session_state.agent_root_turn_id,
     )
 
-    # MCP 接入:用户 ~/.wright/mcp.json + 项目 .wright/mcp.json,后者同名覆盖。
-    # 没配时 configs 为空,start() 直接返回 [],对其余流程完全无感。
-    mcp_manager = McpManager(load_mcp_configs(mcp_config_paths(workspace_dir)))
+    # User MCP config is an explicit local preference. Project config is code
+    # from the workspace and may start arbitrary stdio processes, so it is
+    # opt-in instead of being trusted merely because the repository was opened.
+    mcp_paths, ignored_project_mcp = _trusted_mcp_config_paths(workspace_dir, args)
+    if ignored_project_mcp is not None:
+        logger.warning(
+            "忽略未受信任的项目 MCP 配置 %s；需要时使用 --trust-project-mcp",
+            ignored_project_mcp,
+        )
+    mcp_manager = McpManager(load_mcp_configs(mcp_paths))
     mcp_tools = mcp_manager.start()
 
     publisher = publisher or EventPublisher(
@@ -363,7 +391,8 @@ def build_runtime(
     #     落到交互式 handler 弹窗问你;rm/sudo 等 deny 仍直接拒、不打扰你。
     #   - 无 TTY(管道/CI/后台) → 纯规则,on_no_match=deny 直接 fail-closed,绝不阻塞。
     # 关键:能不能被问到,取决于规则有没有提前 allow 它——allow 列得越全,落到人手里越少。
-    # 默认配置只 allow 只读命令,所以写文件/网络/python 都会落到你这来确认。
+    # 只读工具保留自身的 allow 分类；默认配置不再用宽泛命令前缀放行 shell。
+    # 写文件、网络和 shell 等副作用调用会落到规则或人工确认。
     # 主 Agent 与所有子 Agent 共用这同一份 resolver,规则/记忆全树一致。
     settings = load_permission_settings()
     env_interactive = os.getenv("WRIGHT_PERMISSION_INTERACTIVE")
@@ -391,7 +420,11 @@ def build_runtime(
     # 无人值守 durable run 会显式打开第二层。
     # knowledge_search 是只读检索：启用后放进 base，让子 Agent 也能查知识库。
     knowledge_tools = optional_knowledge_tools()
-    assembled_base = base_tools + mcp_tools + knowledge_tools
+    assembled_base = [
+        *base_tools,
+        *(replace(tool, defer_to_model=True) for tool in mcp_tools),
+        *knowledge_tools,
+    ]
     tools = build_agent_tools(
         llm_client,
         assembled_base,
@@ -401,18 +434,21 @@ def build_runtime(
         enable_autonomy=True,
     )
 
-    # ask_user、loop、记忆与 skill 工具只给主 Agent:都在 build_agent_tools 之后
+    # ask_user、manage_loop、记忆与 load_skill 只给主 Agent:都在 build_agent_tools 之后
     # 【单独追加】，不进 base_tools。子 Agent 不能绕过父 Agent 直接打断人；
     # 它若信息不足，应把缺口作为结果交回父 Agent。子 Agent 也保持无长期记忆、
     # 无 skill 加载器的纯净上下文——委派时把需要的流程写进任务描述。
     # loop 同理：会话内重跑必须看见当前对话，不能下放到隔离的子 Agent。
     memory_manager = MemoryManager(llm_client, selector_llm=selector_llm)
     skill_registry = SkillRegistry(skill_directories(workspace_dir))
-    skill_tools = optional_skill_tools(skill_registry)
+    skill_tools = [
+        replace(tool, defer_to_model=True)
+        for tool in optional_skill_tools(skill_registry)
+    ]
     tools = [
         *tools,
         ask_user_tool,
-        loop_tool,
+        manage_loop_tool,
         *memory_manager.tools(),
         *skill_tools,
     ]

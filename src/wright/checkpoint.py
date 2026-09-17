@@ -210,9 +210,11 @@ def _serialize_session(session: SessionState) -> dict[str, Any]:
             },
             "plan": session.plan_manager.snapshot(),
             "skill_catalog_sent": session.skill_catalog_sent,
+            "active_deferred_tools": list(session.active_deferred_tools),
             "agent_control": session.control_plane.snapshot(),
             "agent_task_id": session.agent_task_id,
             "agent_root_turn_id": session.agent_root_turn_id,
+            "committed_turn_ids": list(session.committed_turn_ids),
             "last_usage": _serialize_usage(session.last_usage),
             "total_usage": _serialize_usage(session.total_usage),
             "task_usage_start": _serialize_usage(session.task_usage_start),
@@ -298,6 +300,12 @@ def _deserialize_session(payload: Any) -> SessionState:
     skill_catalog_sent = _deserialize_skill_catalog_sent(
         data.get("skill_catalog_sent")
     )
+    active_deferred_value = data.get("active_deferred_tools", [])
+    if not isinstance(active_deferred_value, list) or not all(
+        isinstance(item, str) and item for item in active_deferred_value
+    ):
+        raise CheckpointError("active_deferred_tools 必须是非空字符串数组")
+    active_deferred_tools = list(dict.fromkeys(active_deferred_value))
     try:
         control_plane = AgentControlPlane.from_snapshot(
             data.get("agent_control", {}), mark_interrupted=True
@@ -310,6 +318,12 @@ def _deserialize_session(payload: Any) -> SessionState:
     agent_root_turn_id = data.get("agent_root_turn_id", "")
     if not isinstance(agent_root_turn_id, str):
         raise CheckpointError("agent_root_turn_id 必须是字符串")
+    committed_value = data.get("committed_turn_ids", [])
+    if not isinstance(committed_value, list) or not all(
+        isinstance(item, str) and item for item in committed_value
+    ):
+        raise CheckpointError("committed_turn_ids 必须是非空字符串数组")
+    committed_turn_ids = list(dict.fromkeys(committed_value))[-1_000:]
 
     step_count = _nonnegative_int(data.get("step_count"), "step_count")
     active_turn_start_step = _nonnegative_int(
@@ -355,9 +369,11 @@ def _deserialize_session(payload: Any) -> SessionState:
         background_tasks={},
         plan_manager=plan_manager,
         skill_catalog_sent=skill_catalog_sent,
+        active_deferred_tools=active_deferred_tools,
         control_plane=control_plane,
         agent_task_id=agent_task_id,
         agent_root_turn_id=agent_root_turn_id,
+        committed_turn_ids=committed_turn_ids,
         active_turn_start_step=active_turn_start_step,
         active_turn_start_message_index=active_turn_start_message_index,
         last_usage=_deserialize_usage(data.get("last_usage"), "last_usage"),

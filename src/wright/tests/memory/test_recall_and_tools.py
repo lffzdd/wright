@@ -12,7 +12,6 @@ from ...tools.memory_tools import (
     create_memory,
     delete_memory,
     get_memory,
-    save_memory,
     search_memory,
     update_memory,
 )
@@ -65,25 +64,25 @@ def test_build_recall_block_wraps_in_reminder(tmp_path: Path):
     assert "MEMORY.md" in block  # 索引也在
 
 
-def test_save_memory_tool_writes_and_indexes(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("WRIGHT_MEMORY_DIR", str(tmp_path))
-    res = save_memory("user-likes-bun", "prefers bun", "feedback", "用 bun 不用 npm")
+def test_create_memory_tool_writes_and_indexes(tmp_path: Path):
+    res = create_memory(
+        "user-likes-bun", "prefers bun", "feedback", "用 bun 不用 npm",
+        directory=tmp_path,
+    )
     assert res.ok
     assert (tmp_path / "user-likes-bun.md").is_file()
     assert "user-likes-bun" in (tmp_path / "MEMORY.md").read_text(encoding="utf-8")
 
 
-def test_save_memory_rejects_bad_type(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("WRIGHT_MEMORY_DIR", str(tmp_path))
-    res = save_memory("x", "d", "bogus", "c")
+def test_create_memory_rejects_bad_type(tmp_path: Path):
+    res = create_memory("x", "d", "bogus", "c", directory=tmp_path)
     assert not res.ok
     assert "type" in res.err
 
 
-def test_search_memory_lists(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("WRIGHT_MEMORY_DIR", str(tmp_path))
-    save_memory("a", "desc a", "user", "x")
-    res = search_memory("anything")
+def test_search_memory_lists(tmp_path: Path):
+    create_memory("a", "desc a", "user", "x", directory=tmp_path)
+    res = search_memory("anything", directory=tmp_path)
     assert res.ok
     assert res.data["count"] == 1
     assert "a.md" in res.data["memories"]
@@ -107,8 +106,8 @@ def test_explicit_memory_crud_tools(tmp_path: Path):
     assert not get_memory(memory_id, directory=tmp_path).ok
 
 
-def test_bound_toolset_uses_explicit_crud_without_legacy_upsert(tmp_path: Path):
-    tools = build_memory_tools(tmp_path, include_legacy_save=False)
+def test_bound_toolset_uses_explicit_crud(tmp_path: Path):
+    tools = build_memory_tools(tmp_path)
     assert [tool.name for tool in tools] == [
         "create_memory", "get_memory", "update_memory", "delete_memory", "search_memory"
     ]

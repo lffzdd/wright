@@ -1,8 +1,7 @@
 """Model-facing semantic memory CRUD tools.
 
 Tools are built by ``build_memory_tools(directory)`` so the Agent and its tools
-always operate on the same store.  Module-level tools remain for backwards
-compatibility and resolve ``WRIGHT_MEMORY_DIR`` at call time.
+always operate on the same store.
 """
 
 from __future__ import annotations
@@ -12,9 +11,7 @@ from typing import Any
 
 from ..memory.store import (
     MemoryStoreError,
-    rebuild_index,
     search_memories,
-    write_memory_file,
 )
 from ..memory.store import (
     create_memory as store_create_memory,
@@ -31,26 +28,6 @@ from ..memory.store import (
 from ..memory.types import MEMORY_TYPES
 from ..permission import PermissionCheckResult
 from .base import Tool, ToolResult, ToolRuntime
-
-
-def save_memory(
-    name: str,
-    description: str,
-    type: str,
-    content: str,
-    runtime: ToolRuntime | None = None,
-    *,
-    directory: Path | None = None,
-) -> ToolResult:
-    """Backward-compatible upsert; explicit CRUD should be preferred."""
-    try:
-        path = write_memory_file(name, description, type, content, directory)
-        rebuild_index(directory)
-        return ToolResult.success(
-            {"message": "Memory saved", "id": path.stem, "file": path.name, "type": type}
-        )
-    except (MemoryStoreError, OSError) as exc:
-        return ToolResult.fail(str(exc))
 
 
 def create_memory(
@@ -186,8 +163,6 @@ _MEMORY_FIELDS = {
 
 def build_memory_tools(
     directory: Path | None = None,
-    *,
-    include_legacy_save: bool = True,
 ) -> list[Tool]:
     def bind(function):
         return lambda args, runtime: function(
@@ -275,38 +250,4 @@ def build_memory_tools(
         is_concurrency_safe=lambda args: True,
     )
     tools = [create_tool, get_tool, update_tool, delete_tool, search_tool]
-    if include_legacy_save:
-        tools.insert(0, Tool(
-            name="save_memory",
-            description=(
-                "Compatibility upsert: save a long-term memory, overwriting the same name. "
-                "Prefer create_memory/update_memory for new work."
-            ),
-            parameters={
-                "type": "object",
-                "properties": dict(_MEMORY_FIELDS),
-                "required": ["name", "description", "type", "content"],
-                "additionalProperties": False,
-            },
-            call=bind(save_memory),
-        ))
     return tools
-
-
-(
-    save_memory_tool,
-    create_memory_tool,
-    get_memory_tool,
-    update_memory_tool,
-    delete_memory_tool,
-    search_memory_tool,
-) = build_memory_tools()
-
-memory_tools = [
-    save_memory_tool,
-    create_memory_tool,
-    get_memory_tool,
-    update_memory_tool,
-    delete_memory_tool,
-    search_memory_tool,
-]

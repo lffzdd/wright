@@ -97,6 +97,9 @@ class Renderer(ABC):
         """Stable-id tool output hook; legacy renderers receive the same line."""
         self.on_command_output(line)
 
+    def on_tool_phase(self, tool_call: ToolCall | dict, phase: str) -> None:
+        """A planned tool moved to awaiting_approval or running."""
+
     def on_checkpoint_error(self, error: str) -> None:
         """Checkpoint 持久化失败。默认不输出，交互渲染器应明确告警。"""
 
@@ -115,6 +118,9 @@ class Renderer(ABC):
         risk_flags: str,
         reason: str,
         offer_always: bool,
+        remember_rule: str = "",
+        remember_persists: bool = False,
+        revoke_hint: str = "",
     ) -> str:
         """展示权限确认请求并收集用户选择，返回原始输入字符串。
 
@@ -164,6 +170,7 @@ class _LiveTool:
     call: Any
     result: dict | None = None
     output: str = ""
+    phase: str = "planned"
 
 
 class ConsoleRenderer(Renderer):
@@ -252,9 +259,10 @@ class ConsoleRenderer(Renderer):
                 clipped = lines[-_COMMAND_OUTPUT_LINES:]
                 prefix = "" if len(lines) <= _COMMAND_OUTPUT_LINES else "…\n"
                 body = Group(body, Text(prefix + "\n".join(clipped), style="dim"))
+            phase = block.phase.replace("_", " ")
             return Panel(
                 body,
-                title=f"[bold]🔧 {name}[/bold]",
+                title=f"[bold]🔧 {name} · {phase}[/bold]",
                 title_align="left",
                 border_style="yellow",
                 padding=(0, 1),
@@ -432,6 +440,13 @@ class ConsoleRenderer(Renderer):
             self._commit_stream_if_any()
             self._tools.append(_LiveTool(call=tool_call))
             self._refresh_live()
+
+    def on_tool_phase(self, tool_call, phase: str) -> None:
+        with self._prompt_lock:
+            block = self._find_tool(tool_call)
+            if block is not None:
+                block.phase = phase
+                self._refresh_live()
 
     def on_command_output(self, line: str) -> None:
         with self._prompt_lock:
@@ -616,6 +631,9 @@ class ConsoleRenderer(Renderer):
         risk_flags: str,
         reason: str,
         offer_always: bool,
+        remember_rule: str = "",
+        remember_persists: bool = False,
+        revoke_hint: str = "",
     ) -> str:
         payload = {
             "tool_name": tool_name,
@@ -623,6 +641,9 @@ class ConsoleRenderer(Renderer):
             "risk_flags": risk_flags,
             "reason": reason,
             "offer_always": offer_always,
+            "remember_rule": remember_rule,
+            "remember_persists": remember_persists,
+            "revoke_hint": revoke_hint,
         }
         return self._route_prompt("permission", payload, self._collect_permission)
 
@@ -646,6 +667,9 @@ class ConsoleRenderer(Renderer):
         risk_flags: str,
         reason: str,
         offer_always: bool,
+        remember_rule: str = "",
+        remember_persists: bool = False,
+        revoke_hint: str = "",
     ) -> str:
         with self._prompt_lock:
             self._suspend_live()
@@ -659,6 +683,14 @@ class ConsoleRenderer(Renderer):
             info.append(f"{risk_flags}\n")
             info.append("说明: ", style="bold")
             info.append(reason)
+            if offer_always and remember_rule:
+                info.append("\n范围: ", style="bold")
+                info.append(remember_rule)
+                info.append("\n持久化: ", style="bold")
+                info.append("跨会话" if remember_persists else "仅本会话")
+                if revoke_hint:
+                    info.append("\n撤销: ", style="bold")
+                    info.append(revoke_hint)
             self._console.print()
             self._console.print(
                 Panel(
@@ -670,7 +702,8 @@ class ConsoleRenderer(Renderer):
             )
             choices = "  [bold]y[/]=允许一次  [bold]n[/]=拒绝"
             if offer_always:
-                choices += "  [bold]a[/]=本会话总是允许该工具"
+                scope = "跨会话允许此范围" if remember_persists else "本会话允许此范围"
+                choices += f"  [bold]a[/]={scope}"
             self._console.print(choices)
 
         prompt_text = HTML("  <b><ansiyellow>允许执行? </ansiyellow></b>")

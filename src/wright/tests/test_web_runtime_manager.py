@@ -26,12 +26,19 @@ def _fake_runtime(session_id, root):
             project_root=root,
             base_commit="abc",
             branch_name=f"wright/{session_id}",
+            context_tokens=0,
+            task_usage=lambda: SimpleNamespace(
+                prompt_tokens=0, completion_tokens=0, total_tokens=0
+            ),
+            turns=[],
+            plan_manager=SimpleNamespace(snapshot=lambda: {"steps": []}),
         ),
         publisher=publisher,
         interaction_broker=InteractionBroker(publisher),
         event_queue=queue.Queue(),
         agent_idle=threading.Event(),
         cancellation_event=threading.Event(),
+        llm=SimpleNamespace(context_limit=128_000),
         project_context=ProjectContext(
             project_root=root,
             execution_root=root,
@@ -127,3 +134,130 @@ def test_duplicate_command_is_idempotent(monkeypatch, tmp_path):
     while handle.runtime.event_queue.qsize() and time.monotonic() < deadline:
         time.sleep(0.005)
     handle.close()
+
+
+def test_cancel_rejects_queued_turn_before_it_starts(monkeypatch, tmp_path):
+    first_started = threading.Event()
+    release_first = threading.Event()
+    seen: list[str] = []
+
+    def process(rt, event_type, payload):
+        if event_type == "EXIT":
+            return True
+        seen.append(payload["prompt"])
+        if len(seen) == 1:
+            first_started.set()
+            release_first.wait(timeout=2)
+        return False
+
+    monkeypatch.setattr(runtime_module, "process_session_event", process)
+    monkeypatch.setattr(runtime_module, "shutdown_runtime", lambda runtime: None)
+    handle = SessionHandle(_fake_runtime("cancel-queue", tmp_path))
+    handle.submit("first", "command-one")
+    assert first_started.wait(timeout=1)
+    handle.submit("second", "command-two")
+    cancelled = handle.cancel("cancel-command")
+    assert cancelled["payload"]["cancelled_queued"] == 1
+    release_first.set()
+
+    deadline = time.monotonic() + 1
+    while not any(
+        event.type == "command.rejected" and event.payload.get("command_id") == "command-two"
+        for event in handle.publisher.retained_events()
+    ) and time.monotonic() < deadline:
+        time.sleep(0.005)
+
+    assert seen == ["first"]
+    handle.close()
+
+
+def test_cancel_queued_removes_only_target_instruction(monkeypatch, tmp_path):
+    first_started = threading.Event()
+    release_first = threading.Event()
+    seen: list[str] = []
+
+    def process(rt, event_type, payload):
+        if event_type == "EXIT":
+            return True
+        seen.append(payload["prompt"])
+        if payload["prompt"] == "first":
+            first_started.set()
+            release_first.wait(timeout=2)
+        return False
+
+    monkeypatch.setattr(runtime_module, "process_session_event", process)
+    monkeypatch.setattr(runtime_module, "shutdown_runtime", lambda runtime: None)
+    handle = SessionHandle(_fake_runtime("cancel-one", tmp_path))
+    handle.submit("first", "command-one")
+    assert first_started.wait(timeout=1)
+    handle.submit("second", "command-two")
+    handle.submit("third", "command-three")
+
+    cancelled = handle.cancel_queued("cancel-second", "command-two")
+    assert cancelled["type"] == "command.accepted"
+    assert handle.snapshot()["queued_commands"] == [
+        {"command_id": "command-three", "prompt": "third"}
+    ]
+    release_first.set()
+
+    deadline = time.monotonic() + 1
+    while len(seen) < 2 and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert seen == ["first", "third"]
+    handle.close()
+
+
+def _handle_with_model(monkeypatch, tmp_path, *, model="first", idle=True, store=None):
+    monkeypatch.setattr(runtime_module, "shutdown_runtime", lambda runtime: None)
+    runtime = _fake_runtime("model-session", tmp_path)
+    llm = SimpleNamespace(model=model)
+    runtime.llm = llm
+    runtime.agent = SimpleNamespace(llm=llm, checkpoint_store=store)
+    runtime.session_state.model_name = model
+    if idle:
+        runtime.agent_idle.set()
+    else:
+        runtime.agent_idle.clear()
+    return SessionHandle(runtime), llm
+
+
+def test_set_model_updates_llm_and_session(monkeypatch, tmp_path):
+    handle, llm = _handle_with_model(monkeypatch, tmp_path)
+    summary = handle.set_model("second")
+    assert llm.model == "second"
+    assert handle.runtime.session_state.model_name == "second"
+    assert summary["model"] == "second"
+    handle.close()
+
+
+def test_set_model_rejects_empty_and_running_turn(monkeypatch, tmp_path):
+    idle, _llm = _handle_with_model(monkeypatch, tmp_path)
+    with pytest.raises(RuntimeManagerError, match="cannot be empty"):
+        idle.set_model("  ")
+    idle.close()
+
+    running, llm = _handle_with_model(monkeypatch, tmp_path, idle=False)
+    with pytest.raises(RuntimeManagerError, match="while turn is running"):
+        running.set_model("second")
+    assert llm.model == "first"
+    running.close()
+
+
+def test_set_model_rolls_back_on_checkpoint_failure(monkeypatch, tmp_path):
+    class BoomStore:
+        def save(self, _state):
+            raise RuntimeError("disk full")
+
+    handle, llm = _handle_with_model(monkeypatch, tmp_path, store=BoomStore())
+    with pytest.raises(RuntimeManagerError, match="checkpoint failed: disk full"):
+        handle.set_model("second")
+    assert llm.model == "first"
+    assert handle.runtime.session_state.model_name == "first"
+    handle.close()
+
+
+def test_manager_set_model_missing_session_is_404(tmp_path):
+    manager = RuntimeManager(tmp_path, capacity=1, base_args=argparse.Namespace())
+    with pytest.raises(RuntimeManagerError, match="not found") as exc_info:
+        manager.set_model("missing", "gpt-4o")
+    assert exc_info.value.status_code == 404

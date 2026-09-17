@@ -33,7 +33,7 @@ class RuntimeTask:
     """Common task view returned by every backend.
 
     ``details`` preserves backend-specific information for diagnostics and
-    compatibility adapters.  Generic task tools should depend on the common
+    task backends. Generic task tools should depend on the common
     fields instead of branching on those details.
     """
 

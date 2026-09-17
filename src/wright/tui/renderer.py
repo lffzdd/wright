@@ -55,7 +55,7 @@ class ToolView:
     key: str
     name: str
     arguments: Any = None
-    status: str = "running"  # running | done | error
+    status: str = "planned"  # planned | awaiting_approval | running | done | error
     result: Any = None
     error: str = ""
     output: str = ""
@@ -222,6 +222,9 @@ class TUIRenderer(Renderer):
         risk_flags: str,
         reason: str,
         offer_always: bool,
+        remember_rule: str = "",
+        remember_persists: bool = False,
+        revoke_hint: str = "",
     ) -> str:
         payload = {
             "tool_name": tool_name,
@@ -229,6 +232,9 @@ class TUIRenderer(Renderer):
             "risk_flags": risk_flags,
             "reason": reason,
             "offer_always": offer_always,
+            "remember_rule": remember_rule,
+            "remember_persists": remember_persists,
+            "revoke_hint": revoke_hint,
         }
         return self._route_prompt("permission", payload, lambda: "n")
 
@@ -295,6 +301,15 @@ class TUIRenderer(Renderer):
         self._flush_request_usage()
         self._emit(ToolUpsert(view))
 
+    def on_tool_phase(self, tool_call: ToolCall | dict, phase: str) -> None:
+        call_id = _tool_call_id(tool_call)
+        with self._lock:
+            view = next((item for item in self.tools if item.key == call_id), None)
+            if view is None:
+                return
+            view.status = phase
+        self._emit(ToolUpsert(view))
+
     def on_command_output(self, line: str) -> None:
         with self._lock:
             running = [
@@ -334,6 +349,7 @@ class TUIRenderer(Renderer):
                     key=call_id or f"tool-{self._tool_seq}",
                     name=name,
                     arguments=_tool_call_args(tool_call),
+                    status="running",
                 )
                 self.tools.append(block)
             ok = bool(tool_result.get("ok")) if isinstance(tool_result, dict) else False

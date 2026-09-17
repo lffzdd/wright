@@ -48,13 +48,19 @@ class SessionState:
     environment: ExecutionEnvironment = "local"
     base_commit: str | None = None
     branch_name: str | None = None
-    # 目录只往 transcript 写一次。正文走 skill 工具的 tool_result，不另建激活表。
+    # 目录只往 transcript 写一次。正文走 load_skill 的 tool_result，不另建激活表。
     skill_catalog_sent: bool = False
+    # Deferred tool schemas discovered by tool_search. Order is least-recently
+    # touched first so the catalog can remain bounded and survive resume.
+    active_deferred_tools: list[str] = field(default_factory=list)
     # Root 与所有子 Agent 共享同一个控制面；子 session 用 agent_task_id
     # 标记自己在任务树中的位置，root 则为 None。
     control_plane: AgentControlPlane = field(default_factory=AgentControlPlane)
     agent_task_id: str | None = None
     agent_root_turn_id: str = ""
+    # Durable commit markers make a completed user turn idempotent across
+    # crashes.  Status is presentation state; this ledger is the replay guard.
+    committed_turn_ids: list[str] = field(default_factory=list)
     # 当前 user turn 从哪个全局 step 之后开始。Verifier 用它隔离多轮 REPL 中
     # 旧任务的工具证据；checkpoint/resume 也靠它恢复本轮边界。
     active_turn_start_step: int = 0
@@ -140,6 +146,17 @@ class SessionState:
 
     def mark_skill_catalog_sent(self) -> None:
         self.skill_catalog_sent = True
+
+    def clear_active_deferred_tools(self) -> int:
+        count = len(self.active_deferred_tools)
+        self.active_deferred_tools.clear()
+        return count
+
+    def touch_active_deferred_tool(self, name: str) -> None:
+        if name not in self.active_deferred_tools:
+            return
+        self.active_deferred_tools.remove(name)
+        self.active_deferred_tools.append(name)
 
     def begin_user_turn(self, prompt: str) -> None:
         """记录当前任务目标及其证据边界。"""
@@ -346,6 +363,21 @@ class SessionState:
 
     def mark_completed(self) -> None:
         self.status = "completed"
+        turn_id = self.agent_root_turn_id
+        if turn_id and turn_id not in self.committed_turn_ids:
+            self.committed_turn_ids.append(turn_id)
+            self.committed_turn_ids = self.committed_turn_ids[-1_000:]
+
+    def is_turn_committed(self, turn_id: str | None = None) -> bool:
+        candidate = self.agent_root_turn_id if turn_id is None else turn_id
+        return bool(candidate and candidate in self.committed_turn_ids)
+
+    def revoke_turn_commit(self, turn_id: str | None = None) -> None:
+        candidate = self.agent_root_turn_id if turn_id is None else turn_id
+        if candidate:
+            self.committed_turn_ids = [
+                item for item in self.committed_turn_ids if item != candidate
+            ]
 
     def mark_max_steps(self) -> None:
         self.status = "max_steps"

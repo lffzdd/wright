@@ -78,7 +78,7 @@ def test_empty_skills_directory_injects_nothing(tmp_path: Path):
 def test_catalog_is_written_once_into_transcript(tmp_path: Path):
     registry = _write_skill(tmp_path)
     llm = ScriptLLM([
-        _tool("skill", skill_id="release-check"),
+        _tool("load_skill", skill_id="release-check"),
         _final("已按流程检查"),
     ])
     session = SessionState.create("task", tmp_path)
@@ -93,7 +93,7 @@ def test_catalog_is_written_once_into_transcript(tmp_path: Path):
     first_catalogs = _catalog_texts(llm.seen_messages[0])
     assert len(first_catalogs) == 1
     assert "release-check" in first_catalogs[0]
-    assert "调用 skill 工具" in first_catalogs[0]
+    assert "调用 load_skill 工具" in first_catalogs[0]
 
     second_catalogs = _catalog_texts(llm.seen_messages[1])
     assert len(second_catalogs) == 1
