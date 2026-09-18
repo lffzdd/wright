@@ -24,6 +24,9 @@ class FakeManager:
                 "storage_path": "session/att_test.png",
             },
             remove_attachment=lambda _attachment_id: None,
+            command_status=lambda command_id: {
+                "command_id": command_id, "status": "completed", "result": {"run_id": "run-1"},
+            },
         )
 
     def project(self):
@@ -125,6 +128,17 @@ def test_set_model_endpoint(tmp_path):
     )
     assert response.status_code == 200
     assert response.json()["model"] == "gpt-4o-mini"
+
+
+def test_command_status_endpoint_allows_reconnect_query(tmp_path):
+    client, _auth = _authenticated_client(tmp_path)
+    response = client.get(
+        "/api/v1/sessions/session/commands/cmd-1",
+        headers={"origin": "http://testserver"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["result"] == {"run_id": "run-1"}
 
 
 def test_set_model_missing_session_is_404(tmp_path):

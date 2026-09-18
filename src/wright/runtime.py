@@ -16,6 +16,7 @@ from prompt_toolkit import prompt
 
 from .agent import Agent
 from .agent_background import AgentBackgroundRuntime
+from .application_host import ApplicationHost
 from .attachments import AttachmentStore, DraftAttachments
 from .autonomy import AutonomyScheduler, AutonomyStore
 from .checkpoint import CheckpointError, SessionCheckpointStore
@@ -66,7 +67,7 @@ from .verifier import Verifier
 logger = get_logger(__name__)
 
 
-@dataclass(frozen=True)
+@dataclass
 class WrightRuntime:
     agent: Agent
     session_state: Session
@@ -90,6 +91,11 @@ class WrightRuntime:
     draft_attachments: DraftAttachments
     runtime_resources: RuntimeResources
     interaction_broker: Any = None
+    # The ApplicationHost owns durable scheduling, SQLite and durable workers.
+    # A Web RuntimeManager may retain it after this Session closes.
+    application_host: ApplicationHost | None = None
+    owns_application_host: bool = True
+    legacy_autonomy_scheduler: AutonomyScheduler | None = None
     shutdown_lock: threading.Lock = field(default_factory=threading.Lock)
     shutdown_complete: threading.Event = field(default_factory=threading.Event)
 
@@ -159,9 +165,14 @@ def parse_cli_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--ui",
-        choices=("cli", "tui", "web"),
+        choices=("cli", "tui", "web", "headless"),
         default="tui",
-        help="界面：tui（默认）、cli 或本机 Web 控制台",
+        help="界面：tui（默认）、cli、本机 Web 控制台或 headless 自动任务宿主",
+    )
+    parser.add_argument(
+        "--automation-session",
+        metavar="SESSION_ID",
+        help="headless 宿主要承载的 Automation 来源 session_id（不会扫描历史项目）",
     )
     parser.add_argument(
         "--model",
@@ -267,6 +278,8 @@ def assemble_runtime(
     publisher: EventPublisher | None = None,
     interaction_broker: Any = None,
     session_id: str | None = None,
+    start_automation: bool = True,
+    automation_session_id: str | None = None,
 ) -> WrightRuntime:
     load_env()
 
@@ -389,7 +402,7 @@ def assemble_runtime(
     background_runtime = AgentBackgroundRuntime(event_queue)
     autonomy_store = AutonomyStore(
         task_db_path(project_root),
-        session_id=session_state.session_id,
+        session_id=automation_session_id or session_state.session_id,
         workspace_dir=workspace_dir,
     )
     autonomy_scheduler = AutonomyScheduler(autonomy_store, event_queue)
@@ -401,6 +414,7 @@ def assemble_runtime(
         loop_registry=loop_registry,
     )
     mcp_manager: McpManager | None = None
+    application_host: ApplicationHost | None = None
     own_publisher = publisher is None
 
     def abort_assembly() -> None:
@@ -417,6 +431,8 @@ def assemble_runtime(
         finally:
             try:
                 autonomy_scheduler.close()
+                if application_host is not None:
+                    application_host.close()
             finally:
                 try:
                     background_runtime.shutdown(session_state.control_plane)
@@ -565,8 +581,21 @@ def assemble_runtime(
         runtime_resources=runtime_resources,
     )
 
+    # Automation is process/application owned, not consumed by this Session's
+    # event worker.  The foreground Session keeps its own subagent runtime but
+    # all scheduling tools resolve this host scheduler through RuntimeServices.
+    application_host = ApplicationHost(
+        workspace_dir=workspace_dir,
+        store=autonomy_store,
+        llm=llm_client,
+        base_tools=assembled_base,
+        permission_settings=settings,
+    )
+    services.autonomy_scheduler = application_host.scheduler
+
     try:
-        autonomy_scheduler.start()
+        if start_automation:
+            application_host.start()
         loop_registry.start()
     except Exception:
         abort_assembly()
@@ -595,6 +624,8 @@ def assemble_runtime(
         draft_attachments=draft_attachments,
         runtime_resources=runtime_resources,
         interaction_broker=interaction_broker,
+        application_host=application_host,
+        legacy_autonomy_scheduler=autonomy_scheduler,
     )
 
 
@@ -640,11 +671,15 @@ def shutdown_runtime(rt: WrightRuntime) -> None:
             rt.event_renderer.on_checkpoint_error(str(exc))
     if rt.services.loop_registry is not None:
         rt.services.loop_registry.close()
-    if rt.services.autonomy_scheduler is not None:
-        rt.services.autonomy_scheduler.close()
+    if rt.owns_application_host and rt.application_host is not None:
+        rt.application_host.close()
+    if rt.legacy_autonomy_scheduler is not None:
+        rt.legacy_autonomy_scheduler.close()
     if rt.services.agent_background is not None:
         rt.services.agent_background.shutdown(rt.session_state.control_plane)
-    if rt.services.durable_store is not None:
+    # The durable store is owned by ApplicationHost.  A Web RuntimeManager can
+    # deliberately retain that owner after this individual Session closes.
+    if rt.application_host is None and rt.services.durable_store is not None:
         rt.services.durable_store.close()
     # 关闭 MCP session / stdio 子进程,避免残留进程。
     rt.mcp_manager.shutdown()

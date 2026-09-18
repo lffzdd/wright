@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from copy import copy
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,7 +16,7 @@ from ..agent import Agent
 from ..agent_background import AgentBackgroundRuntime
 from ..capabilities import AgentProfile
 from ..coordination import AgentControlError, AgentControlPlane
-from ..llm import LLMClient
+from ..llm import LLMClient, resolve_transport
 from ..permission import (
     PermissionCheckResult,
     PermissionRequest,
@@ -32,6 +33,23 @@ from ..subagent import (
 )
 from ..tools.base import Tool
 from .scheduler import AutonomyScheduler
+
+
+class _DurableToolJournal:
+    """Adapter that makes durable tool calls transactional with the SQLite log."""
+
+    def __init__(self, scheduler: AutonomyScheduler, run_id: str) -> None:
+        self.store = scheduler.store
+        self.run_id = run_id
+
+    def record_intent(self, **value: Any) -> None:
+        self.store.record_tool_intent(run_id=self.run_id, **value)
+
+    def mark_started(self, call_id: str) -> None:
+        self.store.mark_tool_started(self.run_id, call_id)
+
+    def record_result(self, call_id: str, result: dict[str, Any], *, status: str) -> None:
+        self.store.record_tool_result(self.run_id, call_id, result, status=status)
 
 # Isolated workers start at depth=1 and may spawn one leaf helper.
 DURABLE_MAX_DEPTH = 2
@@ -179,7 +197,9 @@ def _commit_durable_run(
 def launch_durable_run(
     *,
     run_id: str,
-    root_session: Session,
+    root_session: Session | None = None,
+    workspace_dir=None,
+    control_plane: AgentControlPlane | None = None,
     scheduler: AutonomyScheduler,
     llm: LLMClient,
     base_tools: Sequence[Tool],
@@ -197,11 +217,18 @@ def launch_durable_run(
     run = scheduler.store.get_run(run_id)
     if run.status != "dispatched":
         return None
-    scheduler.store.start_run(run_id)
+    configured_steps = run.run_config.get("max_steps")
+    if configured_steps is not None:
+        max_steps = int(configured_steps)
+    scheduler.store.start_run(run_id, owner_id=scheduler.host_id)
     root_turn_id = _durable_root_turn_id(run_id)
     scheduler.store.set_run_root_turn(run_id, root_turn_id)
 
-    control = root_session.control_plane
+    if root_session is None and workspace_dir is None:
+        raise ValueError("durable run requires workspace_dir when no source Session exists")
+    control = control_plane or (
+        root_session.control_plane if root_session is not None else AgentControlPlane()
+    )
     prompt = run.prompt.strip() or run.automation_name or "durable task"
     try:
         record = control.begin_task(
@@ -241,7 +268,7 @@ def launch_durable_run(
     )
     child_session = Session.create(
         initial_goal=prompt,
-        workspace_dir=root_session.workspace_dir,
+        workspace_dir=(root_session.workspace_dir if root_session is not None else workspace_dir),
         max_steps=record.step_budget,
     )
     child_session.control_plane = control
@@ -267,8 +294,21 @@ def launch_durable_run(
             usage.total_tokens,
         )
 
+    # Automation configuration is a persisted run snapshot.  Do not mutate a
+    # host-shared client when a task selected a model: concurrent durable runs
+    # must retain their own selection.
+    run_llm = copy(llm)
+    configured_model = run.run_config.get("model")
+    if configured_model:
+        run_llm.model = str(configured_model)
+    configured_transport = run.run_config.get("transport")
+    if configured_transport:
+        run_llm.transport_name = resolve_transport(
+            run_llm.base_url, str(configured_transport)
+        )
+
     child_agent = Agent(
-        llm,
+        run_llm,
         child_tools,
         child_session,
         SilentRenderer(),
@@ -283,6 +323,7 @@ def launch_durable_run(
             "durable", frozenset(tool.name for tool in child_tools),
             max_steps=record.step_budget,
         ),
+        execution_journal=_DurableToolJournal(scheduler, run_id),
     )
     user_prompt = _user_prompt_for_run(scheduler, run_id)
 

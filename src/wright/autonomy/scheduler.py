@@ -8,6 +8,7 @@ import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
+from uuid import uuid4
 
 from .models import AutomationRecord, DurableRunRecord
 from .store import AutonomyStore, AutonomyStoreError
@@ -33,6 +34,8 @@ class AutonomyScheduler:
         # race on the same files/shell. Raise this only with git worktree
         # isolation.
         max_inflight: int = 1,
+        dispatch_run: Callable[[str], None] | None = None,
+        host_id: str | None = None,
     ) -> None:
         if poll_interval <= 0:
             raise ValueError("poll_interval must be > 0")
@@ -43,6 +46,8 @@ class AutonomyScheduler:
         self.poll_interval = float(poll_interval)
         self.web_probe = web_probe or probe_public_web_page
         self.max_inflight = int(max_inflight)
+        self.host_id = host_id or f"host_{uuid4().hex}"
+        self._dispatch_run = dispatch_run
         self._wake = threading.Event()
         self._lock = threading.RLock()
         self._thread: threading.Thread | None = None
@@ -103,6 +108,7 @@ class AutonomyScheduler:
                 status=status,
                 result=result,
                 error=error,
+                owner_id=self.host_id,
             )
         finally:
             self.notify_changed()
@@ -145,12 +151,19 @@ class AutonomyScheduler:
                 self.store.materialize_due()
                 self._poll_web_changes()
                 if self.store.count_active_runs() < self.max_inflight:
-                    run = self.store.claim_next_run()
+                    run = self.store.claim_next_run(owner_id=self.host_id)
                     if run is not None:
                         with self._lock:
                             if self._closed:
                                 return
-                        self.event_queue.put(("DURABLE_RUN_DUE", run.id))
+                        if self._dispatch_run is not None:
+                            # Dispatch is deliberately outside SQLite's claim
+                            # transaction. A process failure before the worker
+                            # starts leaves a durable dispatched row that the
+                            # next host safely requeues.
+                            self._dispatch_run(run.id)
+                        else:
+                            self.event_queue.put(("DURABLE_RUN_DUE", run.id))
             except Exception as exc:
                 if self._closed or self.store.closed:
                     return

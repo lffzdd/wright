@@ -114,6 +114,7 @@ class AutomationRecord:
     next_run_at: float | None = None
     last_run_at: float | None = None
     trigger_state: dict[str, Any] = field(default_factory=dict)
+    run_config: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -131,6 +132,7 @@ class AutomationRecord:
             "next_run_at": self.next_run_at,
             "last_run_at": self.last_run_at,
             "trigger_state": dict(self.trigger_state),
+            "run_config": dict(self.run_config),
         }
 
 
@@ -155,6 +157,9 @@ class DurableRunRecord:
     cancel_requested: bool = False
     cancel_reason: str = ""
     root_turn_id: str = ""
+    occurrence_key: str = ""
+    owner_id: str = ""
+    run_config: dict[str, Any] = field(default_factory=dict)
 
     @property
     def terminal(self) -> bool:
@@ -181,6 +186,9 @@ class DurableRunRecord:
             "cancel_requested": self.cancel_requested,
             "cancel_reason": self.cancel_reason,
             "root_turn_id": self.root_turn_id,
+            "occurrence_key": self.occurrence_key,
+            "owner_id": self.owner_id,
+            "run_config": dict(self.run_config),
         }
 
 

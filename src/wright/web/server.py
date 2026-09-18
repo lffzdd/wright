@@ -140,6 +140,15 @@ def create_app(
         except RuntimeManagerError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get("/api/v1/sessions/{session_id}/commands/{command_id}")
+    def command_status(session_id: str, command_id: str, request: Request) -> dict[str, Any]:
+        """Query a durably accepted command after a client disconnect."""
+        _require_auth(request, auth)
+        try:
+            return manager.get(session_id).command_status(command_id)
+        except RuntimeManagerError as exc:
+            raise HTTPException(status_code=exc.status_code or 404, detail=str(exc)) from exc
+
     @app.post("/api/v1/sessions/{session_id}/model")
     def set_session_model(session_id: str, body: ModelRequest, request: Request) -> dict[str, Any]:
         _require_auth(request, auth)

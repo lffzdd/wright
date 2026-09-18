@@ -8,14 +8,19 @@ the execution owners.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import threading
 from collections import deque
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from .logger import get_logger
 from .runs import TERMINAL_RUN_STATUSES
 from .session_models import available_models
+
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from .runtime import WrightRuntime
@@ -233,6 +238,26 @@ class SessionService:
             self._command_order.append(command_id)
             return True
 
+    def _accept_command(self, command_id: str, payload: dict[str, Any]) -> bool:
+        """Persist a command id before it is allowed to affect a session."""
+        store = getattr(self.runtime, "autonomy_store", None)
+        if store is None:
+            return self._remember_command(command_id)
+        try:
+            _record, fresh = store.accept_command(
+                f"session:{self.session_id}", command_id, payload
+            )
+        except Exception as exc:
+            raise SessionServiceError(f"command was not durably accepted: {exc}") from exc
+        if fresh:
+            self._remember_command(command_id)
+        return fresh
+
+    @staticmethod
+    def _answer_digest(answer: Any) -> str:
+        encoded = json.dumps(answer, ensure_ascii=False, default=repr)
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
     def _attachments(self, attachment_ids: list[str]) -> list[dict[str, object]]:
         if not attachment_ids:
             return []
@@ -257,7 +282,10 @@ class SessionService:
         if not cleaned and not attachments:
             raise SessionServiceError("prompt or attachment is required")
         command_id = command_id or uuid4().hex
-        fresh = self._remember_command(command_id)
+        fresh = self._accept_command(command_id, {
+            "command": "turn.submit", "prompt": cleaned,
+            "attachment_ids": attachment_ids,
+        })
         queued = not self.runtime.agent_idle.is_set() or not self.runtime.event_queue.empty()
         if fresh:
             with self._lock:
@@ -283,7 +311,9 @@ class SessionService:
     ) -> dict[str, Any]:
         self._require_accepting_input()
         command_id = command_id or uuid4().hex
-        fresh = self._remember_command(command_id)
+        fresh = self._accept_command(command_id, {
+            "command": "turn.cancel", "cancel_queued": cancel_queued,
+        })
         cancelled_queued = 0
         if fresh:
             self.runtime.cancellation_event.set()
@@ -309,7 +339,9 @@ class SessionService:
         self._require_accepting_input()
         if not command_id or not target_command_id:
             raise SessionServiceError("command_id and target_command_id are required")
-        fresh = self._remember_command(command_id)
+        fresh = self._accept_command(command_id, {
+            "command": "turn.cancel_queued", "target_command_id": target_command_id,
+        })
         with self._lock:
             queued = target_command_id in self._queued
             if fresh and queued:
@@ -329,7 +361,10 @@ class SessionService:
         self._require_accepting_input()
         if not command_id:
             raise SessionServiceError("command_id is required")
-        fresh = self._remember_command(command_id)
+        fresh = self._accept_command(command_id, {
+            "command": "interaction.respond", "request_id": request_id,
+            "answer_sha256": self._answer_digest(answer),
+        })
         resolver = getattr(self.interactions, "resolve", None)
         resolved = bool(resolver(request_id, answer)) if fresh and callable(resolver) else False
         event_type = "command.accepted" if resolved or not fresh else "command.rejected"
@@ -345,6 +380,18 @@ class SessionService:
         self._require_accepting_input()
         set_session_model(self.runtime, model)
         return self.summary()
+
+    def command_status(self, command_id: str) -> dict[str, Any]:
+        """Return the durable acceptance record for a client retry/query."""
+        if not command_id:
+            raise SessionServiceError("command_id is required")
+        store = getattr(self.runtime, "autonomy_store", None)
+        if store is None:
+            raise SessionServiceError("durable command history is unavailable")
+        try:
+            return store.get_command(f"session:{self.session_id}", command_id)
+        except Exception as exc:
+            raise SessionServiceError(str(exc)) from exc
 
     def summary(self) -> dict[str, Any]:
         state = self.runtime.session_state
@@ -449,7 +496,16 @@ class SessionService:
                 )
                 return False
         try:
-            return self._event_processor(self.runtime, event_type, payload)
+            stop = self._event_processor(self.runtime, event_type, payload)
+            if command_id:
+                try:
+                    self.runtime.autonomy_store.complete_command(
+                        f"session:{self.session_id}", command_id,
+                        {"event": event_type}, status="completed",
+                    )
+                except Exception:
+                    logger.warning("could not persist command completion", exc_info=True)
+            return stop
         finally:
             if command_id:
                 with self._lock:

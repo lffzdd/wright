@@ -67,11 +67,13 @@ class ToolExecutor:
         services: RuntimeServices | None = None,
         runtime_resources: RuntimeResources | None = None,
         capability_snapshot: CapabilitySnapshot | None = None,
+        execution_journal=None,
     ):
         if tool_timeout <= 0:
             raise ValueError("tool_timeout 必须 > 0")
         self.tool_registry = tool_registry
         self.capability_snapshot = capability_snapshot
+        self.execution_journal = execution_journal
         self.tool_timeout = tool_timeout
         self._services = services
         self.permission_resolver = permission_resolver or PermissionResolver(
@@ -266,6 +268,26 @@ class ToolExecutor:
         if isinstance(arguments.get("timeout"), (int, float)):
             arguments["timeout"] = min(arguments["timeout"], effective_timeout)
 
+        journal = self.execution_journal
+        if journal is not None:
+            try:
+                journal.record_intent(
+                    call_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    arguments=arguments,
+                    permission={
+                        "decision": permission.decision,
+                        "reason": permission.reason,
+                        "source": permission.source,
+                    },
+                    environment={"workspace_dir": str(self.workspace_dir), "cwd": str(self._current_cwd())},
+                )
+                journal.mark_started(tool_call.id)
+            except Exception as exc:
+                # Intention is the commit point. Never perform a durable
+                # side-effect after failing to record that it is about to run.
+                return ToolResult.fail(f"durable tool intent persistence failed: {exc}")
+
         execution_started: float | None = None
         try:
             runtime.raise_if_cancelled()
@@ -285,6 +307,20 @@ class ToolExecutor:
                     else 0.0
                 )
 
+        if journal is not None:
+            try:
+                journal.record_result(
+                    tool_call.id,
+                    tool_result.to_dict(),
+                    status="succeeded" if tool_result.ok else "failed",
+                )
+            except Exception as exc:
+                # The tool has run, so this must be recoverable as unknown;
+                # do not claim a normal result or attempt a second execution.
+                return ToolResult.fail(
+                    f"durable tool result persistence failed: {exc}",
+                    data={"outcome": "unknown"},
+                )
         return tool_result
 
     def _current_cwd(self) -> Path:

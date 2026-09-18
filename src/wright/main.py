@@ -30,6 +30,17 @@ def main() -> None:
             ) from exc
         run_web(args)
         return
+    if args.ui == "headless":
+        from .headless import run_headless_host
+
+        try:
+            run_headless_host(
+                runtime_config_from_args(args),
+                source_session_id=args.automation_session,
+            )
+        except KeyboardInterrupt:
+            return
+        return
     # A fullscreen app only makes sense on an interactive terminal. Keep the
     # default pleasant for people while preserving text behavior for scripts.
     if args.ui == "tui" and sys.stdin.isatty() and sys.stdout.isatty():

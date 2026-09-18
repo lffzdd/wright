@@ -70,10 +70,16 @@ class AgentBackgroundRuntime:
 
         future.add_done_callback(done)
 
-    def shutdown(self, control: AgentControlPlane, *, grace_seconds: float = 2.0) -> None:
+    def shutdown(self, control: AgentControlPlane, *, grace_seconds: float = 2.0) -> bool:
+        """Request cancellation and report whether every worker has exited.
+
+        A false return is deliberately not a license for the owner to close a
+        database or process registry: a still-running worker may need them to
+        commit its final durable result.
+        """
         with self._lock:
             if self._closed:
-                return
+                return not self._futures
             self._closed = True
             futures = list(self._futures.values())
         for task in control.tree(None):
@@ -81,6 +87,16 @@ class AgentBackgroundRuntime:
         if futures:
             wait(futures, timeout=grace_seconds)
         self._executor.shutdown(wait=False, cancel_futures=True)
+        return all(future.done() for future in futures)
+
+    def wait_for_idle(self, timeout: float | None = None) -> bool:
+        """Wait for accepted worker functions without holding the runtime lock."""
+        with self._lock:
+            futures = list(self._futures.values())
+        if not futures:
+            return True
+        wait(futures, timeout=timeout)
+        return all(future.done() for future in futures)
 
     @staticmethod
     def _cancel_running(node: dict[str, Any], control: AgentControlPlane) -> None:

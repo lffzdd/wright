@@ -69,6 +69,7 @@ class Agent:
         services: RuntimeServices | None = None,
         runtime_resources: RuntimeResources | None = None,
         profile: AgentProfile | None = None,
+        execution_journal=None,
     ):
         self.llm = llm
         self.session_state = session_state
@@ -169,6 +170,7 @@ class Agent:
             services=services,
             runtime_resources=self.runtime_resources,
             capability_snapshot=self.capabilities,
+            execution_journal=execution_journal,
         )
         if (
             checkpoint_store is not None

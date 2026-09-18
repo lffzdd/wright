@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from .looping import SessionLoopRegistry
 
 
-@dataclass(frozen=True)
+@dataclass
 class RuntimeServices:
     agent_background: AgentBackgroundRuntime | None = None
     durable_store: AutonomyStore | None = None

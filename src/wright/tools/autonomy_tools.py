@@ -69,6 +69,7 @@ def schedule_task(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult
             recovery_policy=arguments.get("recovery_policy", "manual"),
             max_retries=int(arguments.get("max_retries", 0)),
             retry_delay_seconds=float(arguments.get("retry_delay_seconds", 30)),
+            run_config=arguments.get("run_config"),
         )
         _notify(runtime)
         return ToolResult.success(record.to_dict())
@@ -242,6 +243,18 @@ schedule_task_tool = Tool(
             },
             "retry_delay_seconds": {
                 "type": "number", "minimum": 0, "maximum": 86_400, "default": 30,
+            },
+            "run_config": {
+                "type": "object",
+                "description": "Snapshot for this durable run only; it cannot grant extra permissions.",
+                "properties": {
+                    "profile": {"type": "string", "enum": ["durable"]},
+                    "model": {"type": "string", "minLength": 1, "maxLength": 200},
+                    "transport": {"type": "string", "enum": ["auto", "chat", "responses"]},
+                    "environment": {"type": "string", "enum": ["local"]},
+                    "max_steps": {"type": "integer", "minimum": 1, "maximum": 1000},
+                },
+                "additionalProperties": False,
             },
         },
         "required": ["name", "prompt", "trigger"],

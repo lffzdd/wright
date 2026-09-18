@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from ..application_host import ApplicationHost
 from ..attachments import AttachmentError, AttachmentRecord
 from ..checkpoint import CheckpointError, SessionCheckpointStore
 from ..interaction import InteractionBroker
@@ -149,6 +150,12 @@ class SessionHandle:
         except SessionServiceError as exc:
             raise RuntimeManagerError(str(exc)) from exc
 
+    def command_status(self, command_id: str) -> dict[str, Any]:
+        try:
+            return self.service.command_status(command_id)
+        except SessionServiceError as exc:
+            raise RuntimeManagerError(str(exc), status_code=404) from exc
+
     def snapshot(self) -> dict[str, Any]:
         state = self.runtime.session_state
         service_snapshot = self.service.snapshot()
@@ -272,6 +279,10 @@ class RuntimeManager:
         self.worktrees = WorktreeManager(self.project_root)
         self.checkpoints = SessionCheckpointStore(session_dir(self.project_root))
         self._handles: dict[str, SessionHandle] = {}
+        # Hosts outlive their creating browser session.  They are closed only
+        # when the Web application itself stops (or an explicit host API is
+        # introduced), never by SessionHandle.close().
+        self._application_hosts: dict[str, ApplicationHost] = {}
         self._lock = threading.RLock()
 
     def project(self) -> dict[str, Any]:
@@ -384,8 +395,14 @@ class RuntimeManager:
                 if not resume_session_id and context.environment == "worktree":
                     self.worktrees.archive(context)
                 raise
+            host = runtime.application_host
+            if host is None:
+                shutdown_runtime(runtime)
+                raise RuntimeManagerError("runtime did not construct ApplicationHost")
+            runtime.owns_application_host = False
             handle = SessionHandle(runtime)
             self._handles[session_id] = handle
+            self._application_hosts[session_id] = host
         publisher.publish("session.snapshot", handle.snapshot())
         if prompt and prompt.strip():
             handle.submit(prompt, uuid4().hex)
@@ -441,5 +458,9 @@ class RuntimeManager:
         with self._lock:
             handles = list(self._handles.values())
             self._handles.clear()
+            hosts = list(self._application_hosts.values())
+            self._application_hosts.clear()
         for handle in handles:
             handle.close()
+        for host in hosts:
+            host.close()

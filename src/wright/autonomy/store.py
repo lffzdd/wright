@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import secrets
@@ -27,7 +28,7 @@ class AutonomyNotFoundError(AutonomyStoreError):
 class AutonomyStore:
     """Thread-safe, session-scoped view over a workspace-level SQLite DB."""
 
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def __init__(self, path: Path, *, session_id: str, workspace_dir: Path) -> None:
         self.path = path.resolve()
@@ -85,7 +86,7 @@ class AutonomyStore:
 
     def _initialize_schema(self) -> None:
         version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
-        if version not in {0, self.SCHEMA_VERSION}:
+        if version not in {0, 1, self.SCHEMA_VERSION}:
             raise AutonomyStoreError(
                 f"unsupported autonomy DB version: {version}"
             )
@@ -145,7 +146,70 @@ class AutonomyStore:
             CREATE INDEX IF NOT EXISTS idx_external_events_pending
                 ON external_events(session_id, consumed_at, id);
         """)
+        if version < 2:
+            self._migrate_v2()
         self._conn.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
+
+    def _migrate_v2(self) -> None:
+        """Add recoverability metadata without rewriting historical rows."""
+        columns = {
+            str(row["name"])
+            for row in self._conn.execute("PRAGMA table_info(automations)").fetchall()
+        }
+        if "run_config_json" not in columns:
+            self._conn.execute(
+                "ALTER TABLE automations ADD COLUMN run_config_json TEXT NOT NULL DEFAULT '{}'"
+            )
+        run_columns = {
+            str(row["name"])
+            for row in self._conn.execute("PRAGMA table_info(durable_runs)").fetchall()
+        }
+        if "occurrence_key" not in run_columns:
+            self._conn.execute(
+                "ALTER TABLE durable_runs ADD COLUMN occurrence_key TEXT NOT NULL DEFAULT ''"
+            )
+        if "owner_id" not in run_columns:
+            self._conn.execute(
+                "ALTER TABLE durable_runs ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''"
+            )
+        if "run_config_json" not in run_columns:
+            self._conn.execute(
+                "ALTER TABLE durable_runs ADD COLUMN run_config_json TEXT NOT NULL DEFAULT '{}'"
+            )
+        self._conn.executescript("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_durable_runs_occurrence
+                ON durable_runs(automation_id, occurrence_key)
+                WHERE occurrence_key != '';
+            CREATE TABLE IF NOT EXISTS accepted_commands (
+                scope TEXT NOT NULL,
+                command_id TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                payload_hash TEXT NOT NULL,
+                status TEXT NOT NULL,
+                result_json TEXT NOT NULL DEFAULT '{}',
+                accepted_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                PRIMARY KEY(scope, command_id)
+            );
+            CREATE TABLE IF NOT EXISTS durable_tool_executions (
+                id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL REFERENCES durable_runs(id),
+                step_id TEXT NOT NULL DEFAULT '',
+                call_id TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                effective_arguments_json TEXT NOT NULL,
+                permission_json TEXT NOT NULL,
+                environment_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                result_json TEXT NOT NULL DEFAULT '{}',
+                created_at REAL NOT NULL,
+                started_at REAL,
+                ended_at REAL,
+                UNIQUE(run_id, call_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_durable_tool_executions_run
+                ON durable_tool_executions(run_id, created_at);
+        """)
 
     # -- Automation definitions -------------------------------------------------
 
@@ -158,6 +222,7 @@ class AutonomyStore:
         recovery_policy: str = "manual",
         max_retries: int = 0,
         retry_delay_seconds: float = 30,
+        run_config: dict[str, Any] | None = None,
         now: float | None = None,
     ) -> AutomationRecord:
         name = _bounded(name, "name", 200)
@@ -180,6 +245,7 @@ class AutonomyStore:
                 "retry_delay_seconds must be between 0 and 86400"
             )
         now = time.time() if now is None else float(now)
+        config_json = _dump(_safe_run_config(run_config or {}))
         trigger = self._normalize_trigger(trigger)
         next_run_at = self._initial_next_run(trigger, now)
         trigger_state = (
@@ -193,14 +259,15 @@ class AutonomyStore:
                 INSERT INTO automations (
                     id, session_id, name, prompt, trigger_type, trigger_json,
                     trigger_state_json, status, recovery_policy, max_retries,
-                    retry_delay_seconds, created_at, updated_at, next_run_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
+                    retry_delay_seconds, created_at, updated_at, next_run_at,
+                    run_config_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     automation_id, self.session_id, name, prompt, trigger.type,
                     _dump(trigger.to_dict()), _dump(trigger_state), recovery_policy,
                     int(max_retries), float(retry_delay_seconds), now, now,
-                    next_run_at,
+                    next_run_at, config_json,
                 ),
             )
         return self.get_automation(automation_id)
@@ -320,6 +387,192 @@ class AutonomyStore:
             )
             return int(cursor.lastrowid)
 
+    # -- Recoverable command acceptance ---------------------------------------
+
+    def accept_command(
+        self,
+        scope: str,
+        command_id: str,
+        payload: dict[str, Any],
+        *,
+        now: float | None = None,
+    ) -> tuple[dict[str, Any], bool]:
+        """Durably accept a command before a caller reports it as accepted.
+
+        The boolean is true only for the first submission. Repeating an id
+        with changed content is rejected instead of creating an ambiguous
+        second operation.
+        """
+        scope = _bounded(scope, "command scope", 300)
+        command_id = _bounded(command_id, "command_id", 300)
+        payload_json = _dump(payload)
+        digest = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+        now = time.time() if now is None else float(now)
+        with self._write():
+            row = self._conn.execute(
+                "SELECT payload_hash, status, result_json FROM accepted_commands "
+                "WHERE scope = ? AND command_id = ?",
+                (scope, command_id),
+            ).fetchone()
+            if row is not None:
+                if str(row["payload_hash"]) != digest:
+                    raise AutonomyStoreError(
+                        "command_id was already accepted with different content"
+                    )
+                return {
+                    "scope": scope,
+                    "command_id": command_id,
+                    "status": str(row["status"]),
+                    "result": _load_object(row["result_json"]),
+                }, False
+            self._conn.execute(
+                """INSERT INTO accepted_commands
+                   (scope, command_id, payload_json, payload_hash, status,
+                    accepted_at, updated_at)
+                   VALUES (?, ?, ?, ?, 'accepted', ?, ?)""",
+                (scope, command_id, payload_json, digest, now, now),
+            )
+        return {
+            "scope": scope, "command_id": command_id,
+            "status": "accepted", "result": {},
+        }, True
+
+    def complete_command(
+        self,
+        scope: str,
+        command_id: str,
+        result: dict[str, Any],
+        *,
+        status: str = "completed",
+        now: float | None = None,
+    ) -> dict[str, Any]:
+        if status not in {"accepted", "running", "completed", "failed"}:
+            raise AutonomyStoreError(f"invalid command status: {status}")
+        now = time.time() if now is None else float(now)
+        with self._write():
+            cursor = self._conn.execute(
+                """UPDATE accepted_commands SET status = ?, result_json = ?, updated_at = ?
+                   WHERE scope = ? AND command_id = ?""",
+                (status, _dump(result), now, scope, command_id),
+            )
+            if cursor.rowcount != 1:
+                raise AutonomyNotFoundError(f"unknown command_id: {command_id}")
+        return self.get_command(scope, command_id)
+
+    def get_command(self, scope: str, command_id: str) -> dict[str, Any]:
+        with self._read():
+            row = self._conn.execute(
+                "SELECT * FROM accepted_commands WHERE scope = ? AND command_id = ?",
+                (scope, command_id),
+            ).fetchone()
+        if row is None:
+            raise AutonomyNotFoundError(f"unknown command_id: {command_id}")
+        return {
+            "scope": str(row["scope"]),
+            "command_id": str(row["command_id"]),
+            "status": str(row["status"]),
+            "result": _load_object(row["result_json"]),
+            "accepted_at": float(row["accepted_at"]),
+            "updated_at": float(row["updated_at"]),
+        }
+
+    # -- Tool side-effect journal ----------------------------------------------
+
+    def record_tool_intent(
+        self,
+        *,
+        run_id: str,
+        call_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        permission: dict[str, Any],
+        environment: dict[str, Any],
+        step_id: str = "",
+        now: float | None = None,
+    ) -> None:
+        """Persist intent before a durable tool is allowed to run."""
+        now = time.time() if now is None else float(now)
+        execution_id = f"tool_{run_id}_{call_id}"
+        with self._write():
+            self._conn.execute(
+                """INSERT INTO durable_tool_executions
+                   (id, run_id, step_id, call_id, tool_name,
+                    effective_arguments_json, permission_json, environment_json,
+                    status, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'intended', ?)
+                   ON CONFLICT(run_id, call_id) DO NOTHING""",
+                (
+                    execution_id, run_id, step_id[:200], call_id[:300], tool_name[:200],
+                    _dump(_redact_arguments(arguments)), _dump(permission),
+                    _dump(environment), now,
+                ),
+            )
+
+    def mark_tool_started(
+        self, run_id: str, call_id: str, *, now: float | None = None
+    ) -> None:
+        now = time.time() if now is None else float(now)
+        with self._write():
+            cursor = self._conn.execute(
+                """UPDATE durable_tool_executions SET status = 'started', started_at = ?
+                   WHERE run_id = ? AND call_id = ? AND status = 'intended'""",
+                (now, run_id, call_id),
+            )
+            if cursor.rowcount != 1:
+                raise AutonomyStoreError("tool intent is missing or already terminal")
+
+    def record_tool_result(
+        self,
+        run_id: str,
+        call_id: str,
+        result: dict[str, Any],
+        *,
+        status: str,
+        now: float | None = None,
+    ) -> None:
+        if status not in {"succeeded", "failed", "unknown"}:
+            raise AutonomyStoreError(f"invalid tool execution status: {status}")
+        now = time.time() if now is None else float(now)
+        with self._write():
+            cursor = self._conn.execute(
+                """UPDATE durable_tool_executions
+                   SET status = ?, result_json = ?, ended_at = ?
+                   WHERE run_id = ? AND call_id = ? AND status = 'started'""",
+                (status, _dump(result), now, run_id, call_id),
+            )
+            if cursor.rowcount != 1:
+                raise AutonomyStoreError("tool result has no started intent")
+
+    def recover_tool_executions(self, run_id: str, *, now: float | None = None) -> int:
+        """Mark started effects unknown; recovery never repeats them implicitly."""
+        now = time.time() if now is None else float(now)
+        with self._write():
+            cursor = self._conn.execute(
+                """UPDATE durable_tool_executions
+                   SET status = 'unknown', ended_at = ?,
+                       result_json = ?
+                   WHERE run_id = ? AND status = 'started'""",
+                (now, _dump({"error": "host stopped after tool start; outcome unknown"}), run_id),
+            )
+        return cursor.rowcount
+
+    def list_tool_executions(self, run_id: str) -> list[dict[str, Any]]:
+        with self._read():
+            rows = self._conn.execute(
+                "SELECT * FROM durable_tool_executions WHERE run_id = ? ORDER BY created_at",
+                (run_id,),
+            ).fetchall()
+        return [
+            {
+                "id": str(row["id"]), "run_id": str(row["run_id"]),
+                "call_id": str(row["call_id"]), "tool_name": str(row["tool_name"]),
+                "status": str(row["status"]),
+                "arguments": _load_object(row["effective_arguments_json"]),
+                "result": _load_object(row["result_json"]),
+            }
+            for row in rows
+        ]
+
     def materialize_due(self, *, now: float | None = None) -> list[str]:
         now = time.time() if now is None else float(now)
         created: list[str] = []
@@ -343,6 +596,7 @@ class AutonomyStore:
                             automation,
                             scheduled_for=due,
                             trigger_payload={"scheduled_for": due},
+                            occurrence_key=f"{trigger.type}:{due:.6f}",
                             now=now,
                         ))
                         created_run = True
@@ -389,6 +643,7 @@ class AutonomyStore:
                             "before": automation.trigger_state,
                             "after": snapshot,
                         },
+                        occurrence_key=f"file:{snapshot.get('mtime_ns')}:{snapshot.get('size')}",
                         now=now,
                     ))
 
@@ -426,6 +681,7 @@ class AutonomyStore:
                         automation,
                         scheduled_for=float(event["created_at"]),
                         trigger_payload=payload,
+                        occurrence_key=f"event:{int(event['id'])}",
                         now=now,
                     ))
                     self._conn.execute(
@@ -495,6 +751,7 @@ class AutonomyStore:
                         "before": previous,
                         "after": snapshot,
                     },
+                    occurrence_key=f"web:{_hash_payload(snapshot)}",
                     now=now,
                 )
             self._conn.execute(
@@ -554,7 +811,9 @@ class AutonomyStore:
                 ).fetchall()
         return [self._run_from_row(row) for row in rows]
 
-    def claim_next_run(self, *, now: float | None = None) -> DurableRunRecord | None:
+    def claim_next_run(
+        self, *, owner_id: str = "", now: float | None = None
+    ) -> DurableRunRecord | None:
         now = time.time() if now is None else float(now)
         with self._write():
             row = self._conn.execute(
@@ -570,9 +829,9 @@ class AutonomyStore:
             run_id = str(row["id"])
             cursor = self._conn.execute(
                 """UPDATE durable_runs
-                   SET status = 'dispatched', ended_at = NULL
+                   SET status = 'dispatched', ended_at = NULL, owner_id = ?
                    WHERE id = ? AND status IN ('queued', 'waiting_retry')""",
-                (run_id,),
+                (str(owner_id)[:200], run_id),
             )
             if cursor.rowcount != 1:
                 return None
@@ -590,7 +849,7 @@ class AutonomyStore:
         return int(row["n"])
 
     def start_run(
-        self, run_id: str, *, now: float | None = None
+        self, run_id: str, *, owner_id: str = "", now: float | None = None
     ) -> DurableRunRecord:
         now = time.time() if now is None else float(now)
         with self._write():
@@ -598,8 +857,9 @@ class AutonomyStore:
                 """UPDATE durable_runs
                    SET status = 'running', attempt = attempt + 1,
                        started_at = ?, ended_at = NULL
-                   WHERE id = ? AND session_id = ? AND status = 'dispatched'""",
-                (now, run_id, self.session_id),
+                   WHERE id = ? AND session_id = ? AND status = 'dispatched'
+                     AND (? = '' OR owner_id = '' OR owner_id = ?)""",
+                (now, run_id, self.session_id, str(owner_id)[:200], str(owner_id)[:200]),
             )
             if cursor.rowcount != 1:
                 current = self.get_run(run_id)
@@ -654,6 +914,7 @@ class AutonomyStore:
         status: str,
         result: str = "",
         error: str = "",
+        owner_id: str = "",
         now: float | None = None,
     ) -> DurableRunRecord:
         if status not in {"completed", "failed", "cancelled", "unknown"}:
@@ -665,6 +926,8 @@ class AutonomyStore:
             raise AutonomyStoreError(
                 f"run {run_id} cannot finish from {current.status}"
             )
+        if owner_id and current.owner_id and current.owner_id != owner_id:
+            raise AutonomyStoreError("run is owned by another host")
         now = time.time() if now is None else float(now)
         automation = self.get_automation(current.automation_id)
         if current.cancel_requested:
@@ -733,7 +996,19 @@ class AutonomyStore:
                 run_id = str(row["id"])
                 if run_id in protected:
                     continue
+                started_effects = self._conn.execute(
+                    """UPDATE durable_tool_executions
+                       SET status = 'unknown', ended_at = ?, result_json = ?
+                       WHERE run_id = ? AND status = 'started'""",
+                    (
+                        now,
+                        _dump({"error": "host stopped after tool start; outcome unknown"}),
+                        run_id,
+                    ),
+                ).rowcount
                 can_retry = (
+                    not started_effects
+                    and
                     row["recovery_policy"] == "retry"
                     and int(row["attempt"]) <= int(row["max_retries"])
                 )
@@ -876,6 +1151,7 @@ class AutonomyStore:
                     "payload": pending.get("payload") or {},
                     "coalesced_count": int(pending.get("count") or 1),
                 },
+                occurrence_key=f"event:{pending.get('event_id')}",
                 now=now,
             ))
             state = dict(automation.trigger_state)
@@ -892,21 +1168,30 @@ class AutonomyStore:
         *,
         scheduled_for: float,
         trigger_payload: dict[str, Any],
+        occurrence_key: str,
         now: float,
     ) -> str:
         run_id = f"run_{secrets.token_hex(7)}"
-        self._conn.execute(
+        cursor = self._conn.execute(
             """INSERT INTO durable_runs (
                 id, automation_id, session_id, trigger_type,
                 trigger_payload_json, status, attempt, max_retries,
-                scheduled_for, created_at
-            ) VALUES (?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?)""",
+                scheduled_for, created_at, occurrence_key, run_config_json
+            ) VALUES (?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?, ?)
+            ON CONFLICT DO NOTHING""",
             (
                 run_id, automation.id, self.session_id, automation.trigger.type,
                 _dump(trigger_payload), automation.max_retries,
-                scheduled_for, now,
+                scheduled_for, now, occurrence_key, _dump(automation.run_config),
             ),
         )
+        if cursor.rowcount == 0:
+            row = self._conn.execute(
+                "SELECT id FROM durable_runs WHERE automation_id = ? AND occurrence_key = ?",
+                (automation.id, occurrence_key),
+            ).fetchone()
+            assert row is not None
+            return str(row["id"])
         return run_id
 
     def _run_query(self, predicate: str, parameters: tuple[Any, ...]):
@@ -939,6 +1224,7 @@ class AutonomyStore:
                 None if row["last_run_at"] is None else float(row["last_run_at"])
             ),
             trigger_state=_load_object(row["trigger_state_json"]),
+            run_config=_load_object(row["run_config_json"]),
         )
 
     @staticmethod
@@ -967,6 +1253,9 @@ class AutonomyStore:
             cancel_requested=bool(row["cancel_requested"]),
             cancel_reason=str(row["cancel_reason"]),
             root_turn_id=str(row["root_turn_id"]),
+            occurrence_key=str(row["occurrence_key"]),
+            owner_id=str(row["owner_id"]),
+            run_config=_load_object(row["run_config_json"]),
         )
 
 
@@ -996,3 +1285,45 @@ def _load_object(value: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise AutonomyStoreError("autonomy DB JSON value must be an object")
     return parsed
+
+
+def _hash_payload(value: dict[str, Any]) -> str:
+    return hashlib.sha256(_dump(value).encode("utf-8")).hexdigest()[:32]
+
+
+def _safe_run_config(value: dict[str, Any]) -> dict[str, Any]:
+    """Persist configuration snapshots, never credential values.
+
+    The present API accepts only the small declarative durable-run surface.
+    Unknown nesting is rejected so a caller cannot accidentally copy an
+    environment or API key into the task database.
+    """
+    if not isinstance(value, dict):
+        raise AutonomyStoreError("run_config must be an object")
+    allowed = {"profile", "model", "transport", "environment", "max_steps"}
+    unknown = set(value) - allowed
+    if unknown:
+        raise AutonomyStoreError(f"unsupported run_config fields: {sorted(unknown)}")
+    clean: dict[str, Any] = {}
+    for key, item in value.items():
+        if key == "max_steps":
+            if isinstance(item, bool) or not isinstance(item, int) or not 1 <= item <= 1_000:
+                raise AutonomyStoreError("run_config.max_steps must be between 1 and 1000")
+            clean[key] = item
+        elif key in {"profile", "model", "transport", "environment"}:
+            clean[key] = _bounded(str(item), f"run_config.{key}", 200)
+    if "profile" in clean and clean["profile"] != "durable":
+        raise AutonomyStoreError("durable automations only support the durable profile")
+    if "transport" in clean and clean["transport"] not in {"auto", "chat", "responses"}:
+        raise AutonomyStoreError("run_config.transport must be auto, chat, or responses")
+    if "environment" in clean and clean["environment"] != "local":
+        raise AutonomyStoreError("durable automations currently require the local environment")
+    return clean
+
+
+def _redact_arguments(value: dict[str, Any]) -> dict[str, Any]:
+    sensitive = {"api_key", "authorization", "token", "password", "secret"}
+    return {
+        str(key): "[redacted]" if str(key).casefold() in sensitive else item
+        for key, item in value.items()
+    }
