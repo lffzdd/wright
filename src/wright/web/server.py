@@ -9,13 +9,15 @@ import socket
 import webbrowser
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import (
     FastAPI,
+    File,
     HTTPException,
     Request,
     Response,
+    UploadFile,
     WebSocket,
     WebSocketDisconnect,
 )
@@ -81,7 +83,7 @@ def create_app(
         response = await call_next(request)
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; style-src 'self'; "
-            "img-src 'self' data:; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; "
+            "img-src 'self' data: blob:; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; "
             "font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
         )
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -148,6 +150,54 @@ def create_app(
                 status_code=exc.status_code or 409,
                 detail=str(exc),
             ) from exc
+
+    @app.post("/api/v1/sessions/{session_id}/attachments")
+    async def upload_attachment(
+        session_id: str,
+        request: Request,
+        file: Annotated[UploadFile, File(...)],
+    ) -> dict[str, object]:
+        _require_auth(request, auth)
+        try:
+            return manager.get(session_id).upload_attachment(
+                file.filename or "image", await file.read()
+            )
+        except RuntimeManagerError as exc:
+            raise HTTPException(status_code=exc.status_code or 409, detail=str(exc)) from exc
+        finally:
+            await file.close()
+
+    @app.get("/api/v1/sessions/{session_id}/attachments/{attachment_id}")
+    def get_attachment(session_id: str, attachment_id: str, request: Request) -> FileResponse:
+        _require_auth(request, auth)
+        try:
+            record, path = manager.get(session_id).attachment_path(attachment_id)
+            return FileResponse(
+                path,
+                media_type=record.media_type,
+                filename=record.filename,
+                content_disposition_type="inline",
+            )
+        except RuntimeManagerError as exc:
+            raise HTTPException(status_code=exc.status_code or 404, detail=str(exc)) from exc
+
+    @app.get("/api/v1/sessions/{session_id}/attachments/{attachment_id}/thumbnail")
+    def get_attachment_thumbnail(session_id: str, attachment_id: str, request: Request) -> FileResponse:
+        _require_auth(request, auth)
+        try:
+            _record, path = manager.get(session_id).attachment_thumbnail_path(attachment_id)
+            return FileResponse(path, media_type="image/webp")
+        except RuntimeManagerError as exc:
+            raise HTTPException(status_code=exc.status_code or 404, detail=str(exc)) from exc
+
+    @app.delete("/api/v1/sessions/{session_id}/attachments/{attachment_id}")
+    def delete_attachment(session_id: str, attachment_id: str, request: Request) -> dict[str, bool]:
+        _require_auth(request, auth)
+        try:
+            manager.get(session_id).remove_attachment(attachment_id)
+            return {"ok": True}
+        except RuntimeManagerError as exc:
+            raise HTTPException(status_code=exc.status_code or 409, detail=str(exc)) from exc
 
     @app.post("/api/v1/sessions/{session_id}/close")
     def close_session(session_id: str, request: Request) -> dict[str, Any]:
@@ -253,7 +303,14 @@ def create_app(
                         command_type = command.get("type")
                         command_id = str(command.get("command_id", ""))
                         if command_type == "turn.submit":
-                            handle.submit(str(command.get("prompt", "")), command_id)
+                            attachment_ids = command.get("attachment_ids", [])
+                            if not isinstance(attachment_ids, list) or not all(
+                                isinstance(item, str) for item in attachment_ids
+                            ):
+                                raise RuntimeManagerError("attachment_ids must be a string array")
+                            handle.submit(
+                                str(command.get("prompt", "")), command_id, attachment_ids
+                            )
                         elif command_type == "turn.cancel":
                             handle.cancel(command_id)
                         elif command_type == "turn.cancel_queued":
@@ -319,6 +376,9 @@ def _available_port(requested: int) -> int:
 def run_web(args: Any) -> None:
     import uvicorn
 
+    from ..runtime import load_env
+
+    load_env()
     project_root = (args.workspace or Path.cwd()).expanduser().resolve()
     manager = RuntimeManager(
         project_root,

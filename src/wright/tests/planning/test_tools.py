@@ -1,14 +1,11 @@
-from ...session import SessionState
-from ...tools.base import ToolRuntime
+from ...session import Session
+from ...tools.base import tool_runtime_for_session
 from ...tools.plan_tools import create_plan, get_plan, replan, update_plan
 
 
 def _runtime(tmp_path):
-    session = SessionState.create("goal", tmp_path)
-    return session, ToolRuntime(
-        workspace_dir=tmp_path,
-        session_state=session,
-    )
+    session = Session.create("goal", tmp_path)
+    return session, tool_runtime_for_session(session, workspace_dir=tmp_path)
 
 
 def test_plan_tools_share_session_manager(tmp_path):
@@ -50,8 +47,8 @@ def test_replan_tool_keeps_completed_history(tmp_path):
 
 
 def test_sessions_have_isolated_plans(tmp_path):
-    first = SessionState.create("first", tmp_path)
-    second = SessionState.create("second", tmp_path)
+    first = Session.create("first", tmp_path)
+    second = Session.create("second", tmp_path)
 
     first.plan_manager.create_plan("only first", ["a"])
 

@@ -7,8 +7,6 @@ selector(召回选择)和 extractor(记忆提取)都需要「给一组消息、�
 
 from __future__ import annotations
 
-from openai.types.chat import ChatCompletionMessageParam
-
 from ..events import ContentDone, UsageEvent
 from ..llm import LLMClient
 from ..session import UsageRecord
@@ -19,7 +17,7 @@ def side_query(llm: LLMClient, system: str, user: str) -> str:
 
     仅此类结构化数据查询使用 JSON mode；不传入 Agent 的工具清单。
     """
-    messages: list[ChatCompletionMessageParam] = [
+    messages: list[dict] = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]

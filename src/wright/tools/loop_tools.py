@@ -9,7 +9,7 @@ from .base import Tool, ToolResult, ToolRuntime
 
 
 def _registry(runtime: ToolRuntime) -> SessionLoopRegistry:
-    registry = runtime.services.loop_registry if runtime.services else None
+    registry = runtime.capabilities.loop_registry if runtime.capabilities else None
     if registry is None:
         raise RuntimeError("in-session loop runtime is not configured")
     return registry

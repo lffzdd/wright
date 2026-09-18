@@ -28,6 +28,7 @@ PROMPT_INTERRUPTED = object()
 class InteractionRequest:
     kind: InteractionKind
     payload: dict[str, Any]
+    request_id: str = field(default_factory=lambda: uuid4().hex)
     reply: Queue = field(default_factory=lambda: Queue(maxsize=1))
 
 
@@ -35,6 +36,8 @@ class InteractionHub:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._pending: deque[InteractionRequest] = deque()
+        self._requests: dict[str, InteractionRequest] = {}
+        self._closed = False
         self._collector_ident: int | None = None
         self._interrupt: Callable[[], None] | None = None
 
@@ -51,23 +54,53 @@ class InteractionHub:
 
     def has_pending(self) -> bool:
         with self._lock:
-            return bool(self._pending)
+            return bool(self._requests)
 
     def request(self, kind: InteractionKind, payload: dict[str, Any]) -> Any:
         """Agent / 工具线程：投递请求并阻塞直到收集线程回复。"""
         item = InteractionRequest(kind=kind, payload=payload)
         with self._lock:
+            if self._closed:
+                return "n" if kind == "permission" else None
             self._pending.append(item)
+            self._requests[item.request_id] = item
         interrupt = self._interrupt
         if interrupt is not None:
             interrupt()
-        return item.reply.get()
+        answer = item.reply.get()
+        with self._lock:
+            self._requests.pop(item.request_id, None)
+        return answer
 
     def poll(self) -> InteractionRequest | None:
         with self._lock:
-            if not self._pending:
-                return None
-            return self._pending.popleft()
+            while self._pending:
+                item = self._pending.popleft()
+                if item.request_id in self._requests:
+                    return item
+            return None
+
+    def resolve(self, request_id: str, answer: Any) -> bool:
+        with self._lock:
+            item = self._requests.pop(request_id, None)
+            if item is None or item.reply.full():
+                return False
+            item.reply.put_nowait(answer)
+        return True
+
+    def cancel_pending(self) -> None:
+        with self._lock:
+            pending = list(self._requests.values())
+            self._requests.clear()
+            self._pending.clear()
+        for item in pending:
+            if not item.reply.full():
+                item.reply.put_nowait(None if item.kind == "ask_user" else "n")
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+        self.cancel_pending()
 
     def wait_for_idle_or_request(self, idle: threading.Event) -> None:
         """Agent 忙碌时不画主输入框，但仍能被权限请求唤醒。"""

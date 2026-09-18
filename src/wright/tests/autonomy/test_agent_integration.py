@@ -10,7 +10,7 @@ from ...autonomy.runner import launch_durable_run
 from ...permission import PermissionSettings
 from ...renderer import SilentRenderer
 from ...services import RuntimeServices
-from ...session import SessionState
+from ...session import Session
 from ...skills.registry import SkillRegistry
 from ...skills.store import write_skill
 from ...tools.ask_user_tool import ask_user_tool
@@ -55,7 +55,7 @@ def _runtime(tmp_path):
         workspace_dir=workspace,
     )
     events = queue.Queue()
-    session = SessionState.create("interactive", workspace)
+    session = Session.create("interactive", workspace)
     session.session_id = "session"
     background = AgentBackgroundRuntime(events, max_workers=1)
     scheduler = AutonomyScheduler(store, events, poll_interval=1)
@@ -93,7 +93,7 @@ def test_durable_run_leaves_root_session_untouched(tmp_path):
     assert root_agent.run("interactive turn") == "interactive result"
     session.plan_manager.create_plan("old", ["old step"])
     session.set_cwd(nested)
-    root_goal = session.user_goal
+    root_goal = session.current_goal()
     root_plan = session.plan_manager.snapshot()
     root_len = len(session.message_records)
     root_cwd = session.get_cwd()
@@ -119,7 +119,7 @@ def test_durable_run_leaves_root_session_untouched(tmp_path):
     assert event_type == "DURABLE_RUN_FINISHED"
     assert finished_id == run_id
 
-    assert session.user_goal == root_goal
+    assert session.current_goal() == root_goal
     assert session.plan_manager.snapshot() == root_plan
     assert len(session.message_records) == root_len
     assert session.get_cwd() == root_cwd
@@ -162,7 +162,7 @@ def test_durable_run_does_not_block_root_user_input(tmp_path):
         SilentRenderer(),
     )
     assert root_agent.run("please keep chatting") == "user heard"
-    assert session.user_goal == "please keep chatting"
+    assert session.current_goal() == "please keep chatting"
 
     event_type, finished_id = events.get(timeout=2)
     assert event_type == "DURABLE_RUN_FINISHED"
@@ -245,6 +245,6 @@ def test_cancelled_dispatched_run_is_not_started(tmp_path):
     run = store.get_run(run_id)
     assert run.status == "cancelled"
     assert run.cancel_reason == "external cancellation"
-    assert session.status == "running"
+    assert session.current_run_status() == "idle"
     background.shutdown(session.control_plane)
     store.close()

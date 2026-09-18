@@ -1,4 +1,4 @@
-"""把 SessionState 内的 PlanManager 暴露成模型可调用工具。"""
+"""把 Session 内的 PlanManager 暴露成模型可调用工具。"""
 
 from __future__ import annotations
 
@@ -6,10 +6,9 @@ from .base import Tool, ToolResult, ToolRuntime
 
 
 def _manager(runtime: ToolRuntime | None):
-    session = runtime.session_state if runtime is not None else None
-    manager = getattr(session, "plan_manager", None)
+    manager = runtime.capabilities.plan_manager if runtime and runtime.capabilities else None
     if manager is None:
-        raise RuntimeError("plan tool requires a SessionState with PlanManager")
+        raise RuntimeError("plan tool requires a Session with PlanManager")
     return manager
 
 

@@ -5,7 +5,7 @@ from wright.tests.responses import event, response
 from ...agent import Agent
 from ...permission import PermissionCheckResult, PermissionResolver
 from ...renderer import SilentRenderer
-from ...session import SessionState
+from ...session import Session
 from ...tools.ask_user_tool import ask_user_tool
 
 
@@ -58,7 +58,7 @@ def test_ask_user_runs_through_without_pausing(tmp_path):
     """核心集成测试：ask_user 在工具执行期间同步获取用户输入，
     主循环不中断、不退出、不需要 resume。一次 run() 调用跑完全程。"""
     llm = AskThenAnswerLLM()
-    session = SessionState.create("theme", tmp_path)
+    session = Session.create("theme", tmp_path)
 
     interaction_calls = []
 
@@ -76,7 +76,7 @@ def test_ask_user_runs_through_without_pausing(tmp_path):
 
     # 一次 run() 就拿到了最终答案，不再返回 None
     assert result == "已选择蓝色主题"
-    assert session.status == "completed"
+    assert session.current_run_status() == "completed"
 
     # 交互层被正确调用，且它拿到的是完整工具请求。
     assert len(interaction_calls) == 1
@@ -127,7 +127,7 @@ def test_ask_user_can_be_called_multiple_times(tmp_path):
             source="test_interaction",
         )
 
-    session = SessionState.create("twice", tmp_path)
+    session = Session.create("twice", tmp_path)
     agent = Agent(
         TwiceLLM(),
         [ask_user_tool],
@@ -139,7 +139,7 @@ def test_ask_user_can_be_called_multiple_times(tmp_path):
     result = agent.run("start", max_steps=5)
 
     assert result == "done"
-    assert session.status == "completed"
+    assert session.current_run_status() == "completed"
 
 
 def test_ask_user_without_interaction_handler_returns_error(tmp_path):
@@ -158,7 +158,7 @@ def test_ask_user_without_interaction_handler_returns_error(tmp_path):
             else:
                 yield event(content=_final("recovered"))
 
-    session = SessionState.create("no-handler", tmp_path)
+    session = Session.create("no-handler", tmp_path)
     agent = Agent(
         AskThenFinalLLM(),
         [ask_user_tool],
@@ -174,7 +174,7 @@ def test_ask_user_without_interaction_handler_returns_error(tmp_path):
 def test_ask_user_cannot_be_auto_approved_by_normal_permission_handler(tmp_path):
     """requires_user_interaction 必须压过普通 allow 规则，避免答案由策略伪造。"""
 
-    session = SessionState.create("no-auto-answer", tmp_path)
+    session = Session.create("no-auto-answer", tmp_path)
     agent = Agent(
         AskThenAnswerLLM(),
         [ask_user_tool],
@@ -205,7 +205,7 @@ def test_ask_user_cannot_be_auto_approved_by_normal_permission_handler(tmp_path)
 
 def test_agent_no_longer_has_resume_method(tmp_path):
     """确认 resume() 方法已被移除。"""
-    session = SessionState.create("goal", tmp_path)
+    session = Session.create("goal", tmp_path)
     agent = Agent(AskThenAnswerLLM(), [ask_user_tool], session, SilentRenderer())
 
     assert not hasattr(agent, "resume")

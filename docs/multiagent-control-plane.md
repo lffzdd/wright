@@ -3,7 +3,7 @@
 ## 为什么原来的 `spawn_agent` 还不算控制面
 
 原实现已经具备两个重要性质：子 Agent 上下文隔离，以及同一轮多个
-`spawn_agent` 的线程并发。但每次调用只是临时创建一个 `SessionState`，执行结束后
+`spawn_agent` 的线程并发。但每次调用只是临时创建一个 `Session`，执行结束后
 只返回字符串。系统无法回答这些问题：
 
 - 当前一共有多少子任务，谁是谁的孩子？
@@ -18,7 +18,7 @@
 ## 结构
 
 ```text
-Root SessionState
+Root Session
 └── AgentControlPlane（全树共享）
     ├── AgentTask a0001...（depth 1）
     │   └── AgentTask a0002...（depth 2）
@@ -33,7 +33,7 @@ Root SessionState
 └── bounded result / error
 ```
 
-Root 和所有后代共享同一个控制面，但每个子 Agent 仍拥有独立 `SessionState` 和消息
+Root 和所有后代共享同一个控制面，但每个子 Agent 仍拥有独立 `Session` 和消息
 历史。控制面保存任务摘要，不保存子 Agent transcript，因此不会破坏上下文隔离。
 
 ## 生命周期

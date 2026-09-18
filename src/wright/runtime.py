@@ -7,7 +7,7 @@ import os
 import queue
 import sys
 import threading
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,7 @@ from prompt_toolkit import prompt
 
 from .agent import Agent
 from .agent_background import AgentBackgroundRuntime
+from .attachments import AttachmentStore, DraftAttachments
 from .autonomy import AutonomyScheduler, AutonomyStore
 from .checkpoint import CheckpointError, SessionCheckpointStore
 from .interaction import InteractionHub
@@ -26,6 +27,7 @@ from .logger import get_logger
 from .looping import SessionLoopRegistry
 from .memory import MemoryManager
 from .paths import (
+    attachment_dir,
     ensure_project_state,
     project_id,
     project_mcp_config_path,
@@ -46,10 +48,11 @@ from .permission import (
     append_allow_rule,
     load_permission_settings,
 )
+from .processes import RuntimeResources
 from .project import ProjectContext
 from .renderer import ConsoleRenderer, Renderer
 from .services import RuntimeServices
-from .session import SessionState
+from .session import Session
 from .skills import SkillRegistry, optional_skill_tools
 from .subagent import build_agent_tools
 from .tools import tools as base_tools
@@ -66,7 +69,7 @@ logger = get_logger(__name__)
 @dataclass(frozen=True)
 class WrightRuntime:
     agent: Agent
-    session_state: SessionState
+    session_state: Session
     renderer: Renderer
     event_renderer: PublishingRenderer
     publisher: EventPublisher
@@ -83,7 +86,41 @@ class WrightRuntime:
     llm: LLMClient
     resumed: bool
     cancellation_event: threading.Event
+    attachment_store: AttachmentStore
+    draft_attachments: DraftAttachments
+    runtime_resources: RuntimeResources
     interaction_broker: Any = None
+    shutdown_lock: threading.Lock = field(default_factory=threading.Lock)
+    shutdown_complete: threading.Event = field(default_factory=threading.Event)
+
+
+@dataclass(frozen=True)
+class RuntimeConfig:
+    """Explicit runtime inputs shared by CLI, TUI and Web assembly."""
+
+    workspace: Path | None = None
+    resume: str | None = None
+    continue_latest: bool = False
+    no_session_persistence: bool = False
+    hooks_config: Path | None = None
+    model: str | None = None
+    transport: str | None = None
+    trust_project_mcp: bool = False
+
+
+def runtime_config_from_args(args: argparse.Namespace) -> RuntimeConfig:
+    """Translate an entry-point namespace once; assembly never parses CLI data."""
+    hooks = getattr(args, "hooks_config", None)
+    return RuntimeConfig(
+        workspace=getattr(args, "workspace", None),
+        resume=getattr(args, "resume", None),
+        continue_latest=bool(getattr(args, "continue_latest", False)),
+        no_session_persistence=bool(getattr(args, "no_session_persistence", False)),
+        hooks_config=Path(hooks) if hooks else None,
+        model=getattr(args, "model", None),
+        transport=getattr(args, "transport", None),
+        trust_project_mcp=bool(getattr(args, "trust_project_mcp", False)),
+    )
 
 
 def parse_cli_args() -> argparse.Namespace:
@@ -130,6 +167,12 @@ def parse_cli_args() -> argparse.Namespace:
         "--model",
         metavar="MODEL",
         help="覆盖 OPENAI_MODEL；TUI 的 /model 使用同一配置",
+    )
+    parser.add_argument(
+        "--transport",
+        choices=("auto", "chat", "responses"),
+        default=None,
+        help="主模型协议：auto（默认）、chat 或 responses",
     )
     parser.add_argument(
         "--web-port",
@@ -186,7 +229,7 @@ def _make_interaction_handler(renderer: Renderer):
     return handler
 
 
-def _load_env() -> None:
+def load_env() -> None:
     """Load API keys from the nearest .env without requiring a specific cwd."""
     here = Path(__file__).resolve()
     candidates = [
@@ -202,12 +245,12 @@ def _load_env() -> None:
 
 
 def _trusted_mcp_config_paths(
-    workspace: Path, args: argparse.Namespace
+    workspace: Path, config: RuntimeConfig
 ) -> tuple[list[Path], Path | None]:
     """Return executable MCP configs and any ignored project config."""
     paths = [user_mcp_config_path()]
     project = project_mcp_config_path(workspace)
-    trusted = bool(getattr(args, "trust_project_mcp", False)) or os.getenv(
+    trusted = config.trust_project_mcp or os.getenv(
         "WRIGHT_TRUST_PROJECT_MCP"
     ) == "1"
     if trusted:
@@ -216,8 +259,8 @@ def _trusted_mcp_config_paths(
     return paths, project if project.is_file() else None
 
 
-def build_runtime(
-    args: argparse.Namespace,
+def assemble_runtime(
+    config: RuntimeConfig,
     *,
     renderer: Renderer | None = None,
     project_context: ProjectContext | None = None,
@@ -225,11 +268,11 @@ def build_runtime(
     interaction_broker: Any = None,
     session_id: str | None = None,
 ) -> WrightRuntime:
-    _load_env()
+    load_env()
 
     base_url = os.getenv("OPENAI_BASE_URL")
     api_key = os.getenv("OPENAI_API_KEY")
-    requested_model = getattr(args, "model", None)
+    requested_model = config.model
     configured_model = os.getenv("OPENAI_MODEL")
     context_limit_raw = os.getenv("OPENAI_CONTEXT_LIMIT")
     context_limit = int(context_limit_raw) if context_limit_raw else None
@@ -238,7 +281,7 @@ def build_runtime(
         renderer = ConsoleRenderer()
         renderer.bind_interaction(InteractionHub())
 
-    requested_workspace = (getattr(args, "workspace", None) or Path.cwd()).expanduser().resolve()
+    requested_workspace = (config.workspace or Path.cwd()).expanduser().resolve()
     project_context = project_context or ProjectContext.local(requested_workspace)
     workspace_dir = project_context.execution_root
     project_root = project_context.project_root
@@ -251,8 +294,8 @@ def build_runtime(
     # 多轮对话:session 整段存活,每轮把用户输入 append 进同一条历史；Agent.run 会把
     # user_goal 更新为当前任务，供 Verifier 和 checkpoint 使用。
     checkpoint_store = SessionCheckpointStore(session_dir(project_root))
-    resume_arg = getattr(args, "resume", None)
-    continue_latest = bool(getattr(args, "continue_latest", False))
+    resume_arg = config.resume
+    continue_latest = config.continue_latest
     resumed = bool(resume_arg is not None or continue_latest)
     try:
         if resume_arg is not None:
@@ -285,8 +328,8 @@ def build_runtime(
         elif continue_latest:
             session_state = checkpoint_store.load_latest()
         else:
-            session_state = SessionState.create(
-                user_goal="(interactive session)",
+            session_state = Session.create(
+                initial_goal="(interactive session)",
                 workspace_dir=workspace_dir,
                 session_id=session_id,
                 project_root=project_root,
@@ -303,12 +346,25 @@ def build_runtime(
     if not model:
         raise ValueError("OPENAI_MODEL 或 --model 不能为空")
     session_state.model_name = model
+    attachment_store = AttachmentStore(attachment_dir(project_root), session_state.session_id)
+    requested_transport = (
+        session_state.llm_transport
+        or config.transport
+        or os.getenv("WRIGHT_LLM_TRANSPORT", "auto")
+    )
     llm_client = LLMClient(
         base_url=base_url,
         api_key=api_key,
         model=model,
         context_limit=context_limit or 128000,
+        transport=requested_transport,
+        attachment_store=attachment_store,
     )
+    session_state.llm_transport = llm_client.transport_name
+    llm_client.session_attachments = session_state.attachments
+    draft_attachments = DraftAttachments(attachment_store, session_state.attachments)
+    runtime_resources = RuntimeResources.for_session(session_state.session_id)
+    assert runtime_resources is not None
 
     # 记忆的召回/提取 side-query 可选用更便宜的模型省钱(对标 memdir 用 Sonnet 选记忆)。
     # 配了 OPENAI_MEMORY_MODEL 就单独建个非流式 client,否则复用主 client。
@@ -319,6 +375,7 @@ def build_runtime(
             api_key=api_key,
             model=memory_model,
             stream=False,
+            transport=session_state.llm_transport,
         )
         if memory_model
         else llm_client
@@ -343,18 +400,47 @@ def build_runtime(
         autonomy_scheduler=autonomy_scheduler,
         loop_registry=loop_registry,
     )
+    mcp_manager: McpManager | None = None
+    own_publisher = publisher is None
+
+    def abort_assembly() -> None:
+        """Release resources constructed before a runtime became publishable."""
+        cancellation_event.set()
+        cancelled_tasks = runtime_resources.close()
+        session_state.mark_background_tasks_cancel_requested(
+            cancelled_tasks, "runtime assembly failed"
+        )
+        if interaction_broker is not None:
+            interaction_broker.close()
+        try:
+            loop_registry.close()
+        finally:
+            try:
+                autonomy_scheduler.close()
+            finally:
+                try:
+                    background_runtime.shutdown(session_state.control_plane)
+                finally:
+                    try:
+                        autonomy_store.close()
+                    finally:
+                        if mcp_manager is not None:
+                            mcp_manager.shutdown()
+                        if own_publisher and publisher is not None:
+                            publisher.close()
     try:
         lifecycle = load_lifecycle_manager(
             workspace_dir,
             session_state.session_id,
             config_path=(
-                Path(args.hooks_config)
-                if getattr(args, "hooks_config", None)
+                config.hooks_config
+                if config.hooks_config is not None
                 else None
             ),
             trace_dir=trace_dir(project_root),
         )
     except LifecycleConfigError as exc:
+        abort_assembly()
         raise SystemExit(f"无法加载 lifecycle hooks: {exc}") from exc
     lifecycle.emit(
         "session_start",
@@ -365,14 +451,18 @@ def build_runtime(
     # User MCP config is an explicit local preference. Project config is code
     # from the workspace and may start arbitrary stdio processes, so it is
     # opt-in instead of being trusted merely because the repository was opened.
-    mcp_paths, ignored_project_mcp = _trusted_mcp_config_paths(workspace_dir, args)
+    mcp_paths, ignored_project_mcp = _trusted_mcp_config_paths(workspace_dir, config)
     if ignored_project_mcp is not None:
         logger.warning(
             "忽略未受信任的项目 MCP 配置 %s；需要时使用 --trust-project-mcp",
             ignored_project_mcp,
         )
-    mcp_manager = McpManager(load_mcp_configs(mcp_paths))
-    mcp_tools = mcp_manager.start()
+    try:
+        mcp_manager = McpManager(load_mcp_configs(mcp_paths))
+        mcp_tools = mcp_manager.start()
+    except Exception:
+        abort_assembly()
+        raise
 
     publisher = publisher or EventPublisher(
         project_id=project_id(project_root),
@@ -382,6 +472,7 @@ def build_runtime(
         publisher,
         interaction=interaction_broker,
         direct_renderer=renderer,
+        runtime_resources=runtime_resources,
     )
 
     # 权限裁决:加载持久化配置(模式 + allow/deny 规则),按"要不要人"两种装配。
@@ -464,17 +555,22 @@ def build_runtime(
         verifier=Verifier(),
         checkpoint_store=(
             None
-            if getattr(args, "no_session_persistence", False)
+            if config.no_session_persistence
             else checkpoint_store
         ),
         on_shell_task_done=lambda task_id: event_queue.put(("TASK_DONE", task_id)),
         lifecycle=lifecycle,
         skills=skill_registry if skill_tools else None,
         services=services,
+        runtime_resources=runtime_resources,
     )
 
-    autonomy_scheduler.start()
-    loop_registry.start()
+    try:
+        autonomy_scheduler.start()
+        loop_registry.start()
+    except Exception:
+        abort_assembly()
+        raise
 
     return WrightRuntime(
         agent=agent,
@@ -495,14 +591,48 @@ def build_runtime(
         llm=llm_client,
         resumed=resumed,
         cancellation_event=cancellation_event,
+        attachment_store=attachment_store,
+        draft_attachments=draft_attachments,
+        runtime_resources=runtime_resources,
         interaction_broker=interaction_broker,
     )
 
 
+def build_runtime(
+    args: argparse.Namespace,
+    **kwargs: Any,
+) -> WrightRuntime:
+    """Legacy argparse wrapper; production hosts call ``assemble_runtime``."""
+    return assemble_runtime(runtime_config_from_args(args), **kwargs)
+
+
 def shutdown_runtime(rt: WrightRuntime) -> None:
+    # SessionRunner invokes us when its worker actually exits; direct legacy
+    # callers are harmless too.  Do not double-close MCP/database resources.
+    with rt.shutdown_lock:
+        if rt.shutdown_complete.is_set():
+            return
+        rt.shutdown_complete.set()
     rt.cancellation_event.set()
     if rt.interaction_broker is not None:
         rt.interaction_broker.close()
+    cancelled_tasks = rt.runtime_resources.close()
+    rt.session_state.mark_background_tasks_cancel_requested(
+        cancelled_tasks, "runtime shutdown"
+    )
+    # A selected-but-never-sent image has no conversational meaning and should
+    # not become durable just because the host exits normally.  Referenced
+    # images deliberately remain available for checkpoint resume.
+    referenced = {
+        attachment_id
+        for record in rt.session_state.message_records
+        for attachment_id in record.message.get("attachments", [])
+        if isinstance(attachment_id, str)
+    }
+    for attachment_id, record in list(rt.session_state.attachments.items()):
+        if attachment_id not in referenced:
+            rt.attachment_store.remove(record)
+            del rt.session_state.attachments[attachment_id]
     if rt.agent.checkpoint_store is not None:
         try:
             rt.agent.checkpoint_store.save(rt.session_state)

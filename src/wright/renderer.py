@@ -834,14 +834,14 @@ class ConsoleRenderer(Renderer):
                    用户可 j/k 滚动、/ 搜索、q 退出。
         """
         final_turns = [t for t in session_state.turns if t.route == "final"]
-        pairs = collect_history_pairs(
+        entries = collect_history_entries(
             session_state, max_turns=None if pager else max_turns
         )
-        if not pairs:
+        if not entries:
             return
 
         total_final = len(final_turns)
-        shown = len(pairs)
+        shown = len(entries)
         if pager:
             suffix = f"共 {shown} 轮（完整）"
             title_label = "📜 历史完整记录"
@@ -859,7 +859,7 @@ class ConsoleRenderer(Renderer):
                 )
             )
 
-            for user_text, answer_text in pairs:
+            for user_text, answer_text, attachments in entries:
                 con.print()
                 if user_text:
                     if pager:
@@ -871,6 +871,12 @@ class ConsoleRenderer(Renderer):
                         if len(display_user) > 120:
                             display_user = display_user[:117] + "..."
                         con.print(Text(f"  🧑 {display_user}", style="dim cyan"))
+                for index, attachment in enumerate(attachments, 1):
+                    con.print(Text(
+                        f"  🖼 [{index}] {attachment.filename} "
+                        f"({attachment.width}×{attachment.height})",
+                        style="dim cyan",
+                    ))
 
                 # 回答：pager 模式不截断；摘要模式截 300 字符
                 display_answer = answer_text
@@ -973,6 +979,57 @@ def collect_history_pairs(
         else:
             deduped.append((user_text, answer_text))
     return deduped
+
+
+def collect_history_entries(
+    session_state: Any,
+    *,
+    max_turns: int | None = 5,
+) -> list[tuple[str, str, tuple[Any, ...]]]:
+    """History pairs plus safe, byte-free attachment labels for terminal UIs."""
+    final_turns = [turn for turn in session_state.turns if turn.route == "final"]
+    recent = final_turns if max_turns is None else final_turns[-max_turns:]
+    positions = {record.id: index for index, record in enumerate(session_state.message_records)}
+    registry = getattr(session_state, "attachments", {})
+    entries: list[tuple[str, str, tuple[Any, ...]]] = []
+    for turn in recent:
+        answer = turn.parsed.get("final_answer", "")
+        if not isinstance(answer, str):
+            try:
+                answer = json.dumps(answer, ensure_ascii=False)
+            except (TypeError, ValueError):
+                answer = str(answer)
+        if not answer.strip():
+            continue
+        message: dict[str, Any] | None = None
+        for record in reversed(session_state.message_records[:positions.get(turn.message_id, 0)]):
+            candidate = record.message
+            content = candidate.get("content", "")
+            if candidate.get("role") != "user" or not isinstance(content, str):
+                continue
+            stripped = content.lstrip()
+            if stripped.startswith(("<system-reminder>", "<task-notification>")):
+                continue
+            if stripped.startswith("{") and any(
+                key in stripped[:120] for key in ("tool_results", "verification_feedback")
+            ):
+                continue
+            message = candidate
+            break
+        if message is None:
+            continue
+        attachment_ids = message.get("attachments", ())
+        attachments = tuple(
+            registry[attachment_id]
+            for attachment_id in attachment_ids
+            if isinstance(attachment_ids, list) and attachment_id in registry
+        )
+        entry = (str(message.get("content", "")).strip(), answer.strip(), attachments)
+        if entries and entries[-1][0] == entry[0]:
+            entries[-1] = entry
+        else:
+            entries.append(entry)
+    return entries
 
 
 class SilentRenderer(Renderer):

@@ -1,7 +1,5 @@
 import json
 
-from openai.types.chat import ChatCompletionMessageParam
-
 from .tools.base import ToolCall, ToolResult
 
 # 入站解析(模型输出 → 结构化回合)已搬到 protocol.py。
@@ -17,7 +15,7 @@ def estimate_tokens(text: str) -> int:
     return len(text) // CHARS_PER_TOKEN
 
 
-def estimate_message_tokens(message: ChatCompletionMessageParam) -> int:
+def estimate_message_tokens(message: dict) -> int:
     """估算正文、原生工具参数和供应商推理字段的 token 数。"""
     content = message.get("content")
     count = estimate_tokens(content) if isinstance(content, str) else 0
@@ -26,12 +24,26 @@ def estimate_message_tokens(message: ChatCompletionMessageParam) -> int:
     reasoning = message.get("reasoning_content")
     if isinstance(reasoning, str):
         count += estimate_tokens(reasoning)
+    # Before a provider reports usage we deliberately reserve a conservative
+    # budget for every image.  Base64 length is not a token estimate and must
+    # never be persisted merely to calculate this number.
+    parts = message.get("parts")
+    if isinstance(parts, list):
+        count += 1024 * sum(
+            isinstance(part, dict) and part.get("type") == "image"
+            for part in parts
+        )
     return count
+
+
+def estimate_tools_tokens(tools: tuple[dict, ...] | list[dict]) -> int:
+    """Estimate request schema input separately from history and actual usage."""
+    return estimate_tokens(json.dumps(tools, ensure_ascii=False, sort_keys=True))
 
 
 def build_tool_results_messages(
     tool_tuple: list[tuple[ToolCall, ToolResult]],
-) -> list[ChatCompletionMessageParam]:
+) -> list[dict]:
     """One native result per call, preserving the provider's call ID."""
     return [
         {

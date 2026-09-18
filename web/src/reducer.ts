@@ -1,4 +1,4 @@
-import type { Interaction, ToolState, UiEvent, ViewState } from "./types";
+import type { Attachment, Interaction, ToolState, UiEvent, ViewState } from "./types";
 
 function noticeText(event: UiEvent): string {
   if (event.type === "turn.failed") return `Turn failed: ${String(event.payload.error ?? event.payload.status ?? "unknown error")}`;
@@ -51,6 +51,7 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
     next.active_turn = {
       turn_id: event.turn_id,
       prompt: String(event.payload.prompt ?? ""),
+      attachments: Array.isArray(event.payload.attachments) ? event.payload.attachments as Attachment[] : [],
       reasoning: "",
       content: "",
       tools: [],
@@ -85,7 +86,7 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
       const fallback = event.type === "turn.failed"
         ? `Turn failed: ${String(event.payload.error ?? event.payload.status ?? "unknown error")}`
         : event.type === "turn.cancelled" ? "Turn cancelled." : "";
-      next.history = [...next.history, { user: next.active_turn.prompt, assistant: next.active_turn.content || fallback }];
+      next.history = [...next.history, { user: next.active_turn.prompt, assistant: next.active_turn.content || fallback, attachments: next.active_turn.attachments }];
     }
     next.active_turn = null;
     next.session = { ...next.session, status: "idle", agent_status: event.type.split(".")[1] };
@@ -114,10 +115,13 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
     if (event.payload.command === "turn.submit" && event.payload.queued && !event.payload.duplicate) {
       const commandId = String(event.payload.command_id ?? "");
       if (!next.queued_commands.some((item) => item.command_id === commandId)) {
-        next.queued_commands = [...next.queued_commands, {
+        const queued = {
           command_id: commandId,
           prompt: String(event.payload.prompt ?? ""),
-        }];
+        } as { command_id: string; prompt: string; attachments?: Attachment[] };
+        const attachments = Array.isArray(event.payload.attachments) ? event.payload.attachments as Attachment[] : [];
+        if (attachments.length) queued.attachments = attachments;
+        next.queued_commands = [...next.queued_commands, queued];
       }
       next.queue_depth = next.queued_commands.length;
     } else if (event.payload.command === "turn.cancel_queued") {

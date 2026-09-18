@@ -29,6 +29,19 @@ export const api = {
   close: (id: string) => json(`/api/v1/sessions/${id}/close`, { method: "POST", body: "{}" }),
   archive: (id: string) => json(`/api/v1/sessions/${id}/archive`, { method: "POST", body: "{}" }),
   setModel: (id: string, model: string) => json(`/api/v1/sessions/${id}/model`, { method: "POST", body: JSON.stringify({ model }) }),
+  uploadAttachment: async (id: string, file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    const response = await fetch(`/api/v1/sessions/${id}/attachments`, { method: "POST", credentials: "same-origin", body });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({ detail: response.statusText }));
+      throw new Error(String(detail.detail ?? response.statusText));
+    }
+    return response.json();
+  },
+  deleteAttachment: (id: string, attachmentId: string) => json(`/api/v1/sessions/${id}/attachments/${attachmentId}`, { method: "DELETE" }),
+  attachmentUrl: (id: string, attachmentId: string) => `/api/v1/sessions/${id}/attachments/${attachmentId}`,
+  attachmentThumbnailUrl: (id: string, attachmentId: string) => `/api/v1/sessions/${id}/attachments/${attachmentId}/thumbnail`,
   changes: (id: string) => json<{ local_warning: boolean; baseline: string; changes: Array<{ path: string; status: string }> }>(`/api/v1/sessions/${id}/changes`),
   patch: (id: string, path: string) => json<{ path: string; patch: string; truncated: boolean; binary: boolean }>(`/api/v1/sessions/${id}/changes/${path.split("/").map(encodeURIComponent).join("/")}`),
 };

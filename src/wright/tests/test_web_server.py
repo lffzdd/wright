@@ -18,6 +18,12 @@ class FakeManager:
                 "stream_id": publisher.stream_id,
                 "last_seq": publisher.latest_seq,
             },
+            upload_attachment=lambda filename, data: {
+                "id": "att_test", "filename": filename, "media_type": "image/png",
+                "size": len(data), "sha256": "a" * 64, "width": 1, "height": 1,
+                "storage_path": "session/att_test.png",
+            },
+            remove_attachment=lambda _attachment_id: None,
         )
 
     def project(self):
@@ -141,3 +147,21 @@ def test_set_model_empty_name_is_409(tmp_path):
     )
     assert response.status_code == 409
     assert "cannot be empty" in response.json()["detail"]
+
+
+def test_authenticated_attachment_upload_and_delete(tmp_path):
+    client, _auth = _authenticated_client(tmp_path)
+
+    uploaded = client.post(
+        "/api/v1/sessions/session/attachments",
+        files={"file": ("image.png", b"png-bytes", "image/png")},
+        headers={"origin": "http://testserver"},
+    )
+    removed = client.delete(
+        "/api/v1/sessions/session/attachments/att_test",
+        headers={"origin": "http://testserver"},
+    )
+
+    assert uploaded.status_code == 200
+    assert uploaded.json()["filename"] == "image.png"
+    assert removed.status_code == 200

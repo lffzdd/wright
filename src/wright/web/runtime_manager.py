@@ -3,21 +3,26 @@
 from __future__ import annotations
 
 import argparse
-import os
 import threading
-from collections import deque
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from ..attachments import AttachmentError, AttachmentRecord
 from ..checkpoint import CheckpointError, SessionCheckpointStore
 from ..interaction import InteractionBroker
 from ..paths import project_id, session_dir
 from ..project import ProjectContext
-from ..renderer import SilentRenderer, collect_history_pairs
-from ..runtime import WrightRuntime, build_runtime, shutdown_runtime
+from ..renderer import SilentRenderer
+from ..runtime import (
+    WrightRuntime,
+    assemble_runtime,
+    runtime_config_from_args,
+    shutdown_runtime,
+)
 from ..session_host import process_session_event
-from ..tui.session_control import available_models
+from ..session_models import available_models, process_model_name
+from ..session_service import SessionService, SessionServiceError
 from ..ui_events import EventPublisher
 from ..worktrees import ArchiveResult, WorktreeManager
 
@@ -29,23 +34,22 @@ class RuntimeManagerError(RuntimeError):
 
 
 class SessionHandle:
+    """Web adapter over the shared session service.
+
+    Attachment transport and HTTP snapshot projection are Web concerns; all
+    session commands themselves are delegated to ``SessionService``.
+    """
+
     def __init__(self, runtime: WrightRuntime) -> None:
         self.runtime = runtime
         self.publisher = runtime.publisher
         self.interactions: InteractionBroker = runtime.interaction_broker
-        self._closed = threading.Event()
-        self._commands: set[str] = set()
-        self._command_order: deque[str] = deque(maxlen=2_000)
-        self._command_lock = threading.Lock()
-        self._queued_turns: dict[str, str] = {}
-        self._cancelled_turns: set[str] = set()
-        self._active_turn_command: str | None = None
-        self.thread = threading.Thread(
-            target=self._worker,
-            name=f"wright-web-{runtime.session_state.session_id}",
-            daemon=True,
+        self.service = SessionService(
+            runtime,
+            event_processor=process_session_event,
+            shutdown=shutdown_runtime,
         )
-        self.thread.start()
+        self.service.start()
 
     @property
     def session_id(self) -> str:
@@ -53,191 +57,136 @@ class SessionHandle:
 
     @property
     def closed(self) -> bool:
-        return self._closed.is_set()
+        return self.service.closed
 
-    def _worker(self) -> None:
-        event_queue = self.runtime.event_queue
-        while not self._closed.is_set():
-            event_type, payload = event_queue.get()
-            command_id = (
-                str(payload.get("command_id", ""))
-                if event_type == "USER_INPUT" and isinstance(payload, dict)
-                else ""
-            )
-            if command_id:
-                with self._command_lock:
-                    self._queued_turns.pop(command_id, None)
-                    if command_id in self._cancelled_turns:
-                        self._cancelled_turns.discard(command_id)
-                        cancelled_before_start = True
-                    else:
-                        self._active_turn_command = command_id
-                        cancelled_before_start = False
-                if cancelled_before_start:
-                    self.publisher.publish(
-                        "command.rejected",
-                        {
-                            "command_id": command_id,
-                            "command": "turn.submit",
-                            "reason": "queued instruction cancelled before start",
-                        },
-                    )
-                    continue
-            try:
-                if process_session_event(self.runtime, event_type, payload):
-                    return
-            except Exception as exc:
-                self.runtime.agent_idle.set()
-                self.publisher.publish(
-                    "system.notice", {"text": f"session worker error: {exc}"}
-                )
-            finally:
-                if command_id:
-                    with self._command_lock:
-                        if self._active_turn_command == command_id:
-                            self._active_turn_command = None
+    @property
+    def thread(self):
+        return self.service.runner.thread
 
-    def _remember_command(self, command_id: str) -> bool:
-        with self._command_lock:
-            if command_id in self._commands:
-                return False
-            if len(self._command_order) == self._command_order.maxlen:
-                oldest = self._command_order.popleft()
-                self._commands.discard(oldest)
-            self._command_order.append(command_id)
-            self._commands.add(command_id)
-            return True
+    def _attachment_summaries(self, attachment_ids: list[str]) -> list[dict[str, object]]:
+        if not attachment_ids:
+            return []
+        try:
+            return [record.to_dict() for record in self.runtime.session_state.attachment_records(attachment_ids)]
+        except (AttributeError, ValueError) as exc:
+            raise RuntimeManagerError(str(exc)) from exc
 
-    def submit(self, prompt: str, command_id: str) -> dict[str, Any]:
+    def upload_attachment(self, filename: str, data: bytes) -> dict[str, object]:
         if self.closed:
             raise RuntimeManagerError("session is closed")
-        cleaned = prompt.strip()
-        if not cleaned:
-            raise RuntimeManagerError("prompt cannot be empty")
+        try:
+            record = self.runtime.attachment_store.register_bytes(
+                filename, data, self.runtime.session_state.attachments
+            )
+            self.runtime.session_state.attachments[record.id] = record
+            store = getattr(self.runtime.agent, "checkpoint_store", None)
+            if store is not None:
+                store.save(self.runtime.session_state)
+            return record.to_dict()
+        except AttachmentError as exc:
+            raise RuntimeManagerError(str(exc)) from exc
+
+    def remove_attachment(self, attachment_id: str) -> None:
+        record = self.runtime.session_state.attachments.get(attachment_id)
+        if record is None:
+            raise RuntimeManagerError("attachment not found", status_code=404)
+        if any(
+            attachment_id in (message.message.get("attachments") or [])
+            for message in self.runtime.session_state.message_records
+        ):
+            raise RuntimeManagerError("attachment is already part of conversation history")
+        self.runtime.attachment_store.remove(record)
+        del self.runtime.session_state.attachments[attachment_id]
+        store = getattr(self.runtime.agent, "checkpoint_store", None)
+        if store is not None:
+            store.save(self.runtime.session_state)
+
+    def attachment_path(self, attachment_id: str) -> tuple[AttachmentRecord, Path]:
+        record = self.runtime.session_state.attachments.get(attachment_id)
+        if record is None:
+            raise RuntimeManagerError("attachment not found", status_code=404)
+        try:
+            return record, self.runtime.attachment_store.path_for(record)
+        except AttachmentError as exc:
+            raise RuntimeManagerError(str(exc), status_code=404) from exc
+
+    def attachment_thumbnail_path(self, attachment_id: str) -> tuple[AttachmentRecord, Path]:
+        record = self.runtime.session_state.attachments.get(attachment_id)
+        if record is None:
+            raise RuntimeManagerError("attachment not found", status_code=404)
+        try:
+            return record, self.runtime.attachment_store.thumbnail_path_for(record)
+        except AttachmentError as exc:
+            raise RuntimeManagerError(str(exc), status_code=404) from exc
+
+    def submit(
+        self, prompt: str, command_id: str, attachment_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
         if not command_id:
             raise RuntimeManagerError("command_id is required")
-        fresh = self._remember_command(command_id)
-        queued = not self.runtime.agent_idle.is_set() or not self.runtime.event_queue.empty()
-        if fresh:
-            with self._command_lock:
-                self._queued_turns[command_id] = cleaned
-            self.runtime.event_queue.put((
-                "USER_INPUT",
-                {"prompt": cleaned, "command_id": command_id},
-            ))
-        event = self.publisher.publish(
-            "command.accepted",
-            {
-                "command_id": command_id,
-                "command": "turn.submit",
-                "prompt": cleaned,
-                "queued": queued,
-                "duplicate": not fresh,
-            },
-        )
-        return event.to_dict()
+        try:
+            return self.service.submit(prompt, command_id, attachment_ids)
+        except SessionServiceError as exc:
+            raise RuntimeManagerError(str(exc)) from exc
 
     def cancel(self, command_id: str) -> dict[str, Any]:
         if not command_id:
             raise RuntimeManagerError("command_id is required")
-        fresh = self._remember_command(command_id)
-        if fresh:
-            self.runtime.cancellation_event.set()
-            self.interactions.cancel_pending()
-            with self._command_lock:
-                self._cancelled_turns.update(self._queued_turns)
-        event = self.publisher.publish(
-            "command.accepted",
-            {
-                "command_id": command_id,
-                "command": "turn.cancel",
-                "duplicate": not fresh,
-                "cancelled_queued": len(self._cancelled_turns) if fresh else 0,
-            },
-        )
-        return event.to_dict()
+        try:
+            return self.service.cancel_current(command_id, cancel_queued=True)
+        except SessionServiceError as exc:
+            raise RuntimeManagerError(str(exc)) from exc
 
     def cancel_queued(self, command_id: str, target_command_id: str) -> dict[str, Any]:
-        if not command_id or not target_command_id:
-            raise RuntimeManagerError("command_id and target_command_id are required")
-        fresh = self._remember_command(command_id)
-        with self._command_lock:
-            queued = target_command_id in self._queued_turns
-            if fresh and queued:
-                self._cancelled_turns.add(target_command_id)
-        event_type = "command.accepted" if queued or not fresh else "command.rejected"
-        event = self.publisher.publish(event_type, {
-            "command_id": command_id,
-            "command": "turn.cancel_queued",
-            "target_command_id": target_command_id,
-            "duplicate": not fresh,
-            "reason": "" if queued or not fresh else "queued instruction is no longer pending",
-        })
-        return event.to_dict()
+        try:
+            return self.service.cancel_queued(command_id, target_command_id)
+        except SessionServiceError as exc:
+            raise RuntimeManagerError(str(exc)) from exc
 
     def respond(self, command_id: str, request_id: str, answer: Any) -> dict[str, Any]:
-        if not command_id:
-            raise RuntimeManagerError("command_id is required")
-        fresh = self._remember_command(command_id)
-        resolved = self.interactions.resolve(request_id, answer) if fresh else False
-        event_type = "command.accepted" if resolved or not fresh else "command.rejected"
-        event = self.publisher.publish(event_type, {
-            "command_id": command_id,
-            "command": "interaction.respond",
-            "request_id": request_id,
-            "duplicate": not fresh,
-            "reason": "" if resolved or not fresh else "interaction is no longer pending",
-        })
-        return event.to_dict()
+        try:
+            return self.service.respond_interaction(command_id, request_id, answer)
+        except SessionServiceError as exc:
+            raise RuntimeManagerError(str(exc)) from exc
 
     def snapshot(self) -> dict[str, Any]:
         state = self.runtime.session_state
+        service_snapshot = self.service.snapshot()
+        authoritative_run = service_snapshot["active_run"]
         active: dict[str, Any] | None = None
-        for event in self.publisher.retained_events():
-            if event.type == "turn.started":
-                active = {
-                    "turn_id": event.turn_id,
-                    "prompt": event.payload.get("prompt", ""),
-                    "reasoning": "",
-                    "content": "",
-                    "tools": {},
-                }
-            elif active is not None and event.turn_id in {None, active["turn_id"]}:
-                if event.type == "reasoning.delta":
-                    active["reasoning"] += str(event.payload.get("piece", ""))
-                elif event.type == "content.delta":
-                    active["content"] += str(event.payload.get("piece", ""))
-                elif event.type == "content.final":
-                    active["content"] = event.payload.get("content", "")
-                elif event.type in {"tool.planned", "tool.awaiting_approval", "tool.running"}:
-                    active["tools"][event.payload.get("call_id", "")] = dict(event.payload)
-                elif event.type == "tool.output":
-                    tool = active["tools"].setdefault(event.payload.get("call_id", ""), {})
-                    tool["output"] = tool.get("output", "") + str(event.payload.get("output", ""))
-                elif event.type == "tool.finished":
-                    active["tools"].setdefault(event.payload.get("call_id", ""), {}).update(event.payload)
-                elif event.type in {"turn.completed", "turn.failed", "turn.cancelled"}:
-                    active = None
-        if active is not None:
-            active["tools"] = list(active["tools"].values())
+        if authoritative_run is not None:
+            # This live projection, not the finite UI-event ring, owns stream
+            # accumulation. Reconnection therefore does not require the old
+            # turn.started/content.delta events to still be retained.
+            response = self.runtime.runtime_resources.response_snapshot(
+                authoritative_run["run_id"]
+            ) or {}
+            active = {
+                "run_id": authoritative_run["run_id"],
+                "turn_id": None,
+                "prompt": authoritative_run["goal"],
+                "attachments": [],
+                "reasoning": response.get("reasoning", ""),
+                "content": response.get("content", ""),
+                "tools": response.get("tools") or authoritative_run["tools"],
+            }
         usage = state.task_usage()
-        with self._command_lock:
-            queued_commands = [
-                {"command_id": command_id, "prompt": prompt}
-                for command_id, prompt in self._queued_turns.items()
-                if command_id not in self._cancelled_turns
-            ]
+        queued_commands = [
+            {
+                "command_id": item["command_id"],
+                "prompt": item["prompt"],
+                **({"attachments": item["attachments"]} if item.get("attachments") else {}),
+            }
+            for item in service_snapshot["queued_commands"]
+        ]
         return {
             "stream_id": self.publisher.stream_id,
             "last_seq": self.publisher.latest_seq,
             "session": self.summary(),
-            "history": [
-                {"user": user, "assistant": assistant}
-                for user, assistant in collect_history_pairs(state, max_turns=None)
-            ],
+            "history": self._history(),
             "active_turn": active,
             "plan": state.plan_manager.snapshot(),
-            "pending_interactions": self.interactions.snapshot(),
+            "pending_interactions": service_snapshot["pending_interactions"],
             "notices": [
                 {"id": event.event_id, "type": event.type, **event.payload}
                 for event in self.publisher.retained_events()
@@ -252,70 +201,63 @@ class SessionHandle:
                 "request_prompt_tokens": 0,
                 "request_completion_tokens": 0,
                 "request_total_tokens": 0,
-                "context_tokens": state.context_tokens,
+                "context_tokens": getattr(
+                    state, "request_context_tokens", state.context_tokens
+                ),
                 "context_limit": self.runtime.llm.context_limit,
             },
         }
 
+    def _history(self) -> list[dict[str, Any]]:
+        """Project final turns with the image references of their user turn."""
+        records = getattr(self.runtime.session_state, "message_records", None)
+        if not isinstance(records, list):
+            return []
+        id_to_index = {record.id: index for index, record in enumerate(records)}
+        history: list[dict[str, Any]] = []
+        for turn in self.runtime.session_state.turns:
+            if turn.route != "final":
+                continue
+            answer = turn.parsed.get("final_answer", "")
+            if not isinstance(answer, str):
+                answer = str(answer)
+            if not answer.strip():
+                continue
+            user: dict[str, Any] | None = None
+            for index in range(id_to_index.get(turn.message_id, 0) - 1, -1, -1):
+                candidate = records[index].message
+                if candidate.get("role") != "user":
+                    continue
+                text = candidate.get("content", "")
+                if not isinstance(text, str) or text.lstrip().startswith("<"):
+                    continue
+                user = candidate
+                break
+            if user is None:
+                continue
+            attachment_ids = user.get("attachments", [])
+            attachments = self._attachment_summaries(attachment_ids) if isinstance(attachment_ids, list) else []
+            item: dict[str, Any] = {"user": str(user.get("content", "")).strip(), "assistant": answer.strip()}
+            if attachments:
+                item["attachments"] = attachments
+            if history and history[-1]["user"] == item["user"]:
+                history[-1] = item
+            else:
+                history.append(item)
+        return history
+
     def summary(self) -> dict[str, Any]:
-        state = self.runtime.session_state
-        return {
-            "session_id": state.session_id,
-            "status": "running" if not self.runtime.agent_idle.is_set() else "idle",
-            "agent_status": state.status,
-            "user_goal": state.user_goal,
-            "model": state.model_name,
-            "environment": state.environment,
-            "execution_root": str(state.workspace_dir),
-            "project_root": str(state.project_root or state.workspace_dir),
-            "base_commit": state.base_commit,
-            "branch_name": state.branch_name,
-            "pending_interactions": len(self.interactions.snapshot()),
-            "active": not self.closed,
-            "recoverable": True,
-        }
+        return {**self.service.summary(), "recoverable": True}
 
     def set_model(self, model: str) -> dict[str, Any]:
-        if self.closed:
-            raise RuntimeManagerError("session is closed")
-        if not self.runtime.agent_idle.is_set():
-            raise RuntimeManagerError("cannot change model while turn is running")
-        cleaned = model.strip()
-        if not cleaned:
-            raise RuntimeManagerError("model name cannot be empty")
-        current = str(self.runtime.llm.model)
-        agent_llm = getattr(self.runtime.agent, "llm", None)
-        previous_session_model = self.runtime.session_state.model_name
-        if cleaned != current:
-            self.runtime.llm.model = cleaned
-            if agent_llm is not None and agent_llm is not self.runtime.llm:
-                agent_llm.model = cleaned
-            self.runtime.session_state.model_name = cleaned
-            store = getattr(self.runtime.agent, "checkpoint_store", None)
-            if store is not None:
-                try:
-                    store.save(self.runtime.session_state)
-                except Exception as exc:
-                    self.runtime.llm.model = current
-                    if agent_llm is not None and agent_llm is not self.runtime.llm:
-                        agent_llm.model = current
-                    self.runtime.session_state.model_name = previous_session_model
-                    raise RuntimeManagerError(f"checkpoint failed: {exc}") from exc
-            self.publisher.publish(
-                "session.status_changed",
-                {"session_id": self.session_id, "model": cleaned},
-            )
+        try:
+            self.service.set_model(model)
+        except SessionServiceError as exc:
+            raise RuntimeManagerError(str(exc)) from exc
         return self.summary()
 
-    def close(self) -> None:
-        if self._closed.is_set():
-            return
-        self._closed.set()
-        self.runtime.cancellation_event.set()
-        self.interactions.close()
-        self.runtime.event_queue.put(("EXIT", None))
-        self.thread.join(timeout=5)
-        shutdown_runtime(self.runtime)
+    def close(self) -> bool:
+        return self.service.close(wait_timeout=5)
 
 
 class RuntimeManager:
@@ -333,7 +275,7 @@ class RuntimeManager:
         self._lock = threading.RLock()
 
     def project(self) -> dict[str, Any]:
-        base_model = getattr(self.base_args, "model", None) or os.environ.get("OPENAI_MODEL", "gpt-4o")
+        base_model = process_model_name(getattr(self.base_args, "model", None))
         models = list(available_models(base_model))
         return {
             "project_id": project_id(self.project_root),
@@ -428,8 +370,8 @@ class RuntimeManager:
             )
             broker = InteractionBroker(publisher)
             try:
-                runtime = build_runtime(
-                    self._args(context=context, model=model, resume=resume_session_id),
+                runtime = assemble_runtime(
+                    runtime_config_from_args(self._args(context=context, model=model, resume=resume_session_id)),
                     renderer=SilentRenderer(),
                     project_context=context,
                     publisher=publisher,
@@ -468,12 +410,15 @@ class RuntimeManager:
 
     def close(self, session_id: str) -> dict[str, Any]:
         with self._lock:
-            handle = self._handles.pop(session_id, None)
+            handle = self._handles.get(session_id)
         if handle is None:
             raise RuntimeManagerError("session is not active")
+        finished = handle.close()
         summary = handle.summary()
-        handle.close()
-        return {**summary, "active": False, "status": "closed"}
+        if finished:
+            with self._lock:
+                self._handles.pop(session_id, None)
+        return summary
 
     def archive(self, session_id: str) -> ArchiveResult:
         try:

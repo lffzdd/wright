@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import json
 import sys
-import threading
 from pathlib import Path
-from queue import Full
 from typing import Any, ClassVar
+from uuid import uuid4
 
 from rich.console import Group
 from rich.json import JSON as RichJSON
@@ -23,8 +22,8 @@ from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
 from ..interaction import InteractionRequest
 from ..logger import get_logger
-from ..runtime import WrightRuntime, build_runtime, shutdown_runtime
-from ..session_host import process_session_event
+from ..runtime import WrightRuntime, assemble_runtime, runtime_config_from_args
+from ..session_service import SessionService, SessionServiceError, set_session_model
 from .renderer import (
     AgentEventNotice,
     DraftFreeze,
@@ -66,14 +65,6 @@ def _json_text(value: Any) -> str:
         return json.dumps(value, ensure_ascii=False, indent=2)
     except Exception:
         return str(value)
-
-
-def _fail_interaction(request: InteractionRequest) -> None:
-    value: Any = None if request.kind == "ask_user" else "n"
-    try:
-        request.reply.put_nowait(value)
-    except Full:
-        pass
 
 
 def _context_ring(tokens: int | None, limit: int | None) -> tuple[str, str, str]:
@@ -693,6 +684,16 @@ class WrightTUI(App):
         padding: 0 2 1 2;
     }
 
+    #attachments {
+        display: none;
+        height: auto;
+        margin: 0 1;
+        padding: 0 1;
+        color: #b9c8d8;
+        background: #202a35;
+        border-left: solid #52718f;
+    }
+
     #composer {
         height: 5;
         min-height: 5;
@@ -904,13 +905,15 @@ class WrightTUI(App):
         if not isinstance(rt.renderer, TUIRenderer):
             raise TypeError("TUI host requires TUIRenderer")
         self.renderer = rt.renderer
-        self.session_thread: threading.Thread | None = None
+        self.service: SessionService | None = (
+            SessionService(rt) if hasattr(rt, "publisher") else None
+        )
+        self.session_thread: Any | None = None
         self._draft: AssistantBlock | None = None
         self._reasoning: ReasoningBlock | None = None
         self._tools: dict[str, ToolBlock] = {}
         self._draining = False
         self._active_request: InteractionRequest | None = None
-        self._stop = threading.Event()
         self._scroll_pending = False
         self._slash_completion = SlashCompletion()
 
@@ -924,6 +927,7 @@ class WrightTUI(App):
             yield Static("○", id="context")
         yield VerticalScroll(id="transcript")
         with Vertical(id="composer-wrap"):
+            yield Static("", id="attachments")
             yield Static("", id="slash-suggestions")
             yield MultilineComposer(
                 placeholder="Message Wright…",
@@ -942,42 +946,43 @@ class WrightTUI(App):
         self._seed_history()
         self._refresh_status()
         self.set_interval(0.25, self._refresh_status)
-        self.session_thread = threading.Thread(
-            target=self._session_loop,
-            name="wright-session",
-            daemon=True,
-        )
-        self.session_thread.start()
+        if self.service is not None:
+            self.service.start()
+            self.session_thread = self.service.runner.thread
         self.query_one("#composer", MultilineComposer).focus()
 
     def on_unmount(self) -> None:
-        self._stop.set()
         self.renderer.detach()
-        self._fail_pending_interactions()
-        try:
-            self.rt.event_queue.put_nowait(("EXIT", None))
-        except Exception:
-            pass
+        if self.service is not None:
+            self.service.close(wait_timeout=0)
 
     def _seed_history(self) -> None:
         transcript = self.query_one("#transcript", VerticalScroll)
         if self.rt.resumed:
             sid = self.rt.session_state.session_id
-            status = self.rt.session_state.status
+            status = self.rt.session_state.current_run_status()
             transcript.mount(SystemBlock(f"resumed {sid}  ({status})"))
         session = self.rt.session_state
         records = session.message_records
         positions = {record.id: index for index, record in enumerate(records)}
-        shown_user = ""
+        shown_user: tuple[str, tuple[str, ...]] | None = None
         restored = False
         for turn in session.turns:
             assistant_index = positions.get(turn.message_id)
             if assistant_index is None:
                 continue
-            user_text = self._history_user_before(records, assistant_index)
-            if user_text and user_text != shown_user:
-                transcript.mount(UserBlock(user_text))
-                shown_user = user_text
+            user_text, attachment_ids = self._history_user_before(records, assistant_index)
+            user_key = (user_text, tuple(attachment_ids))
+            if (user_text or attachment_ids) and user_key != shown_user:
+                labels = [
+                    f"[{index}] {record.filename} ({record.width}×{record.height})"
+                    for index, attachment_id in enumerate(attachment_ids, 1)
+                    if (record := session.attachments.get(attachment_id)) is not None
+                ]
+                transcript.mount(UserBlock(
+                    user_text + ("\n🖼 " + "  ".join(labels) if labels else "")
+                ))
+                shown_user = user_key
                 restored = True
 
             assistant = records[assistant_index].message
@@ -1017,7 +1022,7 @@ class WrightTUI(App):
                 ))
                 restored = True
         if restored:
-            if session.status != "running":
+            if session.current_run_status() != "running":
                 usage = session.task_usage()
                 if usage.total_tokens:
                     transcript.mount(TaskUsageBlock(
@@ -1032,7 +1037,7 @@ class WrightTUI(App):
         self._scroll_to_end()
 
     @staticmethod
-    def _history_user_before(records: list[Any], assistant_index: int) -> str:
+    def _history_user_before(records: list[Any], assistant_index: int) -> tuple[str, list[str]]:
         for record in reversed(records[:assistant_index]):
             message = record.message
             if message.get("role") != "user":
@@ -1048,30 +1053,9 @@ class WrightTUI(App):
                 for key in ("tool_results", "verification_feedback")
             ):
                 continue
-            return content.strip()
-        return ""
-
-    def _session_loop(self) -> None:
-        rt = self.rt
-        try:
-            if rt.resumed and rt.session_state.status == "running":
-                rt.agent_idle.clear()
-                try:
-                    rt.agent.continue_run()
-                finally:
-                    rt.agent_idle.set()
-            while not self._stop.is_set():
-                event_type, payload = rt.event_queue.get()
-                if process_session_event(rt, event_type, payload):
-                    break
-        except Exception:
-            logger.exception("tui session loop failed")
-            self.renderer.on_system_notice("session loop failed")
-        if not self._stop.is_set():
-            try:
-                self.call_from_thread(self.exit)
-            except RuntimeError:
-                pass
+            attachment_ids = message.get("attachments", [])
+            return content.strip(), attachment_ids if isinstance(attachment_ids, list) else []
+        return "", []
 
     def _transcript(self) -> VerticalScroll:
         return self.query_one("#transcript", VerticalScroll)
@@ -1192,9 +1176,12 @@ class WrightTUI(App):
                 except Exception:
                     logger.exception("tui interaction failed")
                     result = None if request.kind == "ask_user" else "n"
+                assert self.service is not None
                 try:
-                    request.reply.put_nowait(result)
-                except Full:
+                    self.service.respond_interaction(uuid4().hex, request.request_id, result)
+                except SessionServiceError:
+                    # Closing cancels the modal's request on its own control
+                    # channel; a late UI answer is deliberately ignored.
                     pass
                 self._active_request = None
         finally:
@@ -1238,19 +1225,6 @@ class WrightTUI(App):
             )
         return "n"
 
-    def _fail_pending_interactions(self) -> None:
-        if self._active_request is not None:
-            _fail_interaction(self._active_request)
-            self._active_request = None
-        hub = self.renderer._hub
-        if hub is None:
-            return
-        while True:
-            request = hub.poll()
-            if request is None:
-                break
-            _fail_interaction(request)
-
     def on_multiline_composer_submitted(self, event: MultilineComposer.Submitted) -> None:
         value = event.value.strip()
         if not value:
@@ -1281,7 +1255,11 @@ class WrightTUI(App):
             return
         self._transcript().mount(UserBlock(value))
         self._scroll_to_end()
-        self.rt.event_queue.put(("USER_INPUT", value))
+        try:
+            assert self.service is not None
+            self.service.submit(value)
+        except SessionServiceError as exc:
+            self.renderer.on_system_notice(str(exc))
         self._refresh_status()
 
     def _control_available(self) -> bool:
@@ -1300,11 +1278,8 @@ class WrightTUI(App):
             except Exception as exc:
                 self.renderer.on_system_notice(f"checkpoint failed: {exc}")
                 return
-        self._stop.set()
-        try:
-            self.rt.event_queue.put_nowait(("EXIT", None))
-        except Exception:
-            pass
+        assert self.service is not None
+        self.service.close(wait_timeout=0)
         self.exit(result=request)
 
     async def _choose_resume(self) -> None:
@@ -1330,25 +1305,16 @@ class WrightTUI(App):
         if not self._control_available() or not model:
             return
         current = str(self.rt.llm.model)
-        if model == current:
+        try:
+            if self.service is None:
+                set_session_model(self.rt, model)
+            else:
+                self.service.set_model(model)
+        except SessionServiceError as exc:
+            self.renderer.on_system_notice(str(exc))
             return
-        self.rt.llm.model = model
-        if self.rt.agent.llm is not self.rt.llm:
-            self.rt.agent.llm.model = model
-        previous_session_model = self.rt.session_state.model_name
-        self.rt.session_state.model_name = model
-        store = self.rt.agent.checkpoint_store
-        if store is not None:
-            try:
-                store.save(self.rt.session_state)
-            except Exception as exc:
-                self.rt.llm.model = current
-                if self.rt.agent.llm is not self.rt.llm:
-                    self.rt.agent.llm.model = current
-                self.rt.session_state.model_name = previous_session_model
-                self.renderer.on_system_notice(f"checkpoint failed: {exc}")
-                return
-        self.renderer.on_system_notice(f"model  {current}  →  {model}")
+        if model != current:
+            self.renderer.on_system_notice(f"model  {current}  →  {model}")
         self._refresh_status()
 
     def on_multiline_composer_slash_changed(
@@ -1394,11 +1360,8 @@ class WrightTUI(App):
         suggestions.update("\n".join(lines) + "\n  ↑↓ navigate  ·  tab complete  ·  esc close")
 
     def _request_quit(self) -> None:
-        self._stop.set()
-        try:
-            self.rt.event_queue.put_nowait(("EXIT", None))
-        except Exception:
-            pass
+        if self.service is not None:
+            self.service.close(wait_timeout=0)
         self.exit()
 
     async def action_quit(self) -> None:
@@ -1408,8 +1371,8 @@ class WrightTUI(App):
         if self.rt.agent_idle.is_set():
             self.renderer.on_system_notice("no running task to stop")
             return
-        self.rt.cancellation_event.set()
-        self._fail_pending_interactions()
+        assert self.service is not None
+        self.service.cancel_current()
         screen = self.screen
         if isinstance(screen, PermissionModal):
             screen.dismiss("n")
@@ -1471,6 +1434,17 @@ class WrightTUI(App):
             status_state.set_class(not idle, "running")
 
             self.query_one("#status-meta", Static).update("  ·  ".join(meta_parts))
+            attachment_bar = self.query_one("#attachments", Static)
+            drafts = getattr(self.rt, "draft_attachments", None)
+            pending = drafts.summaries() if drafts is not None else []
+            if pending:
+                attachment_bar.update("Attached: " + "  ".join(
+                    f"[{index}] {record.filename} ({record.width}×{record.height})"
+                    for index, record in enumerate(pending, 1)
+                ))
+                attachment_bar.display = True
+            else:
+                attachment_bar.display = False
             indicator = self.query_one("#context", Static)
             indicator.update(context)
             indicator.tooltip = tooltip
@@ -1504,7 +1478,7 @@ def run_tui(args: Any) -> None:
     renderer.bind_interaction(InteractionHub())
     active_args = args
     while True:
-        rt = build_runtime(active_args, renderer=renderer)
+        rt = assemble_runtime(runtime_config_from_args(active_args), renderer=renderer)
         app = WrightTUI(rt)
         transition: SessionControlRequest | None = None
         try:
@@ -1514,15 +1488,10 @@ def run_tui(args: Any) -> None:
             elif rt.agent.checkpoint_store:
                 print(f"💾 会话已保存 (session_id: {rt.session_state.session_id})")
         finally:
-            app._stop.set()
-            try:
-                rt.event_queue.put_nowait(("EXIT", None))
-            except Exception:
-                pass
-            thread = app.session_thread
-            if thread is not None and thread.is_alive():
-                thread.join(timeout=2.0)
-            shutdown_runtime(rt)
+            stopped = app.service.close(wait_timeout=2.0) if app.service is not None else True
+        if transition is not None and not stopped:
+            print("会话仍在关闭中；尚未安全退出，无法切换会话。")
+            return
         if transition is None:
             return
         active_args = runtime_args_for_transition(active_args, transition)

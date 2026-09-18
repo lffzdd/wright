@@ -9,6 +9,7 @@ import {
   FileCode,
   GitBranch,
   HardDrives,
+  Paperclip,
   PaperPlaneRight,
   Plus,
   SidebarSimple,
@@ -23,7 +24,7 @@ import { DiffViewer } from "./DiffViewer";
 import { MarkdownContent } from "./Markdown";
 import { api, bootstrap } from "./api";
 import { applyEvent } from "./reducer";
-import type { Interaction, SessionSummary, Snapshot, UiEvent, ViewState } from "./types";
+import type { Attachment, Interaction, SessionSummary, Snapshot, UiEvent, ViewState } from "./types";
 
 type InspectorTab = "changes" | "plan" | "details";
 
@@ -262,6 +263,16 @@ function InteractionCard({ interaction, respond }: { interaction: Interaction; r
   );
 }
 
+function MessageAttachments({ sessionId, attachments }: { sessionId: string; attachments?: Attachment[] }) {
+  if (!attachments?.length) return null;
+  return <div className="message-attachments">{attachments.map((attachment) => (
+    <a key={attachment.id} href={api.attachmentUrl(sessionId, attachment.id)} target="_blank" rel="noreferrer" title={`${attachment.filename} · ${attachment.width}×${attachment.height}`}>
+      <img src={api.attachmentThumbnailUrl(sessionId, attachment.id)} alt={attachment.filename} />
+      <span>{attachment.filename}</span>
+    </a>
+  ))}</div>;
+}
+
 function Timeline({ state, respond, cancelQueued }: { state: ViewState; respond: (requestId: string, answer: unknown) => void; cancelQueued: (commandId: string) => void }) {
   const bottom = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -275,11 +286,11 @@ function Timeline({ state, respond, cancelQueued }: { state: ViewState; respond:
         <p>Ask Wright to inspect, change, or verify the project. Tools and diffs stay visible while it works.</p>
       </div>}
       {state.history.map((turn, index) => <div className="turn" key={`${index}-${turn.user.slice(0, 20)}`}>
-        <div className="message user-message"><span>You</span><p>{turn.user}</p></div>
+        <div className="message user-message"><span>You</span>{turn.user && <p>{turn.user}</p>}<MessageAttachments sessionId={state.session.session_id} attachments={turn.attachments} /></div>
         <div className="message assistant-message"><span>Wright</span><MarkdownContent content={turn.assistant} /></div>
       </div>)}
       {state.active_turn && <div className="turn active-turn">
-        <div className="message user-message"><span>You</span><p>{state.active_turn.prompt}</p></div>
+        <div className="message user-message"><span>You</span>{state.active_turn.prompt && <p>{state.active_turn.prompt}</p>}<MessageAttachments sessionId={state.session.session_id} attachments={state.active_turn.attachments} /></div>
         {state.active_turn.reasoning && <details className="reasoning" open={!state.active_turn.content}>
           <summary><Brain size={16} />Reasoning</summary>
           <div>{state.active_turn.reasoning}</div>
@@ -291,7 +302,7 @@ function Timeline({ state, respond, cancelQueued }: { state: ViewState; respond:
       {state.queued_commands.length > 0 && <section className="queue-list" aria-label="Queued instructions">
         <strong>{state.queued_commands.length} queued instruction{state.queued_commands.length === 1 ? "" : "s"}</strong>
         {state.queued_commands.map((item) => <div className="queue-item" key={item.command_id}>
-          <span>{item.prompt}</span>
+          <span>{item.prompt || "Attached images"}{item.attachments?.length ? ` · ${item.attachments.length} image${item.attachments.length === 1 ? "" : "s"}` : ""}</span>
           <button type="button" className="button subtle" onClick={() => cancelQueued(item.command_id)}>Remove</button>
         </div>)}
       </section>}
@@ -301,22 +312,49 @@ function Timeline({ state, respond, cancelQueued }: { state: ViewState; respond:
   );
 }
 
-function Composer({ running, submit, cancel }: { running: boolean; submit: (prompt: string) => void; cancel: () => void }) {
+function Composer({ sessionId, running, submit, cancel }: { sessionId: string; running: boolean; submit: (prompt: string, attachmentIds: string[]) => void; cancel: () => void }) {
   const [value, setValue] = useState("");
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    setValue("");
+    setAttachments([]);
+    setError("");
+  }, [sessionId]);
+  const upload = async (files: FileList | File[]) => {
+    const selected = Array.from(files);
+    if (!selected.length) return;
+    setUploading(true); setError("");
+    try {
+      const uploaded = await Promise.all(selected.map((file) => api.uploadAttachment(sessionId, file) as Promise<Attachment>));
+      setAttachments((current) => [...current, ...uploaded]);
+    } catch (reason) { setError(String(reason)); }
+    finally { setUploading(false); }
+  };
+  const remove = async (attachment: Attachment) => {
+    try { await api.deleteAttachment(sessionId, attachment.id); setAttachments((current) => current.filter((item) => item.id !== attachment.id)); }
+    catch (reason) { setError(String(reason)); }
+  };
   const send = (event: FormEvent) => {
     event.preventDefault();
-    if (!value.trim()) return;
-    submit(value.trim());
+    if (!value.trim() && !attachments.length) return;
+    submit(value.trim(), attachments.map((attachment) => attachment.id));
     setValue("");
+    setAttachments([]);
   };
-  return <form className="composer" onSubmit={send}>
-    <textarea aria-label="Message Wright" value={value} onChange={(event) => setValue(event.target.value)} placeholder={running ? "Queue another instruction…" : "Message Wright…"} rows={2} onKeyDown={(event) => {
+  return <form className="composer" onSubmit={send} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); upload(event.dataTransfer.files); }}>
+    <input ref={input} className="file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => { if (event.target.files) upload(event.target.files); event.target.value = ""; }} />
+    {attachments.length > 0 && <div className="composer-attachments">{attachments.map((attachment) => <div className="composer-attachment" key={attachment.id}><img src={api.attachmentThumbnailUrl(sessionId, attachment.id)} alt="" /><span>{attachment.filename}</span><button type="button" onClick={() => remove(attachment)} aria-label={`Remove ${attachment.filename}`}><X size={12} /></button></div>)}</div>}
+    <textarea aria-label="Message Wright" value={value} onPaste={(event) => { if (event.clipboardData.files.length) upload(event.clipboardData.files); }} onChange={(event) => setValue(event.target.value)} placeholder={running ? "Queue another instruction…" : "Message Wright…"} rows={2} onKeyDown={(event) => {
       if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
     }} />
     <div className="composer-actions">
-      <span>Enter to send · Shift+Enter for newline</span>
+      <button type="button" className="icon-button" title="Attach images" onClick={() => input.current?.click()}><Paperclip size={16} /></button>
+      <span>{error || (uploading ? "Uploading images…" : "Drop, paste, or attach images · Enter to send · Shift+Enter for newline")}</span>
       {running && <button type="button" className="button stop" onClick={cancel}><Square size={13} weight="fill" />Stop</button>}
-      <button className="button primary" disabled={!value.trim()}><PaperPlaneRight size={15} />Send</button>
+      <button className="button primary" disabled={uploading || (!value.trim() && !attachments.length)}><PaperPlaneRight size={15} />Send</button>
     </div>
   </form>;
 }
@@ -588,7 +626,7 @@ export default function App() {
             respond={(requestId, answer) => send({ type: "interaction.respond", command_id: commandId(), request_id: requestId, answer })}
             cancelQueued={(targetCommandId) => send({ type: "turn.cancel_queued", command_id: commandId(), target_command_id: targetCommandId })}
           />
-          <Composer running={Boolean(running)} submit={(prompt) => send({ type: "turn.submit", command_id: commandId(), prompt })} cancel={() => send({ type: "turn.cancel", command_id: commandId() })} />
+          <Composer sessionId={state.session.session_id} running={Boolean(running)} submit={(prompt, attachmentIds) => send({ type: "turn.submit", command_id: commandId(), prompt, attachment_ids: attachmentIds })} cancel={() => send({ type: "turn.cancel", command_id: commandId() })} />
         </> : <div className="no-session"><TerminalWindow size={36} weight="duotone" /><h2>No session selected</h2><p>Create an isolated task or resume a saved checkpoint.</p><button className="button primary" onClick={() => setDialog(true)}><Plus size={15} />New session</button></div>}
       </main>
       {state && selected ? <Inspector state={state} sessionId={selected} open={inspectorOpen} close={() => setInspectorOpen(false)} /> : <aside className="inspector empty-inspector"><FileCode size={24} /><p>Changes, plan, and details appear here.</p></aside>}

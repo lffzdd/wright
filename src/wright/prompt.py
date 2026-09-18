@@ -21,9 +21,10 @@ def build_system_prompt(tools: Sequence[Tool], memory_section: str = "") -> str:
         if "read_file" in names:
             edit_advice = (
                 "Prefer edit_file for unique in-place replacements; set replace_all to "
-                "replace every occurrence. Read the file with read_file before edit_file. "
-                "read_file prefixes each line with N|; do not copy those prefixes into "
-                "edit_file old_text. Use write_file to create a file or rewrite it whole."
+                "replace every occurrence. Read the file with read_file before edit_file "
+                "or before overwriting it with write_file. read_file prefixes each line "
+                "with N|; do not copy those prefixes into edit_file old_text. Use "
+                "write_file to create a file or rewrite it whole."
             )
         paragraphs.append(edit_advice)
     if "execute_command" in names:

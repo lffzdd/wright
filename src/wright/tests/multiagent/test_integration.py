@@ -8,9 +8,9 @@ from ...coordination import AgentControlConfig, AgentControlPlane
 from ...events import UsageEvent
 from ...executor import ToolExecutor
 from ...renderer import SilentRenderer
-from ...session import SessionState
+from ...session import Session
 from ...subagent import build_agent_tools, make_spawn_agent_tool
-from ...tools.base import ToolCall, ToolRuntime
+from ...tools.base import ToolCall, tool_runtime_for_session
 from ...tools.command_tools import execute_command
 
 
@@ -40,7 +40,7 @@ def test_nested_agents_form_one_shared_task_tree(tmp_path):
         _final("outer done"),
         _final("root done"),
     ])
-    session = SessionState.create("root", tmp_path)
+    session = Session.create("root", tmp_path)
     tools = build_agent_tools(
         llm, [], max_depth=2, render_subagents=False
     )
@@ -71,7 +71,7 @@ class UsageLLM:
 
 
 def test_shared_token_budget_stops_child_before_accepting_final(tmp_path):
-    session = SessionState.create("root", tmp_path)
+    session = Session.create("root", tmp_path)
     session.control_plane = AgentControlPlane(
         AgentControlConfig(max_tokens_per_turn=10)
     )
@@ -79,12 +79,12 @@ def test_shared_token_budget_stops_child_before_accepting_final(tmp_path):
     spawn = make_spawn_agent_tool(
         UsageLLM(), [], max_depth=1, render_subagents=False
     )
-    runtime = ToolRuntime(
+    runtime = tool_runtime_for_session(
+        session,
         tool_name="spawn_agent",
         tool_call_id="call_1",
         workspace_dir=tmp_path,
         cwd_provider=session.get_cwd,
-        session_state=session,
     )
 
     result = spawn.call({"task": "expensive"}, runtime)
@@ -105,7 +105,7 @@ class SlowFinalLLM:
 
 
 def test_executor_deadline_propagates_to_child_control_state(tmp_path):
-    session = SessionState.create("root", tmp_path)
+    session = Session.create("root", tmp_path)
     session.begin_user_turn("root")
     spawn = make_spawn_agent_tool(
         SlowFinalLLM(), [], max_depth=1, child_timeout=0.01,
@@ -114,7 +114,7 @@ def test_executor_deadline_propagates_to_child_control_state(tmp_path):
     executor = ToolExecutor(
         {"spawn_agent": spawn},
         tool_timeout=0.01,
-        session_state=session,
+        session=session,
     )
 
     outcome = executor.execute([
@@ -130,7 +130,7 @@ def test_executor_deadline_propagates_to_child_control_state(tmp_path):
 def test_control_plane_changes_are_checkpointed_and_live_tasks_recover_unknown(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    session = SessionState.create("root", workspace)
+    session = Session.create("root", workspace)
     session.begin_user_turn("root")
     store = SessionCheckpointStore(tmp_path / "checkpoints")
     Agent(
@@ -158,7 +158,7 @@ def test_control_plane_changes_are_checkpointed_and_live_tasks_recover_unknown(t
 
 def test_spawn_emits_structured_lifecycle_events(tmp_path):
     events = []
-    session = SessionState.create("root", tmp_path)
+    session = Session.create("root", tmp_path)
     session.begin_user_turn("root")
     spawn = make_spawn_agent_tool(
         ScriptLLM([_final("done")]),
@@ -166,12 +166,12 @@ def test_spawn_emits_structured_lifecycle_events(tmp_path):
         max_depth=1,
         render_subagents=False,
     )
-    runtime = ToolRuntime(
+    runtime = tool_runtime_for_session(
+        session,
         tool_name="spawn_agent",
         tool_call_id="call_1",
         workspace_dir=tmp_path,
         cwd_provider=session.get_cwd,
-        session_state=session,
         emit_progress=events.append,
     )
 
@@ -183,12 +183,12 @@ def test_spawn_emits_structured_lifecycle_events(tmp_path):
 
 
 def test_child_runtime_cannot_leave_background_processes(tmp_path):
-    session = SessionState.create("child", tmp_path)
-    runtime = ToolRuntime(
+    session = Session.create("child", tmp_path)
+    runtime = tool_runtime_for_session(
+        session,
         tool_name="execute_command",
         workspace_dir=tmp_path,
         cwd_provider=session.get_cwd,
-        session_state=session,
         allow_background_tasks=False,
     )
 

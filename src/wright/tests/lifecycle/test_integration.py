@@ -7,9 +7,9 @@ from wright.tests.responses import event, response
 from ...agent import Agent
 from ...lifecycle import HookRegistration, LifecycleManager, TraceRecorder
 from ...renderer import SilentRenderer
-from ...session import SessionState
+from ...session import Session
 from ...subagent import make_spawn_agent_tool
-from ...tools.base import Tool, ToolResult, ToolRuntime
+from ...tools.base import Tool, ToolResult, tool_runtime_for_session
 
 
 def _final(answer):
@@ -17,7 +17,7 @@ def _final(answer):
 
 
 class ScriptLLM:
-    context_limit = 100
+    context_limit = 128_000
 
     def __init__(self, script):
         self.script = list(script)
@@ -52,7 +52,7 @@ class RecordingMemory:
 def test_agent_emits_root_lifecycle_and_compaction_events(tmp_path):
     recorder = TraceRecorder(tmp_path / "trace.jsonl")
     lifecycle = LifecycleManager("session", recorder)
-    session = SessionState.create("goal", tmp_path)
+    session = Session.create("goal", tmp_path)
     session.active_deferred_tools = ["specialized_tool"]
     specialized = Tool(
         name="specialized_tool",
@@ -61,8 +61,10 @@ def test_agent_emits_root_lifecycle_and_compaction_events(tmp_path):
         call=lambda args, runtime: ToolResult.success(),
         defer_to_model=True,
     )
+    llm = ScriptLLM([_final("done")])
+    llm.context_limit = 5_000
     agent = Agent(
-        ScriptLLM([_final("done")]),
+        llm,
         [specialized],
         session,
         SilentRenderer(),
@@ -72,9 +74,8 @@ def test_agent_emits_root_lifecycle_and_compaction_events(tmp_path):
     )
     session.append_message({
         "role": "tool", "tool_call_id": "old",
-        "content": json.dumps({"ok": True, "data": "x" * 500}),
+        "content": json.dumps({"ok": True, "data": "x" * 40_000}),
     })
-    session.context_tokens = 80
 
     assert agent.run("do it") == "done"
     assert session.active_deferred_tools == []
@@ -108,7 +109,7 @@ def test_agent_stop_hook_can_reject_candidate_and_continue(tmp_path):
     agent = Agent(
         ScriptLLM([_final("first"), _final("second")]),
         [],
-        SessionState.create("goal", tmp_path),
+        Session.create("goal", tmp_path),
         SilentRenderer(),
         lifecycle=lifecycle,
     )
@@ -120,14 +121,14 @@ def test_agent_stop_hook_can_reject_candidate_and_continue(tmp_path):
 def test_llm_failure_is_traced_without_destroying_resumable_state(tmp_path):
     recorder = TraceRecorder(tmp_path / "trace.jsonl")
     lifecycle = LifecycleManager("session", recorder)
-    session = SessionState.create("goal", tmp_path)
+    session = Session.create("goal", tmp_path)
     agent = Agent(
         BrokenLLM(), [], session, SilentRenderer(), lifecycle=lifecycle
     )
 
     with pytest.raises(RuntimeError, match="provider unavailable"):
         agent.run("do it")
-    assert session.status == "running"
+    assert session.current_run_status() == "running"
     assert [row["event"] for row in recorder.read()] == [
         "user_prompt_submit",
         "agent_start",
@@ -139,7 +140,7 @@ def test_llm_failure_is_traced_without_destroying_resumable_state(tmp_path):
 def test_subagent_uses_shared_lifecycle_with_agent_identity(tmp_path):
     recorder = TraceRecorder(tmp_path / "trace.jsonl")
     lifecycle = LifecycleManager("root-session", recorder)
-    root = SessionState.create("root", tmp_path)
+    root = Session.create("root", tmp_path)
     root.begin_user_turn("root")
     spawn = make_spawn_agent_tool(
         ScriptLLM([_final("child done")]),
@@ -150,12 +151,12 @@ def test_subagent_uses_shared_lifecycle_with_agent_identity(tmp_path):
 
     result = spawn.call(
         {"task": "child"},
-        ToolRuntime(
+        tool_runtime_for_session(
+            root,
             tool_name="spawn_agent",
             tool_call_id="call_1",
             workspace_dir=tmp_path,
             cwd_provider=root.get_cwd,
-            session_state=root,
             lifecycle=lifecycle,
         ),
     )
@@ -175,7 +176,7 @@ def test_subagent_uses_shared_lifecycle_with_agent_identity(tmp_path):
 def test_runtime_notification_preserves_user_turn_and_defers_episode(tmp_path):
     recorder = TraceRecorder(tmp_path / "trace.jsonl")
     lifecycle = LifecycleManager("session", recorder)
-    session = SessionState.create("placeholder", tmp_path)
+    session = Session.create("placeholder", tmp_path)
     memory = RecordingMemory()
     agent = Agent(
         ScriptLLM([_final("initial answer"), _final("background incorporated")]),
@@ -197,6 +198,8 @@ def test_runtime_notification_preserves_user_turn_and_defers_episode(tmp_path):
     session.plan_manager.create_plan("goal", ["wait for background"])
 
     assert agent.run("real user goal") == "initial answer"
+    original_run = session.active_run()
+    assert original_run is not None and original_run.status == "completed"
     original_boundary = session.active_turn_start_message_index
     original_plan = session.plan_manager.snapshot()
     assert memory.finalized == []
@@ -217,7 +220,13 @@ def test_runtime_notification_preserves_user_turn_and_defers_episode(tmp_path):
         },
     }) == "background incorporated"
 
-    assert session.user_goal == "real user goal"
+    assert session.current_goal() == "real user goal"
+    continuation = session.active_run()
+    assert continuation is not None
+    assert continuation.run_id != original_run.run_id
+    assert continuation.parent_run_id == original_run.run_id
+    assert continuation.root_run_id == original_run.root_run_id
+    assert original_run.status == "completed"
     assert session.agent_root_turn_id == expected_turn_id
     assert session.active_turn_start_message_index == original_boundary
     assert session.plan_manager.snapshot() == original_plan

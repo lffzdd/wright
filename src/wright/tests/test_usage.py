@@ -8,9 +8,10 @@ from wright.checkpoint import SessionCheckpointStore
 from wright.events import UsageEvent
 from wright.memory.llm_util import metered_events
 from wright.renderer import ConsoleRenderer, SilentRenderer
-from wright.session import SessionState, UsageRecord
+from wright.session import Session, UsageRecord
 from wright.tests.responses import response
 from wright.tools.base import Tool, ToolCall, ToolResult
+from wright.util import estimate_message_tokens
 from wright.verifier import Verifier
 
 
@@ -37,18 +38,22 @@ def test_usage_after_tool_results_and_verifier(tmp_path):
             yield UsageEvent({'prompt_tokens': 100, 'completion_tokens': 20})
             yield response(calls=[{'name': 'read', 'arguments': {}}]) if self.calls == 1 else response(content='done')
 
-    session = SessionState.create('test', tmp_path)
+    session = Session.create('test', tmp_path)
     renderer = Capture()
     tool = Tool('read', 'read', {'type': 'object', 'properties': {}}, lambda args, runtime: ToolResult.success('x' * 400))
     agent = Agent(LLM(), [tool], session, renderer, verifier=Verifier())
     assert agent.run('test') == 'done'
     assert len(renderer.requests) == 2  # Intermediate snapshots do not print twice.
     assert renderer.summaries == [(200, 40, 240)]
-    assert session.context_tokens == 120
+    assert session.last_usage == UsageRecord(100, 20, 120)
+    assert session.context_tokens == sum(
+        estimate_message_tokens(record.message)
+        for record in session.message_records
+    )
 
 
 def test_task_totals_include_descendants_once_and_survive_resume(tmp_path):
-    session = SessionState.create('old', tmp_path)
+    session = Session.create('old', tmp_path)
     session.add_usage(UsageRecord(90, 10, 100))
     session.begin_user_turn('new')
     session.add_usage(UsageRecord(10, 5, 15))
@@ -186,7 +191,7 @@ def test_console_live_takes_a_snapshot_not_a_callback(monkeypatch):
 def test_legacy_checkpoint_derives_task_boundary(tmp_path):
     from wright.checkpoint import _deserialize_session, _serialize_session
 
-    session = SessionState.create('old', tmp_path)
+    session = Session.create('old', tmp_path)
     for goal, usage in [('old', UsageRecord(90, 10, 100)), ('new', UsageRecord(10, 5, 15))]:
         session.begin_user_turn(goal)
         turn = session.record_assistant_turn(assistant_raw='done', parsed={}, route='final')
@@ -213,7 +218,7 @@ def test_runtime_event_summary_waits_for_memory_finalization(tmp_path):
             self.usage_observer(UsageRecord(30, 10, 40))
             return {'episode_id': 'episode'}
 
-    session = SessionState.create('task', tmp_path)
+    session = Session.create('task', tmp_path)
     session.begin_user_turn('task')
     renderer = Capture()
     agent = Agent(LLM(), [], session, renderer, memory=Memory())

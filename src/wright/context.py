@@ -1,122 +1,200 @@
-"""上下文压缩:token 逼近上限时,折叠旧的工具结果以腾出上下文。
+"""Build immutable request context from durable conversation records.
 
-这一块从 Agent 里独立出来,职责单一——只认 message_records(wire 记录)、
-一个 context_tokens(running total)和 context_limit,不依赖完整 SessionState,
-因此可以拿一组 MessageRecord + int 直接单测。
-
-折叠是【就地改写】MessageRecord.message;调用方(Agent)负责把返回的 token_savings
-从 session 的 running total 里扣掉。
-
-compaction 可以改写、删除、合并非 assistant records;被 TurnRecord.message_id
-引用的 assistant record 必须保留,除非未来把 assistant 原文归档到 TurnRecord。
-
-原生工具结果可折叠正文，但必须保留 role=tool 和 tool_call_id。
+Session records are facts. A ``ContextView`` is a disposable, deep-copied
+projection of those facts for exactly one model request. Compression therefore
+cannot rewrite history, checkpoint data, UI transcript, or verification input.
 """
 
-import json
+from __future__ import annotations
 
-from openai.types.chat import ChatCompletionMessageParam
+import json
+from collections.abc import Sequence
+from copy import deepcopy
+from dataclasses import dataclass
+from typing import Any
 
 from .renderer import Renderer
 from .session import MessageRecord
-from .util import estimate_message_tokens
+from .util import estimate_message_tokens, estimate_tools_tokens
+
+
+class ContextBudgetExceeded(ValueError):
+    """The deterministic projection cannot safely fit the request budget."""
+
+
+@dataclass(frozen=True)
+class ContextEntry:
+    """One request message and its stable durable-record reference."""
+
+    record_id: str | None
+    message: dict[str, Any]
+    source: str
+
+
+@dataclass(frozen=True)
+class ContextView:
+    """A request-scoped projection with no mutable aliases into Session."""
+
+    entries: tuple[ContextEntry, ...]
+    tools: tuple[dict[str, Any], ...]
+    estimated_tokens: int
+    history_tokens: int
+    transient_tokens: int
+    tool_schema_tokens: int
+    output_reserve_tokens: int
+    folded_record_ids: tuple[str, ...] = ()
+    over_budget: bool = False
+
+    @property
+    def messages(self) -> list[dict[str, Any]]:
+        """Return a fresh copy for adapters which may normalize wire fields."""
+        return [deepcopy(entry.message) for entry in self.entries]
 
 
 class ContextCompactor:
+    """Deterministically fold old tool results in a ContextView only."""
+
     def __init__(
         self,
         renderer: Renderer,
         context_watermark: float = 0.75,
         keep_recent_tool_results: int = 3,
-    ):
+    ) -> None:
         self.renderer = renderer
         self.context_watermark = context_watermark
         self.keep_recent_tool_results = keep_recent_tool_results
 
-    def compact_if_needed(
+    def project(
         self,
-        message_records: list[MessageRecord],
-        context_tokens: int,
+        entries: Sequence[ContextEntry],
+        *,
+        estimated_tokens: int,
         context_limit: int | None,
-    ) -> tuple[int, int]:
-        """超水位就折叠旧工具结果,返回 (折叠条数, 省下的 token 数)。
+    ) -> tuple[tuple[ContextEntry, ...], tuple[str, ...]]:
+        """Return folded copies when the watermark is exceeded.
 
-        调用方拿到 token_savings 后应 context_tokens -= savings 来维护 running total。
-        只要越过水位线就 on_context_compact 上报一次——哪怕没有可折叠的旧结果
-        (folded_count=0),也要让用户知道"上下文吃紧了但腾不出空间"。
+        Tool result messages remain in place with the same call id. This keeps
+        native function-call/result ordering valid for both provider adapters.
         """
-        if context_limit is None:
-            return 0, 0
-
-        if context_tokens <= context_limit * self.context_watermark:
-            return 0, 0
-
-        folded_count, token_savings = self._fold_old_tool_results(message_records)
-        self.renderer.on_context_compact(
-            folded_count,
-            context_tokens,
-            context_limit,
-            self.context_watermark,
-        )
-        return folded_count, token_savings
-
-    @staticmethod
-    def _is_tool_result_message(msg: ChatCompletionMessageParam) -> bool:
-        return (
-            msg.get("role") == "tool"
-            and bool(msg.get("tool_call_id"))
-            and isinstance(msg.get("content"), str)
-        )
-
-    def _fold_old_tool_results(
-        self, message_records: list[MessageRecord]
-    ) -> tuple[int, int]:
-        """压缩旧工具结果,保留最近 keep_recent 条完整结果。
-
-        返回 (折叠条数, 省下的估算 token 数)。token_savings 用来让调用方
-        从 running total 里扣减——折叠是就地改写 content,省下的就是
-        (旧 content 估算 - 新 content 估算) 的差值。
-        """
-        keep_recent = max(0, self.keep_recent_tool_results)
-        tool_result_indexes = [
-            idx
-            for idx, record in enumerate(message_records)
-            if self._is_tool_result_message(record.message)
+        copied = [
+            ContextEntry(entry.record_id, deepcopy(entry.message), entry.source)
+            for entry in entries
         ]
-        indexes_to_fold = (
-            tool_result_indexes[:-keep_recent] if keep_recent else tool_result_indexes
-        )
+        if (
+            context_limit is None
+            or estimated_tokens <= context_limit * self.context_watermark
+        ):
+            return tuple(copied), ()
 
-        folded_count = 0
-        token_savings = 0
-        for idx in indexes_to_fold:
-            msg = message_records[idx].message
-            content = msg.get("content")
+        candidates = [
+            index
+            for index, entry in enumerate(copied)
+            if self._is_tool_result_message(entry.message)
+        ]
+        keep_recent = max(0, self.keep_recent_tool_results)
+        fold_indexes = candidates[:-keep_recent] if keep_recent else candidates
+        folded: list[str] = []
+        for index in fold_indexes:
+            entry = copied[index]
+            content = entry.message.get("content")
             if not isinstance(content, str):
                 continue
-
             try:
-                content_json = json.loads(content)
+                raw = json.loads(content)
             except json.JSONDecodeError:
                 continue
-
-            if not isinstance(content_json, dict) or content_json.get("folded"):
+            if not isinstance(raw, dict) or raw.get("folded"):
                 continue
-
-            old_tokens = estimate_message_tokens(msg)
-            folded_content = json.dumps({
-                "ok": content_json.get("ok", True),
-                "err": content_json.get("err", ""),
-                "data": "[旧工具结果已折叠以节省上下文]",
-                "folded": True,
-            }, ensure_ascii=False)
-            if len(folded_content) >= len(content):
+            replacement = json.dumps(
+                {
+                    "ok": raw.get("ok", True),
+                    "err": raw.get("err", ""),
+                    "data": "[older tool result folded for this request]",
+                    "folded": True,
+                },
+                ensure_ascii=False,
+            )
+            if len(replacement) >= len(content):
                 continue
-            msg["content"] = folded_content
-            folded_count += 1
+            entry.message["content"] = replacement
+            if entry.record_id is not None:
+                folded.append(entry.record_id)
 
-            # 折叠后的估算差值就是省下的 token
-            new_tokens = estimate_message_tokens(msg)
-            token_savings += old_tokens - new_tokens
+        self.renderer.on_context_compact(
+            len(folded), estimated_tokens, context_limit, self.context_watermark
+        )
+        return tuple(copied), tuple(folded)
 
-        return folded_count, token_savings
+    @staticmethod
+    def _is_tool_result_message(message: dict[str, Any]) -> bool:
+        return (
+            message.get("role") == "tool"
+            and isinstance(message.get("tool_call_id"), str)
+            and bool(message["tool_call_id"])
+            and isinstance(message.get("content"), str)
+        )
+
+
+class ContextBuilder:
+    """Build the one-way durable-record -> request-context projection."""
+
+    def __init__(self, compactor: ContextCompactor) -> None:
+        self.compactor = compactor
+
+    def build(
+        self,
+        records: Sequence[MessageRecord],
+        *,
+        tools: Sequence[dict[str, Any]],
+        reminders: Sequence[dict[str, Any]] = (),
+        context_limit: int | None = None,
+        output_reserve_tokens: int | None = None,
+    ) -> ContextView:
+        entries = tuple(
+            ContextEntry(record.id, deepcopy(record.message), record.source)
+            for record in records
+        ) + tuple(
+            ContextEntry(None, deepcopy(message), "transient")
+            for message in reminders
+        )
+        tool_copies = tuple(deepcopy(tool) for tool in tools)
+        history_tokens = sum(
+            estimate_message_tokens(entry.message)
+            for entry in entries
+            if entry.record_id is not None
+        )
+        transient_tokens = sum(
+            estimate_message_tokens(entry.message)
+            for entry in entries
+            if entry.record_id is None
+        )
+        tool_tokens = estimate_tools_tokens(tool_copies)
+        reserve = output_reserve_tokens if output_reserve_tokens is not None else (
+            max(256, context_limit // 8) if context_limit is not None else 0
+        )
+        estimated = history_tokens + transient_tokens + tool_tokens + reserve
+        projected, folded_ids = self.compactor.project(
+            entries, estimated_tokens=estimated, context_limit=context_limit
+        )
+        projected_history = sum(
+            estimate_message_tokens(entry.message)
+            for entry in projected
+            if entry.record_id is not None
+        )
+        projected_transient = sum(
+            estimate_message_tokens(entry.message)
+            for entry in projected
+            if entry.record_id is None
+        )
+        projected_total = projected_history + projected_transient + tool_tokens + reserve
+        return ContextView(
+            entries=projected,
+            tools=tool_copies,
+            estimated_tokens=projected_total,
+            history_tokens=projected_history,
+            transient_tokens=projected_transient,
+            tool_schema_tokens=tool_tokens,
+            output_reserve_tokens=reserve,
+            folded_record_ids=folded_ids,
+            over_budget=context_limit is not None and projected_total > context_limit,
+        )

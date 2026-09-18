@@ -1,10 +1,10 @@
 import queue
 
-from ..session import SessionState
+from ..session import Session
 from ..session_host import _task_notification_event
 from ..subagent import build_agent_tools
 from ..tasks import TaskService
-from ..tools.base import ToolRuntime
+from ..tools.base import tool_runtime_for_session
 from ..tools.command_tools import execute_command
 from ..tools.task_tools import (
     cancel_task_tool,
@@ -15,7 +15,7 @@ from ..tools.task_tools import (
 
 
 def _session(tmp_path):
-    session = SessionState.create("root", tmp_path)
+    session = Session.create("root", tmp_path)
     session.begin_user_turn("root")
     return session
 
@@ -43,7 +43,7 @@ def _agent_task(session, *, status="running"):
 def test_service_projects_agent_and_shell_without_copying_ownership(tmp_path):
     session = _session(tmp_path)
     agent_record = _agent_task(session, status="completed")
-    runtime = ToolRuntime(session_state=session, workspace_dir=tmp_path)
+    runtime = tool_runtime_for_session(session, workspace_dir=tmp_path)
     launched = execute_command(
         "echo shell-result",
         run_in_background=True,
@@ -71,7 +71,7 @@ def test_service_projects_agent_and_shell_without_copying_ownership(tmp_path):
 def test_unified_tools_query_wait_and_list(tmp_path):
     session = _session(tmp_path)
     record = _agent_task(session, status="completed")
-    runtime = ToolRuntime(session_state=session, workspace_dir=tmp_path)
+    runtime = tool_runtime_for_session(session, workspace_dir=tmp_path)
 
     queried = get_task_tool.call({"task_id": record.id}, runtime)
     waited = wait_task_tool.call({"task_id": record.id, "timeout": 0}, runtime)
@@ -84,7 +84,7 @@ def test_unified_tools_query_wait_and_list(tmp_path):
 
 def test_wait_timeout_observes_without_cancelling_shell_task(tmp_path):
     session = _session(tmp_path)
-    runtime = ToolRuntime(session_state=session, workspace_dir=tmp_path)
+    runtime = tool_runtime_for_session(session, workspace_dir=tmp_path)
     launched = execute_command(
         "sleep 5 & wait",
         run_in_background=True,
@@ -108,7 +108,7 @@ def test_wait_timeout_observes_without_cancelling_shell_task(tmp_path):
 def test_unified_cancel_routes_agent_and_shell(tmp_path):
     session = _session(tmp_path)
     agent_record = _agent_task(session)
-    runtime = ToolRuntime(session_state=session, workspace_dir=tmp_path)
+    runtime = tool_runtime_for_session(session, workspace_dir=tmp_path)
     launched = execute_command(
         "sleep 5",
         run_in_background=True,
@@ -133,8 +133,8 @@ def test_agent_and_shell_completion_share_runtime_event_shape(tmp_path):
     session = _session(tmp_path)
     agent_record = _agent_task(session, status="completed")
     notifications = queue.Queue()
-    runtime = ToolRuntime(
-        session_state=session,
+    runtime = tool_runtime_for_session(
+        session,
         workspace_dir=tmp_path,
         notify_background_done=notifications.put,
     )

@@ -3,7 +3,7 @@ from wright.tests.responses import event, response
 
 from ...agent import Agent
 from ...renderer import SilentRenderer
-from ...session import SessionState
+from ...session import Session
 from ...tools.plan_tools import create_plan_tool
 
 
@@ -34,7 +34,7 @@ class PlanningLLM:
 
 def test_agent_injects_latest_plan_as_ephemeral_reminder(tmp_path):
     llm = PlanningLLM()
-    session = SessionState.create("task", tmp_path)
+    session = Session.create("task", tmp_path)
     agent = Agent(
         llm,
         [create_plan_tool],

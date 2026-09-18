@@ -36,10 +36,11 @@ def encode_tools(
         if name in names:
             raise ValueError(f"Duplicate native tool name: {name}")
         names[name] = tool.name
-        function = {**tool.to_dict(), "name": name}
-        if not function["parameters"]:
-            function["parameters"] = {"type": "object", "properties": {}}
-        schemas.append({"type": "function", "function": function})
+        schema = {**tool.to_dict(), "name": name}
+        if not schema["parameters"]:
+            schema["parameters"] = {"type": "object", "properties": {}}
+        # Provider adapters own the Chat/Responses-specific function wrapper.
+        schemas.append(schema)
     return schemas, names
 
 

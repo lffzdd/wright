@@ -7,7 +7,7 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from ..coordination import AgentControlError, AgentTaskRecord
-from ..processes import terminate_process_tree
+from ..processes import ProcessRegistry, RuntimeResources, terminate_process_tree
 from .types import (
     RuntimeTask,
     TaskKind,
@@ -114,8 +114,9 @@ class AgentTaskBackend:
 class ShellTaskBackend:
     kind: TaskKind = "shell"
 
-    def __init__(self, session_state) -> None:
+    def __init__(self, session_state, process_registry: ProcessRegistry | None) -> None:
         self.session_state = session_state
+        self.process_registry = process_registry
 
     def get(self, task_id: str) -> RuntimeTask | None:
         task = self.session_state.get_background_task(task_id)
@@ -134,38 +135,47 @@ class ShellTaskBackend:
         cancellation_check: Callable[[], bool] | None = None,
     ) -> RuntimeTask:
         raw = self.session_state.get_background_task(task_id)
+        resources = self._resources(task_id)
         if raw is None:
             raise TaskNotFoundError(f"Unknown task_id: {task_id}")
+        # A checkpoint may retain task metadata from a previous process, but
+        # never a trustworthy process handle.  Report that fact without
+        # pretending we can wait for, cancel, or restart the old process.
+        if resources is None:
+            return self._project(raw)
         deadline = None if timeout is None else time.monotonic() + timeout
-        while not raw.done.is_set():
+        while not resources.done.is_set():
             if cancellation_check is not None and cancellation_check():
                 raise TaskWaitCancelled(f"wait_task cancelled: {task_id}")
             if deadline is None:
-                raw.done.wait(timeout=0.05)
+                resources.done.wait(timeout=0.05)
                 continue
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
-            raw.done.wait(timeout=min(0.05, remaining))
+            resources.done.wait(timeout=min(0.05, remaining))
         return self._project(raw)
 
     def cancel(self, task_id: str, reason: str) -> RuntimeTask:
         task = self.session_state.get_background_task(task_id)
+        resources = self._resources(task_id)
         if task is None:
             raise TaskNotFoundError(f"Unknown task_id: {task_id}")
-        if task.done.is_set():
+        if resources is None:
+            return self._project(task)
+        if resources.done.is_set():
             return self._project(task)
 
         task.cancel_requested = True
         task.cancel_reason = reason[:1_000]
-        terminate_process_tree(task.process)
-        task.done.wait(timeout=2)
+        terminate_process_tree(resources.process)
+        resources.done.wait(timeout=2)
         return self._project(task)
 
-    @staticmethod
-    def _project(task) -> RuntimeTask:
-        done = task.done.is_set()
-        returncode = task.process.returncode if done else None
+    def _project(self, task) -> RuntimeTask:
+        resources = self._resources(task.task_id)
+        done = resources.done.is_set() if resources is not None else False
+        returncode = resources.process.returncode if done and resources is not None else None
         if not done:
             status: TaskStatus = "running"
         elif task.cancel_requested:
@@ -174,8 +184,12 @@ class ShellTaskBackend:
             status = "completed"
         else:
             status = "failed"
-        with task.output_lock:
-            output = "".join(task.output_lines)[-8_000:]
+        if resources is None:
+            status = "unknown"
+            output = ""
+        else:
+            with resources.output_lock:
+                output = "".join(resources.output_lines)[-8_000:]
         error = (
             f"Command exited with code {returncode}"
             if status == "failed" else ""
@@ -186,6 +200,7 @@ class ShellTaskBackend:
             status=status,
             description=task.command or "background shell command",
             root_turn_id=task.root_turn_id,
+            run_id=task.run_id,
             created_at=task.created_at,
             started_at=task.started_at,
             ended_at=task.ended_at,
@@ -197,8 +212,12 @@ class ShellTaskBackend:
             details={
                 "command": task.command,
                 "done": done,
+                "run_id": task.run_id,
             },
         )
+
+    def _resources(self, task_id: str):
+        return self.process_registry.get(task_id) if self.process_registry else None
 
 
 class TaskService:
@@ -215,10 +234,17 @@ class TaskService:
         cls,
         session_state,
         services: RuntimeServices | None = None,
+        runtime_resources: RuntimeResources | None = None,
     ) -> TaskService:
+        resources = runtime_resources or RuntimeResources.for_session(
+            session_state.session_id, create=False
+        )
         backends: list[TaskBackend] = [
             AgentTaskBackend(session_state.control_plane),
-            ShellTaskBackend(session_state),
+            ShellTaskBackend(
+                session_state,
+                resources.process_registry if resources is not None else None,
+            ),
         ]
         durable_store = services.durable_store if services is not None else None
         if durable_store is not None:

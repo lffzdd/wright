@@ -33,7 +33,7 @@ queued → dispatched → running → completed
 Scheduler 线程只做四件事：检查触发条件、写 durable run、原子 claim、向 REPL 投递
 `DURABLE_RUN_DUE(run_id)`。它从不调用 `Agent.run`，也不修改 root transcript。
 
-REPL 主线程收到事件后只构造独立 `SessionState` 并 `background_runtime.submit(...)`，
+REPL 主线程收到事件后只构造独立 `Session` 并 `background_runtime.submit(...)`，
 然后立刻回到事件循环。Durable session 不继承 root 的 transcript、cwd、plan、status
 或 memory。同一 workspace 同时最多 dispatch 一个 durable run（`max_inflight`，默认 1）；
 提高上限前需要 git worktree 级别的隔离，否则并发 shell 会互相踩。

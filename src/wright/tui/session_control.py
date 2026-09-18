@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from argparse import Namespace
 from dataclasses import dataclass
-from os import environ
+
+from ..session_models import available_models, process_model_name
+
+__all__ = ["SessionControlRequest", "available_models", "process_model_name", "runtime_args_for_transition"]
 
 
 @dataclass(frozen=True)
@@ -32,12 +35,3 @@ def runtime_args_for_transition(
     values["continue_latest"] = False
     values["resume"] = request.session_id if request.kind == "resume" else None
     return Namespace(**values)
-
-
-def available_models(current: str, configured: str | None = None) -> tuple[str, ...]:
-    """Read optional WRIGHT_MODELS while always retaining the active model."""
-    configured = environ.get("WRIGHT_MODELS", "") if configured is None else configured
-    models = [model.strip() for model in configured.split(",") if model.strip()]
-    if current and current not in models:
-        models.insert(0, current)
-    return tuple(dict.fromkeys(models))

@@ -42,6 +42,7 @@ class RuntimeTask:
     status: TaskStatus
     description: str
     root_turn_id: str = ""
+    run_id: str = ""
     parent_id: str | None = None
     created_at: float | None = None
     started_at: float | None = None
@@ -66,6 +67,7 @@ class RuntimeTask:
             "terminal": self.terminal,
             "description": self.description,
             "root_turn_id": self.root_turn_id,
+            "run_id": self.run_id,
             "parent_id": self.parent_id,
             "created_at": self.created_at,
             "started_at": self.started_at,

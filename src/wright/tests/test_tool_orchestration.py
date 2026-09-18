@@ -3,9 +3,9 @@ import time
 from pathlib import Path
 
 from ..executor import ToolExecutor
-from ..session import SessionState
+from ..session import Session
 from ..tasks import TaskNotFoundError, TaskService
-from ..tools.base import Tool, ToolCall, ToolResult, ToolRuntime
+from ..tools.base import Tool, ToolCall, ToolResult, tool_runtime_for_session
 from ..tools.command_permissions import is_execute_command_concurrency_safe
 from ..tools.command_tools import execute_command
 from ..tools.file_tools import read_file, write_file
@@ -77,10 +77,10 @@ def test_command_cwd_is_isolated_per_session(tmp_path):
     first_dir.mkdir()
     second_dir.mkdir()
 
-    first = SessionState.create("first", tmp_path)
-    second = SessionState.create("second", tmp_path)
-    first_runtime = ToolRuntime(workspace_dir=tmp_path, session_state=first)
-    second_runtime = ToolRuntime(workspace_dir=tmp_path, session_state=second)
+    first = Session.create("first", tmp_path)
+    second = Session.create("second", tmp_path)
+    first_runtime = tool_runtime_for_session(first, workspace_dir=tmp_path)
+    second_runtime = tool_runtime_for_session(second, workspace_dir=tmp_path)
 
     assert execute_command("cd first", runtime=first_runtime).ok
     assert execute_command("cd second", runtime=second_runtime).ok
@@ -93,9 +93,9 @@ def test_command_cwd_is_isolated_per_session(tmp_path):
 
 
 def test_background_tasks_belong_to_their_session(tmp_path):
-    first = SessionState.create("first", tmp_path)
-    second = SessionState.create("second", tmp_path)
-    first_runtime = ToolRuntime(workspace_dir=tmp_path, session_state=first)
+    first = Session.create("first", tmp_path)
+    second = Session.create("second", tmp_path)
+    first_runtime = tool_runtime_for_session(first, workspace_dir=tmp_path)
 
     result = execute_command(
         "sleep 0.05 && echo done",
@@ -116,8 +116,8 @@ def test_background_tasks_belong_to_their_session(tmp_path):
 def test_explicit_background_command_does_not_update_session_cwd(tmp_path):
     child = tmp_path / "child"
     child.mkdir()
-    session = SessionState.create("background cwd", tmp_path)
-    runtime = ToolRuntime(workspace_dir=tmp_path, session_state=session)
+    session = Session.create("background cwd", tmp_path)
+    runtime = tool_runtime_for_session(session, workspace_dir=tmp_path)
 
     result = execute_command(
         "cd child && sleep 0.05",
@@ -142,8 +142,8 @@ def test_timed_out_background_command_does_not_overwrite_later_cwd(tmp_path):
     later_dir = tmp_path / "later"
     slow_dir.mkdir()
     later_dir.mkdir()
-    session = SessionState.create("timed background cwd", tmp_path)
-    runtime = ToolRuntime(workspace_dir=tmp_path, session_state=session)
+    session = Session.create("timed background cwd", tmp_path)
+    runtime = tool_runtime_for_session(session, workspace_dir=tmp_path)
 
     result = execute_command(
         "cd slow && sleep 0.15",
@@ -166,8 +166,8 @@ def test_timed_out_background_command_does_not_overwrite_later_cwd(tmp_path):
 
 
 def test_file_tools_use_runtime_workspace(tmp_path):
-    session = SessionState.create("files", tmp_path)
-    runtime = ToolRuntime(workspace_dir=tmp_path, session_state=session)
+    session = Session.create("files", tmp_path)
+    runtime = tool_runtime_for_session(session, workspace_dir=tmp_path)
 
     assert write_file("nested/a.txt", "hello", runtime=runtime).ok
     result = read_file("nested/a.txt", runtime=runtime)
@@ -180,8 +180,8 @@ def test_file_tools_use_runtime_workspace(tmp_path):
 def test_file_write_locks_serialize_same_path_but_not_different_paths(
     tmp_path, monkeypatch
 ):
-    session = SessionState.create("files", tmp_path)
-    runtime = ToolRuntime(workspace_dir=tmp_path, session_state=session)
+    session = Session.create("files", tmp_path)
+    runtime = tool_runtime_for_session(session, workspace_dir=tmp_path)
     original_write_text = Path.write_text
     guard = threading.Lock()
     active = 0

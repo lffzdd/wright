@@ -24,27 +24,15 @@ _path_locks: dict[Path, threading.RLock] = {}
 
 
 def _workspace(runtime: ToolRuntime) -> Path:
-    if runtime.workspace_dir is None:
-        raise RuntimeError("file tool requires runtime.workspace_dir")
-    return runtime.workspace_dir.resolve()
+    if runtime.capabilities is None:
+        raise RuntimeError("file tool requires execution capability")
+    return runtime.capabilities.execution.workspace_dir
 
 
 def _safe_path(path: str, runtime: ToolRuntime) -> Path:
-    workspace = _workspace(runtime)
-    base = workspace
-    try:
-        if runtime.cwd_provider is not None:
-            base = runtime.cwd_provider().resolve()
-        elif runtime.session_state is not None and hasattr(runtime.session_state, "get_cwd"):
-            base = runtime.session_state.get_cwd().resolve()
-    except Exception:
-        base = workspace
-    if not base.is_relative_to(workspace):
-        raise ValueError("Current working directory is outside the workspace")
-    safe_path = (base / path).resolve()
-    if not safe_path.is_relative_to(workspace):
-        raise ValueError("Unsafe path")
-    return safe_path
+    if runtime.capabilities is None:
+        raise RuntimeError("file tool requires execution capability")
+    return runtime.capabilities.execution.path(path)
 
 
 def _path_lock(path: Path) -> threading.RLock:
@@ -54,6 +42,26 @@ def _path_lock(path: Path) -> threading.RLock:
 
 def _relative_file(path: Path, runtime: ToolRuntime) -> str:
     return str(path.relative_to(_workspace(runtime))) or "."
+
+
+def _detect_encoding(path: Path) -> str:
+    with path.open("rb") as source:
+        head = source.read(4)
+    if head.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return "utf-16"
+    if head.startswith(b"\xef\xbb\xbf"):
+        return "utf-8-sig"
+    return "utf-8"
+
+
+def _read_text(path: Path, *, replace: bool = False) -> tuple[str, str]:
+    encoding = _detect_encoding(path)
+    errors = "replace" if replace else "strict"
+    return path.read_text(encoding=encoding, errors=errors), encoding
+
+
+def _write_text(path: Path, content: str, encoding: str) -> None:
+    path.write_text(content, encoding=encoding)
 
 
 @dataclass(frozen=True)
@@ -167,18 +175,28 @@ def _stamp_write_view(path: Path, runtime: ToolRuntime, content: str) -> None:
     )
 
 
-def _unread_or_stale(path: Path, runtime: ToolRuntime) -> ToolResult | None:
+def _unread_or_stale(
+    path: Path,
+    runtime: ToolRuntime,
+    *,
+    require_complete: bool = False,
+) -> ToolResult | None:
     relative = _relative_file(path, runtime)
     viewed = _remembered_file_view(runtime, path)
     if viewed is None:
         return ToolResult.fail(
-            "read_file this path before edit_file",
+            "read_file this path first",
             data={"reason": "not_read", "file": relative},
+        )
+    if require_complete and not viewed.is_complete:
+        return ToolResult.fail(
+            "read the whole file before overwriting it",
+            data={"reason": "incomplete", "file": relative},
         )
     stat = path.stat()
     if stat.st_mtime_ns == viewed.mtime_ns and stat.st_size == viewed.size:
         return None
-    if viewed.is_complete and path.read_text(encoding="utf-8") == viewed.content:
+    if viewed.is_complete and _read_text(path, replace=True)[0] == viewed.content:
         return None
     return ToolResult.fail(
         "file changed since last read_file; read it again",
@@ -434,13 +452,14 @@ def read_file(
                 "truncated": viewed.truncated,
             })
 
+        encoding = _detect_encoding(safe_path)
         selected: list[str] = []
         total_chars = 0
         truncated = False
         last_line = start_line - 1
         next_start_line: int | None = None
         next_start_column: int | None = None
-        with open(safe_path, encoding="utf-8", errors="replace") as source:
+        with open(safe_path, encoding=encoding, errors="replace") as source:
             for line_number, line in enumerate(source, 1):
                 runtime.raise_if_cancelled()
                 if line_number < start_line:
@@ -510,9 +529,18 @@ def write_file(
 
             if safe_path.exists() and not overwrite:
                 return ToolResult.fail("File already exists")
+            if safe_path.is_file():
+                blocked = _unread_or_stale(
+                    safe_path, runtime, require_complete=True
+                )
+                if blocked is not None:
+                    return blocked
 
+            encoding = (
+                _detect_encoding(safe_path) if safe_path.is_file() else "utf-8"
+            )
             safe_path.parent.mkdir(parents=True, exist_ok=True)
-            safe_path.write_text(content, encoding="utf-8")
+            _write_text(safe_path, content, encoding)
             _stamp_write_view(safe_path, runtime, content)
 
         return ToolResult.success(
@@ -615,7 +643,7 @@ def edit_file(
             if unread is not None:
                 return unread
 
-            content = safe_path.read_text(encoding="utf-8")
+            content, encoding = _read_text(safe_path)
             count = content.count(old_text)
             if count == 0:
                 return ToolResult.fail(
@@ -629,7 +657,7 @@ def edit_file(
 
             replacements = count if replace_all else 1
             updated = content.replace(old_text, new_text, replacements)
-            safe_path.write_text(updated, encoding="utf-8")
+            _write_text(safe_path, updated, encoding)
             _stamp_write_view(safe_path, runtime, updated)
 
         return ToolResult.success({
@@ -742,7 +770,10 @@ read_file_tool = Tool(
 
 write_file_tool = Tool(
     name="write_file",
-    description="Write content to a file inside the workspace. Creates parent directories if needed.",
+    description=(
+        "Create or overwrite a workspace file. Creates parent directories. "
+        "Overwriting an existing file requires a complete read_file first."
+    ),
     parameters={
         "type": "object",
         "properties": {

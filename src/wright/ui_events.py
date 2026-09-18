@@ -12,10 +12,11 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from .processes import RuntimeResources
 from .renderer import Renderer
 from .tools.base import ToolCall, ToolResult
 
-UI_EVENT_VERSION = 1
+UI_EVENT_VERSION = 2
 UI_EVENT_TYPES = frozenset({
     "session.snapshot", "session.status_changed", "turn.started",
     "turn.completed", "turn.failed", "turn.cancelled", "reasoning.delta",
@@ -261,18 +262,24 @@ class PublishingRenderer(Renderer):
         *,
         interaction: Any = None,
         direct_renderer: Renderer | None = None,
+        runtime_resources: RuntimeResources | None = None,
     ) -> None:
         self.publisher = publisher
         self.interaction = interaction
         self.direct_renderer = direct_renderer
+        self.runtime_resources = runtime_resources
         self._active_call_id: str | None = None
         if direct_renderer is not None:
             publisher.add_listener(RendererEventSubscriber(direct_renderer))
 
     def on_reasoning_delta(self, piece: str) -> None:
+        if self.runtime_resources is not None:
+            self.runtime_resources.append_reasoning(piece)
         self.publisher.publish("reasoning.delta", {"piece": piece})
 
     def on_content_delta(self, piece: str) -> None:
+        if self.runtime_resources is not None:
+            self.runtime_resources.append_content(piece)
         self.publisher.publish("content.delta", {"piece": piece})
 
     def on_tool_call(self, tool_call: ToolCall | dict) -> None:
@@ -282,6 +289,11 @@ class PublishingRenderer(Renderer):
             id=str(tool_call.get("id", "")),
         )
         self._active_call_id = call.id
+        if self.runtime_resources is not None:
+            self.runtime_resources.update_tool(call.id, {
+                "call_id": call.id, "name": call.name,
+                "arguments": call.arguments, "phase": "planned",
+            })
         self.publisher.publish("tool.planned", {
             "call_id": call.id, "name": call.name, "arguments": call.arguments,
             "phase": "planned",
@@ -295,6 +307,11 @@ class PublishingRenderer(Renderer):
             arguments=dict(tool_call.get("arguments") or {}),
             id=str(tool_call.get("id", "")),
         )
+        if self.runtime_resources is not None:
+            self.runtime_resources.update_tool(call.id, {
+                "call_id": call.id, "name": call.name,
+                "arguments": call.arguments, "phase": phase,
+            })
         self.publisher.publish(f"tool.{phase}", {
             "call_id": call.id,
             "name": call.name,
@@ -303,6 +320,8 @@ class PublishingRenderer(Renderer):
         })
 
     def on_tool_output(self, call_id: str, line: str) -> None:
+        if self.runtime_resources is not None:
+            self.runtime_resources.append_tool_output(call_id, line)
         self.publisher.publish("tool.output", {"call_id": call_id, "output": line})
 
     def on_command_output(self, line: str) -> None:
@@ -317,11 +336,17 @@ class PublishingRenderer(Renderer):
             id=str(tool_call.get("id", "")),
         )
         result = tool_result.to_dict() if isinstance(tool_result, ToolResult) else dict(tool_result)
+        if self.runtime_resources is not None:
+            self.runtime_resources.update_tool(call.id, {
+                "call_id": call.id, "name": call.name, **result,
+            })
         self.publisher.publish("tool.finished", {
             "call_id": call.id, "name": call.name, **result,
         })
 
     def on_final(self, answer: Any) -> None:
+        if self.runtime_resources is not None:
+            self.runtime_resources.set_content(str(answer))
         self.publisher.publish("content.final", {"content": _json_value(answer)})
 
     def on_turn_begin(self) -> None:

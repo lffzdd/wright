@@ -2,6 +2,7 @@ import json
 import queue
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -9,6 +10,7 @@ from wright.tests.responses import event, response
 
 from ...agent import Agent
 from ...checkpoint import SessionCheckpointStore
+from ...execution import LocalExecutionBackend
 from ...looping import (
     LoopError,
     SessionLoopRegistry,
@@ -16,8 +18,8 @@ from ...looping import (
     parse_loop_command,
 )
 from ...renderer import SilentRenderer
-from ...services import RuntimeServices
-from ...session import SessionState
+from ...session import Session
+from ...tool_capabilities import RunScope, ToolCapabilities
 from ...tools.base import ToolRuntime
 from ...tools.loop_tools import manage_loop_tool
 
@@ -50,7 +52,7 @@ def _registry(min_interval=0.05, idle=None):
 def test_loop_tick_uses_runtime_event_without_resetting_goal_or_plan(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    session = SessionState.create("keep this goal", workspace)
+    session = Session.create("keep this goal", workspace)
     events, _idle, registry = _registry()
     agent = Agent(
         ScriptLLM(["initial answer", "loop result"]),
@@ -76,7 +78,7 @@ def test_loop_tick_uses_runtime_event_without_resetting_goal_or_plan(tmp_path):
         registry.close()
 
     assert result == "loop result"
-    assert session.user_goal == "keep this goal"
+    assert session.current_goal() == "keep this goal"
     assert session.plan_manager.snapshot() == original_plan
     payload = json.loads(session.wire_messages()[-2]["content"])
     event = payload["runtime_event"]
@@ -129,7 +131,10 @@ def test_loop_rejects_short_interval_and_capacity():
     with pytest.raises(LoopError, match="at most 20"):
         registry.create(prompt="one more", interval_seconds=5)
 
-    runtime = ToolRuntime(services=RuntimeServices(loop_registry=registry))
+    runtime = ToolRuntime(capabilities=ToolCapabilities(
+        RunScope(""), LocalExecutionBackend(Path.cwd(), Path.cwd),
+        loop_registry=registry,
+    ))
     failed = manage_loop_tool.call(
         {"action": "create", "interval_seconds": 1, "prompt": "nope"},
         runtime,
@@ -141,7 +146,7 @@ def test_loop_rejects_short_interval_and_capacity():
 def test_loop_state_is_absent_from_checkpoint(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    session = SessionState.create("goal", workspace)
+    session = Session.create("goal", workspace)
     _events, _idle, registry = _registry()
     created = registry.create(
         name="secret-loop-name",

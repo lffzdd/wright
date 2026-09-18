@@ -7,9 +7,11 @@ consumer: USER_INPUT, background tasks, loops, durable runs, slash commands.
 from __future__ import annotations
 
 import json
+import shlex
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from .attachments import AttachmentError
 from .autonomy import AutonomyStore, AutonomyStoreError
 from .autonomy.runner import launch_durable_run
 from .logger import get_logger
@@ -139,7 +141,7 @@ def _cmd_status(_text: str, rt: WrightRuntime) -> None:
     _notice(
         rt,
         "\n".join((
-            f"session  {session.session_id}  ({session.status})",
+            f"session  {session.session_id}  ({getattr(session, 'lifecycle', 'open')})",
             f"workspace  {session.workspace_dir}",
             (
                 f"task usage  {usage.prompt_tokens:,} in  ·  "
@@ -171,6 +173,10 @@ SLASH_COMMANDS: dict[str, SlashCommand] = {
     "/history": SlashCommand("/history", "show prior turns", "/history [all|N]", _cmd_history),
     "/loop": SlashCommand("/loop", "create, list, or stop a loop", "/loop <interval|list|stop>", _cmd_loop),
     "/event": SlashCommand("/event", "emit an external event", "/event <name> [JSON]", _cmd_event),
+    "/attach": SlashCommand("/attach", "attach one or more images", "/attach PATH..."),
+    "/attachments": SlashCommand("/attachments", "list pending images", "/attachments"),
+    "/detach": SlashCommand("/detach", "remove a pending image", "/detach INDEX|all"),
+    "/send": SlashCommand("/send", "send pending images", "/send [prompt]"),
 }
 
 
@@ -204,6 +210,52 @@ def dispatch_slash(text: str, rt: WrightRuntime) -> bool:
     return True
 
 
+def _attachment_notice(rt: WrightRuntime) -> str:
+    drafts = getattr(rt, "draft_attachments", None)
+    if drafts is None:
+        return "当前运行时不支持附件"
+    records = drafts.summaries()
+    if not records:
+        return "没有待发送图片"
+    return "待发送图片:\n" + "\n".join(
+        f"  [{index}] {record.filename} ({record.width}×{record.height})"
+        for index, record in enumerate(records, 1)
+    )
+
+
+def _dispatch_attachment_command(text: str, rt: WrightRuntime) -> tuple[bool, str | None]:
+    """Return (handled, prompt-to-send); attachment drafts are host-local."""
+    stripped = text.strip()
+    head, _, tail = stripped.partition(" ")
+    drafts = getattr(rt, "draft_attachments", None)
+    if head == "/attach":
+        if drafts is None:
+            _notice(rt, "当前运行时不支持附件")
+            return True, None
+        try:
+            added = drafts.attach_paths(shlex.split(tail))
+            _notice(rt, "已附加: " + ", ".join(record.filename for record in added))
+        except (AttachmentError, ValueError) as exc:
+            _notice(rt, str(exc))
+        return True, None
+    if head == "/attachments":
+        _notice(rt, _attachment_notice(rt))
+        return True, None
+    if head == "/detach":
+        if drafts is None:
+            _notice(rt, "当前运行时不支持附件")
+            return True, None
+        try:
+            removed = drafts.detach(tail.strip())
+            _notice(rt, "已移除: " + ", ".join(record.filename for record in removed))
+        except AttachmentError as exc:
+            _notice(rt, str(exc))
+        return True, None
+    if head == "/send":
+        return False, tail.strip()
+    return False, None
+
+
 def process_session_event(
     rt: WrightRuntime,
     event_type: str,
@@ -229,35 +281,65 @@ def process_session_event(
         if isinstance(payload, dict):
             user_input = str(payload.get("prompt", ""))
             command_id = str(payload.get("command_id", ""))
+            attachment_ids = [
+                str(item) for item in payload.get("attachment_ids", [])
+                if isinstance(item, str)
+            ]
         else:
             user_input = str(payload)
             command_id = ""
+            attachment_ids = []
+        handled, send_prompt = _dispatch_attachment_command(user_input, rt)
+        if handled:
+            agent_idle.set()
+            return False
+        if send_prompt is not None:
+            user_input = send_prompt
         if dispatch_slash(user_input, rt):
+            agent_idle.set()
+            return False
+        if not attachment_ids:
+            drafts = getattr(rt, "draft_attachments", None)
+            if drafts is not None:
+                attachment_ids = drafts.consume()
+        if not user_input.strip() and not attachment_ids:
+            _notice(rt, "请输入文字或先用 /attach 添加图片")
             agent_idle.set()
             return False
         turn_id = f"{session_state.session_id}:{len(session_state.message_records)}"
         rt.publisher.publish(
             "turn.started",
-            {"prompt": user_input, "command_id": command_id},
+            {
+                "prompt": user_input,
+                "command_id": command_id,
+                "attachments": [
+                    record.to_dict()
+                    for record in session_state.attachment_records(attachment_ids)
+                ],
+            },
             turn_id=turn_id,
         )
         try:
             rt.agent.run(
                 user_input,
                 cancellation_check=rt.cancellation_event.is_set,
+                attachment_ids=attachment_ids,
             )
             if rt.cancellation_event.is_set():
                 rt.publisher.publish(
                     "turn.cancelled", {"command_id": command_id}, turn_id=turn_id
                 )
-            elif session_state.status == "completed":
+            elif session_state.current_run_status() == "completed":
                 rt.publisher.publish(
                     "turn.completed", {"command_id": command_id}, turn_id=turn_id
                 )
             else:
                 rt.publisher.publish(
                     "turn.failed",
-                    {"command_id": command_id, "status": session_state.status},
+                    {
+                        "command_id": command_id,
+                        "status": session_state.current_run_status(),
+                    },
                     turn_id=turn_id,
                 )
         except Exception as exc:
@@ -275,11 +357,21 @@ def process_session_event(
         agent_idle.clear()
         try:
             try:
-                task = TaskService.for_session(session_state, services).get(str(payload))
+                task = TaskService.for_session(
+                    session_state, services, rt.runtime_resources
+                ).get(str(payload))
             except TaskNotFoundError:
                 logger.warning("忽略未知后台任务完成事件: %s", payload)
             else:
-                rt.agent.run_runtime_event(_task_notification_event(task))
+                active = rt.session_state.active_run_id
+                task_run = task.run_id
+                if task_run and task_run != active:
+                    # A completion from A must not become evidence for B.  The
+                    # event remains observable; a later continuation-run phase
+                    # can elect to reason over it with A's budget/lineage.
+                    _notice(rt, f"background task {task.id} for run {task_run} finished: {task.status}")
+                else:
+                    rt.agent.run_runtime_event(_task_notification_event(task))
         finally:
             agent_idle.set()
         return False

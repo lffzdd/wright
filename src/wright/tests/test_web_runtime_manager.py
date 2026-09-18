@@ -7,7 +7,9 @@ from types import SimpleNamespace
 import pytest
 
 from ..interaction import InteractionBroker
+from ..processes import RuntimeResources
 from ..project import ProjectContext
+from ..session import Session
 from ..ui_events import EventPublisher
 from ..web import runtime_manager as runtime_module
 from ..web.runtime_manager import RuntimeManager, RuntimeManagerError, SessionHandle
@@ -39,6 +41,7 @@ def _fake_runtime(session_id, root):
         agent_idle=threading.Event(),
         cancellation_event=threading.Event(),
         llm=SimpleNamespace(context_limit=128_000),
+        runtime_resources=RuntimeResources(session_id),
         project_context=ProjectContext(
             project_root=root,
             execution_root=root,
@@ -47,6 +50,46 @@ def _fake_runtime(session_id, root):
             branch_name=f"wright/{session_id}",
         ),
     )
+
+
+def test_snapshot_uses_live_response_projection_after_event_ring_eviction(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(runtime_module, "shutdown_runtime", lambda runtime: None)
+    runtime = _fake_runtime("live-snapshot", tmp_path)
+    session = Session.create("active goal", tmp_path, session_id="live-snapshot")
+    session.begin_user_turn("active goal")
+    runtime.session_state = session
+    runtime.publisher = EventPublisher(
+        project_id="project", session_id=session.session_id, max_events=1
+    )
+    runtime.interaction_broker = InteractionBroker(runtime.publisher)
+    resources = RuntimeResources.for_session(session.session_id)
+    assert resources is not None
+    runtime.runtime_resources = resources
+    run = session.active_run()
+    assert run is not None
+    resources.begin_response(run.run_id)
+    resources.append_reasoning("reasoning survives")
+    resources.append_content("complete streamed response")
+    resources.update_tool("call_1", {"call_id": "call_1", "name": "read_file"})
+    for number in range(3):
+        runtime.publisher.publish("content.delta", {"piece": str(number)})
+
+    handle = SessionHandle(runtime)
+    snapshot = handle.snapshot()
+
+    assert snapshot["active_turn"] == {
+        "run_id": run.run_id,
+        "turn_id": None,
+        "prompt": "active goal",
+        "attachments": [],
+        "reasoning": "reasoning survives",
+        "content": "complete streamed response",
+        "tools": [{"call_id": "call_1", "name": "read_file"}],
+    }
+    assert len(runtime.publisher.retained_events()) == 1
+    handle.close()
 
 
 def test_separate_session_workers_execute_in_parallel(monkeypatch, tmp_path):
@@ -261,3 +304,26 @@ def test_manager_set_model_missing_session_is_404(tmp_path):
     with pytest.raises(RuntimeManagerError, match="not found") as exc_info:
         manager.set_model("missing", "gpt-4o")
     assert exc_info.value.status_code == 404
+
+
+def test_project_exposes_configured_models_not_a_hardcoded_default(monkeypatch, tmp_path):
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
+    monkeypatch.delenv("WRIGHT_MODELS", raising=False)
+    manager = RuntimeManager(tmp_path, capacity=1, base_args=argparse.Namespace(model=None))
+
+    empty = manager.project()
+    assert empty["default_model"] == ""
+    assert empty["models"] == []
+
+    monkeypatch.setenv("OPENAI_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("WRIGHT_MODELS", "deepseek-v4-flash,deepseek-chat")
+    configured = manager.project()
+    assert configured["default_model"] == "deepseek-v4-flash"
+    assert configured["models"] == ["deepseek-v4-flash", "deepseek-chat"]
+
+    cli_manager = RuntimeManager(
+        tmp_path, capacity=1, base_args=argparse.Namespace(model="cli-model")
+    )
+    overridden = cli_manager.project()
+    assert overridden["default_model"] == "cli-model"
+    assert overridden["models"] == ["cli-model", "deepseek-v4-flash", "deepseek-chat"]

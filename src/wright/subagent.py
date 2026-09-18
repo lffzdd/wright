@@ -6,18 +6,18 @@ import json
 from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import replace
-from pathlib import Path
 from typing import Any
 
 from rich.console import Console
 
 from .agent import Agent
+from .capabilities import AgentProfile
 from .coordination import AgentControlError, AgentTaskRecord
 from .llm import LLMClient
 from .logger import get_logger
 from .permission import PermissionResolver
 from .renderer import Renderer, SilentRenderer
-from .session import SessionState, UsageRecord
+from .session import Session, UsageRecord
 from .tools.autonomy_tools import autonomy_tools
 from .tools.base import Tool, ToolResult, ToolRuntime
 from .tools.task_tools import task_tools
@@ -207,21 +207,22 @@ def make_spawn_agent_tool(
     def _call(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
         task = arguments["task"].strip()
         run_in_background = bool(arguments.get("run_in_background", False))
-        session = runtime.session_state
-        if session is None:
-            return ToolResult.fail("spawn_agent requires SessionState runtime")
-        control = session.control_plane
-        if run_in_background and session.agent_task_id is not None:
+        capabilities = runtime.capabilities
+        delegation = capabilities.delegation if capabilities is not None else None
+        if capabilities is None or delegation is None:
+            return ToolResult.fail("spawn_agent requires delegation capability")
+        control = delegation.control
+        if run_in_background and capabilities.scope.agent_task_id is not None:
             return ToolResult.fail("Child Agents cannot launch background Agents")
         child_depth = depth + 1
         effective_max_depth = min(max_depth, control.config.max_depth)
-        root_turn_id = session.agent_root_turn_id or (
-            f"{session.session_id}:{session.active_turn_start_message_index}"
-        )
+        root_turn_id = capabilities.scope.root_turn_id
+        if not root_turn_id:
+            return ToolResult.fail("spawn_agent requires an active run scope")
         try:
             record = control.begin_task(
                 root_turn_id=root_turn_id,
-                parent_id=session.agent_task_id,
+                parent_id=capabilities.scope.agent_task_id,
                 tool_call_id=runtime.tool_call_id,
                 depth=child_depth,
                 task=task,
@@ -257,20 +258,19 @@ def make_spawn_agent_tool(
             permission_resolver=permission_resolver,
         )
 
-        workspace_dir = runtime.workspace_dir or Path.cwd()
-        child_session = SessionState.create(
-            user_goal=task,
+        workspace_dir = capabilities.execution.workspace_dir
+        child_session = Session.create(
+            initial_goal=task,
             workspace_dir=workspace_dir,
             max_steps=record.step_budget,
         )
         child_session.control_plane = control
         child_session.agent_task_id = record.id
         child_session.agent_root_turn_id = root_turn_id
-        if runtime.cwd_provider is not None:
-            try:
-                child_session.set_cwd(runtime.cwd_provider())
-            except Exception:
-                logger.debug("child session set_cwd failed", exc_info=True)
+        try:
+            child_session.set_cwd(capabilities.execution.cwd())
+        except Exception:
+            logger.debug("child session set_cwd failed", exc_info=True)
         control.bind_child_session(record.id, child_session.session_id)
 
         child_renderer: Renderer = (
@@ -304,7 +304,11 @@ def make_spawn_agent_tool(
             usage_observer=observe_usage,
             allow_background_tasks=False,
             lifecycle=runtime.lifecycle,
-            services=runtime.services,
+            services=None,
+            profile=AgentProfile(
+                "child", frozenset(tool.name for tool in child_tools),
+                max_steps=record.step_budget, allow_delegation=child_depth < max_depth,
+            ),
         )
 
         def run_child() -> ToolResult:
@@ -319,7 +323,7 @@ def make_spawn_agent_tool(
                     error = cancellation_reason or runtime_reason or "Child Agent cancelled"
                 elif final_answer is None:
                     task_status = "failed"
-                    error = (f"Child Agent did not finish (status={child_session.status}, "
+                    error = (f"Child Agent did not finish (status={child_session.current_run_status()}, "
                              f"steps={child_session.step_count}/{record.step_budget})")
                 else:
                     task_status, error = "completed", ""
@@ -339,7 +343,7 @@ def make_spawn_agent_tool(
             _emit(runtime, finished)
             common = {
                 "task_id": finished.id, "parent_id": finished.parent_id,
-                "task_status": finished.status, "status": child_session.status,
+                "task_status": finished.status, "status": child_session.current_run_status(),
                 "steps": child_session.step_count, "step_budget": finished.step_budget,
                 "usage": usage, "children": list(finished.children),
             }
@@ -348,9 +352,7 @@ def make_spawn_agent_tool(
             return ToolResult.success({**common, "result": finished.result})
 
         if run_in_background:
-            background_runtime = (
-                runtime.services.agent_background if runtime.services else None
-            )
+            background_runtime = delegation.agent_background
             if background_runtime is None:
                 finished = control.finish_task(
                     record.id, status="failed", steps_used=0,
@@ -384,15 +386,16 @@ def make_spawn_agent_tool(
 
 
 def _get_agent_tree(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
-    session = runtime.session_state
-    if session is None:
-        return ToolResult.fail("get_agent_tree requires SessionState runtime")
+    capabilities = runtime.capabilities
+    delegation = capabilities.delegation if capabilities is not None else None
+    if capabilities is None or delegation is None:
+        return ToolResult.fail("get_agent_tree requires delegation capability")
     include_all = bool(arguments.get("include_all_turns", False))
     return ToolResult.success({
-        "root_turn_id": session.agent_root_turn_id,
-        "limits": session.control_plane.config.to_dict(),
-        "tasks": session.control_plane.tree_summary(
-            None if include_all else session.agent_root_turn_id
+        "root_turn_id": capabilities.scope.root_turn_id,
+        "limits": delegation.control.config.to_dict(),
+        "tasks": delegation.control.tree_summary(
+            None if include_all else capabilities.scope.root_turn_id
         ),
     })
 

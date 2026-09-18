@@ -5,7 +5,7 @@ from wright.tests.responses import event, response
 from ..agent import Agent
 from ..protocol import encode_tools
 from ..renderer import SilentRenderer
-from ..session import SessionState
+from ..session import Session
 from ..tools import tools as built_in_tools
 from ..tools.base import Tool, ToolResult, ToolRuntime
 from ..tools.tool_search import make_tool_search_tool
@@ -39,12 +39,12 @@ def test_tool_search_activates_specialized_schemas_only_after_search():
         [core, schedule, search], active_deferred=active
     )
 
-    assert [item["function"]["name"] for item in before] == [
+    assert [item["name"] for item in before] == [
         "read_file", "tool_search"
     ]
     assert result.ok
     assert result.data["activated"][0]["name"] == "schedule_task"
-    assert [item["function"]["name"] for item in after] == [
+    assert [item["name"] for item in after] == [
         "read_file", "schedule_task", "tool_search"
     ]
 
@@ -168,7 +168,7 @@ def test_search_does_not_activate_unrelated_list_tools():
 def test_encode_tools_without_a_dynamic_catalog_includes_declared_tools():
     deferred = _tool("special", "Specialized", deferred=True)
     schemas, _ = encode_tools([deferred])
-    assert schemas[0]["function"]["name"] == "special"
+    assert schemas[0]["name"] == "special"
 
 
 def test_builtin_capabilities_use_hybrid_loading():
@@ -196,7 +196,7 @@ def test_builtin_capabilities_use_hybrid_loading():
 
     schemas, _ = encode_tools(built_in_tools, active_deferred=set())
     assert {
-        item["function"]["name"] for item in schemas
+        item["name"] for item in schemas
     } == core
 
 
@@ -267,7 +267,7 @@ def test_agent_refreshes_schemas_after_tool_search(tmp_path):
 
         def __call__(self, messages, *, tools):
             self.schema_names.append([
-                item["function"]["name"] for item in tools
+                    item["name"] for item in tools
             ])
             yield event(self.script.pop(0))
 
@@ -275,7 +275,7 @@ def test_agent_refreshes_schemas_after_tool_search(tmp_path):
     agent = Agent(
         llm,
         [specialized],
-        SessionState.create("activate", tmp_path),
+        Session.create("activate", tmp_path),
         SilentRenderer(),
     )
 
@@ -288,7 +288,7 @@ def test_agent_restores_active_deferred_tools_from_session(tmp_path):
     specialized = _tool(
         "schedule_task", "Create a durable recurring scheduled task", deferred=True
     )
-    session = SessionState.create("resume", tmp_path)
+    session = Session.create("resume", tmp_path)
     session.active_deferred_tools = ["missing_tool", "schedule_task"]
 
     class UnusedLLM:
@@ -300,7 +300,7 @@ def test_agent_restores_active_deferred_tools_from_session(tmp_path):
     agent = Agent(UnusedLLM(), [specialized], session, SilentRenderer())
 
     assert session.active_deferred_tools == ["schedule_task"]
-    assert [item["function"]["name"] for item in agent.tool_schemas] == [
+    assert [item["name"] for item in agent.tool_schemas] == [
         "schedule_task",
         "tool_search",
     ]
@@ -331,7 +331,7 @@ def test_agent_rejects_deferred_tool_before_activation(tmp_path):
     answer = Agent(
         ScriptLLM(),
         [specialized],
-        SessionState.create("must-search", tmp_path),
+        Session.create("must-search", tmp_path),
         SilentRenderer(),
     ).run("schedule it")
 

@@ -1,4 +1,4 @@
-"""Atomic SessionState checkpoints and crash recovery."""
+"""Atomic Session checkpoints and crash recovery."""
 
 from __future__ import annotations
 
@@ -11,15 +11,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
-from openai.types.chat import ChatCompletionMessageParam
-
+from .attachments import AttachmentError, AttachmentRecord
 from .coordination import AgentControlError, AgentControlPlane
 from .logger import get_logger
 from .planning import PlanManager
+from .runs import RunRecord
 from .session import (
     MessageRecord,
-    SessionState,
-    SessionStatus,
+    Session,
+    SessionLifecycle,
     ToolExecutionRecord,
     ToolExecutionStatus,
     TurnRecord,
@@ -27,15 +27,15 @@ from .session import (
     UsageRecord,
     VerificationRecord,
 )
-from .tools.base import ToolCall, ToolResult
+from .tools.base import ArtifactRef, ToolCall, ToolResult
 from .util import build_tool_results_messages
 
 logger = get_logger(__name__)
 
-CHECKPOINT_VERSION = 2
+CHECKPOINT_VERSION = 7
 _SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,128}")
 _T = TypeVar("_T", bound=str)
-_SESSION_STATUSES: frozenset[SessionStatus] = frozenset(
+_LEGACY_RUN_STATUSES = frozenset(
     {"running", "completed", "failed", "max_steps"}
 )
 _TURN_ROUTES: frozenset[TurnRoute] = frozenset({"tool_calls", "final", "invalid"})
@@ -61,11 +61,11 @@ class SessionCheckpointStore:
             raise CheckpointError("非法 session_id")
         return self.directory / f"{session_id}.json"
 
-    def save(self, session: SessionState) -> Path:
+    def save(self, session: Session) -> Path:
         with self._save_lock:
             return self._save_unlocked(session)
 
-    def _save_unlocked(self, session: SessionState) -> Path:
+    def _save_unlocked(self, session: Session) -> Path:
         path = self.path_for(session.session_id)
         if not session.workspace_dir.is_dir():
             raise CheckpointError(
@@ -92,7 +92,7 @@ class SessionCheckpointStore:
             raise
         return path
 
-    def load(self, session_id: str) -> SessionState:
+    def load(self, session_id: str) -> Session:
         path = self.path_for(session_id)
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -114,7 +114,7 @@ class SessionCheckpointStore:
             return None
         return max(candidates, key=lambda path: path.stat().st_mtime_ns).stem
 
-    def load_latest(self) -> SessionState:
+    def load_latest(self) -> Session:
         session_id = self.latest_session_id()
         if session_id is None:
             raise CheckpointError("没有可继续的 checkpoint")
@@ -154,8 +154,10 @@ class SessionCheckpointStore:
                 results.append({
                     "session_id": path.stem,
                     "saved_at": saved_at_str,
-                    "status": session_info.get("status", "unknown"),
-                    "user_goal": session_info.get("user_goal", ""),
+                    "status": _checkpoint_run_status(session_info),
+                    "user_goal": session_info.get(
+                        "session_label", session_info.get("user_goal", "")
+                    ),
                     "environment": session_info.get("environment", "local"),
                     "execution_root": session_info.get("workspace_dir", ""),
                     "recoverable": bool(
@@ -170,14 +172,14 @@ class SessionCheckpointStore:
 
 
 
-def _serialize_session(session: SessionState) -> dict[str, Any]:
+def _serialize_session(session: Session) -> dict[str, Any]:
     return {
         "version": CHECKPOINT_VERSION,
         "saved_at": datetime.now(timezone.utc).isoformat(),
         "session": {
             "session_id": session.session_id,
-            "status": session.status,
-            "user_goal": session.user_goal,
+            "lifecycle": session.lifecycle,
+            "session_label": session.session_label,
             "workspace_dir": str(session.workspace_dir),
             "cwd": str(session.get_cwd()),
             "project_root": str(session.project_root or session.workspace_dir),
@@ -185,10 +187,25 @@ def _serialize_session(session: SessionState) -> dict[str, Any]:
             "base_commit": session.base_commit,
             "branch_name": session.branch_name,
             "message_records": [
-                {"id": record.id, "message": _json_safe(record.message)}
+                {
+                    "id": record.id,
+                    "message": _json_safe(record.message),
+                    "source": record.source,
+                }
                 for record in session.message_records
             ],
             "turns": [_serialize_turn(turn) for turn in session.turns],
+            "runs": {
+                run_id: {
+                    "source": run.source, "goal": run.goal, "parent_run_id": run.parent_run_id,
+                    "root_run_id": run.root_run_id, "status": run.status,
+                    "started_at": run.started_at, "ended_at": run.ended_at, "result": run.result,
+                    "error": run.error, "model_config": _json_safe(run.model_config),
+                    "plan": _json_safe(run.plan), "usage": _json_safe(run.usage),
+                    "step_ids": list(run.step_ids), "tool_execution_ids": list(run.tool_execution_ids),
+                } for run_id, run in session.runs.items()
+            },
+            "active_run_id": session.active_run_id,
             "tool_executions": {
                 call_id: {
                     "call": {
@@ -205,6 +222,8 @@ def _serialize_session(session: SessionState) -> dict[str, Any]:
                     "status": execution.status,
                     "started_at": execution.started_at,
                     "ended_at": execution.ended_at,
+                    "run_id": execution.run_id,
+                    "step_id": execution.step_id,
                 }
                 for call_id, execution in session.tool_executions.items()
             },
@@ -219,7 +238,13 @@ def _serialize_session(session: SessionState) -> dict[str, Any]:
             "total_usage": _serialize_usage(session.total_usage),
             "task_usage_start": _serialize_usage(session.task_usage_start),
             "model_name": session.model_name,
+            "llm_transport": session.llm_transport,
+            "attachments": {
+                attachment_id: record.to_dict()
+                for attachment_id, record in session.attachments.items()
+            },
             "context_tokens": session.context_tokens,
+            "request_context_tokens": session.request_context_tokens,
             "step_count": session.step_count,
             "active_turn_start_step": session.active_turn_start_step,
             "active_turn_start_message_index": session.active_turn_start_message_index,
@@ -246,6 +271,8 @@ def _serialize_turn(turn: TurnRecord) -> dict[str, Any]:
             if turn.verification is not None
             else None
         ),
+        "run_id": turn.run_id,
+        "step_id": turn.step_id,
     }
 
 
@@ -259,12 +286,12 @@ def _serialize_usage(usage: UsageRecord | None) -> dict[str, int] | None:
     }
 
 
-def _deserialize_session(payload: Any) -> SessionState:
+def _deserialize_session(payload: Any) -> Session:
     root = _object(payload, "checkpoint")
     version = root.get("version")
-    if version != CHECKPOINT_VERSION:
+    if version not in {2, 3, 4, 5, 6, CHECKPOINT_VERSION}:
         raise CheckpointError(
-            f"不支持的 checkpoint version: {version}; 当前只支持 {CHECKPOINT_VERSION}。"
+            f"不支持的 checkpoint version: {version}; 当前支持 2–{CHECKPOINT_VERSION}。"
             "旧 JSON 协议会话请在 legacy-json-react 标签版本中打开；新版请新建会话。"
         )
     data = _object(root.get("session"), "session")
@@ -272,7 +299,14 @@ def _deserialize_session(payload: Any) -> SessionState:
     session_id = _string(data.get("session_id"), "session_id")
     if _SESSION_ID_PATTERN.fullmatch(session_id) is None:
         raise CheckpointError("非法 session_id")
-    status = _one_of(data.get("status"), _SESSION_STATUSES, "session status")
+    lifecycle = _one_of(
+        data.get("lifecycle", "open"),
+        frozenset({"open", "closing", "closed"}),
+        "session lifecycle",
+    )
+    legacy_run_status = _one_of(
+        data.get("status", "running"), _LEGACY_RUN_STATUSES, "legacy session status"
+    )
 
     workspace_dir = Path(
         _string(data.get("workspace_dir"), "workspace_dir")
@@ -294,6 +328,13 @@ def _deserialize_session(payload: Any) -> SessionState:
     branch_name = _optional_string(data.get("branch_name"), "branch_name")
 
     message_records = _deserialize_messages(data.get("message_records"))
+    if version == 2:
+        # v2 persisted Chat Completions-style strings.  Normalize them while
+        # loading so resumed sessions enter the provider-neutral v3 model.
+        for record in message_records:
+            message = record.message
+            if message.get("role") == "user" and isinstance(message.get("content"), str):
+                message.setdefault("parts", [{"type": "text", "text": message["content"]}])
     turns = _deserialize_turns(data.get("turns"))
     tool_executions = _deserialize_executions(data.get("tool_executions"))
     plan_manager = PlanManager.from_snapshot(_object(data.get("plan"), "plan"))
@@ -340,6 +381,17 @@ def _deserialize_session(payload: Any) -> SessionState:
     context_tokens = _nonnegative_int(
         data.get("context_tokens"), "context_tokens"
     )
+    request_context_tokens = _nonnegative_int(
+        data.get("request_context_tokens", 0), "request_context_tokens"
+    )
+    attachments = _deserialize_attachments(data.get("attachments", {}))
+    for record in message_records:
+        attachment_ids = record.message.get("attachments", ())
+        if attachment_ids and (
+            not isinstance(attachment_ids, list)
+            or not all(isinstance(item, str) and item in attachments for item in attachment_ids)
+        ):
+            raise CheckpointError("message attachment references are invalid")
 
     _validate_links(
         message_records,
@@ -351,10 +403,14 @@ def _deserialize_session(payload: Any) -> SessionState:
         message_id_counter,
     )
 
-    session = SessionState(
+    session = Session(
         session_id=session_id,
-        status=status,
-        user_goal=_string(data.get("user_goal"), "user_goal", allow_empty=True),
+        lifecycle=cast(SessionLifecycle, lifecycle),
+        session_label=_string(
+            data.get("session_label", data.get("user_goal")),
+            "session_label" if version == CHECKPOINT_VERSION else "user_goal",
+            allow_empty=True,
+        ),
         workspace_dir=workspace_dir,
         cwd=cwd,
         project_root=project_root,
@@ -382,10 +438,16 @@ def _deserialize_session(payload: Any) -> SessionState:
         task_usage_start=_deserialize_usage(data.get("task_usage_start"), "task_usage_start")
         or UsageRecord(),
         model_name=_optional_string(data.get("model_name"), "model_name"),
+        llm_transport=_optional_string(data.get("llm_transport"), "llm_transport"),
+        attachments=attachments,
         context_tokens=context_tokens,
+        request_context_tokens=request_context_tokens,
         step_count=step_count,
         max_steps=max_steps,
         message_id_counter=message_id_counter,
+    )
+    _restore_runs(
+        session, data.get("runs"), data.get("active_run_id"), legacy_run_status
     )
     if "task_usage_start" not in data:
         # Older checkpoints counted only main-loop turns.
@@ -398,7 +460,69 @@ def _deserialize_session(payload: Any) -> SessionState:
     return session
 
 
-def _recover_interrupted_tool_calls(session: SessionState) -> None:
+def _restore_runs(
+    session: Session,
+    value: Any,
+    active_run_id: Any,
+    legacy_status: str,
+) -> None:
+    """Load v4 records or deterministically map older turn boundaries."""
+    if isinstance(value, dict):
+        for run_id, row in value.items():
+            if not isinstance(run_id, str) or not isinstance(row, dict):
+                continue
+            run = RunRecord(run_id, session.session_id, str(row.get("source", "legacy")), str(row.get("goal", "")))
+            for key in ("parent_run_id", "root_run_id", "status", "started_at", "ended_at", "result", "error", "model_config", "plan", "usage", "step_ids", "tool_execution_ids"):
+                if key in row:
+                    setattr(run, key, row[key])
+            session.runs[run_id] = run
+        session.active_run_id = active_run_id if active_run_id in session.runs else None
+        return
+    # Old checkpoints had only root-turn strings.  Mapping is deterministic and
+    # intentionally does not invent boundaries beyond what the checkpoint proves.
+    legacy_id = session.agent_root_turn_id or f"legacy:{session.session_id}:0"
+    run = RunRecord(
+        legacy_id, session.session_id, "legacy", session.current_goal(), root_run_id=legacy_id
+    )
+    run.status = "completed" if legacy_status == "completed" else "interrupted"
+    run.step_ids = [turn.step_id or f"legacy-step:{turn.step}" for turn in session.turns]
+    run.tool_execution_ids = list(session.tool_executions)
+    session.runs[legacy_id] = run
+    session.active_run_id = legacy_id if legacy_status == "running" else None
+
+
+def _checkpoint_run_status(session_info: dict[str, Any]) -> str:
+    """Project new run records for the existing session-list API."""
+    active_id = session_info.get("active_run_id")
+    runs = session_info.get("runs")
+    if isinstance(active_id, str) and isinstance(runs, dict):
+        active = runs.get(active_id)
+        if isinstance(active, dict) and isinstance(active.get("status"), str):
+            return active["status"]
+    # v2-v4 files persisted this as session status.
+    value = session_info.get("status", "idle")
+    return value if isinstance(value, str) else "idle"
+
+
+def _deserialize_attachments(value: Any) -> dict[str, AttachmentRecord]:
+    rows = _object(value, "attachments")
+    records: dict[str, AttachmentRecord] = {}
+    for attachment_id, item in rows.items():
+        if not isinstance(attachment_id, str) or not attachment_id:
+            raise CheckpointError("attachment id must be a non-empty string")
+        try:
+            record = AttachmentRecord.from_dict(
+                _object(item, f"attachments[{attachment_id}]")
+            )
+        except AttachmentError as exc:
+            raise CheckpointError(str(exc)) from exc
+        if record.id != attachment_id:
+            raise CheckpointError("attachment key/id mismatch")
+        records[attachment_id] = record
+    return records
+
+
+def _recover_interrupted_tool_calls(session: Session) -> None:
     """Close pending calls from a crashed process without replaying side effects."""
     # Insert missing results beside their assistant call, before any later
     # user/reminder message. Never replay a potentially completed side effect.
@@ -455,11 +579,25 @@ def _deserialize_messages(value: Any) -> list[MessageRecord]:
     for index, row in enumerate(rows):
         item = _object(row, f"message_records[{index}]")
         message = _object(item.get("message"), f"message_records[{index}].message")
+        source = _optional_string(
+            item.get("source"), f"message_records[{index}].source"
+        ) or _legacy_message_source(message)
         records.append(MessageRecord(
             _string(item.get("id"), f"message_records[{index}].id"),
             _message_param(message),
+            source,
         ))
     return records
+
+
+def _legacy_message_source(message: dict[str, Any]) -> str:
+    """Give checkpoints written before message provenance a stable projection."""
+    return {
+        "user": "user_input",
+        "assistant": "model_output",
+        "tool": "tool_result",
+        "system": "system_instruction",
+    }.get(str(message.get("role", "")), "system_feedback")
 
 
 def _deserialize_turns(value: Any) -> list[TurnRecord]:
@@ -502,6 +640,8 @@ def _deserialize_turns(value: Any) -> list[TurnRecord]:
             error=_optional_string(item.get("error"), f"turns[{index}].error"),
             usage=_deserialize_usage(item.get("usage"), f"turns[{index}].usage"),
             verification=verification,
+            run_id=_optional_string(item.get("run_id"), "turn.run_id") or "",
+            step_id=_optional_string(item.get("step_id"), "turn.step_id") or "",
         ))
     return turns
 
@@ -529,6 +669,20 @@ def _deserialize_executions(value: Any) -> dict[str, ToolExecutionRecord]:
                 ok=ok,
                 err=_string(raw_result.get("err", ""), "tool result.err", allow_empty=True),
                 data=raw_result.get("data"),
+                summary=_string(raw_result.get("summary", ""), "tool result.summary", allow_empty=True),
+                content=tuple(_array(raw_result.get("content", []), "tool result.content")),
+                artifacts=tuple(
+                    ArtifactRef(
+                        id=_string(_object(row, "tool artifact").get("id"), "tool artifact.id"),
+                        media_type=_string(_object(row, "tool artifact").get("media_type"), "tool artifact.media_type"),
+                        name=_string(_object(row, "tool artifact").get("name"), "tool artifact.name"),
+                        size=_nonnegative_int(_object(row, "tool artifact").get("size"), "tool artifact.size"),
+                        run_id=_string(_object(row, "tool artifact").get("run_id", ""), "tool artifact.run_id", allow_empty=True),
+                        call_id=_string(_object(row, "tool artifact").get("call_id", ""), "tool artifact.call_id", allow_empty=True),
+                        storage_path=_string(_object(row, "tool artifact").get("storage_path", ""), "tool artifact.storage_path", allow_empty=True),
+                    )
+                    for row in _array(raw_result.get("artifacts", []), "tool result.artifacts")
+                ),
             )
         execution_status = _one_of(
             item.get("status"), _EXECUTION_STATUSES, "tool execution status"
@@ -544,6 +698,8 @@ def _deserialize_executions(value: Any) -> dict[str, ToolExecutionRecord]:
             status=execution_status,
             started_at=_optional_number(item.get("started_at"), "started_at"),
             ended_at=_optional_number(item.get("ended_at"), "ended_at"),
+            run_id=_optional_string(item.get("run_id"), "tool.run_id") or "",
+            step_id=_optional_string(item.get("step_id"), "tool.step_id") or "",
         )
     return executions
 
@@ -648,10 +804,10 @@ def _one_of(value: Any, allowed: frozenset[_T], field: str) -> _T:
     return cast(_T, text)
 
 
-def _message_param(value: dict[str, Any]) -> ChatCompletionMessageParam:
+def _message_param(value: dict[str, Any]) -> dict[str, Any]:
     if value.get("role") not in _MESSAGE_ROLES:
         raise CheckpointError(f"非法 message role: {value.get('role')}")
-    return cast(ChatCompletionMessageParam, value)
+    return value
 
 
 def _optional_string(value: Any, field: str) -> str | None:

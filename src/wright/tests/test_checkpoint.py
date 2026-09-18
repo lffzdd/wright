@@ -7,8 +7,8 @@ from wright.tests.responses import event, response
 from ..agent import Agent
 from ..checkpoint import CheckpointError, SessionCheckpointStore
 from ..renderer import SilentRenderer
-from ..session import SessionState, UsageRecord
-from ..tools.base import ToolCall, ToolResult
+from ..session import Session, UsageRecord
+from ..tools.base import ArtifactRef, ToolCall, ToolResult
 from ..util import build_tool_results_messages
 
 
@@ -16,7 +16,7 @@ def _populated_session(tmp_path):
     workspace = tmp_path / "workspace"
     cwd = workspace / "nested"
     cwd.mkdir(parents=True)
-    session = SessionState.create("checkpoint goal", workspace, max_steps=9)
+    session = Session.create("checkpoint goal", workspace, max_steps=9)
     session.begin_user_turn("checkpoint goal")
     session.append_message({"role": "system", "content": "system"})
     session.append_message({"role": "user", "content": "do it"})
@@ -35,6 +35,10 @@ def _populated_session(tmp_path):
     )
     session.record_usage_for_turn(tool_turn, UsageRecord(10, 4, 14))
     result = ToolResult.success({"path": str(workspace / "a.txt")})
+    result = ToolResult.success(
+        {"path": str(workspace / "a.txt")}, summary="saved file",
+        artifacts=(ArtifactRef("artifact_a", "text/plain", "a.txt", 2, "", "call_1", "artifact_a"),),
+    )
     session.record_tool_execution("call_1", result, started_at=1.5, ended_at=2.0)
     session.append_message(build_tool_results_messages([(call, result)])[0])
 
@@ -51,6 +55,10 @@ def _populated_session(tmp_path):
 def test_checkpoint_round_trips_complete_session_state(tmp_path):
     original = _populated_session(tmp_path)
     original.model_name = "selected-model"
+    assert original.active_run() is not None
+    original.active_run().model_config = {
+        "model": "run-selected-model", "transport": "responses"
+    }
     original.active_deferred_tools = ["web_search", "schedule_task"]
     store = SessionCheckpointStore(tmp_path / "checkpoints")
 
@@ -59,10 +67,13 @@ def test_checkpoint_round_trips_complete_session_state(tmp_path):
 
     assert path.stat().st_mode & 0o777 == 0o600
     assert restored.session_id == original.session_id
-    assert restored.status == "completed"
-    assert restored.user_goal == "checkpoint goal"
+    assert restored.current_run_status() == "completed"
+    assert restored.current_goal() == "checkpoint goal"
     assert restored.get_cwd() == original.get_cwd()
     assert restored.wire_messages() == original.wire_messages()
+    assert [record.source for record in restored.message_records] == [
+        record.source for record in original.message_records
+    ]
     assert restored.step_count == original.step_count
     assert restored.active_turn_start_step == original.active_turn_start_step
     assert (
@@ -71,6 +82,10 @@ def test_checkpoint_round_trips_complete_session_state(tmp_path):
     )
     assert restored.total_usage == original.total_usage
     assert restored.model_name == "selected-model"
+    assert restored.current_run() is not None
+    assert restored.current_run().model_config == {
+        "model": "run-selected-model", "transport": "responses"
+    }
     assert restored.active_deferred_tools == ["web_search", "schedule_task"]
     assert restored.project_root == original.workspace_dir
     assert restored.environment == "local"
@@ -81,6 +96,8 @@ def test_checkpoint_round_trips_complete_session_state(tmp_path):
     execution = restored.tool_executions["call_1"]
     assert execution.call.arguments["file"] == "a.txt"
     assert execution.result.ok is True
+    assert execution.result.summary == "saved file"
+    assert execution.result.artifacts[0].id == "artifact_a"
     assert execution.started_at == 1.5
     assert execution.ended_at == 2.0
     assert restored.turns[-1].verification.approved is True
@@ -93,7 +110,7 @@ def test_committed_turn_marker_prevents_stale_running_checkpoint_replay(tmp_path
     store = SessionCheckpointStore(tmp_path / "checkpoints")
     path = store.save(original)
     payload = json.loads(path.read_text(encoding="utf-8"))
-    payload["session"]["status"] = "running"
+    payload["session"]["runs"][payload["session"]["active_run_id"]]["status"] = "running"
     path.write_text(json.dumps(payload), encoding="utf-8")
     restored = store.load(original.session_id)
 
@@ -106,7 +123,7 @@ def test_committed_turn_marker_prevents_stale_running_checkpoint_replay(tmp_path
     agent = Agent(NoReplayLLM(), [], restored, SilentRenderer(), checkpoint_store=store)
 
     assert agent.continue_run() == "done"
-    assert restored.status == "completed"
+    assert restored.current_run_status() == "completed"
 
 
 def test_reopened_turn_revokes_its_commit_marker(tmp_path):
@@ -135,6 +152,22 @@ def test_checkpoint_v2_without_project_fields_defaults_to_local(tmp_path):
     assert restored.branch_name is None
 
 
+def test_checkpoint_v2_user_content_is_migrated_to_text_part(tmp_path):
+    original = _populated_session(tmp_path)
+    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    path = store.save(original)
+    payload = json.loads(path.read_text())
+    payload["version"] = 2
+    payload["session"].pop("attachments")
+    payload["session"].pop("llm_transport")
+    path.write_text(json.dumps(payload))
+
+    restored = store.load(original.session_id)
+
+    user = next(item for item in restored.conversation_messages() if item["role"] == "user")
+    assert user["parts"] == [{"type": "text", "text": "do it"}]
+
+
 def test_restored_plan_continues_step_ids_without_collision(tmp_path):
     original = _populated_session(tmp_path)
     store = SessionCheckpointStore(tmp_path / "checkpoints")
@@ -148,7 +181,7 @@ def test_restored_plan_continues_step_ids_without_collision(tmp_path):
 def test_checkpoint_does_not_restore_live_autonomy_handles(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    session = SessionState.create("autonomous", workspace)
+    session = Session.create("autonomous", workspace)
     store = SessionCheckpointStore(tmp_path / "checkpoints")
 
     store.save(session)
@@ -160,6 +193,8 @@ def test_checkpoint_does_not_restore_live_autonomy_handles(tmp_path):
     assert "loop_registry" not in text
     assert "agent_background" not in text
     assert "durable_store" not in text
+    assert "process_registry" not in text
+    assert "RuntimeResources" not in text
 
 
 def test_unknown_checkpoint_version_is_rejected(tmp_path):
@@ -172,8 +207,27 @@ def test_unknown_checkpoint_version_is_rejected(tmp_path):
         store.load("abc123")
 
 
+def test_phase_two_v5_checkpoint_loads_without_request_context_estimate(tmp_path):
+    from wright.checkpoint import _deserialize_session, _serialize_session
+
+    session = _populated_session(tmp_path)
+    payload = _serialize_session(session)
+    payload["version"] = 5
+    del payload["session"]["request_context_tokens"]
+    for record in payload["session"]["message_records"]:
+        del record["source"]
+
+    restored = _deserialize_session(payload)
+
+    assert restored.request_context_tokens == 0
+    assert [record.source for record in restored.message_records] == [
+        "system_instruction", "user_input", "model_output", "tool_result", "model_output"
+    ]
+    assert restored.current_run_status() == "completed"
+
+
 def test_checkpoint_refuses_missing_workspace(tmp_path):
-    session = SessionState.create("goal", tmp_path / "missing")
+    session = Session.create("goal", tmp_path / "missing")
     store = SessionCheckpointStore(tmp_path / "checkpoints")
 
     with pytest.raises(CheckpointError, match="workspace_dir 不存在"):
@@ -213,7 +267,7 @@ def test_agent_continues_running_checkpoint_without_new_user_message(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     store = SessionCheckpointStore(tmp_path / "checkpoints")
-    first_session = SessionState.create("placeholder", workspace)
+    first_session = Session.create("placeholder", workspace)
     first_agent = Agent(
         CrashLLM(), [], first_session, SilentRenderer(), checkpoint_store=store
     )
@@ -222,7 +276,7 @@ def test_agent_continues_running_checkpoint_without_new_user_message(tmp_path):
         first_agent.run("survive this", max_steps=3)
 
     restored = store.load(first_session.session_id)
-    assert restored.status == "running"
+    assert restored.current_run_status() == "running"
     user_messages_before = [
         message for message in restored.messages if message.get("role") == "user"
     ]
@@ -232,7 +286,7 @@ def test_agent_continues_running_checkpoint_without_new_user_message(tmp_path):
         llm, [], restored, SilentRenderer(), checkpoint_store=store
     )
     assert second_agent.continue_run() == "resumed"
-    assert restored.status == "completed"
+    assert restored.current_run_status() == "completed"
     assert [
         message for message in restored.messages if message.get("role") == "user"
     ] == user_messages_before
@@ -242,7 +296,7 @@ def test_agent_continues_running_checkpoint_without_new_user_message(tmp_path):
 def test_pending_tool_calls_recover_as_unknown_instead_of_replaying(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    session = SessionState.create("goal", workspace)
+    session = Session.create("goal", workspace)
     session.begin_user_turn("write once")
     session.append_message({"role": "user", "content": "write once"})
     call = ToolCall("write_file", {"file": "a.txt", "content": "x"}, "c1")
@@ -285,7 +339,7 @@ def test_legacy_json_checkpoint_requires_the_preserved_version(tmp_path):
 
 
 def test_recovery_inserts_all_missing_results_before_later_messages(tmp_path):
-    session = SessionState.create("goal", tmp_path)
+    session = Session.create("goal", tmp_path)
     calls = [ToolCall("write_file", {}, "c1"), ToolCall("read_file", {}, "c2")]
     session.record_assistant_turn("checking", {}, "tool_calls", calls)
     # A successful call whose result had not reached the transcript before crash.

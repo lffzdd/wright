@@ -4,20 +4,22 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
-from openai.types.chat import ChatCompletionMessageParam
-
-from .context import ContextCompactor
+from .attachments import MAX_ATTACHMENTS_PER_TURN, MAX_TOTAL_ATTACHMENT_BYTES
+from .capabilities import AgentProfile, CapabilityCatalog, CapabilitySnapshot
+from .context import ContextBudgetExceeded, ContextBuilder, ContextCompactor
 from .events import ContentDelta, ContentDone, ReasoningDelta, UsageEvent
 from .executor import ToolExecutor
 from .llm import LLMClient
 from .logger import get_logger
 from .memory import MemoryManager
+from .model import ModelRequest
 from .permission import PermissionResolver
+from .processes import RuntimeResources
 from .prompt import build_system_prompt
 from .protocol import TurnAbort, encode_tools, parse_turn
 from .renderer import Renderer
 from .services import RuntimeServices
-from .session import SessionState, UsageRecord
+from .session import Session, UsageRecord
 from .skills.prompt import catalog_reminder
 from .skills.registry import SkillRegistry
 from .tools.base import Tool, ToolResult
@@ -47,7 +49,7 @@ class Agent:
         self,
         llm: LLMClient,
         tools: list[Tool],
-        session_state: SessionState,
+        session_state: Session,
         renderer: Renderer,
         tool_timeout: float = 30,
         context_watermark: float = 0.75,
@@ -65,11 +67,16 @@ class Agent:
         lifecycle=None,
         skills: SkillRegistry | None = None,
         services: RuntimeServices | None = None,
+        runtime_resources: RuntimeResources | None = None,
+        profile: AgentProfile | None = None,
     ):
         self.llm = llm
         self.session_state = session_state
         self.renderer = renderer
         self.services = services
+        self.runtime_resources = runtime_resources or RuntimeResources.for_session(
+            session_state.session_id
+        )
         # 长期记忆协作者:只主 Agent 注入,子 Agent 传 None(保持纯净隔离上下文)。
         # Agent 只在主循环里喊它三声:构造时取指令、每轮注入召回、收口后提取落盘。
         self.memory = memory
@@ -102,10 +109,14 @@ class Agent:
             context_watermark=context_watermark,
             keep_recent_tool_results=keep_recent_tool_results,
         )
+        self.context_builder = ContextBuilder(self.compactor)
 
         # Schemas are request-local: parent and child agents may share one client.
         # Specialized capabilities are activated on demand by tool_search.
-        runtime_tools = list(tools)
+        catalog = CapabilityCatalog(tools)
+        self.profile = profile or AgentProfile("root", catalog.names, allow_interaction=True, allow_background_tasks=True, allow_delegation=True)
+        self.capabilities = catalog.snapshot(self.profile)
+        runtime_tools = list(self.capabilities.tools)
         deferred_names = {
             tool.name
             for tool in runtime_tools
@@ -122,6 +133,9 @@ class Agent:
             runtime_tools.append(
                 make_tool_search_tool(runtime_tools, self._active_deferred_tools)
             )
+        # tool_search is an internal catalog projection, never a route to a
+        # capability absent from the immutable profile snapshot.
+        self.capabilities = CapabilitySnapshot(self.profile, tuple(runtime_tools))
         self._schema_tools = runtime_tools
         self.tool_schemas, self._tool_names = encode_tools(
             runtime_tools, active_deferred=set(self._active_deferred_tools)
@@ -146,13 +160,15 @@ class Agent:
             on_progress=renderer.on_agent_event,
             on_shell_task_done=on_shell_task_done,
             permission_resolver=permission_resolver,
-            session_state=session_state,
+            session=session_state,
             # Use the composed check so an autonomous durable run can add its
             # own cancellation signal without rebuilding the executor.
             cancellation_check=self._is_cancelled,
             allow_background_tasks=allow_background_tasks,
             lifecycle=lifecycle,
             services=services,
+            runtime_resources=self.runtime_resources,
+            capability_snapshot=self.capabilities,
         )
         if (
             checkpoint_store is not None
@@ -167,46 +183,8 @@ class Agent:
         return self.llm.context_limit
 
     @property
-    def messages(self) -> Sequence[ChatCompletionMessageParam]:
+    def messages(self) -> Sequence[dict]:
         return self.session_state.messages
-
-    def _compact_context_if_needed(self, transient_tokens: int = 0) -> int:
-        """喊 compactor 折叠旧工具结果;折叠后从 running total 扣减省下的 token。
-
-        不再作废锚点:running total 被增量调整(减去折叠省下的),
-        下次 usage 回来时更新估算锚点。
-        """
-        context_tokens = self.session_state.context_tokens + transient_tokens
-        should_compact = bool(
-            self.context_limit is not None
-            and context_tokens > self.context_limit * self.compactor.context_watermark
-        )
-        if should_compact:
-            self._emit_lifecycle("pre_compact", {
-                "context_tokens": context_tokens,
-                "context_limit": self.context_limit,
-                "watermark": self.compactor.context_watermark,
-            })
-        folded_count, token_savings = self.compactor.compact_if_needed(
-            self.session_state.message_records,
-            context_tokens,
-            self.context_limit,
-        )
-        if token_savings:
-            self.session_state.context_tokens -= token_savings
-        if should_compact:
-            deactivated_tools = (
-                self.session_state.clear_active_deferred_tools()
-                if folded_count
-                else 0
-            )
-            self._emit_lifecycle("post_compact", {
-                "folded_count": folded_count,
-                "token_savings": token_savings,
-                "context_tokens": self.session_state.context_tokens,
-                "deactivated_tools": deactivated_tools,
-            })
-        return folded_count
 
     def _emit_lifecycle(self, event: str, payload: dict):
         if self.lifecycle is None:
@@ -263,7 +241,7 @@ class Agent:
 
     def _run_turn(
         self,
-        reminders: Sequence[ChatCompletionMessageParam] = (),
+        reminders: Sequence[dict] = (),
     ) -> tuple[ContentDone, UsageRecord | None]:
         """渲染事件流，返回包含正文和工具调用的完整响应。
 
@@ -280,13 +258,40 @@ class Agent:
         usage_record: UsageRecord | None = None
         self.renderer.on_turn_begin()
 
-        wire_messages = self.session_state.wire_messages()
-        wire_messages.extend(reminders)
+        view = self.context_builder.build(
+            self.session_state.message_records,
+            tools=self.tool_schemas,
+            reminders=reminders,
+            context_limit=self.context_limit,
+        )
+        self.session_state.request_context_tokens = view.estimated_tokens
+        if view.folded_record_ids:
+            # ContextView owns the projection. Session owns the decision to
+            # deactivate deferred schemas after a compacted request.
+            self._emit_lifecycle("pre_compact", {
+                "context_tokens": view.estimated_tokens,
+                "context_limit": self.context_limit,
+                "watermark": self.compactor.context_watermark,
+            })
+            deactivated_tools = self.session_state.clear_active_deferred_tools()
+            self._emit_lifecycle("post_compact", {
+                "folded_count": len(view.folded_record_ids),
+                "token_savings": 0,
+                "context_tokens": view.estimated_tokens,
+                "deactivated_tools": deactivated_tools,
+                "folded_record_ids": list(view.folded_record_ids),
+                "over_budget": view.over_budget,
+            })
+        if view.over_budget:
+            raise ContextBudgetExceeded(
+                "context exceeds the request budget after deterministic compression"
+            )
+        wire_messages = view.messages
 
         self._emit_lifecycle("llm_start", {
             "model": str(getattr(self.llm, "model", "")),
             "message_count": len(wire_messages),
-            "context_tokens": self.session_state.context_tokens,
+            "context_tokens": view.estimated_tokens,
             "has_plan_reminder": any(
                 "<plan-state>" in str(message.get("content", ""))
                 for message in reminders
@@ -294,7 +299,19 @@ class Agent:
         })
         started = time.monotonic()
         try:
-            for event in self.llm(wire_messages, tools=self.tool_schemas):
+            run_config = (
+                self.session_state.active_run().model_config
+                if self.session_state.active_run() is not None
+                else {}
+            )
+            request = ModelRequest(
+                messages=tuple(wire_messages),
+                tools=tuple(view.tools),
+                context_token_estimate=view.estimated_tokens,
+                model=run_config.get("model") or None,
+                transport=run_config.get("transport") or None,
+            )
+            for event in self.llm(request, tools=self.tool_schemas):
                 if isinstance(event, ReasoningDelta):
                     self.renderer.on_reasoning_delta(event.piece)
                 elif isinstance(event, ContentDelta):
@@ -336,7 +353,7 @@ class Agent:
 
         return response, usage_record
 
-    def _plan_reminder(self) -> ChatCompletionMessageParam | None:
+    def _plan_reminder(self) -> dict | None:
         block = self.session_state.plan_manager.to_prompt_block()
         # 计划字段由模型工具调用产生，最终也可能来自不可信用户文本；保持 user role，
         # 并由 to_prompt_block 的 JSON 数据边界明确它不具备指令权限。
@@ -363,9 +380,9 @@ class Agent:
             self.session_state.append_message({"role": "user", "content": catalog})
         self.session_state.mark_skill_catalog_sent()
 
-    def _ephemeral_reminders(self) -> list[ChatCompletionMessageParam]:
+    def _ephemeral_reminders(self) -> list[dict]:
         """本轮才需要、不能落进会话记录的提醒。目前只有最新计划块。"""
-        reminders: list[ChatCompletionMessageParam] = []
+        reminders: list[dict] = []
         plan = self._plan_reminder()
         if plan is not None:
             reminders.append(plan)
@@ -390,11 +407,6 @@ class Agent:
         transient_plan_tokens: int,
     ) -> None:
         self.session_state.record_usage_for_turn(turn_record, usage_record)
-        # 服务端 prompt_tokens 包含临时计划提醒，但它没有落进 transcript；扣除其估算值，
-        # 令 running total 始终表示持久 transcript。下一轮压缩时会重新加上最新提醒。
-        self.session_state.context_tokens = max(
-            0, self.session_state.context_tokens - transient_plan_tokens
-        )
         self._notify_usage(usage_record)
 
     def _notify_usage(self, usage_record: UsageRecord) -> None:
@@ -431,7 +443,10 @@ class Agent:
     def _stop_if_cancelled(self, *, record_memory: bool = True) -> bool:
         if not self._is_cancelled():
             return False
-        self.session_state.mark_failed()
+        self.session_state.mark_cancelled()
+        active_run = self.session_state.active_run()
+        if active_run is not None:
+            self.runtime_resources.finish_response(active_run.run_id)
         if record_memory:
             self._finalize_memory(None, extract_semantic=False)
         self._checkpoint()
@@ -444,6 +459,7 @@ class Agent:
         max_steps: int | None = None,
         *,
         cancellation_check: Callable[[], bool] | None = None,
+        attachment_ids: Sequence[str] = (),
     ) -> str | None:
         """执行新任务。"""
         max_steps = self.session_state.max_steps if max_steps is None else max_steps
@@ -455,12 +471,31 @@ class Agent:
         if self.session_state.turns:
             self.session_state.plan_manager.reset()
         # 重置上一轮的终态,使 status 始终反映"当前这轮"(多轮 REPL 下尤其需要)。
-        self.session_state.mark_running()
-        self.session_state.begin_user_turn(prompt)
+        attachment_ids = tuple(attachment_ids)
+        records = self.session_state.attachment_records(attachment_ids)
+        if len(records) > MAX_ATTACHMENTS_PER_TURN:
+            raise ValueError("a turn may include at most 10 images")
+        if sum(record.size for record in records) > MAX_TOTAL_ATTACHMENT_BYTES:
+            raise ValueError("turn attachments exceed 50 MiB limit")
+        if not prompt.strip() and not records:
+            raise ValueError("a user message needs text or an attachment")
+        turn_goal = prompt or f"[{len(records)} attached image(s)]"
+        self.session_state.begin_user_turn(turn_goal)
+        self.executor.bind_run(self.session_state)
+        active_run = self.session_state.active_run()
+        if active_run is not None:
+            self.runtime_resources.begin_response(active_run.run_id)
+            active_run.model_config = {
+                "model": str(getattr(self.llm, "model", "")),
+                "transport": str(getattr(self.llm, "transport_name", "")),
+            }
         prompt_decision = None
         if self.session_state.agent_task_id is None:
             prompt_decision = self._emit_lifecycle(
-                "user_prompt_submit", {"prompt": prompt}
+                "user_prompt_submit", {
+                    "prompt": prompt,
+                    "attachments": [record.to_dict() for record in records],
+                }
             )
             if prompt_decision is not None and prompt_decision.decision == "deny":
                 self.session_state.mark_failed()
@@ -470,7 +505,7 @@ class Agent:
                 self._checkpoint()
                 self._emit_agent_stop("failed", reason=prompt_decision.reason)
                 return None
-        self.session_state.append_message({"role": "user", "content": prompt})
+        self.session_state.append_user_message(prompt, attachment_ids)
         if prompt_decision is not None and prompt_decision.additional_context:
             self.session_state.append_message({
                 "role": "user",
@@ -485,7 +520,7 @@ class Agent:
         # 注入(role=user 以兼容各端点)。走 append_message 自动计入 context_tokens。
         # 召回是尽力而为的旁路,内部已吞异常,空块则跳过。
         if self.memory:
-            recall_block = self.memory.recall_block(prompt)
+            recall_block = self.memory.recall_block(turn_goal)
             if recall_block:
                 self.session_state.append_message(
                     {"role": "user", "content": recall_block}
@@ -493,7 +528,7 @@ class Agent:
 
         self._ensure_skill_catalog()
         self._checkpoint()
-        self._emit_agent_start(prompt)
+        self._emit_agent_start(turn_goal)
 
         return self._run_with_cancellation(
             max_steps,
@@ -541,9 +576,19 @@ class Agent:
                 }
             }, ensure_ascii=False)
 
-        self.session_state.mark_running()
+        active_run = self.session_state.active_run()
+        if active_run is None:
+            raise ValueError("runtime event requires an active Run")
+        if active_run.status in {"completed", "failed", "cancelled", "interrupted"}:
+            active_run = self.session_state.begin_continuation_run(
+                str(event.get("type") or "runtime_event"), source="runtime_event"
+            )
+        self.executor.bind_run(self.session_state)
+        self.runtime_resources.begin_response(active_run.run_id)
         self._emit_lifecycle("runtime_event", event)
-        self.session_state.append_message({"role": "user", "content": content})
+        self.session_state.append_message(
+            {"role": "user", "content": content}, source="runtime_event"
+        )
         self._checkpoint()
         self._emit_agent_start(
             str(event.get("type") or "runtime_event"), source="runtime_event"
@@ -576,15 +621,16 @@ class Agent:
         This is intentionally separate from ask_user: human interaction remains
         synchronous inside the permission layer and has no pause/resume state.
         """
-        if self.session_state.status != "running":
+        if self.session_state.current_run_status() != "running":
             raise ValueError(
-                f"只能继续 status=running 的会话，当前为 {self.session_state.status}"
+                "只能继续 running 的 Run，当前为 "
+                f"{self.session_state.current_run_status()}"
             )
         # A checkpoint may have been copied while an older writer still showed
         # status=running.  The commit ledger is authoritative: never call the
         # model again for a turn whose final result was already committed.
         if self.session_state.is_turn_committed():
-            self.session_state.status = "completed"
+            self.session_state.mark_completed()
             self._checkpoint()
             for turn in reversed(self.session_state.turns):
                 answer = turn.parsed.get("final_answer")
@@ -603,9 +649,10 @@ class Agent:
                 f"{self.session_state.session_id}:"
                 f"{self.session_state.active_turn_start_message_index}"
             )
+        self.executor.bind_run(self.session_state)
         self._ensure_skill_catalog()
         self._checkpoint()
-        self._emit_agent_start(self.session_state.user_goal, resumed=True)
+        self._emit_agent_start(self.session_state.current_goal(), resumed=True)
         return self._run_with_cancellation(
             budget,
             cancellation_check=cancellation_check,
@@ -665,6 +712,9 @@ class Agent:
         """Single exit path: render, mark, persist memory, checkpoint, emit."""
         self.renderer.on_final(message)
         getattr(self.session_state, self._TERMINAL_MARKERS[status])()
+        active_run = self.session_state.active_run()
+        if active_run is not None:
+            self.runtime_resources.finish_response(active_run.run_id)
         if record_memory:
             self._finalize_memory(None, extract_semantic=False)
         self._checkpoint()
@@ -735,7 +785,9 @@ class Agent:
         )
         if stop_decision is not None and stop_decision.decision == "deny":
             counters.hook += 1
-            self.session_state.status = "running"
+            active_run = self.session_state.active_run()
+            if active_run is not None:
+                active_run.resume_after_rejection()
             self.session_state.revoke_turn_commit()
             self.session_state.append_message({
                 "role": "user",
@@ -760,6 +812,9 @@ class Agent:
         counters.hook = 0
 
         self.renderer.on_final(turn.final_answer)
+        active_run = self.session_state.active_run()
+        if active_run is not None:
+            self.runtime_resources.finish_response(active_run.run_id)
         # 每个终态都记录 episode；只有成功回合才提取长期语义记忆。
         # 若同 turn 仍有后台 Agent，等最后一条 runtime notification
         # 收口后再一次性写 episode，避免把 running 摘要永久固化。
@@ -907,8 +962,16 @@ class Agent:
             transient = sum(
                 estimate_message_tokens(message) for message in reminders
             )
-            self._compact_context_if_needed(transient)
-            response, usage_record = self._run_turn(reminders)
+            try:
+                response, usage_record = self._run_turn(reminders)
+            except ContextBudgetExceeded as exc:
+                self._terminate(
+                    "failed",
+                    reason="context budget exceeded",
+                    message=f"上下文无法在预算内安全构建：{exc}",
+                    record_memory=record_memory,
+                )
+                return None
             content = response.content
             try:
                 turn = parse_turn(response)

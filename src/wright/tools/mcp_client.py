@@ -46,7 +46,7 @@ from mcp.client.streamable_http import streamablehttp_client
 
 from ..logger import get_logger
 from ..permission import PermissionCheckResult
-from .base import Tool, ToolResult, ToolRuntime
+from .base import ArtifactRef, Tool, ToolResult, ToolRuntime
 
 logger = get_logger(__name__)
 
@@ -338,14 +338,33 @@ def _to_tool_result(result) -> ToolResult:
     非文本块降级成类型占位描述。isError=True → fail。
     """
     parts: list[str] = []
+    content: list[dict[str, Any]] = []
+    artifacts: list[ArtifactRef] = []
     for block in result.content or []:
         text = getattr(block, "text", None)
         if text is not None:
             parts.append(text)
+            content.append({"type": "text", "text": str(text)})
+            continue
+        block_type = str(getattr(block, "type", "unknown"))
+        if block_type == "image":
+            data = getattr(block, "data", "")
+            mime = str(getattr(block, "mimeType", "image/*"))
+            content.append({"type": "image", "media_type": mime, "data": data})
+            parts.append("[MCP image preserved as typed content]")
+        elif block_type == "resource_link":
+            uri = str(getattr(block, "uri", ""))
+            content.append({"type": "resource_link", "uri": uri, "name": str(getattr(block, "name", ""))})
+            parts.append(f"[MCP resource reference: {uri}]")
         else:
-            parts.append(f"[{getattr(block, 'type', 'unknown')} content]")
+            content.append({"type": block_type, "value": repr(block)})
+            parts.append(f"[{block_type} content preserved]")
     text = "\n".join(parts)
+    structured = getattr(result, "structuredContent", None)
+    data = {"content": text}
+    if structured is not None:
+        data["structured_content"] = structured
 
     if getattr(result, "isError", False):
-        return ToolResult.fail(text or "MCP tool returned an error")
-    return ToolResult.success({"content": text})
+        return ToolResult.fail(text or "MCP tool returned an error", data, content=content)
+    return ToolResult.success(data, summary=text[:1_000], content=content, artifacts=artifacts)

@@ -1,6 +1,6 @@
 from ...autonomy import AutonomyStore
 from ...services import RuntimeServices
-from ...session import SessionState
+from ...session import Session
 from ...tools.autonomy_tools import (
     cancel_schedule_tool,
     get_schedule_tool,
@@ -10,7 +10,7 @@ from ...tools.autonomy_tools import (
     resume_schedule_tool,
     schedule_task_tool,
 )
-from ...tools.base import ToolRuntime
+from ...tools.base import tool_runtime_for_session
 
 
 def _runtime(tmp_path):
@@ -21,10 +21,10 @@ def _runtime(tmp_path):
         session_id="session",
         workspace_dir=workspace,
     )
-    session = SessionState.create("root", workspace)
+    session = Session.create("root", workspace)
     session.session_id = "session"
-    return store, ToolRuntime(
-        session_state=session,
+    return store, tool_runtime_for_session(
+        session,
         workspace_dir=workspace,
         services=RuntimeServices(durable_store=store),
     )

@@ -3,7 +3,7 @@
 The control plane owns orchestration state, not execution. ``subagent.py`` runs
 child Agents; this module gives every child a stable identity, lifecycle,
 shared budgets, cancellation propagation, checkpointable state, and a compact
-tree view. Child transcripts remain isolated inside their own SessionState.
+tree view. Child transcripts remain isolated inside their own Session.
 """
 
 from __future__ import annotations

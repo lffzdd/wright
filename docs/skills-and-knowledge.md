@@ -36,7 +36,7 @@ tool_result  正文进入 transcript，之后随对话历史保留
 ```
 
 `continue_run` / `run_runtime_event` 不是新会话：目录标记
-`SessionState.skill_catalog_sent` 已为真则不再重发。后续 `Agent.run()`
+`Session.skill_catalog_sent` 已为真则不再重发。后续 `Agent.run()`
 也不清空这份目录——它已经在历史里。
 
 没有 `list_skills` / `load_skill` / `unload_skill`，也没有激活表。
@@ -47,8 +47,8 @@ tool_result  正文进入 transcript，之后随对话历史保留
 | 状态 | 所有者 | 不放在 |
 |---|---|---|
 | skill 文件 / 正文 | 磁盘 + `SkillRegistry`（进程级只读缓存） | Session、checkpoint、system prompt |
-| 目录是否已写入 transcript | `SessionState.skill_catalog_sent` | 全局 registry、Memory |
-| 计划 | `SessionState.plan_manager` | Skill |
+| 目录是否已写入 transcript | `Session.skill_catalog_sent` | 全局 registry、Memory |
+| 计划 | `Session.plan_manager` | Skill |
 | 跨会话事实 | Memory | Skill |
 
 正文只在被调用时出现在 transcript 的 `tool_result` 里，不另建

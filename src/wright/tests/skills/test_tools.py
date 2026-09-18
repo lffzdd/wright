@@ -2,18 +2,18 @@ from pathlib import Path
 
 from jsonschema import validators
 
-from ...session import SessionState
+from ...session import Session
 from ...skills.registry import SkillRegistry
 from ...skills.store import write_skill
-from ...tools.base import ToolRuntime
+from ...tools.base import tool_runtime_for_session
 from ...tools.skill_tools import build_skill_tools
 from ...tools.validation import validate_tool_arguments
 
 
 def _runtime(tmp_path: Path, registry: SkillRegistry | None = None):
-    session = SessionState.create("goal", tmp_path)
+    session = Session.create("goal", tmp_path)
     tools = build_skill_tools(registry or SkillRegistry(tmp_path))
-    runtime = ToolRuntime(workspace_dir=tmp_path, session_state=session)
+    runtime = tool_runtime_for_session(session, workspace_dir=tmp_path)
     return session, tools, runtime
 
 

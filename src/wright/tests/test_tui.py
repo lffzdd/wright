@@ -270,6 +270,17 @@ def test_session_control_preserves_cli_settings_and_model_choices():
     )
 
 
+def test_process_model_name_uses_cli_then_openai_model(monkeypatch):
+    from wright.tui.session_control import process_model_name
+
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
+    assert process_model_name(None) == ""
+    assert process_model_name("  ") == ""
+    monkeypatch.setenv("OPENAI_MODEL", "  env-model  ")
+    assert process_model_name(None) == "env-model"
+    assert process_model_name(" cli-model ") == "cli-model"
+
+
 def test_tui_model_switch_updates_the_active_llm_client():
     import threading
 

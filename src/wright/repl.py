@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import queue
 import threading
 
 from prompt_toolkit import PromptSession
@@ -11,14 +10,14 @@ from .interaction import PROMPT_INTERRUPTED
 from .logger import get_logger
 from .renderer import ConsoleRenderer
 from .runtime import WrightRuntime
-from .session_host import process_session_event
+from .session_service import SessionService
 
 logger = get_logger(__name__)
 
 
 def _start_input_reader(
     renderer: ConsoleRenderer,
-    event_queue: queue.Queue[tuple[str, object]],
+    service: SessionService,
     agent_idle: threading.Event,
 ) -> threading.Thread:
     """唯一读 stdin 的线程：主指令、权限/提问收集都走这里。
@@ -47,12 +46,18 @@ def _start_input_reader(
             if value is PROMPT_INTERRUPTED:
                 continue
             if value is None or value in {"/exit", "/quit"}:
-                event_queue.put(("EXIT", None))
+                if hasattr(service, "close"):
+                    service.close(wait_timeout=0)
+                else:  # compatibility for the input-reader unit seam
+                    service.put(("EXIT", None))
                 return
             if value:
                 # 先清 idle，避免主线程还没开始跑就又画出第二个「你的指令」。
                 agent_idle.clear()
-                event_queue.put(("USER_INPUT", value))
+                if hasattr(service, "submit"):
+                    service.submit(value)
+                else:  # compatibility for the input-reader unit seam
+                    service.put(("USER_INPUT", value))
 
     thread = threading.Thread(target=read, name="wright-input", daemon=True)
     thread.start()
@@ -62,20 +67,20 @@ def _start_input_reader(
 class Repl:
     def __init__(self, rt: WrightRuntime) -> None:
         self.rt = rt
+        self.service = SessionService(rt)
 
     def run(self) -> None:
         rt = self.rt
         session_state = rt.session_state
         services = rt.services
         agent_idle = rt.agent_idle
-        event_queue = rt.event_queue
         if services.autonomy_scheduler is None or services.agent_background is None:
             raise RuntimeError("REPL requires autonomy scheduler and background runtime")
 
         if not isinstance(rt.renderer, ConsoleRenderer):
             raise TypeError("CLI host requires ConsoleRenderer")
 
-        # 只有这个循环会改 root SessionState。durable run 在这里构造独立会话后
+        # 只有这个循环会改 root Session。durable run 在这里构造独立会话后
         # 丢给后台，完成时只渲染摘要，不再走 run_runtime_event。
         #
         # agent_idle：loop 调度与主输入框的同步信号。
@@ -85,13 +90,12 @@ class Repl:
         if rt.resumed:
             print(
                 f"已恢复 session {session_state.session_id} "
-                f"(status={session_state.status})"
+                f"(run_status={session_state.current_run_status()})"
             )
             rt.renderer.render_session_history(session_state)
-            if session_state.status == "running":
-                rt.agent.continue_run()
-        _start_input_reader(rt.renderer, event_queue, agent_idle)
-        while True:
-            event_type, payload = event_queue.get()
-            if process_session_event(rt, event_type, payload):
-                break
+        self.service.start()
+        _start_input_reader(rt.renderer, self.service, agent_idle)
+        try:
+            self.service.runner.join()
+        finally:
+            self.service.close(wait_timeout=0)

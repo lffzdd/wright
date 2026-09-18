@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from ..logger import get_logger
-from ..processes import terminate_process_tree
+from ..processes import ProcessResources, terminate_process_tree
 from .base import Tool, ToolCancelledError, ToolResult, ToolRuntime
 from .command_permissions import (
     check_execute_command_permission,
@@ -18,11 +18,11 @@ from .command_permissions import (
 
 logger = get_logger(__name__)
 
-def _session(runtime: ToolRuntime | None) -> Any:
-    session = runtime.session_state if runtime is not None else None
-    if session is None or not hasattr(session, "get_cwd"):
-        raise RuntimeError("command tool requires a SessionState runtime")
-    return session
+def _capabilities(runtime: ToolRuntime | None):
+    capabilities = runtime.capabilities if runtime is not None else None
+    if capabilities is None or capabilities.background_tasks is None:
+        raise RuntimeError("command tool requires execution and background-task capabilities")
+    return capabilities
 
 
 def _make_background_task(
@@ -31,9 +31,11 @@ def _make_background_task(
     output_lines: list[str],
     done_event: threading.Event,
     output_lock: threading.RLock,
+    reader_thread: threading.Thread,
     *,
     command: str,
     root_turn_id: str,
+    run_id: str = "",
     on_done: Callable[[], None] | None = None,
 ):
     # 延迟导入避免 session -> tools.base -> tools.__init__ -> command_tools 的环。
@@ -41,17 +43,16 @@ def _make_background_task(
 
     task = BackgroundTask(
         task_id=task_id,
-        process=proc,
-        output_lines=output_lines,
-        done=done_event,
-        output_lock=output_lock,
         on_done=on_done,
         command=command,
         root_turn_id=root_turn_id,
+        run_id=run_id,
     )
     if done_event.is_set():
         task.ended_at = time.time()
-    return task
+    return task, ProcessResources(
+        proc, output_lines, done_event, output_lock, reader_thread
+    )
 
 
 # ── execute_command ───────────────────────────────────────────────────────────
@@ -75,11 +76,11 @@ def execute_command(
     - run_in_background：立即后台运行，返回 task_id。
     """
     try:
-        session = _session(runtime)
+        capabilities = _capabilities(runtime)
 
         def result_data(payload: dict | None = None) -> dict:
             data = dict(payload or {})
-            data["cwd"] = _format_cwd(session, runtime)
+            data["cwd"] = _format_cwd(capabilities)
             return data
 
         if (
@@ -91,7 +92,7 @@ def execute_command(
                 "This Agent cannot create background tasks",
                 data=result_data(),
             )
-        cwd = session.get_cwd()
+        cwd = capabilities.execution.cwd()
 
         # 注入 cwd 追踪：用临时文件，和 Claude Code 的 claude-{id}-cwd 一致
         with tempfile.NamedTemporaryFile(prefix="wright-cwd-", delete=False) as tmp:
@@ -165,19 +166,24 @@ def execute_command(
         done_event.set()
         _notify_background_done()
 
-    threading.Thread(target=_reader, daemon=True).start()
+    reader_thread = threading.Thread(target=_reader, daemon=True)
+    reader_thread.start()
 
     if run_in_background:
         task_id = f"task_{uuid.uuid4().hex[:8]}"
         notify = runtime.notify_background_done if runtime else None
-        background = _make_background_task(
-            task_id, proc, output_lines, done_event, output_lock,
+        background, resources = _make_background_task(
+            task_id, proc, output_lines, done_event, output_lock, reader_thread,
             command=command,
-            root_turn_id=session.agent_root_turn_id,
+            root_turn_id=capabilities.scope.root_turn_id,
+            run_id=capabilities.scope.run_id,
             on_done=(lambda: notify(task_id)) if notify is not None else None,
         )
         background_holder[0] = background
-        session.register_background_task(background)
+        if runtime is None or runtime.runtime_resources is None:
+            raise RuntimeError("background command requires RuntimeResources")
+        capabilities.background_tasks.register(background)
+        runtime.runtime_resources.process_registry.register(task_id, resources)
         if done_event.is_set():
             _notify_background_done()
         return ToolResult.success(result_data({
@@ -210,14 +216,18 @@ def execute_command(
         # 超时：不 kill，转后台
         task_id = f"task_{uuid.uuid4().hex[:8]}"
         notify = runtime.notify_background_done if runtime else None
-        background = _make_background_task(
-            task_id, proc, output_lines, done_event, output_lock,
+        background, resources = _make_background_task(
+            task_id, proc, output_lines, done_event, output_lock, reader_thread,
             command=command,
-            root_turn_id=session.agent_root_turn_id,
+            root_turn_id=capabilities.scope.root_turn_id,
+            run_id=capabilities.scope.run_id,
             on_done=(lambda: notify(task_id)) if notify is not None else None,
         )
         background_holder[0] = background
-        session.register_background_task(background)
+        if runtime is None or runtime.runtime_resources is None:
+            raise RuntimeError("background command requires RuntimeResources")
+        capabilities.background_tasks.register(background)
+        runtime.runtime_resources.process_registry.register(task_id, resources)
         if done_event.is_set():
             _notify_background_done()
         with output_lock:
@@ -229,8 +239,8 @@ def execute_command(
             "output_so_far": output_so_far,
         }))
 
-    if cwd_result:
-        session.set_cwd(cwd_result[0])
+    if cwd_result and capabilities.set_cwd is not None:
+        capabilities.set_cwd(cwd_result[0])
 
     with output_lock:
         output = "".join(output_lines)
@@ -245,16 +255,14 @@ def execute_command(
     return ToolResult.fail(err=f"Command exited with code {returncode}", data=data)
 
 
-def _format_cwd(session: Any, runtime: ToolRuntime | None) -> str:
-    cwd = session.get_cwd().resolve()
-    workspace = runtime.workspace_dir.resolve() if runtime and runtime.workspace_dir else None
-    if workspace is not None:
-        try:
-            relative = cwd.relative_to(workspace)
-            return str(relative) if str(relative) != "." else "."
-        except ValueError:
-            pass
-    return str(cwd)
+def _format_cwd(capabilities) -> str:
+    cwd = capabilities.execution.cwd()
+    workspace = capabilities.execution.workspace_dir
+    try:
+        relative = cwd.relative_to(workspace)
+        return str(relative) if str(relative) != "." else "."
+    except ValueError:
+        return str(cwd)
 
 
 def _consume_cwd_file(cwd_file: Path) -> Path | None:

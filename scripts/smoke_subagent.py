@@ -19,7 +19,7 @@ from pathlib import Path
 from wright.agent import Agent
 from wright.events import ContentDone
 from wright.renderer import SilentRenderer
-from wright.session import SessionState
+from wright.session import Session
 from wright.subagent import build_agent_tools, make_spawn_agent_tool
 from wright.tools.base import Tool, ToolResult
 
@@ -61,8 +61,8 @@ def _final(answer: str) -> ContentDone:
     return response(content=answer, calls=[])
 
 
-def _make_session(goal: str = "主任务") -> SessionState:
-    return SessionState.create(user_goal=goal, workspace_dir=WORKSPACE)
+def _make_session(goal: str = "主任务") -> Session:
+    return Session.create(initial_goal=goal, workspace_dir=WORKSPACE)
 
 
 def test_spawn_agent_listed_in_parent_tools_but_not_at_max_depth():
@@ -93,7 +93,7 @@ def test_parent_delegates_and_aggregates_child_result():
     result = agent.run("把子任务委派出去")
 
     assert result == "汇总:子 Agent 算得 5050"
-    assert session.status == "completed"
+    assert session.current_run_status() == "completed"
     # 父对话里只看得到"委派一次 + 拿回一条 tool_result",中间步骤被隔离在子上下文。
     tool_results_msgs = [
         m
@@ -163,7 +163,7 @@ def test_child_failure_surfaces_as_failed_tool_result():
     ]
     payload = json.loads(tool_results_msgs[0]["content"])
     assert payload["ok"] is False
-    assert payload["data"]["status"] == "max_steps"
+    assert payload["data"]["status"] == "failed"
 
 
 def test_multiple_spawn_agents_run_concurrently_and_preserve_result_order():

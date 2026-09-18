@@ -23,7 +23,7 @@ from wright.agent import Agent
 from wright.events import ContentDelta, ContentDone, UsageEvent
 from wright.llm import LLMClient
 from wright.renderer import SilentRenderer
-from wright.session import SessionState, UsageRecord
+from wright.session import Session, UsageRecord
 from wright.tools.base import Tool, ToolCall, ToolResult, ToolRuntime
 
 
@@ -48,9 +48,9 @@ class RecordingRenderer(SilentRenderer):
         )
 
 
-def _make_session(user_goal: str = "") -> SessionState:
-    return SessionState.create(
-        user_goal=user_goal,
+def _make_session(user_goal: str = "") -> Session:
+    return Session.create(
+        initial_goal=user_goal,
         workspace_dir=_WORKSPACE,
     )
 
@@ -228,7 +228,10 @@ def test_tool_runtime_is_separate_from_model_arguments():
     assert isinstance(captured["runtime"], ToolRuntime)
     assert captured["runtime"].tool_name == "spy"
     assert captured["runtime"].tool_call_id == "c1"
-    assert captured["runtime"].workspace_dir == agent.session_state.workspace_dir
+    assert (
+        captured["runtime"].capabilities.execution.workspace_dir
+        == agent.session_state.workspace_dir
+    )
     assert tool_call.arguments == {"runtime": "model supplied"}
     assert "runtime" not in tool.to_dict()["parameters"].get("properties", {})
 
@@ -335,7 +338,7 @@ def test_stream_usage_event_can_live_on_choice_chunk():
     llm.max_wait = 0
     llm.response_format = {"type": "json_object"}
 
-    events = list(llm._call_stream([{"role": "user", "content": "hello"}], {}))
+    events = list(llm._call_stream([{"role": "user", "content": "hello"}], {}, "fake-model"))
 
     assert isinstance(events[0], ContentDelta) and events[0].piece == "hi"
     assert isinstance(events[1], UsageEvent)
@@ -419,10 +422,9 @@ def test_session_records_invalid_usage_and_status():
     assert final_turn.step == 2
     assert final_turn.tool_execution_ids == []
 
+    session.begin_user_turn("record test")
     session.mark_completed()
-    assert session.status == "completed"
-    session.mark_max_steps()
-    assert session.status == "max_steps"
+    assert session.current_run_status() == "completed"
 
 
 def test_assistant_raw_uses_stable_message_id_after_non_assistant_reorder():
@@ -474,7 +476,7 @@ def test_run_defaults_to_session_max_steps():
     agent = Agent(InvalidLLM(), [], session, SilentRenderer(), tool_timeout=5)
 
     assert agent.run("keep failing") is None
-    assert session.status == "max_steps"
+    assert session.current_run_status() == "failed"
     assert session.step_count == 2
     assert session.max_steps == 2
 
@@ -500,7 +502,7 @@ def test_run_aborts_after_consecutive_invalid():
     )
 
     assert agent.run("keep failing") is None
-    assert session.status == "failed"
+    assert session.current_run_status() == "failed"
     assert session.step_count == 3, "第 3 次连续失败就该止损,不烧到 max_steps"
 
 
@@ -540,7 +542,7 @@ def test_consecutive_invalid_resets_on_success():
 
     # 阈值 2,但失败从不连续出现两次,所以应正常完成而非 failed
     assert agent.run("mix") == "done"
-    assert session.status == "completed"
+    assert session.current_run_status() == "completed"
 
 
 def test_is_tool_result_message_only_accepts_valid_tool_results():
@@ -557,7 +559,7 @@ def test_is_tool_result_message_only_accepts_valid_tool_results():
         assert not compactor._is_tool_result_message(message)
 
 
-def test_fold_old_tool_results_keeps_recent_and_roles():
+def test_context_projection_folds_old_results_without_mutating_history():
     agent = _make_agent([], tool_timeout=5, keep_recent_tool_results=2)
 
     original_messages = list(agent.messages)
@@ -573,25 +575,18 @@ def test_fold_old_tool_results_keeps_recent_and_roles():
             {"role": "assistant", "content": f"assistant {i}"}
         )
 
-    before_len = len(agent.messages)
-    before_roles = [msg["role"] for msg in agent.messages]
     before_ids = [record.id for record in agent.session_state.message_records]
-
-    compactor = agent.compactor
-    folded_count, token_savings = compactor._fold_old_tool_results(
-        agent.session_state.message_records
+    view = agent.context_builder.build(
+        agent.session_state.message_records, tools=[], context_limit=100, output_reserve_tokens=0,
     )
-    assert folded_count == 3
-    assert token_savings > 0
-    assert len(agent.messages) == before_len
-    assert [msg["role"] for msg in agent.messages] == before_roles
+    assert len(view.folded_record_ids) == 3
     assert [record.id for record in agent.session_state.message_records] == before_ids
     assert list(agent.messages[: len(original_messages)]) == original_messages
 
     tool_result_messages = [
         json.loads(msg["content"])
-        for msg in agent.messages
-        if compactor._is_tool_result_message(msg)
+        for msg in view.messages
+        if agent.compactor._is_tool_result_message(msg)
     ]
 
     assert len(tool_result_messages) == 5
@@ -601,14 +596,12 @@ def test_fold_old_tool_results_keeps_recent_and_roles():
         result = folded
         assert result["ok"] is True
         assert result["err"] == ""
-        assert result["data"] == "[旧工具结果已折叠以节省上下文]"
+        assert result["data"] == "[older tool result folded for this request]"
 
-    folded_messages = [
-        msg
-        for msg in agent.messages
-        if compactor._is_tool_result_message(msg)
+    folded_messages = [msg for msg in view.messages if (
+        agent.compactor._is_tool_result_message(msg)
         and json.loads(msg["content"]).get("folded")
-    ]
+    )]
     assert [msg["_test_extra_field"] for msg in folded_messages] == [
         "keep 0",
         "keep 1",
@@ -623,24 +616,23 @@ def test_fold_old_tool_results_keeps_recent_and_roles():
         )
 
 
-def test_fold_old_tool_results_is_idempotent():
+def test_context_projection_is_idempotent():
     agent = _make_agent([], tool_timeout=5, keep_recent_tool_results=1)
     for i in range(3):
         agent.session_state.append_message(
             {"role": "tool", "tool_call_id": f"call_{i}", "content": json.dumps({"ok": False, "err": f"err {i}", "data": "x" * 200}, ensure_ascii=False)}
         )
 
-    compactor = agent.compactor
-    folded_count, _ = compactor._fold_old_tool_results(
-        agent.session_state.message_records
+    first = agent.context_builder.build(
+        agent.session_state.message_records, tools=[], context_limit=100, output_reserve_tokens=0,
     )
-    assert folded_count == 2
-    after_first_fold = list(agent.messages)
-    folded_count2, savings2 = compactor._fold_old_tool_results(
-        agent.session_state.message_records
+    second = agent.context_builder.build(
+        agent.session_state.message_records, tools=[], context_limit=100, output_reserve_tokens=0,
     )
-    assert folded_count2 == 0 and savings2 == 0
-    assert list(agent.messages) == after_first_fold
+    assert len(first.folded_record_ids) == 2
+    assert second.folded_record_ids == first.folded_record_ids
+    assert first.messages == second.messages
+    assert not any(json.loads(message["content"]).get("folded") for message in agent.messages if message.get("role") == "tool")
 
 
 def _append_tool_result_message(agent: Agent, idx: int) -> None:
@@ -668,64 +660,54 @@ def _make_compactor_agent(renderer, keep_recent_tool_results, watermark=0.75):
     )
 
 
-def test_compact_context_if_needed_folds_and_reports():
-    """running total 超过水位 → 触发折叠,context_tokens 被扣减而非作废。"""
+def test_context_projection_reports_folding_without_changing_history():
+    """Projection crossing the watermark reports folding without rewriting history."""
     renderer = RecordingRenderer()
     agent = _make_compactor_agent(renderer, keep_recent_tool_results=2)
 
     for i in range(5):
         _append_tool_result_message(agent, i)
 
-    # 把 context_tokens 设到水位线以上(水位 = 100 * 0.75 = 75)
-    agent.session_state.context_tokens = 80
-
-    assert agent._compact_context_if_needed() == 3
-    # running total 被扣减(而不是作废),值应该变小
-    assert agent.session_state.context_tokens < 80
+    original = [record.message.copy() for record in agent.session_state.message_records]
+    view = agent.context_builder.build(
+        agent.session_state.message_records, tools=[], context_limit=100, output_reserve_tokens=0,
+    )
+    assert len(view.folded_record_ids) == 3
+    assert [record.message for record in agent.session_state.message_records] == original
 
     assert len(renderer.context_compacts) == 1
     report = renderer.context_compacts[0]
     assert report["folded_count"] == 3
     assert report["context_limit"] == 100
     assert report["context_watermark"] == 0.75
-    assert report["prompt_tokens"] == 80  # 上报的是触发时的 context_tokens
+    assert report["prompt_tokens"] > 75
 
 
-def test_compact_context_if_needed_reports_when_nothing_to_fold():
-    """context_tokens 已越线但没有可折的旧结果:仍要上报,context_tokens 不变。"""
+def test_context_projection_without_tool_results_does_not_fold():
     renderer = RecordingRenderer()
     agent = _make_compactor_agent(renderer, keep_recent_tool_results=3)
 
-    # context_tokens 80 > 水位 75,但没有可折的旧工具结果
-    agent.session_state.context_tokens = 80
-
-    assert agent._compact_context_if_needed() == 0
-    # 没折成,running total 不变
-    assert agent.session_state.context_tokens == 80
-    assert renderer.context_compacts == [
-        {
-            "folded_count": 0,
-            "prompt_tokens": 80,
-            "context_limit": 100,
-            "context_watermark": 0.75,
-        }
-    ]
+    agent.session_state.append_message({"role": "user", "content": "x" * 1_000})
+    view = agent.context_builder.build(
+        agent.session_state.message_records, tools=[], context_limit=100, output_reserve_tokens=0,
+    )
+    assert view.folded_record_ids == ()
+    assert renderer.context_compacts[-1]["folded_count"] == 0
 
 
-def test_compact_context_if_needed_skips_below_watermark():
-    """context_tokens 在水位下就什么都不做,也不上报。"""
+def test_context_projection_skips_below_watermark():
     renderer = RecordingRenderer()
     agent = _make_compactor_agent(renderer, keep_recent_tool_results=1)
 
-    # context_tokens 70 < 水位 75,不触发
-    agent.session_state.context_tokens = 70
-
-    assert agent._compact_context_if_needed() == 0
+    view = agent.context_builder.build(
+        agent.session_state.message_records, tools=[], context_limit=100, output_reserve_tokens=0,
+    )
+    assert view.folded_record_ids == ()
     assert renderer.context_compacts == []
 
 
-def test_running_total_calibrated_by_usage():
-    """record_usage_for_turn 把 running total 校准回 P+C 真值,消灭估算误差。"""
+def test_history_estimate_stays_distinct_from_reported_usage():
+    """Persistent-history estimate is never overwritten by provider usage."""
     session = _make_session("calibration test")
 
     # 模拟追加了一些消息,running total 是估算值(可能不准)
@@ -742,8 +724,9 @@ def test_running_total_calibrated_by_usage():
     session.record_usage_for_turn(
         turn, UsageRecord(prompt_tokens=500, completion_tokens=50, total_tokens=550)
     )
-    # 校准后 context_tokens = P+C = 550,不再是之前的估算值
-    assert session.context_tokens == 550
+    assert session.last_usage == UsageRecord(500, 50, 550)
+    assert session.context_tokens > 0
+    assert session.context_tokens != 550
 
 
 def test_running_total_append_message_increments():
@@ -785,11 +768,11 @@ if __name__ == "__main__":
     test_run_aborts_after_consecutive_invalid()
     test_consecutive_invalid_resets_on_success()
     test_is_tool_result_message_only_accepts_valid_tool_results()
-    test_fold_old_tool_results_keeps_recent_and_roles()
-    test_fold_old_tool_results_is_idempotent()
-    test_compact_context_if_needed_folds_and_reports()
-    test_compact_context_if_needed_reports_when_nothing_to_fold()
-    test_compact_context_if_needed_skips_below_watermark()
-    test_running_total_calibrated_by_usage()
+    test_context_projection_folds_old_results_without_mutating_history()
+    test_context_projection_is_idempotent()
+    test_context_projection_reports_folding_without_changing_history()
+    test_context_projection_without_tool_results_does_not_fold()
+    test_context_projection_skips_below_watermark()
+    test_history_estimate_stays_distinct_from_reported_usage()
     test_running_total_append_message_increments()
     print("all tests passed")

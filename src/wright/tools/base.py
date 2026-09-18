@@ -1,13 +1,11 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
 from threading import RLock
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 from ..permission import PermissionCheckResult
-
-if TYPE_CHECKING:
-    from ..services import RuntimeServices
+from ..processes import RuntimeResources
+from ..tool_capabilities import ToolCapabilities, assemble_tool_capabilities
 
 TimeoutOwner = Literal["executor", "tool"]
 
@@ -33,17 +31,15 @@ class ToolRuntime:
     tool_name: str = ""
     tool_call_id: str = ""
 
-    # 当前会话的本地执行边界。工具需要定位 workspace/cwd 时优先用这里,
-    # 避免各工具自己猜 Path.cwd() 或维护重复状态。
-    workspace_dir: Path | None = None
-    cwd_provider: Callable[[], Path] | None = None
-    session_state: Any = None
+    # Explicit, bounded domain operations assembled by ToolExecutor.  Tools
+    # never receive Session, RunStore, or RuntimeServices.
+    capabilities: ToolCapabilities | None = None
+    # Owns process handles, locks, threads and streaming projections.  It is
+    # intentionally separate from checkpointed Session data.
+    runtime_resources: RuntimeResources | None = None
     # Session-scoped lifecycle bus. Kept process-local and intentionally absent
     # from tool schemas/checkpoints.
     lifecycle: Any = None
-    # Live process-local services. Same isolation as lifecycle: not in schemas
-    # or checkpoints, and not derived from SessionState.
-    services: "RuntimeServices | None" = None
     # Process-local bag shared across replace()d per-call runtimes.
     # Not in schemas or checkpoints. Tools store their own records here.
     scratch_lock: RLock = field(default_factory=RLock, repr=False)
@@ -65,6 +61,12 @@ class ToolRuntime:
     # 子 Agent 生命周期结束后不能留下无人管理的后台进程。
     allow_background_tasks: bool = True
 
+    def __post_init__(self) -> None:
+        if self.runtime_resources is None and self.capabilities is not None:
+            session_id = self.capabilities.scope.session_id
+            if session_id:
+                self.runtime_resources = RuntimeResources.for_session(session_id)
+
     def is_cancelled(self) -> bool:
         return bool(self.cancellation_check and self.cancellation_check())
 
@@ -76,6 +78,31 @@ class ToolRuntime:
 
     def get_cancellation_reason(self) -> str:
         return self.cancellation_reason() if self.cancellation_reason else ""
+
+
+def tool_runtime_for_session(
+    session,
+    *,
+    services=None,
+    runtime_resources: RuntimeResources | None = None,
+    workspace_dir=None,
+    cwd_provider=None,
+    **kwargs,
+) -> ToolRuntime:
+    """Build a tool runtime from explicit, bounded capabilities for tests/adapters.
+
+    The Session is consumed at this composition boundary and is not retained by
+    :class:`ToolRuntime`.
+    """
+    capabilities, resources = assemble_tool_capabilities(
+        session, services, runtime_resources,
+        workspace_dir=workspace_dir, cwd_provider=cwd_provider,
+    )
+    return ToolRuntime(
+        capabilities=capabilities,
+        runtime_resources=resources,
+        **kwargs,
+    )
 
 
 def _default_check_permission(
@@ -112,6 +139,10 @@ class Tool:
     # Specialized tools stay executable but can be omitted from the baseline
     # schema payload until tool_search activates them for this Agent session.
     defer_to_model: bool = False
+    # Descriptive metadata is registered once; executor still checks the
+    # immutable Run capability snapshot before any side effect occurs.
+    source: str = "builtin"
+    effect: Literal["read", "write", "process", "network", "internal"] = "internal"
 
     def to_dict(self):
         # 并发与超时策略是系统调度元数据,不喂给模型。
@@ -119,6 +150,24 @@ class Tool:
             "name": self.name,
             "description": self.description,
             "parameters": self.parameters,
+        }
+
+
+@dataclass(frozen=True)
+class ArtifactRef:
+    id: str
+    media_type: str
+    name: str
+    size: int
+    run_id: str = ""
+    call_id: str = ""
+    storage_path: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "id": self.id, "media_type": self.media_type, "name": self.name,
+            "size": self.size, "run_id": self.run_id, "call_id": self.call_id,
+            "storage_path": self.storage_path,
         }
 
 
@@ -150,18 +199,24 @@ class ToolResult:
     ok: bool
     err: str = ""
     data: Any = None
+    summary: str = ""
+    content: tuple[dict[str, Any], ...] = ()
+    artifacts: tuple[ArtifactRef, ...] = ()
 
     @classmethod
-    def success(cls, data=None) -> "ToolResult":
-        return cls(ok=True, err="", data=data)
+    def success(cls, data=None, *, summary: str = "", content=(), artifacts=()) -> "ToolResult":
+        return cls(True, "", data, summary, tuple(content), tuple(artifacts))
 
     @classmethod
-    def fail(cls, err: str, data=None) -> "ToolResult":
-        return cls(ok=False, err=err, data=data)
+    def fail(cls, err: str, data=None, *, summary: str = "", content=(), artifacts=()) -> "ToolResult":
+        return cls(False, err, data, summary, tuple(content), tuple(artifacts))
 
     def to_dict(self):
         return {
             "ok": self.ok,
             "err": self.err,
             "data": self.data,
+            "summary": self.summary,
+            "content": [dict(item) for item in self.content],
+            "artifacts": [item.to_dict() for item in self.artifacts],
         }

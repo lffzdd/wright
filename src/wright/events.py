@@ -41,6 +41,9 @@ class ContentDone:
     reasoning: str = ""
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     finish_reason: str | None = None
+    # Opaque provider continuation data (currently Responses output items).
+    # It is persisted with the assistant record but never rendered to users.
+    provider_state: dict[str, Any] = field(default_factory=dict)
 
     def assistant_message(self) -> dict[str, Any]:
         message: dict[str, Any] = {
@@ -51,6 +54,8 @@ class ContentDone:
         # Some compatible reasoning providers require this field on tool turns.
         if self.reasoning:
             message["reasoning_content"] = self.reasoning
+        if self.provider_state:
+            message["provider_state"] = self.provider_state
         return message
 
 

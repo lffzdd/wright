@@ -5,7 +5,7 @@ from wright.tests.responses import event, response
 from ...agent import Agent
 from ...checkpoint import SessionCheckpointStore
 from ...renderer import SilentRenderer
-from ...session import SessionState
+from ...session import Session
 from ...skills.registry import SkillRegistry
 from ...skills.store import write_skill
 from ...tools.skill_tools import build_skill_tools
@@ -52,8 +52,8 @@ def _catalog_texts(messages) -> list[str]:
 
 
 def test_parent_and_child_sessions_isolate_catalog_flag(tmp_path: Path):
-    parent = SessionState.create("parent", tmp_path)
-    child = SessionState.create("child", tmp_path)
+    parent = Session.create("parent", tmp_path)
+    child = Session.create("child", tmp_path)
     parent.mark_skill_catalog_sent()
     assert parent.skill_catalog_sent is True
     assert child.skill_catalog_sent is False
@@ -61,7 +61,7 @@ def test_parent_and_child_sessions_isolate_catalog_flag(tmp_path: Path):
 
 def test_empty_skills_directory_injects_nothing(tmp_path: Path):
     llm = ScriptLLM([_final("done")])
-    session = SessionState.create("task", tmp_path)
+    session = Session.create("task", tmp_path)
     Agent(llm, [], session, SilentRenderer(), skills=SkillRegistry(tmp_path)).run("hi")
     assert not any(
         "<skill-catalog>" in str(message.get("content", ""))
@@ -81,7 +81,7 @@ def test_catalog_is_written_once_into_transcript(tmp_path: Path):
         _tool("load_skill", skill_id="release-check"),
         _final("已按流程检查"),
     ])
-    session = SessionState.create("task", tmp_path)
+    session = Session.create("task", tmp_path)
     tools = build_skill_tools(registry)
     answer = Agent(
         llm, tools, session, SilentRenderer(), skills=registry
@@ -113,7 +113,7 @@ def test_second_user_turn_does_not_resend_catalog(tmp_path: Path):
         _final("第一轮完成"),
         _final("第二轮完成"),
     ])
-    session = SessionState.create("task", tmp_path)
+    session = Session.create("task", tmp_path)
     agent = Agent(
         llm,
         build_skill_tools(registry),
@@ -136,7 +136,7 @@ def test_continue_run_keeps_catalog_and_does_not_resend(tmp_path: Path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     store = SessionCheckpointStore(tmp_path / "checkpoints")
-    session = SessionState.create("task", workspace)
+    session = Session.create("task", workspace)
     session.begin_user_turn("准备发布")
     session.append_message({"role": "user", "content": "准备发布"})
     session.append_message({

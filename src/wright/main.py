@@ -8,12 +8,18 @@ import os
 import sys
 
 from .repl import Repl
-from .runtime import build_runtime, parse_cli_args, shutdown_runtime
+from .runtime import (
+    assemble_runtime,
+    load_env,
+    parse_cli_args,
+    runtime_config_from_args,
+)
 from .terminal import configure_terminal
 
 
 def main() -> None:
     args = parse_cli_args()
+    load_env()
     if args.ui == "web":
         try:
             from .web.server import run_web
@@ -32,13 +38,14 @@ def main() -> None:
 
         run_tui(args)
         return
-    rt = build_runtime(args)
+    rt = assemble_runtime(runtime_config_from_args(args))
+    repl = Repl(rt)
     try:
-        Repl(rt).run()
-        if rt.agent.checkpoint_store:
-            print(f"💾 会话已保存 (session_id: {rt.session_state.session_id})")
+        repl.run()
     finally:
-        shutdown_runtime(rt)
+        repl.service.close(wait_timeout=5)
+    if rt.agent.checkpoint_store:
+        print(f"💾 会话已保存 (session_id: {rt.session_state.session_id})")
 
 
 if __name__ == "__main__":

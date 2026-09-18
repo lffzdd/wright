@@ -36,6 +36,11 @@ def session_dir(workspace: Path) -> Path:
     return project_state_dir(workspace) / "sessions"
 
 
+def attachment_dir(workspace: Path) -> Path:
+    """Root for session-owned binary attachments, outside edited workspaces."""
+    return project_state_dir(workspace) / "attachments"
+
+
 def trace_dir(workspace: Path) -> Path:
     return project_state_dir(workspace) / "traces"
 
@@ -78,5 +83,6 @@ def ensure_project_state(workspace: Path) -> Path:
     """Create the per-project state tree; return its root."""
     root = project_state_dir(workspace)
     session_dir(workspace).mkdir(parents=True, exist_ok=True)
+    attachment_dir(workspace).mkdir(parents=True, exist_ok=True)
     trace_dir(workspace).mkdir(parents=True, exist_ok=True)
     return root

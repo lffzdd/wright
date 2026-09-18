@@ -13,6 +13,7 @@ from typing import Any
 
 from ..agent import Agent
 from ..agent_background import AgentBackgroundRuntime
+from ..capabilities import AgentProfile
 from ..coordination import AgentControlError, AgentControlPlane
 from ..llm import LLMClient
 from ..permission import (
@@ -24,7 +25,7 @@ from ..permission import (
 )
 from ..renderer import SilentRenderer
 from ..services import RuntimeServices
-from ..session import SessionState, UsageRecord
+from ..session import Session, UsageRecord
 from ..subagent import (
     _child_base_tools,
     build_agent_tools,
@@ -71,7 +72,7 @@ _UNATTENDED_DENY_NOTE = (
 class DurableLaunch:
     run_id: str
     task_id: str
-    session: SessionState
+    session: Session
     tool_names: tuple[str, ...]
 
 
@@ -139,7 +140,7 @@ def _commit_durable_run(
     control: AgentControlPlane,
     run_id: str,
     task_id: str,
-    session: SessionState,
+    session: Session,
     final_answer: str | None,
     task_status: str,
     error: str,
@@ -165,7 +166,7 @@ def _commit_durable_run(
         status = "failed"
         if not error:
             error = (
-                f"autonomous Agent ended with session status={session.status}"
+                f"autonomous Agent ended with run status={session.current_run_status()}"
             )
     scheduler.finish_run(
         run_id,
@@ -178,7 +179,7 @@ def _commit_durable_run(
 def launch_durable_run(
     *,
     run_id: str,
-    root_session: SessionState,
+    root_session: Session,
     scheduler: AutonomyScheduler,
     llm: LLMClient,
     base_tools: Sequence[Tool],
@@ -238,8 +239,8 @@ def launch_durable_run(
         permission_resolver=permission_resolver,
         enable_autonomy=False,
     )
-    child_session = SessionState.create(
-        user_goal=prompt,
+    child_session = Session.create(
+        initial_goal=prompt,
         workspace_dir=root_session.workspace_dir,
         max_steps=record.step_budget,
     )
@@ -278,6 +279,10 @@ def launch_durable_run(
         allow_background_tasks=False,
         lifecycle=lifecycle,
         services=services,
+        profile=AgentProfile(
+            "durable", frozenset(tool.name for tool in child_tools),
+            max_steps=record.step_budget,
+        ),
     )
     user_prompt = _user_prompt_for_run(scheduler, run_id)
 
@@ -303,7 +308,7 @@ def launch_durable_run(
                 task_status = "failed"
                 error = (
                     "autonomous Agent ended with session status="
-                    f"{child_session.status}"
+                    f"{child_session.current_run_status()}"
                 )
             else:
                 task_status, error = "completed", ""

@@ -3,8 +3,8 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 
-from ..session import SessionState
-from ..tools.base import ToolRuntime
+from ..session import Session
+from ..tools.base import tool_runtime_for_session
 from ..tools.file_tools import (
     FILE_UNCHANGED,
     FileView,
@@ -20,9 +20,8 @@ from ..tools.file_tools import (
 
 
 def _runtime(tmp_path):
-    return ToolRuntime(
-        workspace_dir=tmp_path,
-        session_state=SessionState.create("file tools", tmp_path),
+    return tool_runtime_for_session(
+        Session.create("file tools", tmp_path), workspace_dir=tmp_path
     )
 
 
@@ -78,7 +77,7 @@ def test_relative_file_paths_follow_session_cwd_but_stay_in_workspace(tmp_path):
     nested.mkdir()
     (nested / "a.txt").write_text("inside", encoding="utf-8")
     runtime = _runtime(tmp_path)
-    runtime.session_state.set_cwd(nested)
+    runtime.capabilities.set_cwd(nested)
 
     result = read_file("a.txt", runtime=runtime)
     escaped = read_file("../../outside.txt", runtime=runtime)
@@ -187,6 +186,53 @@ def test_write_file_grounds_a_follow_up_edit(tmp_path):
     assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "new line\n"
 
 
+def test_write_file_creates_without_a_prior_read(tmp_path):
+    runtime = _runtime(tmp_path)
+    result = write_file("a.txt", "hello\n", runtime=runtime)
+    assert result.ok
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "hello\n"
+
+
+def test_write_file_requires_a_complete_read_to_overwrite(tmp_path):
+    path = tmp_path / "a.txt"
+    path.write_text("old line\n", encoding="utf-8")
+    runtime = _runtime(tmp_path)
+
+    unread = write_file("a.txt", "new line\n", runtime=runtime)
+    assert not unread.ok
+    assert unread.data["reason"] == "not_read"
+    assert path.read_text(encoding="utf-8") == "old line\n"
+
+    assert read_file("a.txt", start_line=1, end_line=1, runtime=runtime).ok
+    incomplete = write_file("a.txt", "new line\n", runtime=runtime)
+    assert not incomplete.ok
+    assert incomplete.data["reason"] == "incomplete"
+    assert path.read_text(encoding="utf-8") == "old line\n"
+
+    assert read_file("a.txt", runtime=runtime).ok
+    written = write_file("a.txt", "new line\n", runtime=runtime)
+    assert written.ok
+    assert path.read_text(encoding="utf-8") == "new line\n"
+
+    again = write_file("a.txt", "again\n", runtime=runtime)
+    assert again.ok
+    assert path.read_text(encoding="utf-8") == "again\n"
+
+
+def test_write_file_rejects_stale_overwrite(tmp_path):
+    path = tmp_path / "a.txt"
+    path.write_text("old line\n", encoding="utf-8")
+    runtime = _runtime(tmp_path)
+    assert read_file("a.txt", runtime=runtime).ok
+    path.write_text("tampered\n", encoding="utf-8")
+
+    stale = write_file("a.txt", "new line\n", runtime=runtime)
+
+    assert not stale.ok
+    assert stale.data["reason"] == "stale"
+    assert path.read_text(encoding="utf-8") == "tampered\n"
+
+
 def test_file_view_is_shared_across_replaced_runtimes(tmp_path):
     (tmp_path / "a.txt").write_text("old line\n", encoding="utf-8")
     runtime = _runtime(tmp_path)
@@ -264,6 +310,44 @@ def test_file_view_stores_raw_content_not_numbered_output(tmp_path):
     assert view.content == "hello\n"
     assert view.origin == "read"
     assert view.is_complete is True
+
+
+def test_write_and_edit_preserve_existing_file_encoding(tmp_path):
+    path = tmp_path / "a.txt"
+    path.write_bytes("old line\n".encode("utf-16"))
+    runtime = _runtime(tmp_path)
+    assert read_file("a.txt", runtime=runtime).ok
+
+    written = write_file("a.txt", "new line\n", runtime=runtime)
+    assert written.ok
+    assert path.read_bytes()[:2] == b"\xff\xfe"
+    assert path.read_text(encoding="utf-16") == "new line\n"
+
+    edited = edit_file("a.txt", "new line\n", "again\n", runtime=runtime)
+    assert edited.ok
+    assert path.read_bytes()[:2] == b"\xff\xfe"
+    assert path.read_text(encoding="utf-16") == "again\n"
+
+
+def test_write_file_creates_utf8_without_bom(tmp_path):
+    runtime = _runtime(tmp_path)
+    assert write_file("a.txt", "hello\n", runtime=runtime).ok
+    assert (tmp_path / "a.txt").read_bytes() == b"hello\n"
+
+
+def test_write_and_edit_preserve_utf8_bom(tmp_path):
+    path = tmp_path / "a.txt"
+    path.write_text("old line\n", encoding="utf-8-sig")
+    runtime = _runtime(tmp_path)
+    assert read_file("a.txt", runtime=runtime).ok
+
+    assert write_file("a.txt", "new line\n", runtime=runtime).ok
+    assert path.read_bytes()[:3] == b"\xef\xbb\xbf"
+    assert path.read_text(encoding="utf-8-sig") == "new line\n"
+
+    assert edit_file("a.txt", "new line\n", "again\n", runtime=runtime).ok
+    assert path.read_bytes()[:3] == b"\xef\xbb\xbf"
+    assert path.read_text(encoding="utf-8-sig") == "again\n"
 
 
 def test_edit_file_schema_exposes_replace_all():

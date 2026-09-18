@@ -47,6 +47,13 @@ describe("visibleModels", () => {
       "local-oss",
     ]);
   });
+
+  it("lists configured models without inventing a fallback", () => {
+    expect(visibleModels(["deepseek-v4-flash", "deepseek-chat"], "deepseek-v4-flash")).toEqual([
+      "deepseek-v4-flash",
+      "deepseek-chat",
+    ]);
+  });
 });
 
 describe("NewSessionDialog", () => {
@@ -64,6 +71,25 @@ describe("NewSessionDialog", () => {
     expect(document.activeElement).toBe(closeButton);
     fireEvent.keyDown(document, { key: "Escape" });
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("offers the configured project models as the default choice", () => {
+    render(<NewSessionDialog
+      project={{
+        git: true,
+        default_environment: "local",
+        models: ["deepseek-v4-flash", "deepseek-chat"],
+        default_model: "deepseek-v4-flash",
+      }}
+      close={() => undefined}
+      create={async () => undefined}
+    />);
+    const select = screen.getByLabelText(/Model/) as HTMLSelectElement;
+    expect(select.value).toBe("deepseek-v4-flash");
+    expect(Array.from(select.options).map((option) => option.value)).toEqual([
+      "deepseek-v4-flash",
+      "deepseek-chat",
+    ]);
   });
 });
 

@@ -255,14 +255,16 @@ class EpisodeStore:
 def episode_from_session(session_state: Any, final_answer: str | None) -> EpisodeRecord:
     start = int(getattr(session_state, "active_turn_start_step", 0))
     end = int(getattr(session_state, "step_count", start))
-    goal = str(getattr(session_state, "user_goal", ""))[:MAX_EPISODE_GOAL_CHARS]
-    status = getattr(session_state, "status", "failed")
-    if status not in {"completed", "failed", "max_steps"}:
-        raise EpisodeStoreError(f"不能记录未终止的 session status: {status}")
+    current_goal = getattr(session_state, "current_goal", None)
+    goal = str(current_goal() if callable(current_goal) else "")[:MAX_EPISODE_GOAL_CHARS]
+    run_status = getattr(session_state, "current_run_status", None)
+    status = run_status() if callable(run_status) else "failed"
+    if status not in {"completed", "failed", "cancelled"}:
+        raise EpisodeStoreError(f"不能记录未终止的 run status: {status}")
     outcome = (
         str(final_answer)
         if final_answer is not None
-        else f"任务以 status={status} 结束，没有可交付 final_answer。"
+        else f"任务以 run status={status} 结束，没有可交付 final_answer。"
     )[:MAX_EPISODE_OUTCOME_CHARS]
     digest = hashlib.sha256(goal.encode("utf-8")).hexdigest()[:10]
     message_start = int(

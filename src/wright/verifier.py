@@ -15,9 +15,7 @@ import json
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from openai.types.chat import ChatCompletionMessageParam
-
-from .session import SessionState
+from .session import Session
 
 
 @dataclass(frozen=True)
@@ -49,7 +47,7 @@ class VerificationResult:
             )
         return cls(False, normalized)
 
-    def feedback_message(self) -> ChatCompletionMessageParam:
+    def feedback_message(self) -> dict:
         return {
             "role": "user",
             "content": json.dumps(
@@ -72,7 +70,7 @@ class Verifier:
     """Deterministic completion checks. No LLM."""
 
     def verify(
-        self, session: SessionState, final_answer: str = "",
+        self, session: Session, final_answer: str = "",
     ) -> VerificationResult:
         del final_answer
         hard_issues = self._structural_issues(session)
@@ -81,7 +79,7 @@ class Verifier:
         return VerificationResult.approve()
 
     @staticmethod
-    def _structural_issues(session: SessionState) -> list[VerificationIssue]:
+    def _structural_issues(session: Session) -> list[VerificationIssue]:
         issues: list[VerificationIssue] = []
         plan = session.plan_manager
         if plan.has_plan and plan.status != "completed":
@@ -105,7 +103,7 @@ class Verifier:
         return issues
 
     @staticmethod
-    def _artifact_issues(session: SessionState) -> list[VerificationIssue]:
+    def _artifact_issues(session: Session) -> list[VerificationIssue]:
         """Re-stat files that successful first-party write tools claim to have made."""
         issues: list[VerificationIssue] = []
         workspace = session.workspace_dir.resolve()

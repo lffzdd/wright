@@ -16,14 +16,17 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from .capabilities import CapabilitySnapshot
 from .logger import get_logger
 from .permission import (
     PermissionApprovalHandler,
     PermissionPolicy,
     PermissionResolver,
 )
+from .processes import RuntimeResources
 from .services import RuntimeServices
 from .session import ToolExecutionTerminal
+from .tool_capabilities import assemble_tool_capabilities
 from .tools.base import (
     Tool,
     ToolCall,
@@ -57,47 +60,59 @@ class ToolExecutor:
         permission_resolver: PermissionResolver | None = None,
         workspace_dir: Path | None = None,
         cwd_provider: Callable[[], Path] | None = None,
-        session_state=None,
+        session=None,
         cancellation_check: Callable[[], bool] | None = None,
         allow_background_tasks: bool = True,
         lifecycle=None,
         services: RuntimeServices | None = None,
+        runtime_resources: RuntimeResources | None = None,
+        capability_snapshot: CapabilitySnapshot | None = None,
     ):
         if tool_timeout <= 0:
             raise ValueError("tool_timeout 必须 > 0")
         self.tool_registry = tool_registry
+        self.capability_snapshot = capability_snapshot
         self.tool_timeout = tool_timeout
+        self._services = services
         self.permission_resolver = permission_resolver or PermissionResolver(
             permission_policy or PermissionPolicy(),
             permission_approval_handler,
         )
-        self.session_state = session_state
-        self.workspace_dir = (
-            workspace_dir
-            or getattr(session_state, "workspace_dir", None)
-            or Path.cwd()
-        ).resolve()
-        self.cwd_provider = (
-            cwd_provider
-            or (
-                session_state.get_cwd
-                if session_state is not None
-                else lambda: self.workspace_dir
-            )
+        self.capabilities, runtime_resources = assemble_tool_capabilities(
+            session, services, runtime_resources,
+            workspace_dir=workspace_dir, cwd_provider=cwd_provider,
         )
+        self.workspace_dir = self.capabilities.execution.workspace_dir
+        self.cwd_provider = self.capabilities.execution.cwd
         self.cancellation_check = cancellation_check
         self.on_tool_output = on_tool_output
         self.lifecycle = lifecycle
         self.runtime = ToolRuntime(
-            workspace_dir=self.workspace_dir,
-            cwd_provider=self.cwd_provider,
-            session_state=session_state,
+            capabilities=self.capabilities,
+            runtime_resources=runtime_resources,
             emit_output=on_command_output,
             emit_progress=on_progress,
             notify_background_done=on_shell_task_done,
             allow_background_tasks=allow_background_tasks,
             lifecycle=lifecycle,
-            services=services,
+        )
+
+    def bind_run(self, session) -> None:
+        """Refresh the immutable tool capability view after a Run is selected."""
+        capabilities, resources = assemble_tool_capabilities(
+            session,
+            self._services,
+            self.runtime.runtime_resources,
+            workspace_dir=self.workspace_dir,
+            cwd_provider=session.get_cwd,
+        )
+        self.capabilities = capabilities
+        self.workspace_dir = capabilities.execution.workspace_dir
+        self.cwd_provider = capabilities.execution.cwd
+        self.runtime = replace(
+            self.runtime,
+            capabilities=capabilities,
+            runtime_resources=resources,
         )
 
     def _emit_lifecycle(self, event: str, payload: dict):
@@ -106,8 +121,8 @@ class ToolExecutor:
         return self.lifecycle.emit(
             event,
             payload,
-            agent_task_id=getattr(self.session_state, "agent_task_id", None),
-            root_turn_id=getattr(self.session_state, "agent_root_turn_id", ""),
+            agent_task_id=self.capabilities.scope.agent_task_id,
+            root_turn_id=self.capabilities.scope.root_turn_id,
         )
 
     def _prepare_tool_call(
@@ -115,13 +130,17 @@ class ToolExecutor:
     ) -> tuple[ToolCall, ToolResult | None]:
         """Run schema + pre-tool hooks before concurrency is classified.
 
-        The returned call is an execution-only copy. SessionState has already
+        The returned call is an execution-only copy. Session has already
         recorded the model's original input, so hook rewrites remain observable
         without mutating history.
         """
         tool = self.tool_registry.get(tool_call.name)
         if tool is None:
             return tool_call, ToolResult.fail(err=f"Unknown tool: {tool_call.name}")
+        if self.capability_snapshot is not None and tool_call.name not in self.capability_snapshot.names:
+            return tool_call, ToolResult.fail(
+                f"Capability is not authorized for this Run: {tool_call.name}"
+            )
         validation_error = validate_tool_arguments(tool, tool_call.arguments)
         if validation_error is not None:
             return tool_call, validation_error
@@ -155,6 +174,8 @@ class ToolExecutor:
                         ToolCall(tool_call.name, arguments, tool_call.id),
                         updated_validation_error,
                     )
+                # Re-run permission on rewritten arguments below. The hook
+                # may not turn an approval for path A into execution of B.
         return ToolCall(tool_call.name, arguments, tool_call.id), None
 
     def _invoke_tool(

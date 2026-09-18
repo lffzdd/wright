@@ -4,33 +4,34 @@ import json
 import threading
 import time
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 from uuid import uuid4
 
-from openai.types.chat import ChatCompletionMessageParam
-
+from .conversation import ConversationMessage, ImagePart, TextPart, UserTurnInput
 from .coordination import AgentControlPlane
 from .planning import PlanManager
 from .project import ExecutionEnvironment
+from .runs import TERMINAL_RUN_STATUSES, RunRecord, RunStatus, new_run_id
 from .tools.base import ToolCall, ToolResult
 from .util import estimate_message_tokens
 
+if TYPE_CHECKING:
+    from .attachments import AttachmentRecord
+
 CallId: TypeAlias = str
 MessageId: TypeAlias = str
-SessionStatus = Literal["running", "completed", "failed", "max_steps"]
+SessionLifecycle = Literal["open", "closing", "closed"]
 TurnRoute = Literal["tool_calls", "final", "invalid"]
 ToolExecutionTerminal = Literal["succeeded", "failed", "timeout"]
 ToolExecutionStatus = Literal["pending", "running"] | ToolExecutionTerminal
 
 
 @dataclass
-class SessionState:
+class Session:
     session_id: str
-    status: SessionStatus
-    user_goal: str
-
     workspace_dir: Path
     cwd: Path
 
@@ -42,12 +43,20 @@ class SessionState:
     tool_executions: dict[CallId, ToolExecutionRecord]
     background_tasks: dict[str, BackgroundTask]
     plan_manager: PlanManager
+    # A stable label for the long-lived conversation, not the current task.
+    # Every executable goal belongs to its RunRecord.
+    session_label: str = ""
+    lifecycle: SessionLifecycle = "open"
     # Durable state is grouped by project_root. workspace_dir remains the
     # actual execution directory for compatibility with existing tools.
     project_root: Path | None = None
     environment: ExecutionEnvironment = "local"
     base_commit: str | None = None
     branch_name: str | None = None
+    # Authoritative per-execution state.  Legacy fields below are projections
+    # retained while Agent/Tool APIs are migrated.
+    runs: dict[str, RunRecord] = field(default_factory=dict)
+    active_run_id: str | None = None
     # 目录只往 transcript 写一次。正文走 load_skill 的 tool_result，不另建激活表。
     skill_catalog_sent: bool = False
     # Deferred tool schemas discovered by tool_search. Order is least-recently
@@ -72,10 +81,19 @@ class SessionState:
 
     # The active main-model choice is session state so /model survives resume.
     model_name: str | None = None
+    # Resolved once for a session.  A transcript with Responses reasoning items
+    # cannot safely change wire protocols midway through a resumed task.
+    llm_transport: str | None = None
+    # Binary bytes belong to AttachmentStore; checkpoints keep this compact
+    # registry and user messages refer to attachment ids through ``parts``.
+    attachments: dict[str, AttachmentRecord] = field(default_factory=dict)
 
-    # 当前 messages 的预测 token 数(= 下次发送会有多大)。增量维护:追加时加、
-    # 折叠时减；每轮用服务端 P+C 更新估算锚点，工具结果继续按字符估算。
+    # Durable-history estimate, updated as records are appended. It is never
+    # presented as provider usage.
     context_tokens: int = 0
+    # Last complete request estimate: history + transient instructions + tool
+    # schemas + output reserve. Unlike ``last_usage``, this is local only.
+    request_context_tokens: int = 0
 
     step_count: int = 0
     max_steps: int = 25
@@ -90,7 +108,7 @@ class SessionState:
     @classmethod
     def create(
         cls,
-        user_goal: str,
+        initial_goal: str,
         workspace_dir: Path,
         max_steps: int = 50,
         *,
@@ -99,12 +117,11 @@ class SessionState:
         environment: ExecutionEnvironment = "local",
         base_commit: str | None = None,
         branch_name: str | None = None,
-    ) -> SessionState:
+    ) -> Session:
         execution_root = workspace_dir.resolve()
         return cls(
             session_id=session_id or uuid4().hex[:6],
-            status="running",
-            user_goal=user_goal,
+            session_label=initial_goal,
             workspace_dir=execution_root,
             cwd=execution_root,
             project_root=(project_root or execution_root).resolve(),
@@ -128,6 +145,7 @@ class SessionState:
             self.cwd = cwd.resolve()
 
     def register_background_task(self, task: BackgroundTask) -> None:
+        """Persist task metadata; RuntimeResources owns its live handles."""
         with self._background_tasks_lock:
             self.background_tasks[task.task_id] = task
 
@@ -139,6 +157,17 @@ class SessionState:
         """Return a stable registry snapshot; individual tasks remain live."""
         with self._background_tasks_lock:
             return list(self.background_tasks.values())
+
+    def mark_background_tasks_cancel_requested(
+        self, task_ids: tuple[str, ...], reason: str
+    ) -> None:
+        """Reflect a RuntimeResources shutdown in durable task metadata."""
+        with self._background_tasks_lock:
+            for task_id in task_ids:
+                task = self.background_tasks.get(task_id)
+                if task is not None:
+                    task.cancel_requested = True
+                    task.cancel_reason = reason[:1_000]
 
     def _next_step(self) -> int:
         self.step_count += 1
@@ -161,28 +190,90 @@ class SessionState:
     def begin_user_turn(self, prompt: str) -> None:
         """记录当前任务目标及其证据边界。"""
         self.task_usage_start = UsageRecord(**vars(self.total_usage))
-        self.user_goal = prompt
         self.active_turn_start_step = self.step_count
         self.active_turn_start_message_index = len(self.message_records)
+        self.begin_run(
+            prompt,
+            source="subagent" if self.agent_task_id is not None else "user_input",
+        )
         if self.agent_task_id is None:
-            self.agent_root_turn_id = (
-                f"{self.session_id}:{self.active_turn_start_message_index}"
-            )
+            # Legacy task-control IDs remain stable for existing subagent
+            # checkpoints; RunRecord owns the new independent execution id.
+            self.agent_root_turn_id = f"{self.session_id}:{self.active_turn_start_message_index}"
+
+    def begin_run(self, goal: str, *, source: str, parent_run_id: str | None = None) -> RunRecord:
+        """Create the sole writable record for one root execution."""
+        run = RunRecord(new_run_id(), self.session_id, source, goal, parent_run_id=parent_run_id)
+        run.root_run_id = parent_run_id or run.run_id
+        run.start()
+        self.runs[run.run_id] = run
+        self.active_run_id = run.run_id
+        return run
+
+    def begin_continuation_run(self, goal: str, *, source: str) -> RunRecord:
+        """Continue a completed Run without reopening its terminal record."""
+        parent = self.active_run()
+        if parent is None:
+            raise ValueError("runtime continuation requires an existing Run")
+        if parent.status not in TERMINAL_RUN_STATUSES:
+            raise ValueError("runtime continuation requires a terminal parent Run")
+        run = self.begin_run(goal, source=source, parent_run_id=parent.run_id)
+        run.root_run_id = parent.root_run_id or parent.run_id
+        run.model_config = dict(parent.model_config)
+        run.plan = self.plan_manager.snapshot()
+        return run
+
+    def active_run(self) -> RunRecord | None:
+        return self.runs.get(self.active_run_id or "")
+
+    def current_run(self) -> RunRecord | None:
+        """Return the active run, or the most recently created run for history views."""
+        return self.active_run() or next(reversed(self.runs.values()), None)
+
+    def current_run_status(self) -> RunStatus | Literal["idle"]:
+        run = self.current_run()
+        return run.status if run is not None else "idle"
+
+    def current_goal(self) -> str:
+        """Project the current/most-recent Run goal without duplicating it."""
+        run = self.current_run()
+        if run is not None and run.source == "runtime_event":
+            root = self.runs.get(run.root_run_id)
+            if root is not None:
+                return root.goal
+        return run.goal if run is not None else self.session_label
 
     def _next_message_id(self) -> MessageId:
         self.message_id_counter += 1
         return f"msg_{self.message_id_counter}"
 
     @property
-    def messages(self) -> tuple[ChatCompletionMessageParam, ...]:
-        """只读兼容视图:外部不能靠 append 绕过 SessionState.append_message。"""
+    def messages(self) -> tuple[dict[str, Any], ...]:
+        """只读兼容视图:外部不能靠 append 绕过 Session.append_message。"""
         return tuple(self.wire_messages())
 
-    def wire_messages(self) -> list[ChatCompletionMessageParam]:
-        """投影出发给 LLM 的纯 OpenAI wire messages,不携带内部 message_id。"""
-        return [record.message for record in self.message_records]
+    def wire_messages(self) -> list[dict[str, Any]]:
+        """Compatibility projection for text-only Chat Completions callers.
 
-    def append_message(self, message: ChatCompletionMessageParam) -> MessageId:
+        Provider adapters consume :meth:`conversation_messages` so internal
+        attachment references and Responses state never leak to a wire request.
+        """
+        return [
+            deepcopy({
+                key: value
+                for key, value in record.message.items()
+                if key not in {"parts", "attachments", "provider_state"}
+            })
+            for record in self.message_records
+        ]
+
+    def conversation_messages(self) -> list[dict[str, Any]]:
+        """Return provider-neutral message records without mutable internals."""
+        return [deepcopy(record.message) for record in self.message_records]
+
+    def append_message(
+        self, message: dict[str, Any], *, source: str | None = None,
+    ) -> MessageId:
         """把一条消息落进 wire 记录,同步累加 running total,返回稳定 id。
 
         这是 wire 的【唯一追加入口】:context_tokens 要准,就不能让任何人绕过它
@@ -190,9 +281,41 @@ class SessionState:
         record_usage_for_turn 里被 prompt+completion 的估算锚点覆盖掉。
         """
         message_id = self._next_message_id()
-        self.message_records.append(MessageRecord(id=message_id, message=message))
-        self.context_tokens += estimate_message_tokens(message)
+        durable_message = deepcopy(message)
+        message_source = source or {
+            "user": "user_input",
+            "assistant": "model_output",
+            "tool": "tool_result",
+            "system": "system_instruction",
+        }.get(str(durable_message.get("role", "")), "system_feedback")
+        self.message_records.append(MessageRecord(
+            id=message_id, message=durable_message, source=message_source,
+        ))
+        self.context_tokens += estimate_message_tokens(durable_message)
         return message_id
+
+    def append_user_message(
+        self, prompt: str, attachment_ids: list[str] | tuple[str, ...] = (),
+    ) -> MessageId:
+        """Append a normalized user message with optional durable image parts."""
+        turn = UserTurnInput(prompt=prompt, attachment_ids=tuple(attachment_ids))
+        if not turn.prompt.strip() and not turn.attachment_ids:
+            raise ValueError("a user message needs text or an attachment")
+        unknown = [item for item in turn.attachment_ids if item not in self.attachments]
+        if unknown:
+            raise ValueError("unknown attachment id")
+        parts = ([TextPart(turn.prompt)] if turn.prompt else []) + [
+            ImagePart(attachment_id) for attachment_id in turn.attachment_ids
+        ]
+        return self.append_message(ConversationMessage("user", parts).to_dict())  # type: ignore[arg-type]
+
+    def attachment_records(
+        self, attachment_ids: list[str] | tuple[str, ...],
+    ) -> list[AttachmentRecord]:
+        records = [self.attachments.get(item) for item in attachment_ids]
+        if any(item is None for item in records):
+            raise ValueError("unknown attachment id")
+        return [item for item in records if item is not None]
 
     def _append_assistant_message(self, content: str) -> MessageId:
         """把这轮 assistant 原文落进 wire 记录,返回它的稳定 id。
@@ -273,6 +396,15 @@ class SessionState:
             error=None,
         )
         self.turns.append(turn)
+        run = self.active_run()
+        if run is not None:
+            turn.run_id = run.run_id
+            turn.step_id = f"step_{uuid4().hex}"
+            run.step_ids.append(turn.step_id)
+            run.tool_execution_ids.extend(tool_execution_ids)
+            for call_id in tool_execution_ids:
+                self.tool_executions[call_id].run_id = run.run_id
+                self.tool_executions[call_id].step_id = turn.step_id
         return turn
 
     def record_invalid_turn(
@@ -293,6 +425,10 @@ class SessionState:
             error=error,
         )
         self.turns.append(turn)
+        run = self.active_run()
+        if run is not None:
+            turn.run_id, turn.step_id = run.run_id, f"step_{uuid4().hex}"
+            run.step_ids.append(turn.step_id)
         return turn
 
     def record_tool_execution(
@@ -320,11 +456,17 @@ class SessionState:
     def record_usage_for_turn(self, turn: TurnRecord, usage: UsageRecord) -> None:
         turn.usage = usage
         self.last_usage = usage
-        # 校准 running total:此刻 assistant 已入队、工具结果尚未追加,
-        # P+C 作为上下文估算锚点；供应商的推理计量和消息封装可能不同，
-        # 它不等于下一次请求的精确输入大小。
-        self.context_tokens = usage.prompt_tokens + usage.completion_tokens
+        # Provider usage is accounting only.  Keep the durable-history estimate
+        # separate: it cannot be inferred from a provider's current request.
+        self.context_tokens = sum(
+            estimate_message_tokens(record.message)
+            for record in self.message_records
+        )
         self.add_usage(usage)
+        run = self.active_run()
+        if run is not None:
+            for name, value in vars(usage).items():
+                run.usage[name] = run.usage.get(name, 0) + value
 
     def add_usage(self, usage: UsageRecord) -> None:
         """累计消费；辅助请求不改变主对话的上下文估算。"""
@@ -356,17 +498,15 @@ class SessionState:
         turn.verification = record
         return record
 
-    def mark_running(self) -> None:
-        # 多轮对话:新一轮开始时把上一轮留下的终态(completed/failed/max_steps)
-        # 重置回 running,让 status 始终反映"当前这轮"而非历史。
-        self.status = "running"
-
     def mark_completed(self) -> None:
-        self.status = "completed"
         turn_id = self.agent_root_turn_id
         if turn_id and turn_id not in self.committed_turn_ids:
             self.committed_turn_ids.append(turn_id)
             self.committed_turn_ids = self.committed_turn_ids[-1_000:]
+        run = self.active_run()
+        if run is not None:
+            run.plan = self.plan_manager.snapshot()
+            run.finish("completed")
 
     def is_turn_committed(self, turn_id: str | None = None) -> bool:
         candidate = self.agent_root_turn_id if turn_id is None else turn_id
@@ -380,16 +520,23 @@ class SessionState:
             ]
 
     def mark_max_steps(self) -> None:
-        self.status = "max_steps"
+        if self.active_run() is not None:
+            self.active_run().finish("failed", error="max steps reached")
 
     def mark_failed(self) -> None:
-        self.status = "failed"
+        if self.active_run() is not None:
+            self.active_run().finish("failed")
+
+    def mark_cancelled(self) -> None:
+        if self.active_run() is not None:
+            self.active_run().finish("cancelled", error="cancellation requested")
 
 
 @dataclass
 class MessageRecord:
     id: MessageId
-    message: ChatCompletionMessageParam
+    message: dict[str, Any]
+    source: str = "system_feedback"
 
 
 @dataclass
@@ -400,6 +547,8 @@ class ToolExecutionRecord:
     status: ToolExecutionStatus
     started_at: float | None = None
     ended_at: float | None = None
+    run_id: str = ""
+    step_id: str = ""
 
 
 @dataclass
@@ -417,12 +566,16 @@ class UsageRecord:
         prompt + completion 兜底。
         """
         if isinstance(usage, dict):
-            prompt_tokens = int(usage.get("prompt_tokens") or 0)
-            completion_tokens = int(usage.get("completion_tokens") or 0)
+            prompt_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+            completion_tokens = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
             total_tokens = usage.get("total_tokens")
         else:
-            prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
-            completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+            prompt_tokens = int(
+                getattr(usage, "prompt_tokens", 0) or getattr(usage, "input_tokens", 0) or 0
+            )
+            completion_tokens = int(
+                getattr(usage, "completion_tokens", 0) or getattr(usage, "output_tokens", 0) or 0
+            )
             total_tokens = getattr(usage, "total_tokens", None)
 
         if total_tokens is None:
@@ -443,6 +596,9 @@ class TurnRecord:
 
     usage: UsageRecord | None = None
     verification: VerificationRecord | None = None
+    # ModelStep identity and ownership; TurnRecord remains the compatibility name.
+    run_id: str = ""
+    step_id: str = ""
 
 
 @dataclass
@@ -454,12 +610,6 @@ class VerificationRecord:
 @dataclass
 class BackgroundTask:
     task_id: str
-    process: Any
-    output_lines: list[str]
-    done: threading.Event
-    output_lock: threading.RLock = field(
-        default_factory=threading.RLock, repr=False
-    )
     # reader 线程完成时调用；由 execute_command 在注册时写入，主循环
     # 可借此收到统一的 TASK_DONE(task_id) 通知。
     on_done: Callable[[], None] | None = field(default=None, repr=False)
@@ -467,6 +617,7 @@ class BackgroundTask:
     # 这些字段只补充描述、归属和取消意图，不形成另一套状态机。
     command: str = ""
     root_turn_id: str = ""
+    run_id: str = ""
     created_at: float = field(default_factory=time.time)
     started_at: float = field(default_factory=time.time)
     ended_at: float | None = None

@@ -11,13 +11,13 @@ from ...memory.episode import (
     episode_from_session,
 )
 from ...memory.recall import build_recall_block
-from ...session import SessionState, UsageRecord
+from ...session import Session, UsageRecord
 from ...tools.base import ToolCall, ToolResult
 from ...tools.episode_tools import build_episode_tools
 
 
 def _completed_session(tmp_path):
-    session = SessionState.create("placeholder", tmp_path)
+    session = Session.create("placeholder", tmp_path)
     session.begin_user_turn("修复登录测试")
     session.append_message({"role": "user", "content": "修复登录测试"})
     session.plan_manager.create_plan("修复登录", ["修改实现"])
@@ -72,13 +72,13 @@ def test_episode_is_compact_sanitized_and_idempotent(tmp_path):
 
 
 def test_episode_id_distinguishes_turns_cancelled_before_first_step(tmp_path):
-    session = SessionState.create("placeholder", tmp_path)
+    session = Session.create("placeholder", tmp_path)
     session.begin_user_turn("same goal")
     session.append_message({"role": "user", "content": "same goal"})
     session.mark_failed()
     first = episode_from_session(session, None)
 
-    session.mark_running()
+    session.begin_user_turn("follow-up")
     session.begin_user_turn("same goal")
     session.append_message({"role": "user", "content": "same goal"})
     session.mark_failed()

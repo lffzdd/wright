@@ -10,7 +10,6 @@ from .file_tools import (
 from .plan_tools import plan_tools
 from .web_tools import http_request_tool, web_search_tool
 
-
 # Product tools stay on every request. Schedules, skills, episodes, loops, and
 # MCP catalogs pay one discovery round-trip through tool_search.
 tools = [

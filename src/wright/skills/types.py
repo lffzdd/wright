@@ -1,4 +1,4 @@
-"""Skill 的磁盘元数据。目录是否已注入 transcript 属于 SessionState。"""
+"""Skill 的磁盘元数据。目录是否已注入 transcript 属于 Session。"""
 
 from __future__ import annotations
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from ..agent import Agent
 from ..prompt import build_system_prompt
 from ..renderer import SilentRenderer
-from ..session import SessionState
+from ..session import Session
 from ..tools.base import Tool, ToolResult, split_tool_catalog
 from ..tools.tool_search import make_tool_search_tool
 
@@ -52,6 +52,7 @@ def test_edit_and_shell_advice_only_when_those_tools_exist():
     assert "Prefer edit_file" in with_edit
     assert "replace_all" in with_edit
     assert "read_file before edit_file" in with_edit
+    assert "overwriting it with write_file" in with_edit
     assert "N|" in with_edit
     assert "execute_command" not in with_edit
 
@@ -73,7 +74,7 @@ def test_agent_system_prompt_uses_the_assembled_catalog(tmp_path):
     class UnusedLLM:
         context_limit = 128_000
 
-    session = SessionState.create("t", tmp_path)
+    session = Session.create("t", tmp_path)
     agent = Agent(
         UnusedLLM(),
         [_tool("read_file"), _tool("brand_new"), _tool("new_hidden", deferred=True)],

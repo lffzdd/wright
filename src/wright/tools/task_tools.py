@@ -9,9 +9,10 @@ from .base import Tool, ToolResult, ToolRuntime
 
 
 def _service(runtime: ToolRuntime) -> TaskService:
-    if runtime.session_state is None:
-        raise RuntimeError("task tool requires a SessionState runtime")
-    return TaskService.for_session(runtime.session_state, runtime.services)
+    service = runtime.capabilities.tasks if runtime.capabilities else None
+    if service is None:
+        raise RuntimeError("task tool requires task operations")
+    return service
 
 
 def get_task(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
@@ -53,14 +54,13 @@ def cancel_task(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
 
 def list_tasks(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
     try:
-        session = runtime.session_state
-        if session is None:
-            raise RuntimeError("task tool requires a SessionState runtime")
         include_all = bool(arguments.get("include_all_turns", False))
         tasks = _service(runtime).list(
             kind=arguments.get("kind"),
             status=arguments.get("status"),
-            root_turn_id=None if include_all else session.agent_root_turn_id,
+            root_turn_id=(
+                None if include_all else runtime.capabilities.scope.root_turn_id
+            ),
         )
     except (RuntimeError, ValueError) as exc:
         return ToolResult.fail(str(exc))

@@ -118,6 +118,15 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, summary:focus
 .composer textarea::placeholder, textarea::placeholder, input::placeholder { color: var(--faint); }
 .composer-actions { border-top: 1px solid var(--line); min-height: 42px; display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 6px 7px 6px 12px; }
 .composer-actions > span { color: var(--faint); font-size: 11px; margin-right: auto; }
+.file-input { display: none; }
+.composer-attachments, .message-attachments { display: flex; flex-wrap: wrap; gap: 7px; padding: 10px 12px 0; }
+.composer-attachment, .message-attachments a { display: inline-flex; align-items: center; gap: 6px; min-width: 0; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--surface-2); color: var(--muted); font-size: 11px; overflow: hidden; }
+.composer-attachment { padding-right: 4px; }
+.composer-attachment img, .message-attachments img { width: 34px; height: 34px; object-fit: cover; background: var(--chrome); }
+.composer-attachment span, .message-attachments span { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-attachment button { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 3px; }
+.message-attachments { padding: 8px 0 0; }
+.message-attachments a { text-decoration: none; padding-right: 7px; }
 
 .button, .icon-button, .option-button { border: 1px solid transparent; display: inline-flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; }
 .button { min-height: 32px; border-radius: 4px; padding: 0 11px; font-size: 11px; font-weight: 600; }

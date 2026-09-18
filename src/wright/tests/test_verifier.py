@@ -3,7 +3,7 @@ from wright.tests.responses import event, response
 from ..agent import Agent
 from ..lifecycle import HookRegistration, LifecycleManager
 from ..renderer import SilentRenderer
-from ..session import SessionState
+from ..session import Session
 from ..tools.base import ToolCall, ToolResult
 from ..tools.plan_tools import update_plan_tool
 from ..verifier import Verifier
@@ -30,7 +30,7 @@ class ScriptLLM:
 
 
 def test_incomplete_plan_blocks_final_and_returns_to_agent_loop(tmp_path):
-    session = SessionState.create("goal", tmp_path)
+    session = Session.create("goal", tmp_path)
     session.plan_manager.create_plan("deliver", ["implement"])
     llm = ScriptLLM([
         _final("done too early"),
@@ -61,7 +61,7 @@ def test_incomplete_plan_blocks_final_and_returns_to_agent_loop(tmp_path):
 
 def test_structural_verifier_does_not_add_llm_turns_on_chat(tmp_path):
     llm = ScriptLLM([_final("hello")])
-    session = SessionState.create("?", tmp_path)
+    session = Session.create("?", tmp_path)
     agent = Agent(llm, [], session, SilentRenderer(), verifier=Verifier())
 
     assert agent.run("?") == "hello"
@@ -70,7 +70,7 @@ def test_structural_verifier_does_not_add_llm_turns_on_chat(tmp_path):
 
 
 def test_verifier_restats_successful_file_artifacts(tmp_path):
-    session = SessionState.create("goal", tmp_path)
+    session = Session.create("goal", tmp_path)
     session.begin_user_turn("write artifact")
     call = ToolCall(
         "write_file", {"file": "missing.txt", "content": "data"}, "c1"
@@ -90,7 +90,7 @@ def test_verifier_restats_successful_file_artifacts(tmp_path):
 
 
 def test_verifier_and_stop_hook_retries_are_independent(tmp_path):
-    session = SessionState.create("goal", tmp_path)
+    session = Session.create("goal", tmp_path)
     session.plan_manager.create_plan("deliver", ["implement"])
     main_llm = ScriptLLM([
         _final("too early"),
@@ -124,10 +124,9 @@ def test_verifier_and_stop_hook_retries_are_independent(tmp_path):
     result = agent.run("verify the project", max_steps=5)
 
     assert result == "third"
-    assert session.status == "completed"
+    assert session.current_run_status() == "completed"
     finals = [turn for turn in session.turns if turn.route == "final"]
     assert finals[0].verification.approved is False
     assert finals[0].verification.issues[0]["code"] == "plan_incomplete"
     assert finals[1].verification.approved is True
     assert finals[2].verification.approved is True
-

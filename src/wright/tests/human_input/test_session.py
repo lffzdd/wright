@@ -1,27 +1,22 @@
 
-from ...session import SessionState
+from ...session import Session
 
 
-def test_session_does_not_have_waiting_user_status(tmp_path):
-    """确认 waiting_user 状态已从 SessionStatus 中移除。"""
-    session = SessionState.create("goal", tmp_path)
-    assert session.status == "running"
-
-    # waiting_user 不再是合法状态值
-    valid_statuses = {"running", "completed", "failed", "max_steps"}
+def test_session_lifecycle_is_independent_of_run_status(tmp_path):
+    """A Session stays open while each Run carries its own execution state."""
+    session = Session.create("goal", tmp_path)
+    assert session.lifecycle == "open"
+    assert session.current_run_status() == "idle"
+    session.begin_user_turn("goal")
+    assert session.current_run_status() == "running"
     session.mark_completed()
-    assert session.status in valid_statuses
-    session.mark_failed()
-    assert session.status in valid_statuses
-    session.mark_max_steps()
-    assert session.status in valid_statuses
-    session.mark_running()
-    assert session.status in valid_statuses
+    assert session.current_run_status() == "completed"
+    assert session.lifecycle == "open"
 
 
 def test_session_no_longer_has_question_lifecycle_methods(tmp_path):
     """确认旧的状态机方法已被移除。"""
-    session = SessionState.create("goal", tmp_path)
+    session = Session.create("goal", tmp_path)
 
     assert not hasattr(session, "request_user_question")
     assert not hasattr(session, "answer_user_question")

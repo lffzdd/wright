@@ -24,9 +24,19 @@ export type ToolState = {
   phase?: "planned" | "awaiting_approval" | "running" | "succeeded" | "failed";
 };
 
+export type Attachment = {
+  id: string;
+  filename: string;
+  media_type: string;
+  size: number;
+  width: number;
+  height: number;
+};
+
 export type ActiveTurn = {
   turn_id?: string;
   prompt: string;
+  attachments: Attachment[];
   reasoning: string;
   content: string;
   tools: ToolState[];
@@ -48,7 +58,7 @@ export type Interaction = {
   revoke_hint?: string;
 };
 
-export type QueuedCommand = { command_id: string; prompt: string };
+export type QueuedCommand = { command_id: string; prompt: string; attachments?: Attachment[] };
 
 export type Notice = {
   id: string;
@@ -61,7 +71,7 @@ export type Snapshot = {
   stream_id: string;
   last_seq: number;
   session: SessionSummary;
-  history: Array<{ user: string; assistant: string }>;
+  history: Array<{ user: string; assistant: string; attachments?: Attachment[] }>;
   active_turn: ActiveTurn | null;
   plan: { objective?: string; status?: string; steps?: Array<{ id: string; title: string; status: string; note?: string }> };
   pending_interactions: Interaction[];

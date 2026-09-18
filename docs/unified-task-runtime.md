@@ -13,7 +13,7 @@ TaskService  ── get / list / wait / cancel
     │
     ├── AgentTaskBackend ──► AgentControlPlane（Agent 状态唯一 owner）
     │
-    └── ShellTaskBackend ──► SessionState.background_tasks（Shell 状态唯一 owner）
+    └── ShellTaskBackend ──► Session.background_tasks（Shell 元数据唯一 owner）
 ```
 
 `RuntimeTask` 是只读投影视图，不保存任务状态。它统一了 `id`、`kind`、`status`、

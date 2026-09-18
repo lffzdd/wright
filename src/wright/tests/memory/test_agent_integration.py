@@ -13,7 +13,7 @@ from ...events import UsageEvent
 from ...memory import MemoryManager
 from ...memory.store import write_memory_file
 from ...renderer import SilentRenderer
-from ...session import SessionState
+from ...session import Session
 
 
 class _Usage:
@@ -76,13 +76,14 @@ def test_agent_recall_injection_and_extraction(tmp_path: Path):
 
     selector = SelectorLLM()
     manager = MemoryManager(MainLLM(), selector_llm=selector, directory=tmp_path)
-    session = SessionState.create(user_goal="t", workspace_dir=tmp_path)
+    session = Session.create(initial_goal="t", workspace_dir=tmp_path)
     agent = Agent(MainLLM(), [], session, SilentRenderer(), memory=manager)
 
     answer = agent.run("我该用什么包管理器")
     assert answer == "done"
     assert session.total_usage.total_tokens == 15 * (1 + selector.calls)
-    assert session.context_tokens == 15  # side-query usage must not alter context
+    assert session.last_usage.total_tokens == 15
+    assert session.request_context_tokens > 0  # side-query usage does not replace local estimate
 
     # 1) system prompt 含静态记忆指令段
     sys_msg = session.message_records[0].message
@@ -112,7 +113,7 @@ def test_agent_recall_injection_and_extraction(tmp_path: Path):
 
 def test_agent_without_memory_unaffected(tmp_path: Path):
     """memory=None 时:无记忆段、无召回注入,行为与原 Agent 一致。"""
-    session = SessionState.create(user_goal="t", workspace_dir=tmp_path)
+    session = Session.create(initial_goal="t", workspace_dir=tmp_path)
     agent = Agent(MainLLM(), [], session, SilentRenderer())  # 不传 memory
     answer = agent.run("hi")
     assert answer == "done"
@@ -123,7 +124,7 @@ def test_agent_without_memory_unaffected(tmp_path: Path):
 
 def test_new_user_turn_resets_plan_and_episode_does_not_inherit_old_plan(tmp_path: Path):
     manager = MemoryManager(MainLLM(), selector_llm=EmptySelectorLLM(), directory=tmp_path)
-    session = SessionState.create(user_goal="t", workspace_dir=tmp_path)
+    session = Session.create(initial_goal="t", workspace_dir=tmp_path)
     session.plan_manager.create_plan("first task", ["finish first"])
     session.plan_manager.update_step("step_1", "completed")
     agent = Agent(MainLLM(), [], session, SilentRenderer(), memory=manager)
