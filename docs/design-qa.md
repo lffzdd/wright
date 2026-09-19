@@ -4,9 +4,9 @@ source visual truth path: `/Users/williamlao/.cursor/projects/Users-williamlao-P
 
 implementation screenshot paths:
 
-- `/Users/williamlao/Project/wright/.design-qa/wright-web-desktop-1440x900.png`
-- `/Users/williamlao/Project/wright/.design-qa/wright-web-tablet-780x822.png`
-- `/Users/williamlao/Project/wright/.design-qa/wright-web-mobile-390x844.png`
+- `../.design-qa/wright-web-desktop-1440x900.png`
+- `../.design-qa/wright-web-tablet-780x822.png`
+- `../.design-qa/wright-web-mobile-390x844.png`
 
 viewport and normalization:
 
@@ -46,7 +46,7 @@ state:
 
 **Comparison History**
 
-1. Initial tablet pass found a P2 layout failure: the fixed 360 px inspector permanently covered the conversation at a 780 px viewport. Fix: the inspector is now hidden below 980 px and opens from a labelled button as a dismissible overlay. Post-fix evidence: `wright-web-tablet-780x822.png`, where the full active timeline and composer remain visible.
+1. Initial tablet pass found a P2 layout failure: the fixed 360 px inspector permanently covered the conversation at a 780 px viewport. Fix: the inspector is now hidden below 980 px and opens from a labelled button as a dismissible overlay. Post-fix evidence: `../.design-qa/wright-web-tablet-780x822.png`, where the full active timeline and composer remain visible.
 2. Initial integration pass found a P1 state failure: the browser showed `disconnected` because the optional Uvicorn install omitted a WebSocket implementation. Fix: the `web` extra now uses `uvicorn[standard]`; the next browser journey established an accepted WebSocket and completed a real streamed provider response.
 3. Archive-state pass found a P2 frontend cleanup error after unmounting the active timeline. Fix: the scroll effect now returns no value, and the final archive/reload flow completed without a new console error.
 

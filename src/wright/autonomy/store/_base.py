@@ -1,0 +1,79 @@
+"""Connection and transaction ownership for the autonomy store."""
+
+from __future__ import annotations
+
+import os
+import sqlite3
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+
+
+class AutonomyStoreError(ValueError):
+    pass
+
+
+class AutonomyNotFoundError(AutonomyStoreError):
+    pass
+
+
+class _StoreBase:
+    # Version three turns accepted_commands into a recoverable command ledger.
+    # It deliberately stores command payloads, ownership and the Run link in
+    # SQLite instead of treating the in-process SessionService queue as truth.
+    SCHEMA_VERSION = 6
+
+    def __init__(self, path: Path, *, session_id: str, workspace_dir: Path) -> None:
+        self.path = path.resolve()
+        self.session_id = str(session_id)
+        self.workspace_dir = workspace_dir.resolve()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(self.path.parent, 0o700)
+        except OSError:
+            pass
+        self._closed = False
+        self._lock = threading.RLock()
+        self._conn = sqlite3.connect(
+            self.path,
+            check_same_thread=False,
+            timeout=10,
+        )
+        self._conn.row_factory = sqlite3.Row
+        with self._write():
+            self._conn.execute("PRAGMA foreign_keys = ON")
+            self._conn.execute("PRAGMA journal_mode = WAL")
+            self._initialize_schema()
+        try:
+            os.chmod(self.path, 0o600)
+        except OSError:
+            pass
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._conn.close()
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def _ensure_open(self) -> None:
+        if self._closed:
+            raise AutonomyStoreError("autonomy store is closed")
+
+    @contextmanager
+    def _read(self) -> Iterator[None]:
+        with self._lock:
+            self._ensure_open()
+            yield
+
+    @contextmanager
+    def _write(self) -> Iterator[None]:
+        with self._lock:
+            self._ensure_open()
+            with self._conn:
+                yield
