@@ -95,6 +95,31 @@ the execution directory. Archiving removes a worktree only when it is clean and
 has no commits after its recorded base; otherwise Wright retains the branch and
 path for manual review. The Changes inspector is read-only and Git-only.
 
+### Durable automations and recovery
+
+`wright --ui headless --workspace <project>` explicitly starts the local
+ApplicationHost for persisted automations; it does not install a service or
+leave a background process behind. Closing a chat session does not cancel an
+already accepted durable run, while stopping the host stops new scheduling and
+waits for workers before closing MCP connections and SQLite.
+
+Interactive command IDs are stored with their payload and state. Accepted but
+not started input is re-queued after a restart; a command interrupted while it
+was running is recorded as `unknown` and is not automatically replayed. This
+prevents duplicate side effects but is not an exactly-once guarantee for shell,
+MCP, or other external work.
+
+Pending permission and ask-user requests are also recorded with their Run
+scope. The current protocol deliberately fails them closed on process restart:
+the old in-memory waiter no longer exists, so a late reply cannot restart a
+tool call. A future resumable interaction transport must create a new explicit
+request rather than reuse a historic approval.
+
+Delivered MCP images are copied to managed project artifacts instead of being
+kept as base64 in history/checkpoints. The authenticated Web endpoint is
+`/api/v1/sessions/<session>/artifacts/<artifact>`; it serves only references
+recorded by that session's tool history.
+
 ## Tests
 
 ```bash

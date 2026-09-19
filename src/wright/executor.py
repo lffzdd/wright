@@ -68,6 +68,7 @@ class ToolExecutor:
         runtime_resources: RuntimeResources | None = None,
         capability_snapshot: CapabilitySnapshot | None = None,
         execution_journal=None,
+        execution_backend=None,
     ):
         if tool_timeout <= 0:
             raise ValueError("tool_timeout 必须 > 0")
@@ -76,6 +77,7 @@ class ToolExecutor:
         self.execution_journal = execution_journal
         self.tool_timeout = tool_timeout
         self._services = services
+        self._execution_backend = execution_backend
         self.permission_resolver = permission_resolver or PermissionResolver(
             permission_policy or PermissionPolicy(),
             permission_approval_handler,
@@ -83,6 +85,7 @@ class ToolExecutor:
         self.capabilities, runtime_resources = assemble_tool_capabilities(
             session, services, runtime_resources,
             workspace_dir=workspace_dir, cwd_provider=cwd_provider,
+            execution_backend=execution_backend,
         )
         self.workspace_dir = self.capabilities.execution.workspace_dir
         self.cwd_provider = self.capabilities.execution.cwd
@@ -107,6 +110,7 @@ class ToolExecutor:
             self.runtime.runtime_resources,
             workspace_dir=self.workspace_dir,
             cwd_provider=session.get_cwd,
+            execution_backend=self._execution_backend,
         )
         self.capabilities = capabilities
         self.workspace_dir = capabilities.execution.workspace_dir
@@ -196,6 +200,7 @@ class ToolExecutor:
             self.runtime,
             tool_name=tool_call.name,
             tool_call_id=tool_call.id,
+            capabilities=self.capabilities.restricted(tool.required_capabilities),
             cancellation_check=lambda: local_cancel.is_set()
             or bool(self.cancellation_check and self.cancellation_check()),
             cancellation_reason=lambda: (

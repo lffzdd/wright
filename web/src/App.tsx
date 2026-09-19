@@ -210,7 +210,10 @@ function SessionRail({
   );
 }
 
-function ToolCard({ tool }: { tool: NonNullable<ViewState["active_turn"]>["tools"][number] }) {
+function ToolCard({ sessionId, tool }: {
+  sessionId: string;
+  tool: NonNullable<ViewState["active_turn"]>["tools"][number];
+}) {
   const [open, setOpen] = useState(false);
   const done = tool.ok !== undefined;
   const phase = done ? (tool.ok ? "succeeded" : "failed") : (tool.phase ?? "planned");
@@ -231,6 +234,15 @@ function ToolCard({ tool }: { tool: NonNullable<ViewState["active_turn"]>["tools
         <pre>{JSON.stringify(tool.arguments ?? {}, null, 2)}</pre>
         {tool.output && <><label>Output</label><pre>{tool.output}</pre></>}
         {done && <><label>Result</label><pre>{tool.ok ? JSON.stringify(tool.data ?? {}, null, 2) : tool.err}</pre></>}
+        {!!tool.artifacts?.length && <><label>Artifacts</label><div className="tool-artifacts">
+          {tool.artifacts.map((artifact) => <a
+            key={artifact.id}
+            href={api.artifactUrl(sessionId, artifact.id)}
+            target="_blank"
+            rel="noreferrer"
+            title={`${artifact.media_type} · ${artifact.size.toLocaleString()} bytes`}
+          >{artifact.name}</a>)}
+        </div></>}
       </div>}
     </section>
   );
@@ -288,6 +300,7 @@ function Timeline({ state, respond, cancelQueued }: { state: ViewState; respond:
       {state.history.map((turn, index) => <div className="turn" key={`${index}-${turn.user.slice(0, 20)}`}>
         <div className="message user-message"><span>You</span>{turn.user && <p>{turn.user}</p>}<MessageAttachments sessionId={state.session.session_id} attachments={turn.attachments} /></div>
         <div className="message assistant-message"><span>Wright</span><MarkdownContent content={turn.assistant} /></div>
+        {turn.tools?.map((tool) => <ToolCard key={tool.call_id} sessionId={state.session.session_id} tool={tool} />)}
       </div>)}
       {state.active_turn && <div className="turn active-turn">
         <div className="message user-message"><span>You</span>{state.active_turn.prompt && <p>{state.active_turn.prompt}</p>}<MessageAttachments sessionId={state.session.session_id} attachments={state.active_turn.attachments} /></div>
@@ -295,7 +308,7 @@ function Timeline({ state, respond, cancelQueued }: { state: ViewState; respond:
           <summary><Brain size={16} />Reasoning</summary>
           <div>{state.active_turn.reasoning}</div>
         </details>}
-        {state.active_turn.tools.map((tool) => <ToolCard key={tool.call_id} tool={tool} />)}
+        {state.active_turn.tools.map((tool) => <ToolCard key={tool.call_id} sessionId={state.session.session_id} tool={tool} />)}
         <div className="message assistant-message streaming"><span>Wright</span>{state.active_turn.content ? <MarkdownContent content={state.active_turn.content} /> : <span className="thinking"><i />Working…</span>}</div>
       </div>}
       {state.pending_interactions.map((item) => <InteractionCard key={item.request_id} interaction={item} respond={respond} />)}

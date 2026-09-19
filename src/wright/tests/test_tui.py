@@ -1,4 +1,5 @@
 import sys
+from argparse import Namespace
 from types import SimpleNamespace
 
 import pytest
@@ -12,8 +13,10 @@ from wright.session_host import (
     slash_command_matches,
 )
 from wright.tools.base import ToolCall, ToolResult
+from wright.tui import app as tui_app_module
 from wright.tui.app import WrightTUI, _context_ring, require_interactive_tty
 from wright.tui.renderer import TUIRenderer
+from wright.tui.session_control import SessionControlRequest
 
 
 def test_cli_ui_flag_defaults_to_tui(monkeypatch):
@@ -24,6 +27,53 @@ def test_cli_ui_flag_defaults_to_tui(monkeypatch):
 
 def test_tui_exposes_a_visible_stop_binding():
     assert any(binding.key == "ctrl+x" and binding.action == "stop_turn" for binding in WrightTUI.BINDINGS)
+
+
+def test_tui_keeps_application_host_alive_across_session_resume(tmp_path, monkeypatch):
+    class Host:
+        def __init__(self):
+            self.workspace_dir = tmp_path
+            self.closed = 0
+
+        def close(self):
+            self.closed += 1
+
+    class FakeApp:
+        def __init__(self, _runtime):
+            self.service = SimpleNamespace(close=lambda **_kwargs: True)
+
+        def run(self):
+            return transitions.pop(0)
+
+    host = Host()
+    transitions = [SessionControlRequest.resume("saved"), None]
+    assembled_hosts = []
+
+    def assemble(_config, *, renderer, application_host=None):
+        assembled_hosts.append(application_host)
+        return SimpleNamespace(
+            application_host=host,
+            owns_application_host=True,
+            session_state=SimpleNamespace(session_id="saved"),
+            agent=SimpleNamespace(checkpoint_store=None),
+        )
+
+    monkeypatch.setattr(tui_app_module, "require_interactive_tty", lambda: None)
+    monkeypatch.setattr(tui_app_module, "assemble_runtime", assemble)
+    monkeypatch.setattr(tui_app_module, "WrightTUI", FakeApp)
+    monkeypatch.setattr(
+        tui_app_module, "runtime_config_from_args",
+        lambda args: SimpleNamespace(workspace=args.workspace),
+    )
+    monkeypatch.setattr(
+        tui_app_module, "runtime_args_for_transition",
+        lambda args, request: Namespace(workspace=args.workspace, resume=request.session_id),
+    )
+
+    tui_app_module.run_tui(Namespace(workspace=tmp_path, resume=None))
+
+    assert assembled_hosts == [None, host]
+    assert host.closed == 1
 
 
 def test_cli_ui_flag_accepts_tui(monkeypatch):

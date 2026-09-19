@@ -28,7 +28,10 @@ class AutonomyNotFoundError(AutonomyStoreError):
 class AutonomyStore:
     """Thread-safe, session-scoped view over a workspace-level SQLite DB."""
 
-    SCHEMA_VERSION = 2
+    # Version three turns accepted_commands into a recoverable command ledger.
+    # It deliberately stores command payloads, ownership and the Run link in
+    # SQLite instead of treating the in-process SessionService queue as truth.
+    SCHEMA_VERSION = 4
 
     def __init__(self, path: Path, *, session_id: str, workspace_dir: Path) -> None:
         self.path = path.resolve()
@@ -86,7 +89,7 @@ class AutonomyStore:
 
     def _initialize_schema(self) -> None:
         version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
-        if version not in {0, 1, self.SCHEMA_VERSION}:
+        if version not in {0, 1, 2, 3, self.SCHEMA_VERSION}:
             raise AutonomyStoreError(
                 f"unsupported autonomy DB version: {version}"
             )
@@ -148,6 +151,10 @@ class AutonomyStore:
         """)
         if version < 2:
             self._migrate_v2()
+        if version < 3:
+            self._migrate_v3()
+        if version < 4:
+            self._migrate_v4()
         self._conn.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
 
     def _migrate_v2(self) -> None:
@@ -209,6 +216,53 @@ class AutonomyStore:
             );
             CREATE INDEX IF NOT EXISTS idx_durable_tool_executions_run
                 ON durable_tool_executions(run_id, created_at);
+        """)
+
+    def _migrate_v3(self) -> None:
+        """Make command acceptance independently recoverable and claimable.
+
+        Existing v2 rows have no proof that their queue item survived a
+        process exit.  They remain ``accepted`` and are therefore safely
+        eligible for a new owner to queue; rows which had started in a live
+        process are only ever created by v3 and are recovered as ``unknown``.
+        """
+        columns = {
+            str(row["name"])
+            for row in self._conn.execute("PRAGMA table_info(accepted_commands)").fetchall()
+        }
+        additions = {
+            "run_id": "TEXT NOT NULL DEFAULT ''",
+            "owner_id": "TEXT NOT NULL DEFAULT ''",
+            "error": "TEXT NOT NULL DEFAULT ''",
+            "cancel_reason": "TEXT NOT NULL DEFAULT ''",
+        }
+        for name, definition in additions.items():
+            if name not in columns:
+                self._conn.execute(
+                    f"ALTER TABLE accepted_commands ADD COLUMN {name} {definition}"
+                )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_accepted_commands_recovery "
+            "ON accepted_commands(scope, status, updated_at)"
+        )
+
+    def _migrate_v4(self) -> None:
+        """Persist interaction facts without serializing live Queue/Event objects."""
+        self._conn.executescript("""
+            CREATE TABLE IF NOT EXISTS pending_interactions (
+                scope TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                run_id TEXT NOT NULL DEFAULT '',
+                kind TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                resolution_json TEXT NOT NULL DEFAULT '{}',
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                PRIMARY KEY(scope, request_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_pending_interactions_status
+                ON pending_interactions(scope, status, created_at);
         """)
 
     # -- Automation definitions -------------------------------------------------
@@ -410,7 +464,7 @@ class AutonomyStore:
         now = time.time() if now is None else float(now)
         with self._write():
             row = self._conn.execute(
-                "SELECT payload_hash, status, result_json FROM accepted_commands "
+                "SELECT * FROM accepted_commands "
                 "WHERE scope = ? AND command_id = ?",
                 (scope, command_id),
             ).fetchone()
@@ -419,12 +473,7 @@ class AutonomyStore:
                     raise AutonomyStoreError(
                         "command_id was already accepted with different content"
                     )
-                return {
-                    "scope": scope,
-                    "command_id": command_id,
-                    "status": str(row["status"]),
-                    "result": _load_object(row["result_json"]),
-                }, False
+                return self._command_from_row(row), False
             self._conn.execute(
                 """INSERT INTO accepted_commands
                    (scope, command_id, payload_json, payload_hash, status,
@@ -432,10 +481,133 @@ class AutonomyStore:
                    VALUES (?, ?, ?, ?, 'accepted', ?, ?)""",
                 (scope, command_id, payload_json, digest, now, now),
             )
+        return self.get_command(scope, command_id), True
+
+    _COMMAND_TERMINAL = frozenset({"completed", "failed", "cancelled", "unknown"})
+    _COMMAND_STATUSES = frozenset({
+        "accepted", "queued", "claimed", "running", "completed", "failed",
+        "cancelled", "unknown",
+    })
+
+    @staticmethod
+    def _command_from_row(row: sqlite3.Row) -> dict[str, Any]:
+        keys = set(row.keys())
         return {
-            "scope": scope, "command_id": command_id,
-            "status": "accepted", "result": {},
-        }, True
+            "scope": str(row["scope"]),
+            "command_id": str(row["command_id"]),
+            "payload": _load_object(row["payload_json"]),
+            "status": str(row["status"]),
+            "result": _load_object(row["result_json"]),
+            "run_id": str(row["run_id"]) if "run_id" in keys else "",
+            "owner_id": str(row["owner_id"]) if "owner_id" in keys else "",
+            "error": str(row["error"]) if "error" in keys else "",
+            "cancel_reason": str(row["cancel_reason"]) if "cancel_reason" in keys else "",
+            "accepted_at": float(row["accepted_at"]),
+            "updated_at": float(row["updated_at"]),
+        }
+
+    def queue_command(self, scope: str, command_id: str, *, now: float | None = None) -> dict[str, Any]:
+        """Make an accepted command available to a worker without claiming it."""
+        now = time.time() if now is None else float(now)
+        with self._write():
+            self._conn.execute(
+                "UPDATE accepted_commands SET status = 'queued', updated_at = ? "
+                "WHERE scope = ? AND command_id = ? AND status = 'accepted'",
+                (now, scope, command_id),
+            )
+        return self.get_command(scope, command_id)
+
+    def recover_commands(self, scope: str, *, now: float | None = None) -> list[dict[str, Any]]:
+        """Recover work which has not started; classify live-process loss honestly.
+
+        A process crash after ``running`` has no reliable answer about an
+        external side effect, therefore that command is *not* automatically
+        replayed.  ``accepted``, ``queued`` and ``claimed`` have not begun
+        user work and can safely be offered to a fresh consumer.
+        """
+        now = time.time() if now is None else float(now)
+        with self._write():
+            self._conn.execute(
+                "UPDATE accepted_commands SET status = 'queued', owner_id = '', updated_at = ? "
+                "WHERE scope = ? AND status IN ('accepted', 'queued', 'claimed')",
+                (now, scope),
+            )
+            self._conn.execute(
+                "UPDATE accepted_commands SET status = 'unknown', error = "
+                "'process stopped while command was running; outcome requires recovery', "
+                "owner_id = '', updated_at = ? WHERE scope = ? AND status = 'running'",
+                (now, scope),
+            )
+            rows = self._conn.execute(
+                "SELECT * FROM accepted_commands WHERE scope = ? AND status = 'queued' "
+                "ORDER BY accepted_at, command_id",
+                (scope,),
+            ).fetchall()
+        return [self._command_from_row(row) for row in rows]
+
+    def claim_command(
+        self, scope: str, command_id: str, owner_id: str, *, now: float | None = None
+    ) -> dict[str, Any] | None:
+        """Atomically move a queued command to claimed for one consumer."""
+        now = time.time() if now is None else float(now)
+        with self._write():
+            cursor = self._conn.execute(
+                "UPDATE accepted_commands SET status = 'claimed', owner_id = ?, updated_at = ? "
+                "WHERE scope = ? AND command_id = ? AND status = 'queued'",
+                (owner_id, now, scope, command_id),
+            )
+            if cursor.rowcount != 1:
+                return None
+            row = self._conn.execute(
+                "SELECT * FROM accepted_commands WHERE scope = ? AND command_id = ?",
+                (scope, command_id),
+            ).fetchone()
+        return self._command_from_row(row)
+
+    def start_command(
+        self, scope: str, command_id: str, owner_id: str, *, run_id: str = "",
+        now: float | None = None,
+    ) -> bool:
+        now = time.time() if now is None else float(now)
+        with self._write():
+            cursor = self._conn.execute(
+                "UPDATE accepted_commands SET status = 'running', run_id = ?, updated_at = ? "
+                "WHERE scope = ? AND command_id = ? AND status = 'claimed' AND owner_id = ?",
+                (run_id, now, scope, command_id, owner_id),
+            )
+            return cursor.rowcount == 1
+
+    def attach_command_run(
+        self, scope: str, command_id: str, owner_id: str, run_id: str,
+        *, now: float | None = None,
+    ) -> bool:
+        """Persist the Run identity before its first model/tool side effect."""
+        if not run_id:
+            raise AutonomyStoreError("run_id is required")
+        now = time.time() if now is None else float(now)
+        with self._write():
+            cursor = self._conn.execute(
+                "UPDATE accepted_commands SET run_id = ?, updated_at = ? "
+                "WHERE scope = ? AND command_id = ? AND status = 'running' AND owner_id = ?",
+                (run_id[:300], now, scope, command_id, owner_id),
+            )
+            return cursor.rowcount == 1
+
+    def cancel_command(
+        self, scope: str, command_id: str, *, reason: str, now: float | None = None
+    ) -> dict[str, Any] | None:
+        """Cancel work that has not started; a running command needs its owner."""
+        now = time.time() if now is None else float(now)
+        with self._write():
+            cursor = self._conn.execute(
+                "UPDATE accepted_commands SET status = 'cancelled', cancel_reason = ?, "
+                "updated_at = ? WHERE scope = ? AND command_id = ? "
+                "AND status IN ('accepted', 'queued', 'claimed')",
+                (reason[:1000], now, scope, command_id),
+            )
+            if cursor.rowcount != 1:
+                return None
+        return self.get_command(scope, command_id)
 
     def complete_command(
         self,
@@ -446,14 +618,17 @@ class AutonomyStore:
         status: str = "completed",
         now: float | None = None,
     ) -> dict[str, Any]:
-        if status not in {"accepted", "running", "completed", "failed"}:
+        if status not in self._COMMAND_STATUSES:
             raise AutonomyStoreError(f"invalid command status: {status}")
         now = time.time() if now is None else float(now)
+        run_id = str(result.get("run_id", ""))[:300]
         with self._write():
             cursor = self._conn.execute(
-                """UPDATE accepted_commands SET status = ?, result_json = ?, updated_at = ?
-                   WHERE scope = ? AND command_id = ?""",
-                (status, _dump(result), now, scope, command_id),
+                """UPDATE accepted_commands SET status = ?, result_json = ?,
+                   run_id = CASE WHEN ? != '' THEN ? ELSE run_id END, updated_at = ?
+                   WHERE scope = ? AND command_id = ?
+                   AND status NOT IN ('completed', 'failed', 'cancelled', 'unknown')""",
+                (status, _dump(result), run_id, run_id, now, scope, command_id),
             )
             if cursor.rowcount != 1:
                 raise AutonomyNotFoundError(f"unknown command_id: {command_id}")
@@ -467,14 +642,68 @@ class AutonomyStore:
             ).fetchone()
         if row is None:
             raise AutonomyNotFoundError(f"unknown command_id: {command_id}")
-        return {
-            "scope": str(row["scope"]),
-            "command_id": str(row["command_id"]),
-            "status": str(row["status"]),
-            "result": _load_object(row["result_json"]),
-            "accepted_at": float(row["accepted_at"]),
-            "updated_at": float(row["updated_at"]),
-        }
+        return self._command_from_row(row)
+
+    # -- Persisted interaction facts ------------------------------------------
+
+    def record_interaction(
+        self, scope: str, request_id: str, *, kind: str, payload: dict[str, Any],
+        run_id: str = "", now: float | None = None,
+    ) -> None:
+        if kind not in {"permission", "ask_user"}:
+            raise AutonomyStoreError("unsupported interaction kind")
+        now = time.time() if now is None else float(now)
+        with self._write():
+            self._conn.execute(
+                """INSERT INTO pending_interactions
+                   (scope, request_id, run_id, kind, payload_json, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+                   ON CONFLICT(scope, request_id) DO NOTHING""",
+                (scope, request_id, run_id[:300], kind, _dump(payload), now, now),
+            )
+
+    def resolve_interaction(
+        self, scope: str, request_id: str, *, resolution: dict[str, Any],
+        status: str = "resolved", now: float | None = None,
+    ) -> bool:
+        if status not in {"resolved", "cancelled"}:
+            raise AutonomyStoreError("invalid interaction status")
+        now = time.time() if now is None else float(now)
+        with self._write():
+            cursor = self._conn.execute(
+                """UPDATE pending_interactions SET status = ?, resolution_json = ?, updated_at = ?
+                   WHERE scope = ? AND request_id = ? AND status = 'pending'""",
+                (status, _dump(resolution), now, scope, request_id),
+            )
+            return cursor.rowcount == 1
+
+    def terminate_pending_interactions(
+        self, scope: str, *, reason: str, now: float | None = None
+    ) -> int:
+        """Explicitly end waits whose in-memory rendezvous died with a process."""
+        now = time.time() if now is None else float(now)
+        with self._write():
+            cursor = self._conn.execute(
+                """UPDATE pending_interactions SET status = 'cancelled',
+                   resolution_json = ?, updated_at = ? WHERE scope = ? AND status = 'pending'""",
+                (_dump({"reason": reason[:1000]}), now, scope),
+            )
+            return cursor.rowcount
+
+    def list_interactions(self, scope: str) -> list[dict[str, Any]]:
+        with self._read():
+            rows = self._conn.execute(
+                "SELECT * FROM pending_interactions WHERE scope = ? ORDER BY created_at",
+                (scope,),
+            ).fetchall()
+        return [
+            {
+                "request_id": str(row["request_id"]), "run_id": str(row["run_id"]),
+                "kind": str(row["kind"]), "payload": _load_object(row["payload_json"]),
+                "status": str(row["status"]), "resolution": _load_object(row["resolution_json"]),
+            }
+            for row in rows
+        ]
 
     # -- Tool side-effect journal ----------------------------------------------
 

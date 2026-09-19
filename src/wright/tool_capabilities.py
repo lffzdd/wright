@@ -61,7 +61,10 @@ class ToolCapabilities:
     """
 
     scope: RunScope
-    execution: LocalExecutionBackend
+    # The local execution backend is deliberately opt-in.  A planning or
+    # scheduling tool must not receive host file/process access merely because
+    # another tool in the same Run needs it.
+    execution: LocalExecutionBackend | None = None
     set_cwd: Callable[[Path], None] | None = None
     plan_manager: PlanManager | None = None
     tasks: TaskService | None = None
@@ -71,6 +74,23 @@ class ToolCapabilities:
     autonomy_scheduler: AutonomyScheduler | None = None
     loop_registry: SessionLoopRegistry | None = None
 
+    def restricted(self, required: frozenset[str]) -> ToolCapabilities:
+        """Return a call-local view containing only declared operations."""
+        # Execution/scope are foundational identities; all other owners are
+        # opt-in.  This is a structural boundary, not a same-process sandbox.
+        return ToolCapabilities(
+            scope=self.scope,
+            execution=self.execution if "execution" in required else None,
+            set_cwd=self.set_cwd if "cwd" in required else None,
+            plan_manager=self.plan_manager if "plan" in required else None,
+            tasks=self.tasks if "tasks" in required else None,
+            background_tasks=self.background_tasks if "background" in required else None,
+            delegation=self.delegation if "delegation" in required else None,
+            durable_store=self.durable_store if "durable" in required else None,
+            autonomy_scheduler=self.autonomy_scheduler if "autonomy" in required else None,
+            loop_registry=self.loop_registry if "loop" in required else None,
+        )
+
 
 def assemble_tool_capabilities(
     session: Session | None,
@@ -79,6 +99,7 @@ def assemble_tool_capabilities(
     *,
     workspace_dir: Path | None = None,
     cwd_provider: Callable[[], Path] | None = None,
+    execution_backend: LocalExecutionBackend | None = None,
 ) -> tuple[ToolCapabilities, RuntimeResources | None]:
     """Build explicit capabilities once, at the application/executor boundary."""
 
@@ -91,9 +112,10 @@ def assemble_tool_capabilities(
     resources = runtime_resources
     if resources is None and session is not None:
         resources = RuntimeResources.for_session(session.session_id)
+    backend = execution_backend or LocalExecutionBackend(workspace, cwd)
     if session is None:
         scope = RunScope("")
-        return ToolCapabilities(scope, LocalExecutionBackend(workspace, cwd)), resources
+        return ToolCapabilities(scope, backend), resources
 
     active_run = session.active_run()
     scope = RunScope(
@@ -104,7 +126,7 @@ def assemble_tool_capabilities(
     )
     return ToolCapabilities(
         scope=scope,
-        execution=LocalExecutionBackend(workspace, cwd),
+        execution=backend,
         set_cwd=session.set_cwd,
         plan_manager=session.plan_manager,
         tasks=TaskService.for_session(session, services, resources),

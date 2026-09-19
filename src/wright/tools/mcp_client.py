@@ -44,11 +44,16 @@ from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 
+from ..artifacts import ArtifactStore
 from ..logger import get_logger
 from ..permission import PermissionCheckResult
 from .base import ArtifactRef, Tool, ToolResult, ToolRuntime
 
 logger = get_logger(__name__)
+
+_SUPPORTED_IMAGE_MEDIA_TYPES = frozenset({
+    "image/png", "image/jpeg", "image/webp", "image/gif",
+})
 
 
 @dataclass
@@ -168,12 +173,14 @@ class McpManager:
         configs: list[McpServerConfig],
         call_timeout: float = 30.0,
         startup_timeout: float = 30.0,
+        artifact_store: ArtifactStore | None = None,
     ):
         self.configs = configs
         # 单次工具调用超时:应与外层 executor 的 tool_timeout 对齐。
         self.call_timeout = call_timeout
         # 启动(连接 + 发现)整体超时:某个 server 卡在 initialize 时不至于永久挂起。
         self.startup_timeout = startup_timeout
+        self.artifact_store = artifact_store
         self.loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
             target=self.loop.run_forever, name="mcp-loop", daemon=True
@@ -287,7 +294,13 @@ class McpManager:
                 )
             except Exception as e:
                 return ToolResult.fail(f"{type(e).__name__}: {e}")
-            return _to_tool_result(result)
+            scope = runtime.capabilities.scope if runtime.capabilities is not None else None
+            return _to_tool_result(
+                result,
+                artifact_store=self.artifact_store,
+                run_id=scope.run_id if scope is not None else "",
+                call_id=runtime.tool_call_id,
+            )
 
         def check_permission(
             args: dict[str, Any], runtime: ToolRuntime
@@ -316,6 +329,8 @@ class McpManager:
     def shutdown(self) -> None:
         """关闭所有 session / 子进程,并停掉事件循环线程。可重复调用。"""
         if not self._started:
+            if not self.loop.is_closed():
+                self.loop.close()
             return
         try:
             # 给 park 中的 _serve 发关闭信号,它会在自己的任务里退出 AsyncExitStack。
@@ -329,9 +344,14 @@ class McpManager:
             self.loop.call_soon_threadsafe(self.loop.stop)
             self._thread.join(timeout=5)
             self._started = False
+            if not self.loop.is_closed():
+                self.loop.close()
 
 
-def _to_tool_result(result) -> ToolResult:
+def _to_tool_result(
+    result, *, artifact_store: ArtifactStore | None = None,
+    run_id: str = "", call_id: str = "",
+) -> ToolResult:
     """把 MCP 的 CallToolResult 翻译成本系统的 ToolResult。
 
     content 是类型化块的列表(TextContent / ImageContent / ...):文本块拼接,
@@ -350,8 +370,28 @@ def _to_tool_result(result) -> ToolResult:
         if block_type == "image":
             data = getattr(block, "data", "")
             mime = str(getattr(block, "mimeType", "image/*"))
-            content.append({"type": "image", "media_type": mime, "data": data})
-            parts.append("[MCP image preserved as typed content]")
+            if mime not in _SUPPORTED_IMAGE_MEDIA_TYPES:
+                content.append({
+                    "type": "image", "media_type": mime,
+                    "unsupported": "unsupported image media type",
+                })
+                parts.append(f"[MCP image unavailable: unsupported media type {mime}]")
+            elif artifact_store is None:
+                content.append({"type": "image", "media_type": mime, "unavailable": "artifact storage is unavailable"})
+                parts.append("[MCP image unavailable: artifact storage is not configured]")
+            else:
+                try:
+                    ref = artifact_store.register_base64(
+                        str(data), name="mcp-image", run_id=run_id,
+                        call_id=call_id, media_type=mime,
+                    )
+                except ValueError as exc:
+                    content.append({"type": "image", "media_type": mime, "error": str(exc)})
+                    parts.append(f"[MCP image unavailable: {exc}]")
+                else:
+                    artifacts.append(ref)
+                    content.append({"type": "image", "artifact_id": ref.id, "media_type": mime})
+                    parts.append(f"[MCP image artifact: {ref.id}]")
         elif block_type == "resource_link":
             uri = str(getattr(block, "uri", ""))
             content.append({"type": "resource_link", "uri": uri, "name": str(getattr(block, "name", ""))})
@@ -366,5 +406,12 @@ def _to_tool_result(result) -> ToolResult:
         data["structured_content"] = structured
 
     if getattr(result, "isError", False):
-        return ToolResult.fail(text or "MCP tool returned an error", data, content=content)
+        # An MCP error can still carry a useful typed diagnostic or a managed
+        # artifact.  Keep those references available to the caller/UI while
+        # preserving the failure status; do not turn a partial result into
+        # success just because it has content.
+        return ToolResult.fail(
+            text or "MCP tool returned an error", data,
+            content=content, artifacts=artifacts,
+        )
     return ToolResult.success(data, summary=text[:1_000], content=content, artifacts=artifacts)

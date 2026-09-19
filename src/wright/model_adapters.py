@@ -173,12 +173,42 @@ class ResponsesAdapter:
             }
         return value
 
+    @staticmethod
+    def _get(value: Any, name: str, default: Any = None) -> Any:
+        return getattr(value, name, default) if not isinstance(value, dict) else value.get(name, default)
+
+    def _finish_reason(self, response: Any, calls: list[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+        """Map SDK terminal state before it reaches the provider-neutral core.
+
+        ``ContentDone`` remains the single terminal event shape, but only a
+        completed Responses object may produce ``stop``/``tool_calls``.  Every
+        other provider state deliberately stays non-executable.
+        """
+        status = str(self._get(response, "status", "") or "").casefold()
+        details = self._get(response, "incomplete_details") or {}
+        reason = self._get(details, "reason", "")
+        error = self._get(response, "error")
+        metadata = {"responses_status": status or "missing"}
+        if reason:
+            metadata["responses_incomplete_reason"] = str(reason)
+        if error:
+            metadata["responses_error"] = self._dump(error)
+        if status == "completed":
+            return ("tool_calls" if calls else "stop"), metadata
+        if status == "incomplete":
+            return f"incomplete:{reason or 'unspecified'}", metadata
+        if status in {"failed", "error"}:
+            return "failed", metadata
+        if status in {"cancelled", "canceled"}:
+            return "cancelled", metadata
+        return "incomplete:missing_terminal_status", metadata
+
     def decode_response(self, response: Any) -> ContentDone:
         """Decode Responses output into the provider-neutral terminal event."""
         content: list[str] = []
         reasoning: list[str] = []
         calls: list[dict[str, Any]] = []
-        output = list(getattr(response, "output", None) or [])
+        output = list(self._get(response, "output", []) or [])
         for item in output:
             item_type = getattr(item, "type", None) or (
                 item.get("type") if isinstance(item, dict) else ""
@@ -213,19 +243,23 @@ class ResponsesAdapter:
                         summary.get("text", "") if isinstance(summary, dict) else ""
                     )
                     reasoning.append(str(text))
+        finish_reason, terminal_state = self._finish_reason(response, calls)
         return ContentDone(
             content="".join(content),
             reasoning="".join(reasoning),
             tool_calls=calls,
-            finish_reason="tool_calls" if calls else "stop",
-            provider_state={"responses_output": [self._dump(item) for item in output]},
+            finish_reason=finish_reason,
+            provider_state={
+                "responses_output": [self._dump(item) for item in output],
+                **terminal_state,
+            },
         )
 
     def decode_stream_event(
         self, event: Any
     ) -> tuple[list[LLMEvent], Any | None, str | None]:
         """Map one SDK stream event without leaking its event name upstream."""
-        event_type = str(getattr(event, "type", ""))
+        event_type = str(self._get(event, "type", ""))
         if event_type.endswith("output_text.delta"):
             piece = str(getattr(event, "delta", ""))
             return ([ContentDelta(piece)] if piece else []), None, None
@@ -233,8 +267,10 @@ class ResponsesAdapter:
             piece = str(getattr(event, "delta", ""))
             return ([ReasoningDelta(piece)] if piece else []), None, None
         if event_type == "response.completed":
-            return [], getattr(event, "response", None), None
-        if event_type == "response.failed":
-            failed = getattr(event, "response", None)
-            return [], None, str(getattr(failed, "error", None) or "unknown error")
+            return [], self._get(event, "response"), None
+        if event_type in {"response.failed", "response.incomplete", "response.cancelled", "response.canceled"}:
+            failed = self._get(event, "response")
+            done = self.decode_response(failed) if failed is not None else None
+            reason = done.finish_reason if done is not None else event_type
+            return [], done, str(reason)
         return [], None, None

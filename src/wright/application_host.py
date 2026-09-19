@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .agent_background import AgentBackgroundRuntime
+from .artifacts import ArtifactStore
 from .autonomy import AutonomyScheduler, AutonomyStore
 from .autonomy.runner import launch_durable_run
 from .coordination import AgentControlPlane
@@ -25,6 +26,7 @@ from .llm import LLMClient
 from .permission import PermissionSettings
 from .services import RuntimeServices
 from .tools.base import Tool
+from .tools.mcp_client import McpManager, McpServerConfig
 
 
 @dataclass(frozen=True)
@@ -47,6 +49,8 @@ class ApplicationHost:
         llm: LLMClient,
         base_tools: Sequence[Tool],
         permission_settings: PermissionSettings,
+        mcp_configs: Sequence[McpServerConfig] = (),
+        artifact_store: ArtifactStore | None = None,
         on_event: Callable[[str, object], None] | None = None,
         poll_interval: float = 0.5,
     ) -> None:
@@ -54,6 +58,10 @@ class ApplicationHost:
         self.store = store
         self.llm = llm
         self.base_tools = tuple(base_tools)
+        self._host_tools = self.base_tools
+        # Durable work must never borrow the Session's MCP manager: closing a
+        # browser session tears that manager down while this host may live on.
+        self.mcp_manager = McpManager(list(mcp_configs), artifact_store=artifact_store)
         self.permission_settings = permission_settings
         self.event_queue: queue.Queue[tuple[str, object]] = queue.Queue()
         self.control_plane = AgentControlPlane()
@@ -63,6 +71,7 @@ class ApplicationHost:
         self._state = "new"
         self._closed = threading.Event()
         self._lock_fd: int | None = None
+        self._event_thread: threading.Thread | None = None
         self.scheduler = AutonomyScheduler(
             store,
             self.event_queue,
@@ -89,6 +98,11 @@ class ApplicationHost:
             self._state = "running"
         try:
             self._acquire_project_lock()
+            self._host_tools = (*self.base_tools, *self.mcp_manager.start())
+            self._event_thread = threading.Thread(
+                target=self._forward_events, name="wright-application-events", daemon=True
+            )
+            self._event_thread.start()
             self.scheduler.start()
         except Exception:
             with self._lock:
@@ -104,11 +118,12 @@ class ApplicationHost:
         rows as crash recovery. ``flock`` is released by the OS if its process
         dies, so it cannot leave a stale PID file behind.
         """
-        # Store rows are source-session scoped.  Different source sessions can
-        # legitimately have independent schedules in one project database;
-        # two owners of the *same* scope cannot.
-        scope = hashlib.sha256(self.store.session_id.encode("utf-8")).hexdigest()[:16]
-        lock_path = self.store.path.with_suffix(self.store.path.suffix + f".{scope}.host.lock")
+        # Durable definitions retain their source-session association, but
+        # process ownership is an execution-environment concern: two hosts
+        # pointed at one worktree/local checkout could otherwise run unknown
+        # writes concurrently merely because their source sessions differ.
+        scope = hashlib.sha256(str(self.workspace_dir).encode("utf-8")).hexdigest()[:16]
+        lock_path = self.store.path.parent / f"{scope}.host.lock"
         fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -140,7 +155,7 @@ class ApplicationHost:
                 control_plane=self.control_plane,
                 scheduler=self.scheduler,
                 llm=self.llm,
-                base_tools=self.base_tools,
+                base_tools=self._host_tools,
                 permission_settings=self.permission_settings,
                 background_runtime=self.background,
                 services=self.services,
@@ -157,6 +172,14 @@ class ApplicationHost:
     def _publish(self, event: str, payload: object) -> None:
         if self._on_event is not None:
             self._on_event(event, payload)
+
+    def _forward_events(self) -> None:
+        """Drain durable completion/error notifications; never retain them unbounded."""
+        while True:
+            event, payload = self.event_queue.get()
+            if event == "__HOST_EXIT__":
+                return
+            self._publish(event, payload)
 
     def snapshot(self) -> ApplicationHostSnapshot:
         return ApplicationHostSnapshot(
@@ -195,6 +218,11 @@ class ApplicationHost:
         with self._lock:
             if self._state == "closed":
                 return
+        self.event_queue.put(("__HOST_EXIT__", None))
+        thread = self._event_thread
+        if thread is not None:
+            thread.join(timeout=1)
+        self.mcp_manager.shutdown()
         self.store.close()
         self._release_project_lock()
         with self._lock:

@@ -24,6 +24,7 @@ from ..runtime import (
 from ..session_host import process_session_event
 from ..session_models import available_models, process_model_name
 from ..session_service import SessionService, SessionServiceError
+from ..tools.base import ArtifactRef
 from ..ui_events import EventPublisher
 from ..worktrees import ArchiveResult, WorktreeManager
 
@@ -119,6 +120,20 @@ class SessionHandle:
             return record, self.runtime.attachment_store.thumbnail_path_for(record)
         except AttachmentError as exc:
             raise RuntimeManagerError(str(exc), status_code=404) from exc
+
+    def artifact_path(self, artifact_id: str) -> tuple[ArtifactRef, Path]:
+        """Resolve only references recorded in this Session's tool history."""
+        for execution in self.runtime.session_state.tool_executions.values():
+            result = execution.result
+            if result is None:
+                continue
+            for ref in result.artifacts:
+                if ref.id == artifact_id:
+                    try:
+                        return ref, self.runtime.artifact_store.path_for(ref)
+                    except (FileNotFoundError, ValueError) as exc:
+                        raise RuntimeManagerError(str(exc), status_code=404) from exc
+        raise RuntimeManagerError("artifact not found in this session", status_code=404)
 
     def submit(
         self, prompt: str, command_id: str, attachment_ids: list[str] | None = None,
@@ -244,9 +259,33 @@ class SessionHandle:
                 continue
             attachment_ids = user.get("attachments", [])
             attachments = self._attachment_summaries(attachment_ids) if isinstance(attachment_ids, list) else []
-            item: dict[str, Any] = {"user": str(user.get("content", "")).strip(), "assistant": answer.strip()}
+            item: dict[str, Any] = {
+                "user": str(user.get("content", "")).strip(),
+                "assistant": answer.strip(),
+            }
             if attachments:
                 item["attachments"] = attachments
+            # The Run owns tool executions.  Include its completed calls in
+            # this history projection so artifact links survive event-cache
+            # eviction and a resumed session can still display them.
+            run = self.runtime.session_state.runs.get(turn.run_id)
+            if run is not None:
+                tools: list[dict[str, Any]] = []
+                for call_id in run.tool_execution_ids:
+                    execution = self.runtime.session_state.tool_executions.get(call_id)
+                    if execution is None:
+                        continue
+                    tool: dict[str, Any] = {
+                        "call_id": execution.call.id,
+                        "name": execution.call.name,
+                        "arguments": dict(execution.call.arguments),
+                        "phase": execution.status,
+                    }
+                    if execution.result is not None:
+                        tool.update(execution.result.to_dict())
+                    tools.append(tool)
+                if tools:
+                    item["tools"] = tools
             if history and history[-1]["user"] == item["user"]:
                 history[-1] = item
             else:
@@ -380,6 +419,10 @@ class RuntimeManager:
                 project_id=project_id(self.project_root), session_id=session_id
             )
             broker = InteractionBroker(publisher)
+            retained_host = (
+                self._application_hosts.get(session_id)
+                if resume_session_id else None
+            )
             try:
                 runtime = assemble_runtime(
                     runtime_config_from_args(self._args(context=context, model=model, resume=resume_session_id)),
@@ -388,6 +431,7 @@ class RuntimeManager:
                     publisher=publisher,
                     interaction_broker=broker,
                     session_id=session_id,
+                    application_host=retained_host,
                 )
             except Exception:
                 broker.close()
@@ -452,6 +496,19 @@ class RuntimeManager:
         else:
             context = handle.runtime.project_context
             self.close(session_id)
+        if context.environment == "worktree":
+            with self._lock:
+                hosts = tuple(self._application_hosts.values())
+            for host in hosts:
+                if host.workspace_dir != context.execution_root or host.state != "running":
+                    continue
+                if host.store.count_active_runs() or any(
+                    automation.status == "active"
+                    for automation in host.store.list_automations()
+                ):
+                    raise RuntimeManagerError(
+                        "worktree is still referenced by an active automation host"
+                    )
         return self.worktrees.archive(context)
 
     def shutdown(self) -> None:

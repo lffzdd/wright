@@ -273,6 +273,8 @@ class LLMClient:
             if finished is not None:
                 completed = finished
             if error is not None:
+                if completed is not None and getattr(completed, "usage", None):
+                    yield UsageEvent(completed.usage)
                 raise RuntimeError(f"Responses request failed: {error}")
         if completed is None:
             raise RuntimeError("Responses stream ended without response.completed")

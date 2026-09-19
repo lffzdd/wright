@@ -1477,21 +1477,44 @@ def run_tui(args: Any) -> None:
     renderer = TUIRenderer()
     renderer.bind_interaction(InteractionHub())
     active_args = args
-    while True:
-        rt = assemble_runtime(runtime_config_from_args(active_args), renderer=renderer)
-        app = WrightTUI(rt)
-        transition: SessionControlRequest | None = None
-        try:
-            result = app.run()
-            if isinstance(result, SessionControlRequest):
-                transition = result
-            elif rt.agent.checkpoint_store:
-                print(f"💾 会话已保存 (session_id: {rt.session_state.session_id})")
-        finally:
-            stopped = app.service.close(wait_timeout=2.0) if app.service is not None else True
-        if transition is not None and not stopped:
-            print("会话仍在关闭中；尚未安全退出，无法切换会话。")
-            return
-        if transition is None:
-            return
-        active_args = runtime_args_for_transition(active_args, transition)
+    # A TUI session is only a conversation owner.  Persisted automations use
+    # an ApplicationHost which must outlive close/new/resume transitions in
+    # this process, just as the Web RuntimeManager retains its hosts.
+    hosts_by_session: dict[str, Any] = {}
+    hosts_by_workspace: dict[str, Any] = {}
+    try:
+        while True:
+            config = runtime_config_from_args(active_args)
+            resume_id = getattr(active_args, "resume", None)
+            host = hosts_by_session.get(resume_id) if resume_id else None
+            if host is None and config.workspace is not None:
+                host = hosts_by_workspace.get(str(config.workspace.resolve()))
+            rt = assemble_runtime(
+                config, renderer=renderer, application_host=host,
+            )
+            if rt.application_host is not None:
+                # The enclosing TUI is the application owner.  Closing this
+                # particular conversation must not stop its automations.
+                rt.owns_application_host = False
+                hosts_by_session[rt.session_state.session_id] = rt.application_host
+                hosts_by_workspace[str(rt.application_host.workspace_dir)] = rt.application_host
+            app = WrightTUI(rt)
+            transition: SessionControlRequest | None = None
+            try:
+                result = app.run()
+                if isinstance(result, SessionControlRequest):
+                    transition = result
+                elif rt.agent.checkpoint_store:
+                    print(f"💾 会话已保存 (session_id: {rt.session_state.session_id})")
+            finally:
+                stopped = app.service.close(wait_timeout=2.0) if app.service is not None else True
+            if transition is not None and not stopped:
+                print("会话仍在关闭中；尚未安全退出，无法切换会话。")
+                return
+            if transition is None:
+                return
+            active_args = runtime_args_for_transition(active_args, transition)
+    finally:
+        # Several session ids may reference the same local execution host.
+        for host in set(hosts_by_session.values()) | set(hosts_by_workspace.values()):
+            host.close()

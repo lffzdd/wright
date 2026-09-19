@@ -53,6 +53,17 @@ describe("UI event reducer", () => {
     expect(next.active_turn?.tools[1].phase).toBe("succeeded");
   });
 
+  it("keeps registered artifact references on completed tool events", () => {
+    let next = applyEvent(state, event(1, "turn.started", { prompt: "make a report" }));
+    next = applyEvent(next, event(2, "tool.finished", {
+      call_id: "report", name: "write_report", ok: true,
+      artifacts: [{ id: "artifact-1", name: "report.md", media_type: "text/markdown", size: 42 }],
+    }));
+    expect(next.active_turn?.tools[0].artifacts).toEqual([
+      { id: "artifact-1", name: "report.md", media_type: "text/markdown", size: 42 },
+    ]);
+  });
+
   it("deduplicates event ids", () => {
     const delta = event(1, "turn.started", { prompt: "once" });
     const once = applyEvent(state, delta);

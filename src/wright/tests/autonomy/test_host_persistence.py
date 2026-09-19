@@ -5,11 +5,14 @@ import pytest
 
 from wright.tests.responses import event, response
 
+from ...agent import Agent
 from ...application_host import ApplicationHost
 from ...autonomy import AutonomyStore, AutonomyStoreError, TriggerSpec
 from ...executor import ToolExecutor
 from ...permission import PermissionSettings
-from ...tools.base import Tool, ToolCall
+from ...renderer import SilentRenderer
+from ...session import Session
+from ...tools.base import Tool, ToolCall, ToolResult
 
 
 class ScriptLLM:
@@ -45,6 +48,25 @@ def test_command_acceptance_is_durable_and_rejects_changed_replay(tmp_path):
 
     reopened = AutonomyStore(tmp_path / "tasks.sqlite3", session_id="origin-session", workspace_dir=tmp_path / "workspace")
     assert reopened.get_command("project/session", "cmd-1")["result"] == {"run_id": "run-1"}
+    reopened.close()
+
+
+def test_pending_interaction_is_explicitly_terminated_after_restart(tmp_path):
+    _workspace, store = _store(tmp_path)
+    store.record_interaction(
+        "session:origin-session", "approval-1", kind="permission",
+        payload={"tool": "write_file"}, run_id="run-1", now=1,
+    )
+    store.close()
+    reopened = AutonomyStore(
+        tmp_path / "tasks.sqlite3", session_id="origin-session", workspace_dir=tmp_path / "workspace"
+    )
+    assert reopened.terminate_pending_interactions(
+        "session:origin-session", reason="restart", now=2
+    ) == 1
+    record = reopened.list_interactions("session:origin-session")[0]
+    assert record["status"] == "cancelled"
+    assert record["resolution"] == {"reason": "restart"}
     reopened.close()
 
 
@@ -161,6 +183,25 @@ def test_second_application_host_cannot_recover_a_live_owner(tmp_path):
     first.close()
 
 
+def test_second_source_session_cannot_run_same_execution_environment(tmp_path):
+    workspace, store = _store(tmp_path)
+    first = ApplicationHost(
+        workspace_dir=workspace, store=store, llm=ScriptLLM("done"), base_tools=[],
+        permission_settings=PermissionSettings(),
+    )
+    first.start()
+    second_store = AutonomyStore(
+        tmp_path / "other.sqlite3", session_id="another-source", workspace_dir=workspace
+    )
+    second = ApplicationHost(
+        workspace_dir=workspace, store=second_store, llm=ScriptLLM("done"), base_tools=[],
+        permission_settings=PermissionSettings(),
+    )
+    with pytest.raises(RuntimeError, match="already owns"):
+        second.start()
+    first.close()
+
+
 def test_host_defers_store_close_until_its_worker_actually_exits(tmp_path):
     workspace, store = _store(tmp_path)
     host = ApplicationHost(
@@ -207,3 +248,37 @@ def test_effect_is_not_called_when_intent_cannot_be_persisted(tmp_path):
     assert not outcome.result.ok
     assert "intent persistence failed" in outcome.result.err
     assert called == []
+
+
+def test_result_persistence_failure_stops_agent_without_retrying_effect(tmp_path):
+    calls: list[str] = []
+
+    class ResultFailJournal:
+        def record_intent(self, **_value):
+            return None
+
+        def mark_started(self, _call_id):
+            return None
+
+        def record_result(self, _call_id, _result, *, status):
+            raise OSError("result database is unavailable")
+
+    class ToolLLM:
+        context_limit = 128_000
+
+        def __call__(self, _messages, **_kwargs):
+            yield event(response(calls=[{"name": "effect", "arguments": {}}]))
+
+    agent = Agent(
+        ToolLLM(),
+        [Tool("effect", "effect", {"type": "object"}, lambda _args, _rt: calls.append("ran") or ToolResult.success())],
+        Session.create("effect", tmp_path),
+        SilentRenderer(),
+        execution_journal=ResultFailJournal(),
+    )
+    assert agent.run("perform effect") is None
+    assert calls == ["ran"]
+    assert agent.session_state.current_run_status() == "failed"
+    execution = next(iter(agent.session_state.tool_executions.values()))
+    assert execution.result is not None
+    assert execution.result.data == {"outcome": "unknown"}

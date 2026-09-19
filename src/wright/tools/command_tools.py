@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from ..logger import get_logger
-from ..processes import ProcessResources, terminate_process_tree
+from ..processes import ProcessResources
 from .base import Tool, ToolCancelledError, ToolResult, ToolRuntime
 from .command_permissions import (
     check_execute_command_permission,
@@ -20,7 +20,11 @@ logger = get_logger(__name__)
 
 def _capabilities(runtime: ToolRuntime | None):
     capabilities = runtime.capabilities if runtime is not None else None
-    if capabilities is None or capabilities.background_tasks is None:
+    if (
+        capabilities is None
+        or capabilities.execution is None
+        or capabilities.background_tasks is None
+    ):
         raise RuntimeError("command tool requires execution and background-task capabilities")
     return capabilities
 
@@ -104,7 +108,9 @@ def execute_command(
             f"eval {shlex.quote(command)} && pwd -P > {shlex.quote(str(cwd_file))}"
         )
 
-        proc = subprocess.Popen(
+        # The tool owns shell-specific cwd tracking and output semantics; the
+        # execution backend owns where/how the approved process is created.
+        proc = capabilities.execution.start_process(
             ["/bin/bash", "-c", injected],
             cwd=cwd,
             stdout=subprocess.PIPE,
@@ -148,13 +154,12 @@ def execute_command(
             logger.debug("background command on_done callback failed", exc_info=True)
 
     def _reader():
-        assert proc.stdout is not None
-        for line in proc.stdout:
+        for line in capabilities.execution.iter_process_output(proc):
             with output_lock:
                 output_lines.append(line)
             if runtime and runtime.emit_output:
                 runtime.emit_output(line)
-        proc.wait()
+        capabilities.execution.wait_process(proc)
         # reader 只采集命令结束时的 cwd，不负责提交。只有前台调用路径确认命令
         # 没有转后台后才会更新 session，彻底消除 timeout 临界点的提交竞态。
         new_cwd = _consume_cwd_file(cwd_file)
@@ -195,7 +200,7 @@ def execute_command(
     finished = False
     while not finished:
         if runtime and runtime.is_cancelled():
-            terminate_process_tree(proc)
+            capabilities.execution.terminate_process(proc)
             done_event.wait(timeout=2)
             raise ToolCancelledError("execute_command cancelled")
         remaining = deadline - time.monotonic()
@@ -205,7 +210,7 @@ def execute_command(
 
     if not finished:
         if runtime is not None and not runtime.allow_background_tasks:
-            terminate_process_tree(proc)
+            capabilities.execution.terminate_process(proc)
             done_event.wait(timeout=2)
             with output_lock:
                 output_so_far = "".join(output_lines)[-MAX_OUTPUT_CHARS:]
@@ -317,6 +322,7 @@ execute_command_tool = Tool(
     call=lambda args, runtime: execute_command(**args, runtime=runtime),
     check_permission=check_execute_command_permission,
     is_concurrency_safe=is_execute_command_concurrency_safe,
+    required_capabilities=frozenset({"execution", "cwd", "background"}),
     # shell 自己负责前台 timeout → 后台 task 的语义。
     timeout_owner="tool",
 )

@@ -70,6 +70,7 @@ class Agent:
         runtime_resources: RuntimeResources | None = None,
         profile: AgentProfile | None = None,
         execution_journal=None,
+        on_run_started: Callable[[str], None] | None = None,
     ):
         self.llm = llm
         self.session_state = session_state
@@ -98,6 +99,7 @@ class Agent:
         # 不传则 ToolExecutor 自建一个无 handler 的默认 resolver(ask 一律 fail-closed)。
         self._permission_resolver = permission_resolver
         self._cancellation_check = cancellation_check
+        self.on_run_started = on_run_started
         self._active_run_cancellation_check: Callable[[], bool] | None = None
         # 连续 N 轮响应不完整或工具调用无效就止损,
         # 与其烧光 max_steps,不如如实标 failed 退出。中间成功一次即清零。
@@ -117,7 +119,11 @@ class Agent:
         catalog = CapabilityCatalog(tools)
         self.profile = profile or AgentProfile("root", catalog.names, allow_interaction=True, allow_background_tasks=True, allow_delegation=True)
         self.capabilities = catalog.snapshot(self.profile)
-        runtime_tools = list(self.capabilities.tools)
+        runtime_tools = [
+            tool for tool in self.capabilities.tools
+            if (self.profile.allow_interaction or not tool.requires_user_interaction)
+            and (self.profile.allow_delegation or tool.name not in {"spawn_agent", "get_agent_tree"})
+        ]
         deferred_names = {
             tool.name
             for tool in runtime_tools
@@ -143,10 +149,16 @@ class Agent:
         )
         if not self.session_state.message_records:
             memory_section = self.memory.instructions() if self.memory else ""
+            # tool_search is an internal catalog mechanism.  The prompt
+            # describes when to use it, but does not treat it as a product
+            # capability alongside the Profile-authorized tools.
+            prompt_tools = [
+                tool for tool in runtime_tools if tool.name != "tool_search"
+            ]
             self.session_state.append_message({
                 "role": "system",
                 "content": build_system_prompt(
-                    tools, memory_section=memory_section
+                    prompt_tools, memory_section=memory_section
                 ),
             })
 
@@ -165,7 +177,9 @@ class Agent:
             # Use the composed check so an autonomous durable run can add its
             # own cancellation signal without rebuilding the executor.
             cancellation_check=self._is_cancelled,
-            allow_background_tasks=allow_background_tasks,
+            allow_background_tasks=(
+                allow_background_tasks and self.profile.allow_background_tasks
+            ),
             lifecycle=lifecycle,
             services=services,
             runtime_resources=self.runtime_resources,
@@ -465,6 +479,8 @@ class Agent:
     ) -> str | None:
         """执行新任务。"""
         max_steps = self.session_state.max_steps if max_steps is None else max_steps
+        if self.profile.max_steps is not None:
+            max_steps = min(max_steps, self.profile.max_steps)
         if max_steps <= 0:
             raise ValueError("max_steps 必须 > 0")
         self.session_state.max_steps = max_steps
@@ -491,6 +507,8 @@ class Agent:
                 "model": str(getattr(self.llm, "model", "")),
                 "transport": str(getattr(self.llm, "transport_name", "")),
             }
+            if self.on_run_started is not None:
+                self.on_run_started(active_run.run_id)
         prompt_decision = None
         if self.session_state.agent_task_id is None:
             prompt_decision = self._emit_lifecycle(
@@ -888,6 +906,21 @@ class Agent:
         ):
             self.session_state.append_message(message)
         self._checkpoint()
+        if any(
+            isinstance(outcome.result.data, dict)
+            and outcome.result.data.get("outcome") == "unknown"
+            for outcome in outcomes
+        ):
+            # A durable side effect ran but its commit failed.  Giving the
+            # model another turn would invite an untracked retry of the same
+            # operation, so leave an explicit failed/unknown boundary.
+            self._terminate(
+                "failed",
+                reason="tool execution outcome unknown",
+                message="工具已执行但结果未能可靠持久化；不会自动重试副作用。",
+                record_memory=record_memory,
+            )
+            return False
         return True
 
     def _handle_invalid_turn(

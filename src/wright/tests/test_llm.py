@@ -411,6 +411,39 @@ def test_responses_adapter_normalizes_input_tools_usage_and_provider_state():
         llm.client.close()
 
 
+@pytest.mark.parametrize(
+    ("status", "details", "expected"),
+    [
+        ("completed", None, "stop"),
+        ("incomplete", {"reason": "max_output_tokens"}, "incomplete:max_output_tokens"),
+        ("failed", None, "failed"),
+        ("cancelled", None, "cancelled"),
+    ],
+)
+def test_responses_terminal_status_is_not_invented(status, details, expected):
+    llm = _responses_client(lambda _request: pytest.fail("SDK client is replaced"), stream=False)
+    llm.client = SimpleNamespace(responses=SimpleNamespace(create=lambda **_kwargs: SimpleNamespace(
+        status=status, incomplete_details=details, error={"message": "bad"} if status == "failed" else None,
+        output=[SimpleNamespace(type="message", content=[SimpleNamespace(type="output_text", text="partial")])],
+        usage=SimpleNamespace(input_tokens=1, output_tokens=2, total_tokens=3),
+    )))
+    events = list(llm([{"role": "user", "content": "hello"}]))
+    assert events[-1].finish_reason == expected
+    assert events[-1].provider_state["responses_status"] == status
+
+
+def test_responses_truncation_cannot_become_agent_final(tmp_path):
+    class Model:
+        context_limit = 10_000
+
+        def __call__(self, _request, **_kwargs):
+            yield ContentDone("partial answer", finish_reason="incomplete:max_output_tokens")
+
+    session = Session.create("goal", tmp_path)
+    assert Agent(Model(), [], session, SilentRenderer()).run("goal") is None
+    assert session.current_run_status() == "failed"
+
+
 def test_responses_stream_maps_text_usage_and_tool_continuation_state():
     llm = _responses_client(lambda _request: pytest.fail("SDK client is replaced"), stream=True)
     completed = SimpleNamespace(

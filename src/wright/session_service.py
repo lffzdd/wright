@@ -211,6 +211,33 @@ class SessionService:
         self._queued: dict[str, dict[str, Any]] = {}
         self._cancelled: set[str] = set()
         self._active_command: str | None = None
+        # A new process receives a unique consumer id.  SQLite is the arbiter;
+        # this value only identifies the winner of a claim, never grants a
+        # second right to execute work.
+        self._consumer_id = f"session-worker:{uuid4().hex}"
+        agent = getattr(runtime, "agent", None)
+        existing_run_started = getattr(agent, "on_run_started", None)
+
+        def persist_run_id(run_id: str) -> None:
+            if callable(existing_run_started):
+                existing_run_started(run_id)
+            with self._lock:
+                command_id = self._active_command
+            store = getattr(self.runtime, "autonomy_store", None)
+            if command_id and store is not None:
+                try:
+                    store.attach_command_run(
+                        self._command_scope, command_id, self._consumer_id, run_id
+                    )
+                except Exception as exc:
+                    # Executing a new user turn without an accepted Run link
+                    # would reintroduce the crash ambiguity this service owns.
+                    raise SessionServiceError(
+                        "could not persist command Run association"
+                    ) from exc
+
+        if agent is not None:
+            agent.on_run_started = persist_run_id
         self.runner = SessionRunner(runtime, self._consume, shutdown=shutdown)
 
     @property
@@ -222,7 +249,58 @@ class SessionService:
         return self.runner.state == "closed"
 
     def start(self) -> None:
+        self._recover_durable_commands()
         self.runner.start()
+
+    @property
+    def _command_scope(self) -> str:
+        return f"session:{self.session_id}"
+
+    def _recover_durable_commands(self) -> None:
+        """Requeue only work whose execution has not started.
+
+        ``running`` is deliberately classified by the store as ``unknown``:
+        an Agent may already have invoked an external tool when its process
+        disappeared, so replaying would be less reliable than reporting it.
+        """
+        store = getattr(self.runtime, "autonomy_store", None)
+        if store is None:
+            return
+        try:
+            # Queue/Event rendezvous are process-local.  A persisted pending
+            # request from a previous process must never look approvable in a
+            # new UI unless an explicit resumable interaction protocol exists.
+            store.terminate_pending_interactions(
+                self._command_scope,
+                reason="session process restarted; interaction was not resumed",
+            )
+            records = store.recover_commands(self._command_scope)
+        except Exception as exc:
+            raise SessionServiceError(f"could not recover accepted commands: {exc}") from exc
+        for record in records:
+            payload = record.get("payload", {})
+            if payload.get("command") != "turn.submit":
+                # Mutating control commands are completed when handled, not
+                # replayed as an orphaned queue item.
+                continue
+            command_id = str(record["command_id"])
+            attachment_ids = list(payload.get("attachment_ids", []))
+            try:
+                attachments = self._attachments(attachment_ids)
+            except SessionServiceError:
+                # The original attachments may have been removed.  Preserve
+                # the accepted record, but do not manufacture a new prompt.
+                continue
+            with self._lock:
+                self._queued[command_id] = {
+                    "prompt": str(payload.get("prompt", "")),
+                    "attachments": attachments,
+                }
+            self.runtime.event_queue.put((
+                "USER_INPUT",
+                {"prompt": str(payload.get("prompt", "")), "command_id": command_id,
+                 "attachment_ids": attachment_ids},
+            ))
 
     def _require_accepting_input(self) -> None:
         if self.runner.state in {"closing", "closed"}:
@@ -238,20 +316,38 @@ class SessionService:
             self._command_order.append(command_id)
             return True
 
-    def _accept_command(self, command_id: str, payload: dict[str, Any]) -> bool:
+    def _accept_command(self, command_id: str, payload: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         """Persist a command id before it is allowed to affect a session."""
         store = getattr(self.runtime, "autonomy_store", None)
         if store is None:
-            return self._remember_command(command_id)
+            return {}, self._remember_command(command_id)
         try:
-            _record, fresh = store.accept_command(
-                f"session:{self.session_id}", command_id, payload
+            record, fresh = store.accept_command(
+                self._command_scope, command_id, payload
             )
         except Exception as exc:
             raise SessionServiceError(f"command was not durably accepted: {exc}") from exc
         if fresh:
             self._remember_command(command_id)
-        return fresh
+        return record, fresh
+
+    def _queue_input(
+        self, command_id: str, prompt: str, attachment_ids: list[str], attachments: list[dict[str, object]]
+    ) -> None:
+        store = getattr(self.runtime, "autonomy_store", None)
+        if store is not None:
+            try:
+                record = store.queue_command(self._command_scope, command_id)
+            except Exception as exc:
+                raise SessionServiceError(f"could not queue accepted command: {exc}") from exc
+            if record["status"] not in {"queued", "accepted"}:
+                return
+        with self._lock:
+            self._queued[command_id] = {"prompt": prompt, "attachments": attachments}
+        self.runtime.event_queue.put((
+            "USER_INPUT",
+            {"prompt": prompt, "command_id": command_id, "attachment_ids": attachment_ids},
+        ))
 
     @staticmethod
     def _answer_digest(answer: Any) -> str:
@@ -282,18 +378,13 @@ class SessionService:
         if not cleaned and not attachments:
             raise SessionServiceError("prompt or attachment is required")
         command_id = command_id or uuid4().hex
-        fresh = self._accept_command(command_id, {
+        record, fresh = self._accept_command(command_id, {
             "command": "turn.submit", "prompt": cleaned,
             "attachment_ids": attachment_ids,
         })
         queued = not self.runtime.agent_idle.is_set() or not self.runtime.event_queue.empty()
-        if fresh:
-            with self._lock:
-                self._queued[command_id] = {"prompt": cleaned, "attachments": attachments}
-            self.runtime.event_queue.put((
-                "USER_INPUT",
-                {"prompt": cleaned, "command_id": command_id, "attachment_ids": attachment_ids},
-            ))
+        if fresh or record.get("status") in {"accepted", "queued"}:
+            self._queue_input(command_id, cleaned, attachment_ids, attachments)
         return self.publisher.publish(
             "command.accepted",
             {
@@ -311,7 +402,7 @@ class SessionService:
     ) -> dict[str, Any]:
         self._require_accepting_input()
         command_id = command_id or uuid4().hex
-        fresh = self._accept_command(command_id, {
+        _record, fresh = self._accept_command(command_id, {
             "command": "turn.cancel", "cancel_queued": cancel_queued,
         })
         cancelled_queued = 0
@@ -325,6 +416,19 @@ class SessionService:
                 with self._lock:
                     self._cancelled.update(self._queued)
                     cancelled_queued = len(self._queued)
+                    targets = tuple(self._queued)
+                store = getattr(self.runtime, "autonomy_store", None)
+                if store is not None:
+                    for target in targets:
+                        store.cancel_command(
+                            self._command_scope, target, reason="cancelled with current execution"
+                        )
+            store = getattr(self.runtime, "autonomy_store", None)
+            if store is not None:
+                store.complete_command(
+                    self._command_scope, command_id,
+                    {"cancel_queued": cancel_queued}, status="completed",
+                )
         return self.publisher.publish(
             "command.accepted",
             {
@@ -339,13 +443,25 @@ class SessionService:
         self._require_accepting_input()
         if not command_id or not target_command_id:
             raise SessionServiceError("command_id and target_command_id are required")
-        fresh = self._accept_command(command_id, {
+        _record, fresh = self._accept_command(command_id, {
             "command": "turn.cancel_queued", "target_command_id": target_command_id,
         })
         with self._lock:
             queued = target_command_id in self._queued
             if fresh and queued:
                 self._cancelled.add(target_command_id)
+        if fresh:
+            store = getattr(self.runtime, "autonomy_store", None)
+            if store is not None:
+                if queued:
+                    store.cancel_command(
+                        self._command_scope, target_command_id, reason="cancelled before execution"
+                    )
+                store.complete_command(
+                    self._command_scope, command_id,
+                    {"target_command_id": target_command_id, "cancelled": queued},
+                    status="completed" if queued else "failed",
+                )
         event_type = "command.accepted" if queued or not fresh else "command.rejected"
         return self.publisher.publish(event_type, {
             "command_id": command_id,
@@ -361,12 +477,20 @@ class SessionService:
         self._require_accepting_input()
         if not command_id:
             raise SessionServiceError("command_id is required")
-        fresh = self._accept_command(command_id, {
+        _record, fresh = self._accept_command(command_id, {
             "command": "interaction.respond", "request_id": request_id,
             "answer_sha256": self._answer_digest(answer),
         })
         resolver = getattr(self.interactions, "resolve", None)
         resolved = bool(resolver(request_id, answer)) if fresh and callable(resolver) else False
+        if fresh:
+            store = getattr(self.runtime, "autonomy_store", None)
+            if store is not None:
+                store.complete_command(
+                    self._command_scope, command_id,
+                    {"request_id": request_id, "resolved": resolved},
+                    status="completed" if resolved else "failed",
+                )
         event_type = "command.accepted" if resolved or not fresh else "command.rejected"
         return self.publisher.publish(event_type, {
             "command_id": command_id,
@@ -389,7 +513,7 @@ class SessionService:
         if store is None:
             raise SessionServiceError("durable command history is unavailable")
         try:
-            return store.get_command(f"session:{self.session_id}", command_id)
+            return store.get_command(self._command_scope, command_id)
         except Exception as exc:
             raise SessionServiceError(str(exc)) from exc
 
@@ -490,22 +614,54 @@ class SessionService:
                 if not cancelled:
                     self._active_command = command_id
             if cancelled:
+                store = getattr(self.runtime, "autonomy_store", None)
+                if store is not None:
+                    store.cancel_command(
+                        self._command_scope, command_id, reason="queued instruction cancelled before start"
+                    )
                 self.publisher.publish(
                     "command.rejected",
                     {"command_id": command_id, "command": "turn.submit", "reason": "queued instruction cancelled before start"},
                 )
                 return False
+            store = getattr(self.runtime, "autonomy_store", None)
+            if store is not None:
+                claimed = store.claim_command(
+                    self._command_scope, command_id, self._consumer_id
+                )
+                if claimed is None or not store.start_command(
+                    self._command_scope, command_id, self._consumer_id
+                ):
+                    return False
         try:
             stop = self._event_processor(self.runtime, event_type, payload)
             if command_id:
                 try:
-                    self.runtime.autonomy_store.complete_command(
-                        f"session:{self.session_id}", command_id,
-                        {"event": event_type}, status="completed",
-                    )
+                    store = getattr(self.runtime, "autonomy_store", None)
+                    if store is not None:
+                        run = getattr(self.runtime.session_state, "active_run", lambda: None)()
+                        result = {
+                            "run_id": getattr(run, "run_id", ""),
+                            "run_status": getattr(run, "status", "completed"),
+                        }
+                        status = "cancelled" if self.runtime.cancellation_event.is_set() else (
+                            "completed" if result["run_status"] == "completed" else "failed"
+                        )
+                        store.complete_command(self._command_scope, command_id, result, status=status)
                 except Exception:
                     logger.warning("could not persist command completion", exc_info=True)
             return stop
+        except Exception as exc:
+            if command_id:
+                store = getattr(self.runtime, "autonomy_store", None)
+                if store is not None:
+                    try:
+                        store.complete_command(
+                            self._command_scope, command_id, {"error": str(exc)}, status="failed"
+                        )
+                    except Exception:
+                        logger.warning("could not persist command failure", exc_info=True)
+            raise
         finally:
             if command_id:
                 with self._lock:

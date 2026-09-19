@@ -26,7 +26,7 @@ def run_headless_host(
     try:
         host.start()
         print(
-            f"Wright headless host running for {runtime.project_context.workspace_dir}; "
+            f"Wright headless host running for {runtime.project_context.execution_root}; "
             "press Ctrl-C to stop"
         )
         stop.wait()

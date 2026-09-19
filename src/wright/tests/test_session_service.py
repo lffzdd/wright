@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from wright.autonomy import AutonomyStore
 from wright.interaction import InteractionBroker
 from wright.session_service import (
     SessionClosedError,
@@ -29,6 +30,7 @@ def _runtime(*, status="completed", model="first"):
         base_commit=None,
         branch_name=None,
         llm_transport="chat",
+        lifecycle="open",
         attachment_records=lambda ids: [],
     )
     broker = InteractionBroker(publisher)
@@ -44,6 +46,14 @@ def _runtime(*, status="completed", model="first"):
         agent=SimpleNamespace(llm=llm, checkpoint_store=None, continue_run=lambda: None),
         resumed=False,
     )
+
+
+def _durable_runtime(tmp_path):
+    runtime = _runtime()
+    runtime.autonomy_store = AutonomyStore(
+        tmp_path / "autonomy.sqlite", session_id="session", workspace_dir=tmp_path
+    )
+    return runtime
 
 
 def test_service_deduplicates_and_cancels_only_the_selected_queued_input():
@@ -157,3 +167,115 @@ def test_completed_resume_never_continues_a_completed_task():
     service.start()
     assert service.close(wait_timeout=1)
     assert continued == []
+
+
+def test_durably_accepted_input_is_recovered_once_by_real_service_entry(tmp_path):
+    runtime = _durable_runtime(tmp_path)
+    store = runtime.autonomy_store
+    store.accept_command(
+        "session:session", "lost-between-accept-and-queue",
+        {"command": "turn.submit", "prompt": "recover me", "attachment_ids": []},
+    )
+    seen = []
+
+    def consume(_runtime, event_type, payload):
+        if event_type == "EXIT":
+            return True
+        seen.append(payload["prompt"])
+        return False
+
+    service = SessionService(runtime, event_processor=consume, shutdown=lambda _: None)
+    service.start()
+    deadline = time.monotonic() + 1
+    while not seen and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert seen == ["recover me"]
+    record = service.command_status("lost-between-accept-and-queue")
+    assert record["status"] == "completed"
+    assert record["result"]["run_id"] == ""
+    assert service.close(wait_timeout=1)
+    store.close()
+
+
+def test_same_durable_id_requeues_pending_but_rejects_changed_payload(tmp_path):
+    runtime = _durable_runtime(tmp_path)
+    seen = []
+
+    def consume(_runtime, event_type, payload):
+        if event_type == "EXIT":
+            return True
+        seen.append(payload["prompt"])
+        return False
+
+    service = SessionService(runtime, event_processor=consume, shutdown=lambda _: None)
+    first = service.submit("once", "stable")
+    duplicate = service.submit("once", "stable")
+    assert first["payload"]["duplicate"] is False
+    assert duplicate["payload"]["duplicate"] is True
+    with pytest.raises(SessionServiceError, match="different content"):
+        service.submit("changed", "stable")
+    service.start()
+    deadline = time.monotonic() + 1
+    while not seen and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert seen == ["once"]
+    assert service.close(wait_timeout=1)
+    runtime.autonomy_store.close()
+
+
+def test_two_session_consumers_claim_one_persisted_command_once(tmp_path):
+    first = _durable_runtime(tmp_path)
+    second = _runtime()
+    second.autonomy_store = AutonomyStore(
+        tmp_path / "autonomy.sqlite", session_id="session", workspace_dir=tmp_path
+    )
+    first.autonomy_store.accept_command(
+        "session:session", "racing-command",
+        {"command": "turn.submit", "prompt": "only once", "attachment_ids": []},
+    )
+    seen: list[str] = []
+    seen_lock = threading.Lock()
+
+    def consume(_runtime, event_type, payload):
+        if event_type == "EXIT":
+            return True
+        with seen_lock:
+            seen.append(payload["prompt"])
+        return False
+
+    left = SessionService(first, event_processor=consume, shutdown=lambda _: None)
+    right = SessionService(second, event_processor=consume, shutdown=lambda _: None)
+    left.start()
+    right.start()
+    deadline = time.monotonic() + 1
+    while not seen and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert seen == ["only once"]
+    assert first.autonomy_store.get_command("session:session", "racing-command")["status"] == "completed"
+    assert left.close(wait_timeout=1)
+    assert right.close(wait_timeout=1)
+    first.autonomy_store.close()
+    second.autonomy_store.close()
+
+
+def test_running_command_persists_run_identity_before_processor_returns(tmp_path):
+    runtime = _durable_runtime(tmp_path)
+
+    def consume(current, event_type, _payload):
+        if event_type == "EXIT":
+            return True
+        current.agent.on_run_started("run_before_effect")
+        record = current.autonomy_store.get_command("session:session", "cmd")
+        assert record["status"] == "running"
+        assert record["run_id"] == "run_before_effect"
+        return False
+
+    service = SessionService(runtime, event_processor=consume, shutdown=lambda _: None)
+    service.start()
+    service.submit("run", "cmd")
+    deadline = time.monotonic() + 1
+    while service.command_status("cmd")["status"] != "completed" and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert service.command_status("cmd")["run_id"] == "run_before_effect"
+    assert service.close(wait_timeout=1)
+    runtime.autonomy_store.close()

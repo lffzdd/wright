@@ -88,6 +88,7 @@ create_plan_tool = Tool(
         "required": ["objective", "steps"],
     },
     call=lambda args, runtime: create_plan(**args, runtime=runtime),
+    required_capabilities=frozenset({"plan"}),
 )
 
 update_plan_tool = Tool(
@@ -123,6 +124,7 @@ update_plan_tool = Tool(
         "required": ["step_id", "status"],
     },
     call=lambda args, runtime: update_plan(**args, runtime=runtime),
+    required_capabilities=frozenset({"plan"}),
 )
 
 get_plan_tool = Tool(
@@ -130,6 +132,7 @@ get_plan_tool = Tool(
     description="Read the current task plan: overall status, revision, and all steps.",
     parameters={"type": "object", "properties": {}, "required": []},
     call=lambda args, runtime: get_plan(runtime=runtime),
+    required_capabilities=frozenset({"plan"}),
     is_concurrency_safe=lambda args: True,
 )
 
@@ -158,6 +161,7 @@ replan_tool = Tool(
         "required": ["steps", "reason"],
     },
     call=lambda args, runtime: replan(**args, runtime=runtime),
+    required_capabilities=frozenset({"plan"}),
 )
 
 

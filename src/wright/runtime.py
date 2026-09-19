@@ -17,8 +17,9 @@ from prompt_toolkit import prompt
 from .agent import Agent
 from .agent_background import AgentBackgroundRuntime
 from .application_host import ApplicationHost
+from .artifacts import ArtifactStore
 from .attachments import AttachmentStore, DraftAttachments
-from .autonomy import AutonomyScheduler, AutonomyStore
+from .autonomy import AutonomyStore
 from .checkpoint import CheckpointError, SessionCheckpointStore
 from .interaction import InteractionHub
 from .knowledge import optional_knowledge_tools
@@ -28,6 +29,7 @@ from .logger import get_logger
 from .looping import SessionLoopRegistry
 from .memory import MemoryManager
 from .paths import (
+    artifact_dir,
     attachment_dir,
     ensure_project_state,
     project_id,
@@ -88,6 +90,7 @@ class WrightRuntime:
     resumed: bool
     cancellation_event: threading.Event
     attachment_store: AttachmentStore
+    artifact_store: ArtifactStore
     draft_attachments: DraftAttachments
     runtime_resources: RuntimeResources
     interaction_broker: Any = None
@@ -95,7 +98,6 @@ class WrightRuntime:
     # A Web RuntimeManager may retain it after this Session closes.
     application_host: ApplicationHost | None = None
     owns_application_host: bool = True
-    legacy_autonomy_scheduler: AutonomyScheduler | None = None
     shutdown_lock: threading.Lock = field(default_factory=threading.Lock)
     shutdown_complete: threading.Event = field(default_factory=threading.Event)
 
@@ -280,6 +282,7 @@ def assemble_runtime(
     session_id: str | None = None,
     start_automation: bool = True,
     automation_session_id: str | None = None,
+    application_host: ApplicationHost | None = None,
 ) -> WrightRuntime:
     load_env()
 
@@ -360,6 +363,7 @@ def assemble_runtime(
         raise ValueError("OPENAI_MODEL 或 --model 不能为空")
     session_state.model_name = model
     attachment_store = AttachmentStore(attachment_dir(project_root), session_state.session_id)
+    artifact_store = ArtifactStore(artifact_dir(project_root))
     requested_transport = (
         session_state.llm_transport
         or config.transport
@@ -405,16 +409,40 @@ def assemble_runtime(
         session_id=automation_session_id or session_state.session_id,
         workspace_dir=workspace_dir,
     )
-    autonomy_scheduler = AutonomyScheduler(autonomy_store, event_queue)
+    # A resumed Web session can rebind its pre-existing application owner.
+    # Its durable store is the durable fact source; do not create a competing
+    # scheduler/owner merely to reconstruct a conversation runtime.
+    if application_host is not None:
+        autonomy_store.close()
+        autonomy_store = application_host.store
     loop_registry = SessionLoopRegistry(event_queue, agent_idle)
     services = RuntimeServices(
         agent_background=background_runtime,
         durable_store=autonomy_store,
-        autonomy_scheduler=autonomy_scheduler,
         loop_registry=loop_registry,
     )
+    interaction_target = interaction_broker or getattr(renderer, "_hub", None)
+    if interaction_target is not None:
+        bind_persistence = getattr(interaction_target, "set_persistence", None)
+        if callable(bind_persistence):
+            interaction_scope = f"session:{session_state.session_id}"
+
+            def record_interaction(request_id, kind, payload) -> None:
+                active = session_state.active_run()
+                autonomy_store.record_interaction(
+                    interaction_scope, request_id, kind=str(kind), payload=payload,
+                    run_id=active.run_id if active is not None else "",
+                )
+
+            def resolve_interaction(request_id, _kind, resolution) -> None:
+                autonomy_store.resolve_interaction(
+                    interaction_scope, request_id, resolution=resolution,
+                    status="cancelled" if resolution.get("cancelled") else "resolved",
+                )
+
+            bind_persistence(record_interaction, resolve_interaction)
     mcp_manager: McpManager | None = None
-    application_host: ApplicationHost | None = None
+    constructed_application_host: ApplicationHost | None = application_host
     own_publisher = publisher is None
 
     def abort_assembly() -> None:
@@ -430,15 +458,15 @@ def assemble_runtime(
             loop_registry.close()
         finally:
             try:
-                autonomy_scheduler.close()
-                if application_host is not None:
-                    application_host.close()
+                if constructed_application_host is not None and application_host is None:
+                    constructed_application_host.close()
             finally:
                 try:
                     background_runtime.shutdown(session_state.control_plane)
                 finally:
                     try:
-                        autonomy_store.close()
+                        if application_host is None:
+                            autonomy_store.close()
                     finally:
                         if mcp_manager is not None:
                             mcp_manager.shutdown()
@@ -474,7 +502,8 @@ def assemble_runtime(
             ignored_project_mcp,
         )
     try:
-        mcp_manager = McpManager(load_mcp_configs(mcp_paths))
+        mcp_configs = load_mcp_configs(mcp_paths)
+        mcp_manager = McpManager(mcp_configs, artifact_store=artifact_store)
         mcp_tools = mcp_manager.start()
     except Exception:
         abort_assembly()
@@ -584,18 +613,23 @@ def assemble_runtime(
     # Automation is process/application owned, not consumed by this Session's
     # event worker.  The foreground Session keeps its own subagent runtime but
     # all scheduling tools resolve this host scheduler through RuntimeServices.
-    application_host = ApplicationHost(
-        workspace_dir=workspace_dir,
-        store=autonomy_store,
-        llm=llm_client,
-        base_tools=assembled_base,
-        permission_settings=settings,
-    )
-    services.autonomy_scheduler = application_host.scheduler
+    if constructed_application_host is None:
+        constructed_application_host = ApplicationHost(
+            workspace_dir=workspace_dir,
+            store=autonomy_store,
+            llm=llm_client,
+            # Host builds its own MCP wrappers and never retains tools bound
+            # to the Session-owned manager above.
+            base_tools=[*base_tools, *knowledge_tools],
+            permission_settings=settings,
+            mcp_configs=mcp_configs,
+            artifact_store=artifact_store,
+        )
+    services.autonomy_scheduler = constructed_application_host.scheduler
 
     try:
         if start_automation:
-            application_host.start()
+            constructed_application_host.start()
         loop_registry.start()
     except Exception:
         abort_assembly()
@@ -621,11 +655,11 @@ def assemble_runtime(
         resumed=resumed,
         cancellation_event=cancellation_event,
         attachment_store=attachment_store,
+        artifact_store=artifact_store,
         draft_attachments=draft_attachments,
         runtime_resources=runtime_resources,
         interaction_broker=interaction_broker,
-        application_host=application_host,
-        legacy_autonomy_scheduler=autonomy_scheduler,
+        application_host=constructed_application_host,
     )
 
 
@@ -673,8 +707,6 @@ def shutdown_runtime(rt: WrightRuntime) -> None:
         rt.services.loop_registry.close()
     if rt.owns_application_host and rt.application_host is not None:
         rt.application_host.close()
-    if rt.legacy_autonomy_scheduler is not None:
-        rt.legacy_autonomy_scheduler.close()
     if rt.services.agent_background is not None:
         rt.services.agent_background.shutdown(rt.session_state.control_plane)
     # The durable store is owned by ApplicationHost.  A Web RuntimeManager can

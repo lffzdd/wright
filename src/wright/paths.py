@@ -41,6 +41,11 @@ def attachment_dir(workspace: Path) -> Path:
     return project_state_dir(workspace) / "attachments"
 
 
+def artifact_dir(workspace: Path) -> Path:
+    """Managed delivered outputs; never use the edited workspace as storage."""
+    return project_state_dir(workspace) / "artifacts"
+
+
 def trace_dir(workspace: Path) -> Path:
     return project_state_dir(workspace) / "traces"
 
@@ -84,5 +89,6 @@ def ensure_project_state(workspace: Path) -> Path:
     root = project_state_dir(workspace)
     session_dir(workspace).mkdir(parents=True, exist_ok=True)
     attachment_dir(workspace).mkdir(parents=True, exist_ok=True)
+    artifact_dir(workspace).mkdir(parents=True, exist_ok=True)
     trace_dir(workspace).mkdir(parents=True, exist_ok=True)
     return root

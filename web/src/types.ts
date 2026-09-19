@@ -22,6 +22,16 @@ export type ToolState = {
   err?: string;
   data?: unknown;
   phase?: "planned" | "awaiting_approval" | "running" | "succeeded" | "failed";
+  artifacts?: ArtifactRef[];
+};
+
+export type ArtifactRef = {
+  id: string;
+  media_type: string;
+  name: string;
+  size: number;
+  run_id?: string;
+  call_id?: string;
 };
 
 export type Attachment = {
@@ -71,7 +81,12 @@ export type Snapshot = {
   stream_id: string;
   last_seq: number;
   session: SessionSummary;
-  history: Array<{ user: string; assistant: string; attachments?: Attachment[] }>;
+  history: Array<{
+    user: string;
+    assistant: string;
+    attachments?: Attachment[];
+    tools?: ToolState[];
+  }>;
   active_turn: ActiveTurn | null;
   plan: { objective?: string; status?: string; steps?: Array<{ id: string; title: string; status: string; note?: string }> };
   pending_interactions: Interaction[];

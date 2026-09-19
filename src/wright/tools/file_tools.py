@@ -24,13 +24,19 @@ _path_locks: dict[Path, threading.RLock] = {}
 
 
 def _workspace(runtime: ToolRuntime) -> Path:
-    if runtime.capabilities is None:
+    if runtime.capabilities is None or runtime.capabilities.execution is None:
         raise RuntimeError("file tool requires execution capability")
     return runtime.capabilities.execution.workspace_dir
 
 
+def _backend(runtime: ToolRuntime):
+    if runtime.capabilities is None or runtime.capabilities.execution is None:
+        raise RuntimeError("file tool requires execution capability")
+    return runtime.capabilities.execution
+
+
 def _safe_path(path: str, runtime: ToolRuntime) -> Path:
-    if runtime.capabilities is None:
+    if runtime.capabilities is None or runtime.capabilities.execution is None:
         raise RuntimeError("file tool requires execution capability")
     return runtime.capabilities.execution.path(path)
 
@@ -44,9 +50,8 @@ def _relative_file(path: Path, runtime: ToolRuntime) -> str:
     return str(path.relative_to(_workspace(runtime))) or "."
 
 
-def _detect_encoding(path: Path) -> str:
-    with path.open("rb") as source:
-        head = source.read(4)
+def _detect_encoding(path: Path, runtime: ToolRuntime) -> str:
+    head = _backend(runtime).read_bytes(path, 4)
     if head.startswith((b"\xff\xfe", b"\xfe\xff")):
         return "utf-16"
     if head.startswith(b"\xef\xbb\xbf"):
@@ -54,14 +59,14 @@ def _detect_encoding(path: Path) -> str:
     return "utf-8"
 
 
-def _read_text(path: Path, *, replace: bool = False) -> tuple[str, str]:
-    encoding = _detect_encoding(path)
+def _read_text(path: Path, runtime: ToolRuntime, *, replace: bool = False) -> tuple[str, str]:
+    encoding = _detect_encoding(path, runtime)
     errors = "replace" if replace else "strict"
-    return path.read_text(encoding=encoding, errors=errors), encoding
+    return _backend(runtime).read_text(path, encoding=encoding, errors=errors), encoding
 
 
-def _write_text(path: Path, content: str, encoding: str) -> None:
-    path.write_text(content, encoding=encoding)
+def _write_text(path: Path, content: str, encoding: str, runtime: ToolRuntime) -> None:
+    _backend(runtime).write_text(path, content, encoding=encoding)
 
 
 @dataclass(frozen=True)
@@ -140,7 +145,7 @@ def _stamp_read_view(
     next_start_line: int | None,
     next_start_column: int | None,
 ) -> None:
-    stat = path.stat()
+    stat = _backend(runtime).stat(path)
     _remember_file_view(
         runtime,
         path,
@@ -162,7 +167,7 @@ def _stamp_read_view(
 
 
 def _stamp_write_view(path: Path, runtime: ToolRuntime, content: str) -> None:
-    stat = path.stat()
+    stat = _backend(runtime).stat(path)
     _remember_file_view(
         runtime,
         path,
@@ -193,10 +198,10 @@ def _unread_or_stale(
             "read the whole file before overwriting it",
             data={"reason": "incomplete", "file": relative},
         )
-    stat = path.stat()
+    stat = _backend(runtime).stat(path)
     if stat.st_mtime_ns == viewed.mtime_ns and stat.st_size == viewed.size:
         return None
-    if viewed.is_complete and _read_text(path, replace=True)[0] == viewed.content:
+    if viewed.is_complete and _read_text(path, runtime, replace=True)[0] == viewed.content:
         return None
     return ToolResult.fail(
         "file changed since last read_file; read it again",
@@ -253,20 +258,20 @@ def list_directory(
         assert runtime is not None
         runtime.raise_if_cancelled()
         safe_directory = _safe_path(directory, runtime)
-        if not safe_directory.is_dir():
+        if not _backend(runtime).is_dir(safe_directory):
             return ToolResult.fail("Not a directory", data={"entries": []})
         max_entries = max(1, min(int(max_entries), 2_000))
         entries = []
-        for entry in sorted(safe_directory.iterdir(), key=lambda item: item.name.lower()):
+        for entry in sorted(_backend(runtime).iter_directory(safe_directory), key=lambda item: item.name.lower()):
             runtime.raise_if_cancelled()
             if not include_hidden and entry.name.startswith("."):
                 continue
-            kind = "directory" if entry.is_dir() else "file" if entry.is_file() else "other"
+            kind = "directory" if _backend(runtime).is_dir(entry) else "file" if _backend(runtime).is_file(entry) else "other"
             entries.append({
                 "name": entry.name,
                 "path": str(entry.relative_to(_workspace(runtime))),
                 "type": kind,
-                "size": entry.stat().st_size if kind == "file" else None,
+                "size": _backend(runtime).stat(entry).st_size if kind == "file" else None,
             })
             if len(entries) > max_entries:
                 break
@@ -295,11 +300,11 @@ def glob_files(
         if not pattern or Path(pattern).is_absolute() or ".." in Path(pattern).parts:
             return ToolResult.fail("pattern must be a non-empty workspace-relative glob")
         root = _safe_path(directory, runtime)
-        if not root.is_dir():
+        if not _backend(runtime).is_dir(root):
             return ToolResult.fail("Not a directory", data={"matches": []})
         max_results = max(1, min(int(max_results), 2_000))
         matches: list[dict[str, Any]] = []
-        for path in root.glob(pattern):
+        for path in _backend(runtime).glob(root, pattern):
             runtime.raise_if_cancelled()
             if not path.resolve().is_relative_to(_workspace(runtime)):
                 continue
@@ -308,7 +313,7 @@ def glob_files(
                 continue
             matches.append({
                 "path": str(relative),
-                "type": "directory" if path.is_dir() else "file" if path.is_file() else "other",
+                "type": "directory" if _backend(runtime).is_dir(path) else "file" if _backend(runtime).is_file(path) else "other",
             })
         matches.sort(key=lambda item: item["path"])
         truncated = len(matches) > max_results
@@ -336,7 +341,7 @@ def grep_files(
         if not pattern:
             return ToolResult.fail("pattern cannot be empty", data={"matches": []})
         target = _safe_path(path, runtime)
-        if not target.exists():
+        if not _backend(runtime).exists(target):
             return ToolResult.fail("Path does not exist", data={"matches": []})
         max_results = max(1, min(int(max_results), 2_000))
         command = ["rg", "--json", "--color", "never"]
@@ -347,7 +352,7 @@ def grep_files(
         if glob:
             command.extend(["--glob", glob])
         command.extend([pattern, str(target)])
-        completed = subprocess.run(
+        completed = _backend(runtime).run_process(
             command,
             cwd=_workspace(runtime),
             capture_output=True,
@@ -410,7 +415,7 @@ def read_file(
         runtime.raise_if_cancelled()
         safe_path = _safe_path(file, runtime)
 
-        if not safe_path.is_file():
+        if not _backend(runtime).is_file(safe_path):
             return ToolResult.fail("Not a file", data={"content": ""})
 
         # max_chars 来自 LLM,可能是负数/字符串/小数/None。
@@ -429,7 +434,7 @@ def read_file(
                 return ToolResult.fail("end_line must be greater than or equal to start_line")
 
         viewed = _remembered_file_view(runtime, safe_path)
-        stat = safe_path.stat()
+        stat = _backend(runtime).stat(safe_path)
         if _unchanged_read_view(
             viewed,
             mtime_ns=stat.st_mtime_ns,
@@ -452,38 +457,40 @@ def read_file(
                 "truncated": viewed.truncated,
             })
 
-        encoding = _detect_encoding(safe_path)
+        encoding = _detect_encoding(safe_path, runtime)
         selected: list[str] = []
         total_chars = 0
         truncated = False
         last_line = start_line - 1
         next_start_line: int | None = None
         next_start_column: int | None = None
-        with open(safe_path, encoding=encoding, errors="replace") as source:
-            for line_number, line in enumerate(source, 1):
-                runtime.raise_if_cancelled()
-                if line_number < start_line:
-                    continue
-                if end_line is not None and line_number > end_line:
-                    break
-                visible_line = line[start_column - 1:] if line_number == start_line else line
-                remaining = max_chars - total_chars
-                if len(visible_line) > remaining:
-                    selected.append(visible_line[:remaining])
-                    total_chars = max_chars
-                    last_line = line_number
-                    truncated = True
-                    consumed_column = (
-                        start_column + remaining
-                        if line_number == start_line
-                        else 1 + remaining
-                    )
-                    next_start_line = line_number
-                    next_start_column = consumed_column
-                    break
-                selected.append(visible_line)
-                total_chars += len(visible_line)
+        source_lines = _backend(runtime).read_text(
+            safe_path, encoding=encoding, errors="replace"
+        ).splitlines(keepends=True)
+        for line_number, line in enumerate(source_lines, 1):
+            runtime.raise_if_cancelled()
+            if line_number < start_line:
+                continue
+            if end_line is not None and line_number > end_line:
+                break
+            visible_line = line[start_column - 1:] if line_number == start_line else line
+            remaining = max_chars - total_chars
+            if len(visible_line) > remaining:
+                selected.append(visible_line[:remaining])
+                total_chars = max_chars
                 last_line = line_number
+                truncated = True
+                consumed_column = (
+                    start_column + remaining
+                    if line_number == start_line
+                    else 1 + remaining
+                )
+                next_start_line = line_number
+                next_start_column = consumed_column
+                break
+            selected.append(visible_line)
+            total_chars += len(visible_line)
+            last_line = line_number
         content = "".join(selected)
         _stamp_read_view(
             safe_path,
@@ -524,12 +531,12 @@ def write_file(
 
         with _path_lock(safe_path):
             runtime.raise_if_cancelled()
-            if safe_path.exists() and safe_path.is_dir():
+            if _backend(runtime).exists(safe_path) and _backend(runtime).is_dir(safe_path):
                 return ToolResult.fail("Path is a directory")
 
-            if safe_path.exists() and not overwrite:
+            if _backend(runtime).exists(safe_path) and not overwrite:
                 return ToolResult.fail("File already exists")
-            if safe_path.is_file():
+            if _backend(runtime).is_file(safe_path):
                 blocked = _unread_or_stale(
                     safe_path, runtime, require_complete=True
                 )
@@ -537,10 +544,10 @@ def write_file(
                     return blocked
 
             encoding = (
-                _detect_encoding(safe_path) if safe_path.is_file() else "utf-8"
+                _detect_encoding(safe_path, runtime) if _backend(runtime).is_file(safe_path) else "utf-8"
             )
-            safe_path.parent.mkdir(parents=True, exist_ok=True)
-            _write_text(safe_path, content, encoding)
+            _backend(runtime).ensure_directory(safe_path.parent)
+            _write_text(safe_path, content, encoding, runtime)
             _stamp_write_view(safe_path, runtime, content)
 
         return ToolResult.success(
@@ -635,7 +642,7 @@ def edit_file(
 
         with _path_lock(safe_path):
             runtime.raise_if_cancelled()
-            if not safe_path.is_file():
+            if not _backend(runtime).is_file(safe_path):
                 return ToolResult.fail("Not a file")
             if not old_text:
                 return ToolResult.fail("old_text must be non-empty")
@@ -643,7 +650,7 @@ def edit_file(
             if unread is not None:
                 return unread
 
-            content, encoding = _read_text(safe_path)
+            content, encoding = _read_text(safe_path, runtime)
             count = content.count(old_text)
             if count == 0:
                 return ToolResult.fail(
@@ -657,7 +664,7 @@ def edit_file(
 
             replacements = count if replace_all else 1
             updated = content.replace(old_text, new_text, replacements)
-            _write_text(safe_path, updated, encoding)
+            _write_text(safe_path, updated, encoding, runtime)
             _stamp_write_view(safe_path, runtime, updated)
 
         return ToolResult.success({
@@ -705,6 +712,7 @@ list_directory_tool = Tool(
     },
     call=lambda args, runtime: list_directory(**args, runtime=runtime),
     is_concurrency_safe=lambda args: True,
+    required_capabilities=frozenset({"execution"}),
 )
 
 glob_tool = Tool(
@@ -722,6 +730,7 @@ glob_tool = Tool(
     },
     call=lambda args, runtime: glob_files(**args, runtime=runtime),
     is_concurrency_safe=lambda args: True,
+    required_capabilities=frozenset({"execution"}),
 )
 
 grep_tool = Tool(
@@ -741,6 +750,7 @@ grep_tool = Tool(
     },
     call=lambda args, runtime: grep_files(**args, runtime=runtime),
     is_concurrency_safe=lambda args: True,
+    required_capabilities=frozenset({"execution"}),
 )
 
 read_file_tool = Tool(
@@ -766,6 +776,7 @@ read_file_tool = Tool(
     },
     call=lambda args, runtime: read_file(**args, runtime=runtime),
     is_concurrency_safe=lambda args: True,
+    required_capabilities=frozenset({"execution"}),
 )
 
 write_file_tool = Tool(
@@ -795,6 +806,7 @@ write_file_tool = Tool(
     },
     call=lambda args, runtime: write_file(**args, runtime=runtime),
     check_permission=_ask_file_write,
+    required_capabilities=frozenset({"execution"}),
 )
 
 
@@ -833,4 +845,5 @@ edit_file_tool = Tool(
     },
     call=lambda args, runtime: edit_file(**args, runtime=runtime),
     check_permission=_ask_file_edit,
+    required_capabilities=frozenset({"execution"}),
 )

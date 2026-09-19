@@ -199,6 +199,19 @@ def create_app(
         except RuntimeManagerError as exc:
             raise HTTPException(status_code=exc.status_code or 404, detail=str(exc)) from exc
 
+    @app.get("/api/v1/sessions/{session_id}/artifacts/{artifact_id}")
+    def get_artifact(session_id: str, artifact_id: str, request: Request) -> FileResponse:
+        """Authenticated delivery of a registered tool artifact only."""
+        _require_auth(request, auth)
+        try:
+            ref, path = manager.get(session_id).artifact_path(artifact_id)
+            return FileResponse(
+                path, media_type=ref.media_type, filename=ref.name,
+                content_disposition_type="inline",
+            )
+        except RuntimeManagerError as exc:
+            raise HTTPException(status_code=exc.status_code or 404, detail=str(exc)) from exc
+
     @app.delete("/api/v1/sessions/{session_id}/attachments/{attachment_id}")
     def delete_attachment(session_id: str, attachment_id: str, request: Request) -> dict[str, bool]:
         _require_auth(request, auth)

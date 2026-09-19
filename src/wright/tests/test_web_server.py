@@ -1,7 +1,9 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+from ..tools.base import ArtifactRef
 from ..ui_events import EventPublisher
 from ..web.auth import BootstrapAuth
 from ..web.runtime_manager import RuntimeManagerError
@@ -179,3 +181,32 @@ def test_authenticated_attachment_upload_and_delete(tmp_path):
     assert uploaded.status_code == 200
     assert uploaded.json()["filename"] == "image.png"
     assert removed.status_code == 200
+
+
+def test_authenticated_artifact_delivery_uses_registered_reference(tmp_path):
+    artifact = tmp_path / "report.md"
+    artifact.write_text("# Report\ncount: 2", encoding="utf-8")
+    # The route resolves through the handle, never from an arbitrary path sent
+    # by the browser.  Install the test-only registered reference on the same
+    # manager used to create the application.
+    # TestClient intentionally does not expose its app manager, so build a
+    # second authenticated client with the reference-bearing handle.
+    static = tmp_path / "artifact-static"
+    static.mkdir()
+    (static / "index.html").write_text("Wright", encoding="utf-8")
+    auth = BootstrapAuth("artifact-secret")
+    fake = FakeManager()
+    fake.handle.artifact_path = lambda artifact_id: (
+        ArtifactRef(artifact_id, "text/markdown", "report.md", artifact.stat().st_size),
+        Path(artifact),
+    )
+    artifact_client = TestClient(create_app(fake, auth, static_dir=static))
+    artifact_client.post(
+        "/api/v1/auth/exchange", json={"token": "artifact-secret"},
+        headers={"origin": "http://testserver"},
+    )
+    response = artifact_client.get("/api/v1/sessions/session/artifacts/artifact-report")
+
+    assert response.status_code == 200
+    assert response.content == b"# Report\ncount: 2"
+    assert response.headers["content-type"].startswith("text/markdown")

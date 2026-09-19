@@ -40,6 +40,17 @@ class InteractionHub:
         self._closed = False
         self._collector_ident: int | None = None
         self._interrupt: Callable[[], None] | None = None
+        self._on_requested: Callable[[str, InteractionKind, dict[str, Any]], None] | None = None
+        self._on_resolved: Callable[[str, InteractionKind, dict[str, Any]], None] | None = None
+
+    def set_persistence(
+        self,
+        on_requested: Callable[[str, InteractionKind, dict[str, Any]], None],
+        on_resolved: Callable[[str, InteractionKind, dict[str, Any]], None],
+    ) -> None:
+        with self._lock:
+            self._on_requested = on_requested
+            self._on_resolved = on_resolved
 
     def bind_collector(self, interrupt: Callable[[], None] | None = None) -> None:
         """在唯一读 stdin 的线程里调用一次。"""
@@ -64,6 +75,9 @@ class InteractionHub:
                 return "n" if kind == "permission" else None
             self._pending.append(item)
             self._requests[item.request_id] = item
+            callback = self._on_requested
+        if callback is not None:
+            callback(item.request_id, kind, dict(payload))
         interrupt = self._interrupt
         if interrupt is not None:
             interrupt()
@@ -86,6 +100,9 @@ class InteractionHub:
             if item is None or item.reply.full():
                 return False
             item.reply.put_nowait(answer)
+            callback = self._on_resolved
+        if callback is not None:
+            callback(request_id, item.kind, {"resolved": True})
         return True
 
     def cancel_pending(self) -> None:
@@ -96,6 +113,9 @@ class InteractionHub:
         for item in pending:
             if not item.reply.full():
                 item.reply.put_nowait(None if item.kind == "ask_user" else "n")
+            callback = self._on_resolved
+            if callback is not None:
+                callback(item.request_id, item.kind, {"cancelled": True})
 
     def close(self) -> None:
         with self._lock:
@@ -123,6 +143,18 @@ class InteractionBroker:
         self._lock = threading.RLock()
         self._pending: dict[str, _BrokerRequest] = {}
         self._closed = False
+        self._on_requested: Callable[[str, InteractionKind, dict[str, Any]], None] | None = None
+        self._on_resolved: Callable[[str, InteractionKind, dict[str, Any]], None] | None = None
+
+    def set_persistence(
+        self,
+        on_requested: Callable[[str, InteractionKind, dict[str, Any]], None],
+        on_resolved: Callable[[str, InteractionKind, dict[str, Any]], None],
+    ) -> None:
+        """Attach the durable fact owner after runtime assembly."""
+        with self._lock:
+            self._on_requested = on_requested
+            self._on_resolved = on_resolved
 
     def request(self, kind: InteractionKind, payload: dict[str, Any]) -> Any:
         request_id = uuid4().hex
@@ -131,6 +163,9 @@ class InteractionBroker:
             if self._closed:
                 return "n" if kind == "permission" else None
             self._pending[request_id] = item
+            callback = self._on_requested
+        if callback is not None:
+            callback(request_id, kind, dict(payload))
         self.publisher.publish(
             "interaction.requested",
             {"request_id": request_id, "kind": kind, **payload},
@@ -150,6 +185,9 @@ class InteractionBroker:
             "interaction.resolved",
             {"request_id": request_id, "kind": item.kind},
         )
+        callback = self._on_resolved
+        if callback is not None:
+            callback(request_id, item.kind, {"resolved": True})
         return True
 
     def snapshot(self) -> list[dict[str, Any]]:
@@ -170,6 +208,9 @@ class InteractionBroker:
                 "interaction.resolved",
                 {"request_id": request_id, "kind": item.kind, "cancelled": True},
             )
+            callback = self._on_resolved
+            if callback is not None:
+                callback(request_id, item.kind, {"cancelled": True})
 
     def cancel_pending(self) -> None:
         with self._lock:
@@ -181,3 +222,6 @@ class InteractionBroker:
                 "interaction.resolved",
                 {"request_id": request_id, "kind": item.kind, "cancelled": True},
             )
+            callback = self._on_resolved
+            if callback is not None:
+                callback(request_id, item.kind, {"cancelled": True})

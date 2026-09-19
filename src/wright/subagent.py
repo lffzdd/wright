@@ -209,7 +209,11 @@ def make_spawn_agent_tool(
         run_in_background = bool(arguments.get("run_in_background", False))
         capabilities = runtime.capabilities
         delegation = capabilities.delegation if capabilities is not None else None
-        if capabilities is None or delegation is None:
+        if (
+            capabilities is None
+            or capabilities.execution is None
+            or delegation is None
+        ):
             return ToolResult.fail("spawn_agent requires delegation capability")
         control = delegation.control
         if run_in_background and capabilities.scope.agent_task_id is not None:
@@ -382,6 +386,7 @@ def make_spawn_agent_tool(
         call=_call,
         is_concurrency_safe=lambda args: True,
         execution_timeout=child_timeout,
+        required_capabilities=frozenset({"execution", "delegation"}),
     )
 
 
@@ -414,6 +419,7 @@ get_agent_tree_tool = Tool(
     },
     call=_get_agent_tree,
     is_concurrency_safe=lambda args: True,
+    required_capabilities=frozenset({"delegation"}),
 )
 
 

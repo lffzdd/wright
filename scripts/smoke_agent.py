@@ -217,7 +217,10 @@ def test_tool_runtime_is_separate_from_model_arguments():
         captured["runtime"] = runtime
         return ToolResult.success(None)
 
-    tool = Tool("spy", "", {}, spy)
+    tool = Tool(
+        "spy", "", {}, spy,
+        required_capabilities=frozenset({"execution"}),
+    )
     tool_call = ToolCall("spy", {"runtime": "model supplied"}, "c1")
     agent = _make_agent([tool], tool_timeout=5)
 

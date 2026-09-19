@@ -87,6 +87,7 @@ def tool_runtime_for_session(
     runtime_resources: RuntimeResources | None = None,
     workspace_dir=None,
     cwd_provider=None,
+    execution_backend=None,
     **kwargs,
 ) -> ToolRuntime:
     """Build a tool runtime from explicit, bounded capabilities for tests/adapters.
@@ -97,6 +98,7 @@ def tool_runtime_for_session(
     capabilities, resources = assemble_tool_capabilities(
         session, services, runtime_resources,
         workspace_dir=workspace_dir, cwd_provider=cwd_provider,
+        execution_backend=execution_backend,
     )
     return ToolRuntime(
         capabilities=capabilities,
@@ -143,6 +145,9 @@ class Tool:
     # immutable Run capability snapshot before any side effect occurs.
     source: str = "builtin"
     effect: Literal["read", "write", "process", "network", "internal"] = "internal"
+    # Declared owner operations, reduced by ToolExecutor for each call.  Empty
+    # means this legacy/internal tool requires only execution identity.
+    required_capabilities: frozenset[str] = frozenset()
 
     def to_dict(self):
         # 并发与超时策略是系统调度元数据,不喂给模型。

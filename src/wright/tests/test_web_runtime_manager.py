@@ -10,6 +10,7 @@ from ..interaction import InteractionBroker
 from ..processes import RuntimeResources
 from ..project import ProjectContext
 from ..session import Session
+from ..tools.base import ArtifactRef, ToolCall, ToolResult
 from ..ui_events import EventPublisher
 from ..web import runtime_manager as runtime_module
 from ..web.runtime_manager import RuntimeManager, RuntimeManagerError, SessionHandle
@@ -89,6 +90,46 @@ def test_snapshot_uses_live_response_projection_after_event_ring_eviction(
         "tools": [{"call_id": "call_1", "name": "read_file"}],
     }
     assert len(runtime.publisher.retained_events()) == 1
+    handle.close()
+
+
+def test_history_projects_run_owned_artifacts_after_event_cache_eviction(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(runtime_module, "shutdown_runtime", lambda runtime: None)
+    runtime = _fake_runtime("artifact-history", tmp_path)
+    session = Session.create("goal", tmp_path, session_id="artifact-history")
+    session.begin_user_turn("deliver a report")
+    session.append_message({"role": "user", "content": "deliver a report"})
+    session.record_assistant_turn(
+        "", {}, "tool_calls", [ToolCall("make_report", {}, "report-call")],
+    )
+    session.record_tool_execution(
+        "report-call",
+        ToolResult.success(
+            {"message": "created"},
+            artifacts=(ArtifactRef(
+                "artifact-report", "text/markdown", "report.md", 12,
+                "", "report-call", "artifact-report",
+            ),),
+        ),
+    )
+    session.record_assistant_turn(
+        "report delivered", {"final_answer": "report delivered"}, "final",
+    )
+    run = session.active_run()
+    assert run is not None
+    run.finish("completed", result="report delivered")
+    runtime.session_state = session
+
+    handle = SessionHandle(runtime)
+    history = handle.snapshot()["history"]
+
+    assert history[0]["tools"][0]["artifacts"] == [{
+        "id": "artifact-report", "media_type": "text/markdown",
+        "name": "report.md", "size": 12, "run_id": "",
+        "call_id": "report-call", "storage_path": "artifact-report",
+    }]
     handle.close()
 
 
