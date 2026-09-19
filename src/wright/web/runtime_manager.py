@@ -10,9 +10,10 @@ from uuid import uuid4
 
 from ..application_host import ApplicationHost
 from ..attachments import AttachmentError, AttachmentRecord
+from ..autonomy import AutonomyNotFoundError, AutonomyStore
 from ..checkpoint import CheckpointError, SessionCheckpointStore
 from ..interaction import InteractionBroker
-from ..paths import project_id, session_dir
+from ..paths import project_id, session_dir, task_db_path
 from ..project import ProjectContext
 from ..renderer import SilentRenderer
 from ..runtime import (
@@ -455,6 +456,30 @@ class RuntimeManager:
         if handle is None:
             raise RuntimeManagerError("session is not active")
         return handle
+
+    def run_history(self, run_id: str) -> dict[str, Any]:
+        """Project-level durable history, independent of a source Session."""
+        with self._lock:
+            hosts = tuple(self._application_hosts.values())
+        for host in hosts:
+            try:
+                return host.run_history(run_id)
+            except KeyError:
+                continue
+        # A browser may reconnect after the original host was stopped.  Read
+        # the explicitly opened project DB without creating a scheduler or
+        # acquiring an execution lock; no background work is started here.
+        store = AutonomyStore(
+            task_db_path(self.project_root),
+            session_id="__web_history_query__",
+            workspace_dir=self.project_root,
+        )
+        try:
+            return store.run_history(run_id)
+        except AutonomyNotFoundError as exc:
+            raise RuntimeManagerError("durable run not found", status_code=404) from exc
+        finally:
+            store.close()
 
     def list_sessions(self) -> list[dict[str, Any]]:
         with self._lock:

@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .execution import LocalExecutionBackend
 from .processes import RuntimeResources
@@ -50,6 +50,10 @@ class DelegationOperations:
 
     control: AgentControlPlane
     agent_background: AgentBackgroundRuntime | None = None
+    # Optional durable-run journal factory.  This is deliberately a single
+    # operation, not a store/service container: a child receives a journal
+    # scoped to its task identity and cannot mutate the parent Run directly.
+    execution_journal_factory: Callable[[str, str], Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -100,6 +104,7 @@ def assemble_tool_capabilities(
     workspace_dir: Path | None = None,
     cwd_provider: Callable[[], Path] | None = None,
     execution_backend: LocalExecutionBackend | None = None,
+    execution_journal_factory: Callable[[str, str], Any] | None = None,
 ) -> tuple[ToolCapabilities, RuntimeResources | None]:
     """Build explicit capabilities once, at the application/executor boundary."""
 
@@ -134,6 +139,7 @@ def assemble_tool_capabilities(
         delegation=DelegationOperations(
             session.control_plane,
             services.agent_background if services is not None else None,
+            execution_journal_factory,
         ),
         durable_store=services.durable_store if services is not None else None,
         autonomy_scheduler=services.autonomy_scheduler if services is not None else None,

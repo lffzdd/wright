@@ -226,9 +226,17 @@ class SessionService:
             store = getattr(self.runtime, "autonomy_store", None)
             if command_id and store is not None:
                 try:
-                    store.attach_command_run(
-                        self._command_scope, command_id, self._consumer_id, run_id
-                    )
+                    # The command remains ``claimed`` until Agent has created
+                    # its RunRecord.  This callback is the commit point for
+                    # actual execution; a crash before it is safely
+                    # recoverable instead of being misclassified as a running
+                    # side effect.
+                    if not store.start_command(
+                        self._command_scope, command_id, self._consumer_id, run_id=run_id
+                    ):
+                        raise SessionServiceError(
+                            "could not transition accepted command to running"
+                        )
                 except Exception as exc:
                     # Executing a new user turn without an accepted Run link
                     # would reintroduce the crash ambiguity this service owns.
@@ -629,9 +637,7 @@ class SessionService:
                 claimed = store.claim_command(
                     self._command_scope, command_id, self._consumer_id
                 )
-                if claimed is None or not store.start_command(
-                    self._command_scope, command_id, self._consumer_id
-                ):
+                if claimed is None:
                     return False
         try:
             stop = self._event_processor(self.runtime, event_type, payload)

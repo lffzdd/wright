@@ -65,6 +65,7 @@ class ApplicationHost:
         # Durable work must never borrow the Session's MCP manager: closing a
         # browser session tears that manager down while this host may live on.
         self.mcp_manager = McpManager(list(mcp_configs), artifact_store=artifact_store)
+        self.artifact_store = artifact_store
         self.permission_settings = permission_settings
         self.event_queue: queue.Queue[tuple[str, object]] = queue.Queue()
         self.control_plane = AgentControlPlane()
@@ -258,6 +259,17 @@ class ApplicationHost:
                 scheduler_host_id=self._host_id,
                 active_runs=self._active_runs(),
             )
+
+    def run_history(self, run_id: str) -> dict[str, object]:
+        """Read a durable Run without requiring its source Session to exist."""
+        with self._lock:
+            stores = tuple(scheduler.store for scheduler in self._schedulers.values())
+        for store in stores:
+            try:
+                return store.run_history(run_id)
+            except Exception:
+                continue
+        raise KeyError(run_id)
 
     def close(self, *, grace_seconds: float = 2.0) -> bool:
         with self._lock:

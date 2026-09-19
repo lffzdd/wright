@@ -132,6 +132,12 @@ slot. A tool whose result cannot be committed makes its durable Run `unknown`;
 that Run is never automatically retried, even with a retry policy. Whole-run
 retries are limited to failures before any tool executed.
 
+Durable Runs keep an independent SQLite history (`durable_run_history`) with
+ordered user input, model-step, tool-intent/result, child-agent, and completion
+facts. This history remains queryable after the source chat session closes and
+is exposed to authenticated Web clients at `/api/v1/runs/<run-id>`. It is not a
+checkpoint and contains no live threads, processes, or unredacted credentials.
+
 ## Tests
 
 ```bash

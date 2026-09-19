@@ -100,6 +100,25 @@ LaunchAgent/systemd、不会 daemonize、不会开放端口；进程仍在前台
 相同 id、不同内容被拒绝。交互回复只保存回答摘要的 SHA-256，不把可能敏感的回答复制进
 命令去重记录。
 
+## 后台 Run 历史与子 Agent 追溯
+
+自动任务的 SQLite 记录是后台 Run 状态和结果的权威事实来源；交互 Session 的 checkpoint
+只负责交互会话恢复，不替代后台记录。每个 durable Run 在同一个 `tasks.sqlite3` 中写入有序的
+`durable_run_history` 事实，包括用户输入、`ModelStep`、工具意图/启动/结果、子 Agent 的
+绑定关系和最终完成事件。事件带稳定的 `event_id` 与幂等键，内容有界且不写入活跃线程、进程
+句柄或未脱敏凭据。
+
+子 Agent 使用父 Run 提供的窄 journal 工厂：工具执行记录保留 `run_id`、`step_id`、
+`call_id`、`agent_task_id`、`parent_agent_task_id` 和来源 Session Run。来源聊天 Session
+关闭后，宿主仍可用 Run ID 查询完整投影；Web 通过认证的
+`GET /api/v1/runs/<run_id>` 查询，宿主停止后也可从显式打开项目的数据库读取，查询不会
+重新启动任务或重新执行工具。
+
+当前 schema 版本为 6；从旧版本打开数据库会增量创建历史表、补齐工具执行归属列并保留
+provider 原始 call ID，不重写
+既有运行，也不会因为迁移重新执行已完成或未知的副作用。历史缺失只表示旧记录没有该事实，
+不会被推断成成功。
+
 ## 模型工具
 
 调度定义：

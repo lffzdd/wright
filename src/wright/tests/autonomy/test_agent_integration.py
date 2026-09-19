@@ -6,15 +6,18 @@ from wright.tests.responses import event, response
 from ...agent import Agent
 from ...agent_background import AgentBackgroundRuntime
 from ...autonomy import AutonomyScheduler, AutonomyStore, TriggerSpec
-from ...autonomy.runner import launch_durable_run
+from ...autonomy.runner import _DurableToolJournal, launch_durable_run
+from ...capabilities import AgentProfile
 from ...permission import PermissionSettings
 from ...renderer import SilentRenderer
 from ...services import RuntimeServices
 from ...session import Session
 from ...skills.registry import SkillRegistry
 from ...skills.store import write_skill
+from ...subagent import build_agent_tools
 from ...tools.ask_user_tool import ask_user_tool
 from ...tools.autonomy_tools import autonomy_tools
+from ...tools.base import Tool, ToolResult
 from ...tools.knowledge_tools import build_knowledge_tools
 from ...tools.memory_tools import build_memory_tools
 from ...tools.skill_tools import build_skill_tools
@@ -248,3 +251,93 @@ def test_cancelled_dispatched_run_is_not_started(tmp_path):
     assert session.current_run_status() == "idle"
     background.shutdown(session.control_plane)
     store.close()
+
+
+def test_durable_run_persists_history_and_child_side_effect_identity(tmp_path):
+    """A background Run remains queryable after its source Session disappears."""
+    workspace, store, session, scheduler, _events, background, services = _runtime(tmp_path)
+    store.create_automation(
+        name="parent-child", prompt="delegate", trigger=TriggerSpec(type="once", run_at=0), now=0
+    )
+    run_id = store.materialize_due(now=0)[0]
+    store.claim_next_run(owner_id=scheduler.host_id, now=0)
+    store.start_run(run_id, owner_id=scheduler.host_id, now=0)
+    marker = workspace / "child.txt"
+
+    def write_marker(_args, _runtime):
+        marker.write_text("child", encoding="utf-8")
+        return ToolResult.success({"path": str(marker)})
+
+    class Script:
+        context_limit = 128_000
+
+        def __init__(self):
+            self.responses = [
+                response(calls=[{"id": "same-provider-call", "name": "spawn_agent", "arguments": {"task": "write it"}}]),
+                response(calls=[{"id": "same-provider-call", "name": "write_marker", "arguments": {}}]),
+                response(content="child done", calls=[]),
+                response(content="parent done", calls=[]),
+            ]
+
+        def __call__(self, _messages, **_kwargs):
+            yield event(self.responses.pop(0))
+
+    llm = Script()
+    root_journal = _DurableToolJournal(scheduler, run_id, agent_task_id="root-task")
+    tools = build_agent_tools(
+        llm,
+        [Tool("write_marker", "write marker", {"type": "object"}, write_marker)],
+        max_depth=1,
+        render_subagents=False,
+    )
+    root = Agent(
+        llm,
+        tools,
+        session,
+        SilentRenderer(),
+        services=services,
+        execution_journal=root_journal,
+        execution_journal_factory=lambda task_id, parent_id: root_journal.child(task_id, parent_id),
+        profile=AgentProfile(
+            "durable", frozenset(tool.name for tool in tools), max_steps=6,
+            allow_delegation=True,
+        ),
+    )
+    assert root.executor.capabilities.delegation is not None
+    assert root.executor.capabilities.delegation.execution_journal_factory is not None
+
+    assert root.run("delegate") == "parent done"
+    assert marker.read_text(encoding="utf-8") == "child"
+    history = store.run_history(run_id)
+    event_types = [item["event_type"] for item in history["history"]]
+    assert {"user_input", "model_step", "tool_intent", "tool_started", "tool_result"} <= set(event_types)
+    executions = store.list_tool_executions(run_id)
+    assert any(item["agent_task_id"] == "root-task" for item in executions)
+    child_execution = next(item for item in executions if item["tool_name"] == "write_marker")
+    assert child_execution["agent_task_id"]
+    assert child_execution["parent_agent_task_id"] == "root-task"
+    assert child_execution["session_run_id"]
+    assert child_execution["step_id"]
+    parent_execution = next(item for item in executions if item["tool_name"] == "spawn_agent")
+    assert parent_execution["provider_call_id"] == child_execution["provider_call_id"]
+    assert parent_execution["execution_call_id"] != child_execution["execution_call_id"]
+
+    background.shutdown(session.control_plane)
+    store.finish_run(run_id, status="completed", result="parent done")
+    root_journal.record_event(
+        "run_finished", {"status": "completed", "result": "parent done"},
+        event_key="run-finished",
+    )
+    store.close()
+
+    reopened = AutonomyStore(
+        tmp_path / "tasks.sqlite3",
+        session_id="different-source-session",
+        workspace_dir=workspace,
+    )
+    try:
+        persisted = reopened.run_history(run_id)
+        assert persisted["run"]["status"] == "completed"
+        assert persisted["history"][-1]["event_type"] == "run_finished"
+    finally:
+        reopened.close()

@@ -149,6 +149,15 @@ def create_app(
         except RuntimeManagerError as exc:
             raise HTTPException(status_code=exc.status_code or 404, detail=str(exc)) from exc
 
+    @app.get("/api/v1/runs/{run_id}")
+    def durable_run_history(run_id: str, request: Request) -> dict[str, Any]:
+        """Read persisted automation history after its source Session closes."""
+        _require_auth(request, auth)
+        try:
+            return manager.run_history(run_id)
+        except RuntimeManagerError as exc:
+            raise HTTPException(status_code=exc.status_code or 404, detail=str(exc)) from exc
+
     @app.post("/api/v1/sessions/{session_id}/model")
     def set_session_model(session_id: str, body: ModelRequest, request: Request) -> dict[str, Any]:
         _require_auth(request, auth)

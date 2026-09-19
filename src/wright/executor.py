@@ -68,6 +68,7 @@ class ToolExecutor:
         runtime_resources: RuntimeResources | None = None,
         capability_snapshot: CapabilitySnapshot | None = None,
         execution_journal=None,
+        execution_journal_factory=None,
         execution_backend=None,
     ):
         if tool_timeout <= 0:
@@ -75,6 +76,8 @@ class ToolExecutor:
         self.tool_registry = tool_registry
         self.capability_snapshot = capability_snapshot
         self.execution_journal = execution_journal
+        self._execution_journal_factory = execution_journal_factory
+        self._active_step_id = ""
         self.tool_timeout = tool_timeout
         self._services = services
         self._execution_backend = execution_backend
@@ -86,6 +89,7 @@ class ToolExecutor:
             session, services, runtime_resources,
             workspace_dir=workspace_dir, cwd_provider=cwd_provider,
             execution_backend=execution_backend,
+            execution_journal_factory=execution_journal_factory,
         )
         self.workspace_dir = self.capabilities.execution.workspace_dir
         self.cwd_provider = self.capabilities.execution.cwd
@@ -104,6 +108,7 @@ class ToolExecutor:
 
     def bind_run(self, session) -> None:
         """Refresh the immutable tool capability view after a Run is selected."""
+        self._active_step_id = ""
         capabilities, resources = assemble_tool_capabilities(
             session,
             self._services,
@@ -111,6 +116,7 @@ class ToolExecutor:
             workspace_dir=self.workspace_dir,
             cwd_provider=session.get_cwd,
             execution_backend=self._execution_backend,
+            execution_journal_factory=self._execution_journal_factory,
         )
         self.capabilities = capabilities
         self.workspace_dir = capabilities.execution.workspace_dir
@@ -120,6 +126,10 @@ class ToolExecutor:
             capabilities=capabilities,
             runtime_resources=resources,
         )
+
+    def bind_step(self, step_id: str) -> None:
+        """Associate the next batch of tool intents with one ModelStep."""
+        self._active_step_id = str(step_id or "")[:300]
 
     def _emit_lifecycle(self, event: str, payload: dict):
         if self.lifecycle is None:
@@ -279,6 +289,7 @@ class ToolExecutor:
                 journal.record_intent(
                     call_id=tool_call.id,
                     tool_name=tool_call.name,
+                    step_id=self._active_step_id,
                     arguments=arguments,
                     permission={
                         "decision": permission.decision,

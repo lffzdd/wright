@@ -17,6 +17,7 @@ from ..agent_background import AgentBackgroundRuntime
 from ..capabilities import AgentProfile
 from ..coordination import AgentControlError, AgentControlPlane
 from ..llm import LLMClient, resolve_transport
+from ..logger import get_logger
 from ..permission import (
     PermissionCheckResult,
     PermissionRequest,
@@ -32,24 +33,108 @@ from ..subagent import (
     build_agent_tools,
 )
 from ..tools.base import Tool
+from .models import DurableRunRecord
 from .scheduler import AutonomyScheduler
+
+logger = get_logger(__name__)
 
 
 class _DurableToolJournal:
     """Adapter that makes durable tool calls transactional with the SQLite log."""
 
-    def __init__(self, scheduler: AutonomyScheduler, run_id: str) -> None:
+    def __init__(
+        self,
+        scheduler: AutonomyScheduler,
+        run_id: str,
+        *,
+        agent_task_id: str = "",
+        parent_agent_task_id: str = "",
+    ) -> None:
+        self._scheduler = scheduler
         self.store = scheduler.store
         self.run_id = run_id
+        self.agent_task_id = agent_task_id
+        self.parent_agent_task_id = parent_agent_task_id
+        self.session_run_id = ""
+        self._call_keys: dict[str, str] = {}
+
+    def bind_run(self, session_run_id: str) -> None:
+        self.session_run_id = str(session_run_id)[:300]
+        self.record_event(
+            "run_bound",
+            {
+                "session_run_id": self.session_run_id,
+                "agent_task_id": self.agent_task_id,
+                "parent_agent_task_id": self.parent_agent_task_id,
+            },
+            event_key=f"run-bound:{self.agent_task_id}:{self.session_run_id}",
+        )
+
+    def child(self, agent_task_id: str, parent_agent_task_id: str = "") -> _DurableToolJournal:
+        return _DurableToolJournal(
+            self.store_scheduler,
+            self.run_id,
+            agent_task_id=agent_task_id,
+            parent_agent_task_id=parent_agent_task_id or self.agent_task_id,
+        )
+
+    @property
+    def store_scheduler(self) -> AutonomyScheduler:
+        # The scheduler is kept separately instead of reconstructing a store
+        # from a path, preserving the ApplicationHost's ownership/lock.
+        return self._scheduler
 
     def record_intent(self, **value: Any) -> None:
-        self.store.record_tool_intent(run_id=self.run_id, **value)
+        provider_call_id = str(value.get("call_id", ""))
+        execution_call_id = self.store.record_tool_intent(
+            run_id=self.run_id,
+            agent_task_id=self.agent_task_id,
+            session_run_id=self.session_run_id,
+            parent_agent_task_id=self.parent_agent_task_id,
+            **value,
+        )
+        self._call_keys[provider_call_id] = execution_call_id
+        self.record_event(
+            "tool_intent",
+            {"call_id": provider_call_id, "execution_call_id": execution_call_id,
+             "tool_name": value.get("tool_name", ""), "agent_task_id": self.agent_task_id,
+             "session_run_id": self.session_run_id},
+            event_key=f"intent:{self.agent_task_id}:{execution_call_id}",
+        )
 
     def mark_started(self, call_id: str) -> None:
-        self.store.mark_tool_started(self.run_id, call_id)
+        execution_call_id = self._call_keys.get(call_id, call_id)
+        self.store.mark_tool_started(self.run_id, execution_call_id)
+        self.record_event(
+            "tool_started",
+            {"call_id": call_id, "execution_call_id": execution_call_id,
+             "agent_task_id": self.agent_task_id},
+            event_key=f"started:{self.agent_task_id}:{execution_call_id}",
+        )
 
     def record_result(self, call_id: str, result: dict[str, Any], *, status: str) -> None:
-        self.store.record_tool_result(self.run_id, call_id, result, status=status)
+        execution_call_id = self._call_keys.get(call_id, call_id)
+        self.store.record_tool_result(self.run_id, execution_call_id, result, status=status)
+        self.record_event(
+            "tool_result",
+            {"call_id": call_id, "execution_call_id": execution_call_id,
+             "status": status, "agent_task_id": self.agent_task_id, "result": result},
+            event_key=f"result:{self.agent_task_id}:{execution_call_id}",
+        )
+
+    def record_event(
+        self, event_type: str, payload: dict[str, Any] | None = None, *, event_key: str = ""
+    ) -> str:
+        return self.store.record_run_event(
+            self.run_id,
+            event_type,
+            {
+                **(payload or {}),
+                "agent_task_id": self.agent_task_id,
+                "parent_agent_task_id": self.parent_agent_task_id,
+            },
+            event_key=event_key,
+        )
 
 # Isolated workers start at depth=1 and may spawn one leaf helper.
 DURABLE_MAX_DEPTH = 2
@@ -162,7 +247,7 @@ def _commit_durable_run(
     final_answer: str | None,
     task_status: str,
     error: str,
-) -> None:
+) -> DurableRunRecord:
     current = scheduler.store.get_run(run_id)
     if current.terminal:
         finished = current
@@ -188,6 +273,7 @@ def _commit_durable_run(
         result=finished.result if finished.terminal else "",
         error=finished.error,
     )
+    return finished
 
 
 def launch_durable_run(
@@ -253,6 +339,13 @@ def launch_durable_run(
         return None
 
     permission_resolver = _fail_closed_resolver(permission_settings)
+    root_journal = _DurableToolJournal(
+        scheduler, run_id, agent_task_id=record.id
+    )
+
+    def child_journal_factory(agent_task_id: str, parent_agent_task_id: str):
+        return root_journal.child(agent_task_id, parent_agent_task_id)
+
     child_tools = build_agent_tools(
         llm,
         _durable_base_tools(base_tools),
@@ -318,8 +411,10 @@ def launch_durable_run(
         profile=AgentProfile(
             "durable", frozenset(tool.name for tool in child_tools),
             max_steps=record.step_budget,
+            allow_delegation=max_depth > 1,
         ),
-        execution_journal=_DurableToolJournal(scheduler, run_id),
+        execution_journal=root_journal,
+        execution_journal_factory=child_journal_factory,
     )
     user_prompt = _user_prompt_for_run(scheduler, run_id)
 
@@ -356,7 +451,7 @@ def launch_durable_run(
                 f"{type(exc).__name__}: {exc}",
             )
         finally:
-            _commit_durable_run(
+            finished = _commit_durable_run(
                 scheduler=scheduler,
                 control=control,
                 run_id=run_id,
@@ -366,6 +461,20 @@ def launch_durable_run(
                 task_status=task_status,
                 error=error,
             )
+            try:
+                root_journal.record_event(
+                    "run_finished",
+                    {
+                        "status": finished.status,
+                        "result": finished.result,
+                        "error": finished.error,
+                    },
+                    event_key="run-finished",
+                )
+            except Exception:
+                # The terminal SQLite Run row remains authoritative; a
+                # notification history failure cannot cause a second run.
+                logger.error("could not append durable run_finished history", exc_info=True)
 
     try:
         background_runtime.submit(

@@ -30,6 +30,11 @@ class FakeManager:
                 "command_id": command_id, "status": "completed", "result": {"run_id": "run-1"},
             },
         )
+        self.run_snapshot = {
+            "run": {"id": "run-1", "status": "completed"},
+            "history": [{"event_id": "run-1:event:1", "event_type": "run_finished"}],
+            "tool_executions": [],
+        }
 
     def project(self):
         return {"project_id": "project", "name": "test"}
@@ -52,6 +57,11 @@ class FakeManager:
         if not cleaned:
             raise RuntimeManagerError("model name cannot be empty")
         return {"session_id": session_id, "model": cleaned}
+
+    def run_history(self, run_id):
+        if run_id != "run-1":
+            raise RuntimeManagerError("durable run not found", status_code=404)
+        return self.run_snapshot
 
     def shutdown(self):
         pass
@@ -141,6 +151,18 @@ def test_command_status_endpoint_allows_reconnect_query(tmp_path):
 
     assert response.status_code == 200
     assert response.json()["result"] == {"run_id": "run-1"}
+
+
+def test_durable_run_history_endpoint_is_independent_of_source_session(tmp_path):
+    client, _auth = _authenticated_client(tmp_path)
+    response = client.get(
+        "/api/v1/runs/run-1",
+        headers={"origin": "http://testserver"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["run"]["status"] == "completed"
+    assert response.json()["history"][0]["event_type"] == "run_finished"
 
 
 def test_set_model_missing_session_is_404(tmp_path):

@@ -277,6 +277,21 @@ def make_spawn_agent_tool(
             logger.debug("child session set_cwd failed", exc_info=True)
         control.bind_child_session(record.id, child_session.session_id)
 
+        child_journal = None
+        journal_factory = delegation.execution_journal_factory
+        if journal_factory is not None:
+            try:
+                child_journal = journal_factory(
+                    record.id, capabilities.scope.agent_task_id or ""
+                )
+            except Exception as exc:
+                finished = control.finish_task(
+                    record.id, status="failed", steps_used=0,
+                    error=f"could not create child execution journal: {exc}",
+                )
+                _emit(runtime, finished)
+                return ToolResult.fail(finished.error, data={"task_id": finished.id})
+
         child_renderer: Renderer = (
             SubAgentRenderer(child_depth, task)
             if render_subagents else SilentRenderer()
@@ -313,6 +328,8 @@ def make_spawn_agent_tool(
                 "child", frozenset(tool.name for tool in child_tools),
                 max_steps=record.step_budget, allow_delegation=child_depth < max_depth,
             ),
+            execution_journal=child_journal,
+            execution_journal_factory=journal_factory,
         )
 
         def run_child() -> ToolResult:

@@ -70,6 +70,7 @@ class Agent:
         runtime_resources: RuntimeResources | None = None,
         profile: AgentProfile | None = None,
         execution_journal=None,
+        execution_journal_factory=None,
         on_run_started: Callable[[str], None] | None = None,
     ):
         self.llm = llm
@@ -89,6 +90,8 @@ class Agent:
         self.checkpoint_store = checkpoint_store
         self.last_checkpoint_error: Exception | None = None
         self._usage_observer = usage_observer
+        self._execution_journal = execution_journal
+        self._execution_journal_factory = execution_journal_factory
         if self.memory is not None:
             self.memory.usage_observer = self._record_auxiliary_usage
         self.lifecycle = lifecycle
@@ -185,6 +188,7 @@ class Agent:
             runtime_resources=self.runtime_resources,
             capability_snapshot=self.capabilities,
             execution_journal=execution_journal,
+            execution_journal_factory=execution_journal_factory,
         )
         if (
             checkpoint_store is not None
@@ -211,6 +215,31 @@ class Agent:
             agent_task_id=self.session_state.agent_task_id,
             root_turn_id=self.session_state.agent_root_turn_id,
         )
+
+    def _record_run_event(
+        self,
+        event_type: str,
+        payload: dict[str, object] | None = None,
+        *,
+        event_key: str = "",
+    ) -> None:
+        """Persist one durable history fact before the run advances.
+
+        Interactive sessions have no journal.  Durable hosts provide the
+        narrow journal object.  A history write failure is a run failure, not
+        a reason to keep executing with an unverifiable state transition.
+        """
+        journal = self._execution_journal
+        recorder = getattr(journal, "record_event", None) if journal is not None else None
+        if not callable(recorder):
+            return
+        try:
+            recorder(event_type, payload or {}, event_key=event_key)
+        except Exception as exc:
+            logger.error("durable Run history write failed", exc_info=True)
+            raise RuntimeError(
+                f"durable Run history persistence failed for {event_type}"
+            ) from exc
 
     def _emit_agent_start(
         self,
@@ -507,6 +536,9 @@ class Agent:
                 "model": str(getattr(self.llm, "model", "")),
                 "transport": str(getattr(self.llm, "transport_name", "")),
             }
+            bind_journal = getattr(self._execution_journal, "bind_run", None)
+            if callable(bind_journal):
+                bind_journal(active_run.run_id)
             if self.on_run_started is not None:
                 self.on_run_started(active_run.run_id)
         prompt_decision = None
@@ -526,6 +558,15 @@ class Agent:
                 self._emit_agent_stop("failed", reason=prompt_decision.reason)
                 return None
         self.session_state.append_user_message(prompt, attachment_ids)
+        self._record_run_event(
+            "user_input",
+            {
+                "session_run_id": active_run.run_id if active_run is not None else "",
+                "prompt": prompt,
+                "attachment_ids": list(attachment_ids),
+            },
+            event_key=f"user:{active_run.run_id}" if active_run is not None else "",
+        )
         if prompt_decision is not None and prompt_decision.additional_context:
             self.session_state.append_message({
                 "role": "user",
@@ -758,6 +799,25 @@ class Agent:
             assistant_message=turn.assistant_message,
             route="final",
         )
+        self._record_run_event(
+            "model_step",
+            {
+                "session_run_id": turn_record.run_id,
+                "step_id": turn_record.step_id,
+                "route": "final",
+                "content": content,
+                "parsed": turn.parsed,
+                "usage": (
+                    {
+                        "prompt_tokens": usage_record.prompt_tokens,
+                        "completion_tokens": usage_record.completion_tokens,
+                        "total_tokens": usage_record.total_tokens,
+                    }
+                    if usage_record is not None else {}
+                ),
+            },
+            event_key=f"step:{turn_record.step_id}",
+        )
         if usage_record is not None:
             self._record_usage_for_turn(
                 turn_record, usage_record, transient_plan_tokens
@@ -867,6 +927,26 @@ class Agent:
             route="tool_calls",
             tool_calls=turn.tool_calls,
         )
+        self._record_run_event(
+            "model_step",
+            {
+                "session_run_id": turn_record.run_id,
+                "step_id": turn_record.step_id,
+                "route": "tool_calls",
+                "content": content,
+                "parsed": turn.parsed,
+                "tool_call_ids": [call.id for call in turn.tool_calls],
+                "usage": (
+                    {
+                        "prompt_tokens": usage_record.prompt_tokens,
+                        "completion_tokens": usage_record.completion_tokens,
+                        "total_tokens": usage_record.total_tokens,
+                    }
+                    if usage_record is not None else {}
+                ),
+            },
+            event_key=f"step:{turn_record.step_id}",
+        )
         if usage_record is not None:
             self._record_usage_for_turn(
                 turn_record, usage_record, transient_plan_tokens
@@ -886,6 +966,7 @@ class Agent:
         # 恢复层会把这些调用标成 outcome unknown 并要求模型先检查现场，
         # 不会把同一个写操作静默重放。
         self._checkpoint()
+        self.executor.bind_step(turn_record.step_id)
 
         outcomes = self.executor.execute(
             turn.tool_calls,
@@ -942,6 +1023,18 @@ class Agent:
                 "response": response.assistant_message(),
                 "finish_reason": response.finish_reason,
             },
+        )
+        self._record_run_event(
+            "model_step",
+            {
+                "session_run_id": turn_record.run_id,
+                "step_id": turn_record.step_id,
+                "route": "invalid",
+                "content": response.content,
+                "error": str(error),
+                "finish_reason": response.finish_reason,
+            },
+            event_key=f"step:{turn_record.step_id}",
         )
         if usage_record is not None:
             self._record_usage_for_turn(

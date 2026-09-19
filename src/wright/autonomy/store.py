@@ -31,7 +31,7 @@ class AutonomyStore:
     # Version three turns accepted_commands into a recoverable command ledger.
     # It deliberately stores command payloads, ownership and the Run link in
     # SQLite instead of treating the in-process SessionService queue as truth.
-    SCHEMA_VERSION = 4
+    SCHEMA_VERSION = 6
 
     def __init__(self, path: Path, *, session_id: str, workspace_dir: Path) -> None:
         self.path = path.resolve()
@@ -89,7 +89,7 @@ class AutonomyStore:
 
     def _initialize_schema(self) -> None:
         version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
-        if version not in {0, 1, 2, 3, self.SCHEMA_VERSION}:
+        if version not in {0, 1, 2, 3, 4, 5, self.SCHEMA_VERSION}:
             raise AutonomyStoreError(
                 f"unsupported autonomy DB version: {version}"
             )
@@ -155,6 +155,10 @@ class AutonomyStore:
             self._migrate_v3()
         if version < 4:
             self._migrate_v4()
+        if version < 5:
+            self._migrate_v5()
+        if version < 6:
+            self._migrate_v6()
         self._conn.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
 
     def _migrate_v2(self) -> None:
@@ -202,7 +206,11 @@ class AutonomyStore:
                 id TEXT PRIMARY KEY,
                 run_id TEXT NOT NULL REFERENCES durable_runs(id),
                 step_id TEXT NOT NULL DEFAULT '',
+                agent_task_id TEXT NOT NULL DEFAULT '',
+                session_run_id TEXT NOT NULL DEFAULT '',
+                parent_agent_task_id TEXT NOT NULL DEFAULT '',
                 call_id TEXT NOT NULL,
+                provider_call_id TEXT NOT NULL DEFAULT '',
                 tool_name TEXT NOT NULL,
                 effective_arguments_json TEXT NOT NULL,
                 permission_json TEXT NOT NULL,
@@ -216,6 +224,19 @@ class AutonomyStore:
             );
             CREATE INDEX IF NOT EXISTS idx_durable_tool_executions_run
                 ON durable_tool_executions(run_id, created_at);
+            CREATE TABLE IF NOT EXISTS durable_run_history (
+                event_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL REFERENCES durable_runs(id),
+                sequence INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                event_key TEXT NOT NULL DEFAULT '',
+                payload_json TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                UNIQUE(run_id, sequence),
+                UNIQUE(run_id, event_type, event_key)
+            );
+            CREATE INDEX IF NOT EXISTS idx_durable_run_history_run
+                ON durable_run_history(run_id, sequence);
         """)
 
     def _migrate_v3(self) -> None:
@@ -264,6 +285,57 @@ class AutonomyStore:
             CREATE INDEX IF NOT EXISTS idx_pending_interactions_status
                 ON pending_interactions(scope, status, created_at);
         """)
+
+    def _migrate_v5(self) -> None:
+        """Add the durable Run history and parent/child execution identity."""
+        columns = {
+            str(row["name"])
+            for row in self._conn.execute(
+                "PRAGMA table_info(durable_tool_executions)"
+            ).fetchall()
+        }
+        for name, definition in {
+            "agent_task_id": "TEXT NOT NULL DEFAULT ''",
+            "session_run_id": "TEXT NOT NULL DEFAULT ''",
+            "parent_agent_task_id": "TEXT NOT NULL DEFAULT ''",
+        }.items():
+            if name not in columns:
+                self._conn.execute(
+                    f"ALTER TABLE durable_tool_executions ADD COLUMN {name} {definition}"
+                )
+        self._conn.executescript("""
+            CREATE TABLE IF NOT EXISTS durable_run_history (
+                event_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL REFERENCES durable_runs(id),
+                sequence INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                event_key TEXT NOT NULL DEFAULT '',
+                payload_json TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                UNIQUE(run_id, sequence),
+                UNIQUE(run_id, event_type, event_key)
+            );
+            CREATE INDEX IF NOT EXISTS idx_durable_run_history_run
+                ON durable_run_history(run_id, sequence);
+        """)
+
+    def _migrate_v6(self) -> None:
+        """Keep provider call IDs while scoping persisted execution keys."""
+        columns = {
+            str(row["name"])
+            for row in self._conn.execute(
+                "PRAGMA table_info(durable_tool_executions)"
+            ).fetchall()
+        }
+        if "provider_call_id" not in columns:
+            self._conn.execute(
+                "ALTER TABLE durable_tool_executions "
+                "ADD COLUMN provider_call_id TEXT NOT NULL DEFAULT ''"
+            )
+        self._conn.execute(
+            "UPDATE durable_tool_executions SET provider_call_id = call_id "
+            "WHERE provider_call_id = ''"
+        )
 
     # -- Automation definitions -------------------------------------------------
 
@@ -577,22 +649,6 @@ class AutonomyStore:
             )
             return cursor.rowcount == 1
 
-    def attach_command_run(
-        self, scope: str, command_id: str, owner_id: str, run_id: str,
-        *, now: float | None = None,
-    ) -> bool:
-        """Persist the Run identity before its first model/tool side effect."""
-        if not run_id:
-            raise AutonomyStoreError("run_id is required")
-        now = time.time() if now is None else float(now)
-        with self._write():
-            cursor = self._conn.execute(
-                "UPDATE accepted_commands SET run_id = ?, updated_at = ? "
-                "WHERE scope = ? AND command_id = ? AND status = 'running' AND owner_id = ?",
-                (run_id[:300], now, scope, command_id, owner_id),
-            )
-            return cursor.rowcount == 1
-
     def cancel_command(
         self, scope: str, command_id: str, *, reason: str, now: float | None = None
     ) -> dict[str, Any] | None:
@@ -717,25 +773,63 @@ class AutonomyStore:
         permission: dict[str, Any],
         environment: dict[str, Any],
         step_id: str = "",
+        agent_task_id: str = "",
+        session_run_id: str = "",
+        parent_agent_task_id: str = "",
         now: float | None = None,
-    ) -> None:
+    ) -> str:
         """Persist intent before a durable tool is allowed to run."""
         now = time.time() if now is None else float(now)
-        execution_id = f"tool_{run_id}_{call_id}"
+        provider_call_id = str(call_id)[:300]
         with self._write():
+            existing = self._conn.execute(
+                """SELECT call_id FROM durable_tool_executions
+                   WHERE run_id = ? AND provider_call_id = ?
+                     AND agent_task_id = ? AND session_run_id = ?
+                     AND parent_agent_task_id = ?""",
+                (
+                    run_id, provider_call_id, agent_task_id[:200],
+                    session_run_id[:300], parent_agent_task_id[:200],
+                ),
+            ).fetchone()
+            if existing is not None:
+                return str(existing["call_id"])
+
+            stored_call_id = provider_call_id
+            collision = self._conn.execute(
+                "SELECT 1 FROM durable_tool_executions WHERE run_id = ? AND call_id = ?",
+                (run_id, stored_call_id),
+            ).fetchone()
+            if collision is not None:
+                scope = ":".join(
+                    item for item in (
+                        agent_task_id, session_run_id, step_id, provider_call_id
+                    ) if item
+                )[:260]
+                stored_call_id = scope or f"scoped:{provider_call_id}"
+                while self._conn.execute(
+                    "SELECT 1 FROM durable_tool_executions WHERE run_id = ? AND call_id = ?",
+                    (run_id, stored_call_id),
+                ).fetchone() is not None:
+                    stored_call_id = f"{stored_call_id[:285]}:{secrets.token_hex(6)}"
+            execution_id = f"tool_{run_id}_{stored_call_id}"
             self._conn.execute(
                 """INSERT INTO durable_tool_executions
-                   (id, run_id, step_id, call_id, tool_name,
+                   (id, run_id, step_id, agent_task_id, session_run_id,
+                    parent_agent_task_id, call_id, provider_call_id, tool_name,
                     effective_arguments_json, permission_json, environment_json,
                     status, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'intended', ?)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'intended', ?)
                    ON CONFLICT(run_id, call_id) DO NOTHING""",
                 (
-                    execution_id, run_id, step_id[:200], call_id[:300], tool_name[:200],
+                    execution_id, run_id, step_id[:200], agent_task_id[:200],
+                    session_run_id[:300], parent_agent_task_id[:200], stored_call_id,
+                    provider_call_id, tool_name[:200],
                     _dump(_redact_arguments(arguments)), _dump(permission),
                     _dump(environment), now,
                 ),
             )
+            return stored_call_id
 
     def mark_tool_started(
         self, run_id: str, call_id: str, *, now: float | None = None
@@ -794,13 +888,107 @@ class AutonomyStore:
         return [
             {
                 "id": str(row["id"]), "run_id": str(row["run_id"]),
-                "call_id": str(row["call_id"]), "tool_name": str(row["tool_name"]),
+                "call_id": str(row["provider_call_id"] or row["call_id"]),
+                "provider_call_id": str(row["provider_call_id"] or row["call_id"]),
+                "execution_call_id": str(row["call_id"]),
+                "tool_name": str(row["tool_name"]),
+                "step_id": str(row["step_id"]),
+                "agent_task_id": str(row["agent_task_id"]),
+                "session_run_id": str(row["session_run_id"]),
+                "parent_agent_task_id": str(row["parent_agent_task_id"]),
                 "status": str(row["status"]),
                 "arguments": _load_object(row["effective_arguments_json"]),
                 "result": _load_object(row["result_json"]),
             }
             for row in rows
         ]
+
+    def record_run_event(
+        self,
+        run_id: str,
+        event_type: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        event_key: str = "",
+        now: float | None = None,
+    ) -> str:
+        """Append one bounded, queryable fact to a durable Run's history."""
+        event_type = _bounded(event_type, "event_type", 120)
+        event_key = str(event_key)[:300]
+        now = time.time() if now is None else float(now)
+        value = _bounded_history_payload(payload or {})
+        with self._write():
+            row = self._conn.execute(
+                "SELECT session_id FROM durable_runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+            if row is None or str(row["session_id"]) != self.session_id:
+                raise AutonomyNotFoundError(f"Unknown task_id: {run_id}")
+            if event_key:
+                existing = self._conn.execute(
+                    "SELECT event_id FROM durable_run_history "
+                    "WHERE run_id = ? AND event_type = ? AND event_key = ?",
+                    (run_id, event_type, event_key),
+                ).fetchone()
+                if existing is not None:
+                    return str(existing["event_id"])
+            sequence = int(self._conn.execute(
+                "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence "
+                "FROM durable_run_history WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()["next_sequence"])
+            event_id = f"{run_id}:event:{sequence}"
+            self._conn.execute(
+                """INSERT INTO durable_run_history
+                   (event_id, run_id, sequence, event_type, event_key,
+                    payload_json, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (event_id, run_id, sequence, event_type, event_key, _dump(value), now),
+            )
+            return event_id
+
+    def list_run_history(self, run_id: str) -> list[dict[str, Any]]:
+        with self._read():
+            rows = self._conn.execute(
+                """SELECT event_id, run_id, sequence, event_type, event_key,
+                          payload_json, created_at
+                   FROM durable_run_history WHERE run_id = ? ORDER BY sequence""",
+                (run_id,),
+            ).fetchall()
+        return [
+            {
+                "event_id": str(row["event_id"]),
+                "run_id": str(row["run_id"]),
+                "sequence": int(row["sequence"]),
+                "event_type": str(row["event_type"]),
+                "event_key": str(row["event_key"]),
+                "payload": _load_object(row["payload_json"]),
+                "created_at": float(row["created_at"]),
+            }
+            for row in rows
+        ]
+
+    def run_history(self, run_id: str) -> dict[str, Any]:
+        """Return the authoritative durable Run projection for adapters."""
+        # This is a project-level query used after the source Session has been
+        # closed.  The database path is already scoped by the ApplicationHost;
+        # unlike session commands it must not require the vanished source
+        # session_id.
+        with self._read():
+            row = self._conn.execute(
+                """SELECT r.*, a.name AS automation_name, a.prompt AS prompt
+                   FROM durable_runs r JOIN automations a ON a.id = r.automation_id
+                   WHERE r.id = ?""",
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            raise AutonomyNotFoundError(f"Unknown task_id: {run_id}")
+        run = self._run_from_row(row)
+        return {
+            "run": run.to_dict(),
+            "history": self.list_run_history(run_id),
+            "tool_executions": self.list_tool_executions(run_id),
+        }
 
     def materialize_due(self, *, now: float | None = None) -> list[str]:
         now = time.time() if now is None else float(now)
@@ -1554,6 +1742,28 @@ def _load_object(value: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise AutonomyStoreError("autonomy DB JSON value must be an object")
     return parsed
+
+
+def _bounded_history_payload(value: dict[str, Any]) -> dict[str, Any]:
+    """Keep durable history queryable without copying binary or huge output."""
+    if not isinstance(value, dict):
+        return {"value": repr(value)[:8_000]}
+
+    def trim(item: Any, depth: int = 0) -> Any:
+        if depth > 5:
+            return repr(item)[:2_000]
+        if isinstance(item, str):
+            return item if len(item) <= 12_000 else item[:11_997] + "..."
+        if isinstance(item, (int, float, bool)) or item is None:
+            return item
+        if isinstance(item, dict):
+            return {str(key)[:200]: trim(val, depth + 1) for key, val in list(item.items())[:200]}
+        if isinstance(item, (list, tuple)):
+            return [trim(val, depth + 1) for val in item[:200]]
+        return repr(item)[:2_000]
+
+    result = trim(value)
+    return result if isinstance(result, dict) else {"value": result}
 
 
 def _hash_payload(value: dict[str, Any]) -> str:
