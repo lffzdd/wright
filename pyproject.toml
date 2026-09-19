@@ -39,7 +39,7 @@ Homepage = "https://github.com/lffzdd/wright"
 Repository = "https://github.com/lffzdd/wright"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "ruff>=0.15"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/wright"]
