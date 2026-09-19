@@ -163,34 +163,30 @@ def _commit_durable_run(
     task_status: str,
     error: str,
 ) -> None:
-    control.finish_task(
-        task_id,
-        status=task_status,  # type: ignore[arg-type]
-        steps_used=session.step_count,
-        result=final_answer or "",
-        error=error,
-    )
     current = scheduler.store.get_run(run_id)
     if current.terminal:
-        return
-    if current.cancel_requested:
-        status = "cancelled"
-        error = current.cancel_reason or error or "run cancelled"
-    elif task_status == "cancelled":
-        status = "cancelled"
-    elif task_status == "completed" and final_answer is not None:
-        status, error = "completed", ""
+        finished = current
     else:
-        status = "failed"
-        if not error:
-            error = (
-                f"autonomous Agent ended with run status={session.current_run_status()}"
-            )
-    scheduler.finish_run(
-        run_id,
-        status=status,
-        result=final_answer or "",
-        error=error,
+        if current.cancel_requested:
+            status = "cancelled"
+            error = current.cancel_reason or error or "run cancelled"
+        elif task_status == "cancelled":
+            status = "cancelled"
+        elif task_status == "completed" and final_answer is not None:
+            status, error = "completed", ""
+        else:
+            status = "failed"
+            if not error:
+                error = f"autonomous Agent ended with run status={session.current_run_status()}"
+        finished = scheduler.finish_run(
+            run_id, status=status, result=final_answer or "", error=error,
+        )
+    control.finish_task(
+        task_id,
+        status=finished.status if finished.terminal else "failed",
+        steps_used=session.step_count,
+        result=finished.result if finished.terminal else "",
+        error=finished.error,
     )
 
 

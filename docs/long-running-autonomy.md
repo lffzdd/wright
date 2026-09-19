@@ -33,25 +33,24 @@ queued → dispatched → running → completed
 Scheduler 线程只做四件事：检查触发条件、写 durable run、原子 claim、投递已领取的
 `run_id`。它从不调用 `Agent.run`，也不修改 root transcript。
 
-`ApplicationHost` 是一个明确打开项目/来源 scope 的应用级 owner：它拥有 Scheduler、背景
-worker、SQLite 连接和独立控制面。所有 CLI、TUI、Web runtime 都在装配时创建它，并让
-自动化工具解析该宿主的 Scheduler；它可直接接收 Scheduler 的领取结果并通过相同的 durable
-Run 装配流程执行，不借用创建 Automation 的聊天 Session、Renderer、队列或临时目录。
+`ApplicationHost` 是一个执行目录的应用级 owner：拥有 Scheduler、后台 worker、SQLite 连接、
+独立 MCP 连接和控制面。CLI、TUI、Web runtime 在装配时创建或复用它，不借用来源聊天的
+Renderer、队列或 MCP 连接。
 
-CLI/TUI 正常退出会一并关闭当前进程的宿主。Web 的 `RuntimeManager` 则保留每个已打开来源
-scope 的宿主到整个 Web 应用退出：关闭浏览器会话只关闭 Session，不删除 Automation，也不
-停止已持久化自动任务。宿主退出才停止领取新工作，并由下一次宿主启动分类恢复记录。
+CLI/TUI 退出时关闭当前进程的宿主。Web 的 `RuntimeManager` 按执行目录保留宿主；同目录
+关闭后新建会话、恢复旧会话都复用它。每个已打开的来源 Session 保留自己的 AutonomyStore
+视图和 Scheduler，记录不会混入另一个会话。关闭会话不删除 Automation，也不停止已接收的后台任务。
 
-同一项目/来源 scope 的 `ApplicationHost` 使用 OS 自动释放的 advisory file lock；第二个
-headless 宿主会明确拒绝启动，而不是把第一个仍在运行的宿主误判为崩溃并恢复其运行。不同
-来源 session 的调度记录本身有独立 scope，可由同一 Web 应用分别承载。
+同一执行目录通过 OS 自动释放的 advisory file lock 保证只有一个 Host；另一进程不能把
+仍在运行的 owner 当作崩溃现场恢复。各来源 Scheduler 共享宿主的原子领取容量检查，合计
+最多运行一个 durable run，不能靠新建会话绕过同目录并发限制。不同 worktree 使用不同 Host。
 
-REPL 主线程收到事件后只构造独立 `Session` 并 `background_runtime.submit(...)`，
-然后立刻回到事件循环。Durable session 不继承 root 的 transcript、cwd、plan、status
-或 memory。同一 workspace 同时最多 dispatch 一个 durable run（`max_inflight`，默认 1）；
-提高上限前需要 git worktree 级别的隔离，否则并发 shell 会互相踩。
+宿主接收领取结果后构造独立 Session 并提交给后台 worker。Durable session 不继承 root 的
+transcript、cwd、plan、status 或 memory。完成事件由宿主线程消费并转交可选回调，不注入 root 上下文。
 
-完成后投递 `DURABLE_RUN_FINISHED`，主线程只渲染一行摘要，不把结果注入 root 上下文。
+关闭 Host 时先停止所有来源 Scheduler，等待 worker 退出后再释放 MCP、数据库和目录锁。
+归档 worktree 前也必须确认无活跃任务或定义，并停止其宿主。进程重启只恢复显式打开的来源 scope；
+数据库中存在定义本身不等于有一个存活的执行宿主。
 
 ## Headless 宿主
 
@@ -81,7 +80,11 @@ LaunchAgent/systemd、不会 daemonize、不会开放端口；进程仍在前台
   `retry` 运行才会按 `max_retries` 和 delay 重排一次；已有 `started` 工具的运行
   无论策略如何都标为 `unknown`。
   不再沿原 transcript 恢复；durable session 本身不写 checkpoint。这是有意的简化。
-- 只有显式设置 `recovery_policy=retry` 的任务才会按 `max_retries` 和 delay 重试；
+- 只有显式设置 `recovery_policy=retry`、且尚无工具执行过的失败运行才会按预算和 delay 重试。
+  工具已执行但结果提交失败时，终态事务将工具日志和 Run 一并标为 `unknown`，清空成功结果，
+  禁止外层调度器将其降级为普通失败再次执行。即使工具已有确认结果，也不能在缺少幂等契约时
+  因后续模型失败而重跑整个任务。领取队列时同样检查工具日志，旧版本遗留的
+  不安全 queued/waiting_retry 记录会被终结，不会继续执行。
 - `cancel_task(run_id)` 对 queued/dispatched 立即终止，对 running 设置取消信号，Agent 和工具
   在正常协作取消边界观察它。
 
@@ -101,7 +104,7 @@ LaunchAgent/systemd、不会 daemonize、不会开放端口；进程仍在前台
 
 调度定义：
 
-- `create_task`
+- `schedule_task`
 - `get_schedule` / `list_schedules`
 - `pause_schedule` / `resume_schedule` / `cancel_schedule`
 - `list_task_runs`

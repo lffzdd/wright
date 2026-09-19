@@ -10,6 +10,21 @@ from .tools.base import ToolCall, ToolResult
 CHARS_PER_TOKEN = 4
 
 
+def tool_image_references(message: dict) -> list[dict]:
+    """Read managed image references from a native tool-result envelope."""
+    if message.get("role") != "tool" or not isinstance(message.get("content"), str):
+        return []
+    try:
+        result = json.loads(message["content"])
+    except (ValueError, TypeError):
+        return []
+    refs = result.get("artifacts") if isinstance(result, dict) else None
+    if not isinstance(refs, list):
+        return []
+    return [ref for ref in refs if isinstance(ref, dict)
+            and str(ref.get("media_type", "")).startswith("image/")]
+
+
 def estimate_tokens(text: str) -> int:
     """按字符数糙估一段文本的 token 数。"""
     return len(text) // CHARS_PER_TOKEN
@@ -33,6 +48,7 @@ def estimate_message_tokens(message: dict) -> int:
             isinstance(part, dict) and part.get("type") == "image"
             for part in parts
         )
+    count += 1024 * len(tool_image_references(message))
     return count
 
 

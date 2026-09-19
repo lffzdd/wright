@@ -376,6 +376,7 @@ def assemble_runtime(
         context_limit=context_limit or 128000,
         transport=requested_transport,
         attachment_store=attachment_store,
+        artifact_store=artifact_store,
     )
     session_state.llm_transport = llm_client.transport_name
     llm_client.session_attachments = session_state.attachments
@@ -413,8 +414,11 @@ def assemble_runtime(
     # Its durable store is the durable fact source; do not create a competing
     # scheduler/owner merely to reconstruct a conversation runtime.
     if application_host is not None:
-        autonomy_store.close()
-        autonomy_store = application_host.store
+        try:
+            autonomy_store = application_host.scheduler_for(autonomy_store).store
+        except Exception:
+            autonomy_store.close()
+            raise
     loop_registry = SessionLoopRegistry(event_queue, agent_idle)
     services = RuntimeServices(
         agent_background=background_runtime,
@@ -625,7 +629,7 @@ def assemble_runtime(
             mcp_configs=mcp_configs,
             artifact_store=artifact_store,
         )
-    services.autonomy_scheduler = constructed_application_host.scheduler
+    services.autonomy_scheduler = constructed_application_host.scheduler_for(autonomy_store)
 
     try:
         if start_automation:

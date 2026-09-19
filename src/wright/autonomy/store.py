@@ -1045,17 +1045,39 @@ class AutonomyStore:
     ) -> DurableRunRecord | None:
         now = time.time() if now is None else float(now)
         with self._write():
-            row = self._conn.execute(
-                """SELECT id FROM durable_runs
-                   WHERE session_id = ?
-                     AND status IN ('queued', 'waiting_retry')
-                     AND scheduled_for <= ?
-                   ORDER BY scheduled_for, created_at LIMIT 1""",
-                (self.session_id, now),
-            ).fetchone()
-            if row is None:
-                return None
-            run_id = str(row["id"])
+            while True:
+                row = self._conn.execute(
+                    """SELECT id FROM durable_runs
+                       WHERE session_id = ?
+                         AND status IN ('queued', 'waiting_retry')
+                         AND scheduled_for <= ?
+                       ORDER BY scheduled_for, created_at LIMIT 1""",
+                    (self.session_id, now),
+                ).fetchone()
+                if row is None:
+                    return None
+                run_id = str(row["id"])
+                effects = self._conn.execute(
+                    "SELECT status FROM durable_tool_executions WHERE run_id = ? AND status != 'intended'",
+                    (run_id,),
+                ).fetchall()
+                if not effects:
+                    break
+                # Old versions could persist waiting_retry after an effect.
+                # Refuse these records at the claim boundary as well as finish.
+                unresolved = any(effect["status"] in {"started", "unknown"} for effect in effects)
+                reason = "previous tool execution prevents automatic whole-run replay"
+                self._conn.execute(
+                    """UPDATE durable_tool_executions
+                       SET status = 'unknown', ended_at = ?, result_json = ?
+                       WHERE run_id = ? AND status = 'started'""",
+                    (now, _dump({"error": reason}), run_id),
+                )
+                self._conn.execute(
+                    """UPDATE durable_runs SET status = ?, ended_at = ?, result = '', error = ?
+                       WHERE id = ? AND status IN ('queued', 'waiting_retry')""",
+                    ("unknown" if unresolved else "failed", now, reason, run_id),
+                )
             cursor = self._conn.execute(
                 """UPDATE durable_runs
                    SET status = 'dispatched', ended_at = NULL, owner_id = ?
@@ -1148,26 +1170,44 @@ class AutonomyStore:
     ) -> DurableRunRecord:
         if status not in {"completed", "failed", "cancelled", "unknown"}:
             raise AutonomyStoreError(f"invalid terminal run status: {status}")
-        current = self.get_run(run_id)
-        if current.terminal:
-            return current
-        if current.status != "running":
-            raise AutonomyStoreError(
-                f"run {run_id} cannot finish from {current.status}"
-            )
-        if owner_id and current.owner_id and current.owner_id != owner_id:
-            raise AutonomyStoreError("run is owned by another host")
         now = time.time() if now is None else float(now)
-        automation = self.get_automation(current.automation_id)
-        if current.cancel_requested:
-            status = "cancelled"
-            error = error or current.cancel_reason
-        should_retry = (
-            status == "failed"
-            and automation.recovery_policy == "retry"
-            and current.attempt <= current.max_retries
-        )
+        # Terminal classification and retry eligibility use the journal in the
+        # same transaction. An outer worker must not turn an unknown effect
+        # into an ordinary failed/completed Run.
         with self._write():
+            current = self.get_run(run_id)
+            if current.terminal:
+                return current
+            if current.status != "running":
+                raise AutonomyStoreError(f"run {run_id} cannot finish from {current.status}")
+            if owner_id and current.owner_id and current.owner_id != owner_id:
+                raise AutonomyStoreError("run is owned by another host")
+            automation = self.get_automation(current.automation_id)
+            effects = self._conn.execute(
+                "SELECT status FROM durable_tool_executions WHERE run_id = ?",
+                (run_id,),
+            ).fetchall()
+            unresolved = any(row["status"] in {"started", "unknown"} for row in effects)
+            if unresolved:
+                status, result = "unknown", ""
+                error = "tool side effect has no confirmed result; automatic retry is disabled"
+                self._conn.execute(
+                    """UPDATE durable_tool_executions
+                       SET status = 'unknown', ended_at = ?, result_json = ?
+                       WHERE run_id = ? AND status = 'started'""",
+                    (now, _dump({"error": error}), run_id),
+                )
+            elif current.cancel_requested:
+                status = "cancelled"
+                error = error or current.cancel_reason
+            # Without a per-tool idempotency contract, repeating a whole Run
+            # after any tool executed can repeat already committed effects.
+            should_retry = (
+                status == "failed"
+                and not any(row["status"] != "intended" for row in effects)
+                and automation.recovery_policy == "retry"
+                and current.attempt <= current.max_retries
+            )
             if should_retry:
                 self._conn.execute(
                     """UPDATE durable_runs

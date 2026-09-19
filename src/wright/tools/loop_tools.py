@@ -89,5 +89,6 @@ manage_loop_tool = Tool(
         "additionalProperties": False,
     },
     call=loop_tool_call,
+    required_capabilities=frozenset({"loop"}),
     defer_to_model=True,
 )

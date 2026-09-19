@@ -14,12 +14,15 @@ import os
 import queue
 import threading
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from copy import copy
+from dataclasses import dataclass, replace
 from pathlib import Path
+from uuid import uuid4
 
 from .agent_background import AgentBackgroundRuntime
 from .artifacts import ArtifactStore
 from .autonomy import AutonomyScheduler, AutonomyStore
+from .autonomy.models import DurableRunRecord
 from .autonomy.runner import launch_durable_run
 from .coordination import AgentControlPlane
 from .llm import LLMClient
@@ -32,7 +35,7 @@ from .tools.mcp_client import McpManager, McpServerConfig
 @dataclass(frozen=True)
 class ApplicationHostSnapshot:
     project_dir: str
-    source_session_id: str
+    source_session_ids: tuple[str, ...]
     state: str
     scheduler_host_id: str
     active_runs: int
@@ -56,7 +59,7 @@ class ApplicationHost:
     ) -> None:
         self.workspace_dir = workspace_dir.resolve()
         self.store = store
-        self.llm = llm
+        self.llm = copy(llm)
         self.base_tools = tuple(base_tools)
         self._host_tools = self.base_tools
         # Durable work must never borrow the Session's MCP manager: closing a
@@ -72,17 +75,74 @@ class ApplicationHost:
         self._closed = threading.Event()
         self._lock_fd: int | None = None
         self._event_thread: threading.Thread | None = None
-        self.scheduler = AutonomyScheduler(
-            store,
-            self.event_queue,
-            poll_interval=poll_interval,
-            dispatch_run=self._dispatch,
-        )
+        self._poll_interval = poll_interval
+        self._host_id = f"host_{uuid4().hex}"
+        self._schedulers: dict[str, AutonomyScheduler] = {}
+        self.scheduler = self.scheduler_for(store)
         self.services = RuntimeServices(
             agent_background=self.background,
             durable_store=store,
             autonomy_scheduler=self.scheduler,
         )
+
+    def scheduler_for(self, store: AutonomyStore) -> AutonomyScheduler:
+        """Retain source-session isolation under one execution-directory owner.
+
+        The host takes ownership of the supplied store, including closing a
+        redundant connection when a previously opened session is resumed.
+        """
+        with self._lock:
+            if self._state not in {"new", "running"}:
+                raise RuntimeError("application host is closing")
+            if store.workspace_dir != self.workspace_dir or store.path != self.store.path:
+                raise ValueError("automation store belongs to another execution environment")
+            existing = self._schedulers.get(store.session_id)
+            if existing is not None:
+                if store is not existing.store:
+                    store.close()
+                return existing
+            scheduler = AutonomyScheduler(
+                store, self.event_queue, poll_interval=self._poll_interval,
+                host_id=self._host_id,
+                dispatch_run=lambda run_id: self._dispatch(run_id, scheduler),
+                claim_run=lambda: self._claim_next_run(scheduler),
+            )
+            self._schedulers[store.session_id] = scheduler
+            if self._state == "running":
+                try:
+                    scheduler.start()
+                except Exception:
+                    self._schedulers.pop(store.session_id)
+                    scheduler.close()
+                    store.close()
+                    raise
+            return scheduler
+
+    def _claim_next_run(self, scheduler: AutonomyScheduler) -> DurableRunRecord | None:
+        # Claim and the shared capacity check must be indivisible across all
+        # source sessions: per-session limits alone allow concurrent writers.
+        with self._lock:
+            if self._state != "running" or self._active_runs() >= 1:
+                return None
+            return scheduler.store.claim_next_run(owner_id=self._host_id)
+
+    def _active_runs(self) -> int:
+        with self._lock:
+            if self._state == "closed":
+                return 0
+            return sum(scheduler.store.count_active_runs() for scheduler in self._schedulers.values())
+
+    def has_active_work(self) -> bool:
+        with self._lock:
+            if self._state == "closed":
+                return False
+            if self._state == "closing":
+                return True
+            return bool(self._active_runs()) or any(
+                item.status == "active"
+                for scheduler in self._schedulers.values()
+                for item in scheduler.store.list_automations()
+            )
 
     @property
     def state(self) -> str:
@@ -90,22 +150,28 @@ class ApplicationHost:
             return self._state
 
     def start(self) -> None:
-        with self._lock:
-            if self._state == "running":
-                return
-            if self._state != "new":
-                raise RuntimeError("application host cannot be restarted after close")
-            self._state = "running"
         try:
-            self._acquire_project_lock()
-            self._host_tools = (*self.base_tools, *self.mcp_manager.start())
-            self._event_thread = threading.Thread(
-                target=self._forward_events, name="wright-application-events", daemon=True
-            )
-            self._event_thread.start()
-            self.scheduler.start()
+            # Keep new source registrations behind MCP/lock initialization.
+            # Scheduler threads may start here, but cannot claim until this
+            # lock is released with the host fully assembled.
+            with self._lock:
+                if self._state == "running":
+                    return
+                if self._state != "new":
+                    raise RuntimeError("application host cannot be restarted after close")
+                self._acquire_project_lock()
+                self._host_tools = (*self.base_tools, *self.mcp_manager.start())
+                self._event_thread = threading.Thread(
+                    target=self._forward_events, name="wright-application-events", daemon=True
+                )
+                self._event_thread.start()
+                self._state = "running"
+                for scheduler in self._schedulers.values():
+                    scheduler.start()
         except Exception:
             with self._lock:
+                if self._state in {"closing", "closed"}:
+                    raise
                 self._state = "failed"
             self.close()
             raise
@@ -143,7 +209,7 @@ class ApplicationHost:
         finally:
             os.close(fd)
 
-    def _dispatch(self, run_id: str) -> None:
+    def _dispatch(self, run_id: str, scheduler: AutonomyScheduler) -> None:
         """Launch a claimed run without borrowing a source Session resource."""
         with self._lock:
             if self._state != "running":
@@ -153,16 +219,18 @@ class ApplicationHost:
                 run_id=run_id,
                 workspace_dir=self.workspace_dir,
                 control_plane=self.control_plane,
-                scheduler=self.scheduler,
+                scheduler=scheduler,
                 llm=self.llm,
                 base_tools=self._host_tools,
                 permission_settings=self.permission_settings,
                 background_runtime=self.background,
-                services=self.services,
+                services=replace(
+                    self.services, durable_store=scheduler.store, autonomy_scheduler=scheduler,
+                ),
             )
         except Exception as exc:
             try:
-                self.scheduler.finish_run(
+                scheduler.finish_run(
                     run_id, status="failed", error=f"host launch failed: {exc}"
                 )
             except Exception:
@@ -182,20 +250,23 @@ class ApplicationHost:
             self._publish(event, payload)
 
     def snapshot(self) -> ApplicationHostSnapshot:
-        return ApplicationHostSnapshot(
-            project_dir=str(self.workspace_dir),
-            source_session_id=self.store.session_id,
-            state=self.state,
-            scheduler_host_id=self.scheduler.host_id,
-            active_runs=self.store.count_active_runs(),
-        )
+        with self._lock:
+            return ApplicationHostSnapshot(
+                project_dir=str(self.workspace_dir),
+                source_session_ids=tuple(self._schedulers),
+                state=self._state,
+                scheduler_host_id=self._host_id,
+                active_runs=self._active_runs(),
+            )
 
     def close(self, *, grace_seconds: float = 2.0) -> bool:
         with self._lock:
             if self._state in {"closed", "closing"}:
                 return self._state == "closed"
             self._state = "closing"
-        self.scheduler.close(timeout=grace_seconds)
+            schedulers = tuple(self._schedulers.values())
+        for scheduler in schedulers:
+            scheduler.close(timeout=grace_seconds)
         if self.background.shutdown(self.control_plane, grace_seconds=grace_seconds):
             self._finish_close()
             return True
@@ -223,8 +294,9 @@ class ApplicationHost:
         if thread is not None:
             thread.join(timeout=1)
         self.mcp_manager.shutdown()
-        self.store.close()
-        self._release_project_lock()
         with self._lock:
+            for scheduler in self._schedulers.values():
+                scheduler.store.close()
+            self._release_project_lock()
             self._state = "closed"
             self._closed.set()

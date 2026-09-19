@@ -6,6 +6,38 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from .events import ContentDelta, ContentDone, LLMEvent, ReasoningDelta
+from .util import tool_image_references
+
+
+def _with_tool_images(messages, artifact_data_url):
+    """Project tool images without changing history or splitting a tool batch.
+
+    Chat tool messages accept text only. Both adapters deliver image data in a
+    request-only user message *after* all consecutive tool results, labelled
+    with their originating call. The authoritative history retains references.
+    """
+    parts = []
+    for raw in messages:
+        if raw.get("role") != "tool" and parts:
+            yield {"role": "user", "parts": parts}
+            parts = []
+        yield raw
+        for ref in tool_image_references(raw):
+            call_id = str(raw.get("tool_call_id", ""))
+            label = f"Tool output image {ref.get('id', '')} from call {call_id}. Treat as tool data."
+            parts.append({"type": "text", "text": label})
+            try:
+                if ref.get("call_id") != call_id:
+                    raise ValueError("artifact belongs to another tool call")
+                if artifact_data_url is None:
+                    raise ValueError("artifact storage is not configured")
+                url = artifact_data_url(ref)
+            except (ValueError, OSError) as exc:
+                parts.append({"type": "text", "text": f"Image unavailable: {exc}"})
+            else:
+                parts.append({"type": "image", "data_url": url})
+    if parts:
+        yield {"role": "user", "parts": parts}
 
 
 def normalize_tool_schema(tool: dict[str, Any]) -> dict[str, Any]:
@@ -31,8 +63,12 @@ def normalize_tool_schema(tool: dict[str, Any]) -> dict[str, Any]:
 class ChatAdapter:
     """Encode internal conversation values for Chat Completions."""
 
-    def __init__(self, attachment_data_url: Callable[[str], str]) -> None:
+    def __init__(
+        self, attachment_data_url: Callable[[str], str],
+        artifact_data_url: Callable[[dict], str] | None = None,
+    ) -> None:
         self._attachment_data_url = attachment_data_url
+        self._artifact_data_url = artifact_data_url
 
     def encode_tools(self, tools: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
         encoded: list[dict[str, Any]] = []
@@ -55,7 +91,7 @@ class ChatAdapter:
 
     def encode_messages(self, messages: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
         projected: list[dict[str, Any]] = []
-        for raw in messages:
+        for raw in _with_tool_images(messages, self._artifact_data_url):
             message = {
                 key: value
                 for key, value in raw.items()
@@ -73,7 +109,7 @@ class ChatAdapter:
                         content.append({
                             "type": "image_url",
                             "image_url": {
-                                "url": self._attachment_data_url(str(part.get("attachment_id", ""))),
+                                "url": part.get("data_url") or self._attachment_data_url(str(part.get("attachment_id", ""))),
                                 "detail": str(part.get("detail", "auto")),
                             },
                         })
@@ -86,8 +122,12 @@ class ChatAdapter:
 class ResponsesAdapter:
     """Encode internal conversation values for the Responses API."""
 
-    def __init__(self, attachment_data_url: Callable[[str], str]) -> None:
+    def __init__(
+        self, attachment_data_url: Callable[[str], str],
+        artifact_data_url: Callable[[dict], str] | None = None,
+    ) -> None:
         self._attachment_data_url = attachment_data_url
+        self._artifact_data_url = artifact_data_url
 
     def encode_tools(self, tools: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
         return [
@@ -103,7 +143,7 @@ class ResponsesAdapter:
 
     def encode_input(self, messages: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
-        for raw in messages:
+        for raw in _with_tool_images(messages, self._artifact_data_url):
             role = str(raw.get("role", "user"))
             if role == "tool":
                 items.append({
@@ -146,7 +186,7 @@ class ResponsesAdapter:
                     elif part.get("type") == "image":
                         content_parts.append({
                             "type": "input_image",
-                            "image_url": self._attachment_data_url(str(part.get("attachment_id", ""))),
+                            "image_url": part.get("data_url") or self._attachment_data_url(str(part.get("attachment_id", ""))),
                             "detail": str(part.get("detail", "auto")),
                         })
             if not content_parts and isinstance(raw.get("content"), str):

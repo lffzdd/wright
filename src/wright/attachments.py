@@ -33,6 +33,31 @@ class AttachmentError(ValueError):
     """A submitted attachment is unsafe, unsupported, or unavailable."""
 
 
+def inspect_image(path: Path | BinaryIO) -> tuple[str, str, int, int]:
+    """Validate uploads and tool artifacts with the same format/decode limits."""
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(path) as image:
+                if image.width * image.height > MAX_IMAGE_PIXELS:
+                    raise AttachmentError("image exceeds 40 megapixel limit")
+                image.verify()
+            with Image.open(path) as image:
+                image.load()
+                if image.format not in _FORMATS:
+                    raise AttachmentError("only PNG, JPEG, and WebP images are supported")
+                if getattr(image, "is_animated", False):
+                    raise AttachmentError("animated images are not supported")
+                media_type, suffix = _FORMATS[image.format]
+                return media_type, suffix, image.width, image.height
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
+        raise AttachmentError("image is unsafe to decode") from exc
+    except UnidentifiedImageError as exc:
+        raise AttachmentError("file is not a valid image") from exc
+    except OSError as exc:
+        raise AttachmentError("image cannot be decoded") from exc
+
+
 @dataclass(frozen=True)
 class AttachmentRecord:
     id: str
@@ -127,7 +152,7 @@ class AttachmentStore:
                     target.write(chunk)
                 target.flush()
                 os.fsync(target.fileno())
-            media_type, suffix, width, height = self._inspect(temporary)
+            media_type, suffix, width, height = inspect_image(temporary)
             checksum = digest.hexdigest()
             for record in records.values():
                 if record.sha256 == checksum and record.size == size:
@@ -151,30 +176,6 @@ class AttachmentStore:
         except Exception:
             temporary.unlink(missing_ok=True)
             raise
-
-    @staticmethod
-    def _inspect(path: Path) -> tuple[str, str, int, int]:
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("error", Image.DecompressionBombWarning)
-                with Image.open(path) as image:
-                    image.verify()
-                with Image.open(path) as image:
-                    image.load()
-                    if image.format not in _FORMATS:
-                        raise AttachmentError("only PNG, JPEG, and WebP images are supported")
-                    if getattr(image, "is_animated", False):
-                        raise AttachmentError("animated images are not supported")
-                    if image.width * image.height > MAX_IMAGE_PIXELS:
-                        raise AttachmentError("image exceeds 40 megapixel limit")
-                    media_type, suffix = _FORMATS[image.format]
-                    return media_type, suffix, image.width, image.height
-        except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
-            raise AttachmentError("image is unsafe to decode") from exc
-        except UnidentifiedImageError as exc:
-            raise AttachmentError("file is not a valid image") from exc
-        except OSError as exc:
-            raise AttachmentError("image cannot be decoded") from exc
 
     def _write_thumbnail(self, source: Path, attachment_id: str) -> None:
         """Create a small local preview; the original is never rewritten."""

@@ -22,10 +22,12 @@ from urllib.parse import urlparse
 
 from openai import APIConnectionError, APIStatusError, OpenAI, omit
 
+from .artifacts import ArtifactStore
 from .attachments import AttachmentError, AttachmentStore
 from .events import ContentDelta, ContentDone, LLMEvent, ReasoningDelta, UsageEvent
 from .model import ModelRequest
 from .model_adapters import ChatAdapter, ResponsesAdapter
+from .tools.base import ArtifactRef
 
 
 class LLMClient:
@@ -42,6 +44,7 @@ class LLMClient:
         response_format: dict | None = None,
         transport: str = "auto",
         attachment_store: AttachmentStore | None = None,
+        artifact_store: ArtifactStore | None = None,
     ):
 
         if base_url is None or api_key is None or model is None:
@@ -53,6 +56,7 @@ class LLMClient:
         self.base_url = base_url
         self.transport_name = resolve_transport(base_url, transport)
         self.attachment_store = attachment_store
+        self.artifact_store = artifact_store
         self.session_attachments: dict[str, Any] = {}
         self.model = model
         self.context_limit = context_limit
@@ -61,8 +65,8 @@ class LLMClient:
         self.base_wait = base_wait
         self.max_wait = max_wait
         self.response_format = response_format
-        self.chat_adapter = ChatAdapter(self._attachment_data_url)
-        self.responses_adapter = ResponsesAdapter(self._attachment_data_url)
+        self.chat_adapter = ChatAdapter(self._attachment_data_url, self._artifact_data_url)
+        self.responses_adapter = ResponsesAdapter(self._attachment_data_url, self._artifact_data_url)
 
     def __call__(
         self,
@@ -130,6 +134,15 @@ class LLMClient:
 
     def _chat_tools(self, tools: Any) -> Any:
         return omit if tools is omit else self.chat_adapter.encode_tools(tools)
+
+    def _artifact_data_url(self, metadata: dict) -> str:
+        if self.artifact_store is None:
+            raise ValueError("artifact storage is not configured")
+        try:
+            ref = ArtifactRef(**metadata)
+        except TypeError as exc:
+            raise ValueError("artifact metadata is invalid") from exc
+        return self.artifact_store.image_data_url(ref)
 
     def _call_stream(
         self, messages: list[dict[str, Any]], options: dict, model: str

@@ -1,3 +1,4 @@
+import base64
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,6 +17,12 @@ from wright.tools.base import Tool, ToolCall, ToolResult, tool_runtime_for_sessi
 from wright.tools.command_tools import execute_command
 from wright.tools.file_tools import read_file_tool
 from wright.tools.mcp_client import _to_tool_result
+
+from .test_attachments import _png_bytes
+
+
+def _png_base64():
+    return base64.b64encode(_png_bytes()).decode("ascii")
 
 
 def _tool(name: str) -> Tool:
@@ -63,7 +70,7 @@ def test_mcp_result_preserves_structured_content_images_and_errors():
 def test_mcp_image_is_managed_as_an_artifact_not_kept_as_base64(tmp_path):
     store = ArtifactStore(tmp_path / "managed")
     result = SimpleNamespace(
-        content=[SimpleNamespace(type="image", data="aGVsbG8=", mimeType="image/png")],
+        content=[SimpleNamespace(type="image", data=_png_base64(), mimeType="image/png")],
         structuredContent=None,
         isError=False,
     )
@@ -71,7 +78,7 @@ def test_mcp_image_is_managed_as_an_artifact_not_kept_as_base64(tmp_path):
     assert converted.ok
     assert len(converted.artifacts) == 1
     assert "data" not in converted.content[0]
-    assert store.path_for(converted.artifacts[0]).read_bytes() == b"hello"
+    assert store.path_for(converted.artifacts[0]).read_bytes() == _png_bytes()
 
 
 def test_mcp_error_keeps_registered_artifacts_as_diagnostics(tmp_path):
@@ -79,7 +86,7 @@ def test_mcp_error_keeps_registered_artifacts_as_diagnostics(tmp_path):
     result = SimpleNamespace(
         content=[
             SimpleNamespace(type="text", text="partial diagnostic"),
-            SimpleNamespace(type="image", data="aGVsbG8=", mimeType="image/png"),
+            SimpleNamespace(type="image", data=_png_base64(), mimeType="image/png"),
         ],
         structuredContent={"code": "partial"},
         isError=True,
@@ -113,7 +120,7 @@ def test_agent_mcp_artifact_survives_checkpoint_and_is_readable(tmp_path):
             SimpleNamespace(
                 content=[
                     SimpleNamespace(type="text", text="count: 2"),
-                    SimpleNamespace(type="image", data="aGVsbG8=", mimeType="image/png"),
+                    SimpleNamespace(type="image", data=_png_base64(), mimeType="image/png"),
                 ],
                 structuredContent={"count": 2}, isError=False,
             ),
@@ -140,15 +147,15 @@ def test_agent_mcp_artifact_survives_checkpoint_and_is_readable(tmp_path):
     ).run("make a report")
     assert result == "Report delivered"
     ref = session.tool_executions["mcp-call"].result.artifacts[0]
-    assert store.path_for(ref).read_bytes() == b"hello"
+    assert store.path_for(ref).read_bytes() == _png_bytes()
 
     checkpoints = SessionCheckpointStore(tmp_path / "checkpoints")
     checkpoints.save(session)
     restored = checkpoints.load(session.session_id)
     restored_ref = restored.tool_executions["mcp-call"].result.artifacts[0]
     assert restored_ref == ref
-    assert "aGVsbG8=" not in checkpoints.path_for(session.session_id).read_text(encoding="utf-8")
-    assert store.path_for(restored_ref).read_bytes() == b"hello"
+    assert _png_base64() not in checkpoints.path_for(session.session_id).read_text(encoding="utf-8")
+    assert store.path_for(restored_ref).read_bytes() == _png_bytes()
 
 
 def test_managed_artifact_survives_source_cleanup_and_rejects_escape(tmp_path):

@@ -118,7 +118,19 @@ request rather than reuse a historic approval.
 Delivered MCP images are copied to managed project artifacts instead of being
 kept as base64 in history/checkpoints. The authenticated Web endpoint is
 `/api/v1/sessions/<session>/artifacts/<artifact>`; it serves only references
-recorded by that session's tool history.
+recorded by that session's tool history. PNG/JPEG/WebP content is decoded and
+validated against the declared MIME type using the same limits as uploaded
+attachments. Invalid images are reported explicitly and are not registered.
+Chat and Responses requests resolve image references only at the provider
+boundary, after the corresponding batch of tool results. Missing or damaged
+artifacts produce an explicit unavailable-image note; base64 never enters the
+checkpoint. Context estimates reserve an image budget for these references.
+
+Web sessions sharing an execution directory reuse one ApplicationHost while
+retaining separate automation records. Their schedulers share a single dispatch
+slot. A tool whose result cannot be committed makes its durable Run `unknown`;
+that Run is never automatically retried, even with a retry policy. Whole-run
+retries are limited to failures before any tool executed.
 
 ## Tests
 

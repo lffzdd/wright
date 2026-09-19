@@ -321,7 +321,7 @@ class RuntimeManager:
         # Hosts outlive their creating browser session.  They are closed only
         # when the Web application itself stops (or an explicit host API is
         # introduced), never by SessionHandle.close().
-        self._application_hosts: dict[str, ApplicationHost] = {}
+        self._application_hosts: dict[Path, ApplicationHost] = {}
         self._lock = threading.RLock()
 
     def project(self) -> dict[str, Any]:
@@ -419,10 +419,7 @@ class RuntimeManager:
                 project_id=project_id(self.project_root), session_id=session_id
             )
             broker = InteractionBroker(publisher)
-            retained_host = (
-                self._application_hosts.get(session_id)
-                if resume_session_id else None
-            )
+            retained_host = self._application_hosts.get(context.execution_root)
             try:
                 runtime = assemble_runtime(
                     runtime_config_from_args(self._args(context=context, model=model, resume=resume_session_id)),
@@ -446,7 +443,7 @@ class RuntimeManager:
             runtime.owns_application_host = False
             handle = SessionHandle(runtime)
             self._handles[session_id] = handle
-            self._application_hosts[session_id] = host
+            self._application_hosts[context.execution_root] = host
         publisher.publish("session.snapshot", handle.snapshot())
         if prompt and prompt.strip():
             handle.submit(prompt, uuid4().hex)
@@ -500,15 +497,16 @@ class RuntimeManager:
             with self._lock:
                 hosts = tuple(self._application_hosts.values())
             for host in hosts:
-                if host.workspace_dir != context.execution_root or host.state != "running":
+                if host.workspace_dir != context.execution_root:
                     continue
-                if host.store.count_active_runs() or any(
-                    automation.status == "active"
-                    for automation in host.store.list_automations()
-                ):
+                if host.has_active_work():
                     raise RuntimeManagerError(
                         "worktree is still referenced by an active automation host"
                     )
+                if not host.close():
+                    raise RuntimeManagerError("worktree automation host is still closing")
+                with self._lock:
+                    self._application_hosts.pop(context.execution_root, None)
         return self.worktrees.archive(context)
 
     def shutdown(self) -> None:

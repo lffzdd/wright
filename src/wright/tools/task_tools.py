@@ -93,6 +93,7 @@ get_task_tool = Tool(
         "additionalProperties": False,
     },
     call=get_task,
+    required_capabilities=frozenset({"tasks"}),
     is_concurrency_safe=lambda args: True,
 )
 
@@ -118,6 +119,7 @@ wait_task_tool = Tool(
         "additionalProperties": False,
     },
     call=wait_task,
+    required_capabilities=frozenset({"tasks"}),
     is_concurrency_safe=lambda args: True,
     timeout_owner="tool",
 )
@@ -139,6 +141,7 @@ cancel_task_tool = Tool(
         "additionalProperties": False,
     },
     call=cancel_task,
+    required_capabilities=frozenset({"tasks"}),
     # Shell cancellation mutates a live process tree; serialize it with other
     # exclusive tools in the same model turn.
     is_concurrency_safe=lambda args: False,
@@ -171,6 +174,7 @@ list_tasks_tool = Tool(
         "additionalProperties": False,
     },
     call=list_tasks,
+    required_capabilities=frozenset({"tasks"}),
     is_concurrency_safe=lambda args: True,
 )
 

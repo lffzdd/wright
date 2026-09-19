@@ -261,6 +261,7 @@ schedule_task_tool = Tool(
         "additionalProperties": False,
     },
     call=schedule_task,
+    required_capabilities=frozenset({"durable", "autonomy"}),
     check_permission=_persistent_mutation_permission,
     defer_to_model=True,
 )
@@ -276,6 +277,7 @@ get_schedule_tool = Tool(
         "additionalProperties": False,
     },
     call=get_schedule,
+    required_capabilities=frozenset({"durable"}),
     is_concurrency_safe=lambda args: True,
     defer_to_model=True,
 )
@@ -296,6 +298,7 @@ list_schedules_tool = Tool(
         "additionalProperties": False,
     },
     call=list_schedules,
+    required_capabilities=frozenset({"durable"}),
     is_concurrency_safe=lambda args: True,
     defer_to_model=True,
 )
@@ -317,6 +320,7 @@ def _schedule_mutation_tool(name: str, description: str, call) -> Tool:
             "additionalProperties": False,
         },
         call=call,
+        required_capabilities=frozenset({"durable", "autonomy"}),
         check_permission=_persistent_mutation_permission,
         defer_to_model=True,
     )
@@ -348,6 +352,7 @@ list_task_runs_tool = Tool(
         "additionalProperties": False,
     },
     call=list_task_runs,
+    required_capabilities=frozenset({"durable"}),
     is_concurrency_safe=lambda args: True,
     defer_to_model=True,
 )

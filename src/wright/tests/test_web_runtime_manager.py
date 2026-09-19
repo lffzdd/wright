@@ -368,3 +368,53 @@ def test_project_exposes_configured_models_not_a_hardcoded_default(monkeypatch, 
     overridden = cli_manager.project()
     assert overridden["default_model"] == "cli-model"
     assert overridden["models"] == ["cli-model", "deepseek-v4-flash", "deepseek-chat"]
+
+
+def test_closed_local_session_can_be_replaced_without_losing_its_schedules(monkeypatch, tmp_path):
+    from .. import runtime as assembly
+    from ..autonomy import TriggerSpec
+    from .responses import response
+
+    class Model:
+        model = "offline"
+        transport_name = "chat"
+        context_limit = 128_000
+
+        def __call__(self, *_args, **_kwargs):
+            yield response(content="done")
+
+    monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("OPENAI_MODEL", "offline")
+    monkeypatch.setattr(assembly, "load_env", lambda: None)
+    monkeypatch.setattr(assembly, "LLMClient", lambda **_: Model())
+    monkeypatch.setattr(assembly, "load_mcp_configs", lambda _: [])
+    monkeypatch.setattr(assembly, "optional_knowledge_tools", list)
+    monkeypatch.setattr(assembly, "load_lifecycle_manager", lambda *a, **k: SimpleNamespace(emit=lambda *a, **k: None))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    manager = RuntimeManager(workspace, base_args=argparse.Namespace())
+    try:
+        first = manager.create(environment="local")
+        first_id = first.runtime.session_state.session_id
+        host = first.runtime.application_host
+        first_store = first.runtime.autonomy_store
+        auto = first_store.create_automation(
+            name="retained", prompt="work", trigger=TriggerSpec(type="once", run_at=time.time() + 3600),
+        )
+        manager.close(first_id)
+        second = manager.create(environment="local")
+        second_id = second.runtime.session_state.session_id
+        assert second.runtime.application_host is host
+        assert second.runtime.autonomy_store.session_id == second_id
+        assert second.runtime.autonomy_store.list_automations() == []
+        assert first_store.get_automation(auto.id).session_id == first_id
+        second_store = second.runtime.autonomy_store
+        manager.close(second_id)
+        restored = manager.create(resume_session_id=first_id)
+        assert restored.runtime.application_host is host
+        assert restored.runtime.autonomy_store is first_store
+        assert restored.runtime.autonomy_store.list_automations()[0].id == auto.id
+        assert len(manager._application_hosts) == 1
+    finally:
+        manager.shutdown()
+    assert first_store.closed and second_store.closed

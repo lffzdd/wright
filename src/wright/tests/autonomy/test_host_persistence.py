@@ -282,3 +282,159 @@ def test_result_persistence_failure_stops_agent_without_retrying_effect(tmp_path
     execution = next(iter(agent.session_state.tool_executions.values()))
     assert execution.result is not None
     assert execution.result.data == {"outcome": "unknown"}
+
+
+def test_host_does_not_retry_unknown_effect_even_with_retry_policy(tmp_path, monkeypatch):
+    from ...tools.base import ToolResult
+
+    workspace, store = _store(tmp_path)
+    automation = store.create_automation(
+        name="effect", prompt="append once", trigger=TriggerSpec(type="once", run_at=0),
+        recovery_policy="retry", max_retries=1, retry_delay_seconds=0, now=0,
+    )
+    original_record = store.record_tool_result
+    failed = []
+
+    def fail_first_commit(*args, **kwargs):
+        if not failed:
+            failed.append(True)
+            raise OSError("injected result commit failure")
+        return original_record(*args, **kwargs)
+
+    monkeypatch.setattr(store, "record_tool_result", fail_first_commit)
+    marker = workspace / "effect.txt"
+
+    def effect(_args, _runtime):
+        with marker.open("a") as output:
+            output.write("effect\n")
+        return ToolResult.success("appended")
+
+    class Model:
+        context_limit = 128_000
+
+        def __call__(self, messages, **_kwargs):
+            if messages[-1]["role"] == "tool":
+                yield response(content="done")
+            else:
+                yield response(calls=[{"name": "effect", "arguments": {}}])
+
+    finished = threading.Event()
+    host = ApplicationHost(
+        workspace_dir=workspace, store=store, llm=Model(),
+        base_tools=[Tool("effect", "append marker", {"type": "object"}, effect)],
+        permission_settings=PermissionSettings(), poll_interval=0.01,
+        on_event=lambda *_: finished.set(),
+    )
+    try:
+        host.start()
+        assert finished.wait(3)
+        run = store.list_runs(automation.id)[0]
+        assert run.status == "unknown"
+        assert run.attempt == 1
+        assert marker.read_text() == "effect\n"
+        assert store.list_tool_executions(run.id)[0]["status"] == "unknown"
+        assert store.claim_next_run(owner_id=host.scheduler.host_id) is None
+    finally:
+        host.close()
+
+
+@pytest.mark.parametrize("requested_status", ["completed", "failed", "cancelled"])
+@pytest.mark.parametrize("effect_status", ["started", "unknown"])
+def test_run_with_uncommitted_effect_cannot_finish_or_retry(tmp_path, requested_status, effect_status):
+    _workspace, store = _store(tmp_path)
+    try:
+        store.create_automation(
+            name="effect", prompt="work", trigger=TriggerSpec(type="once", run_at=0),
+            recovery_policy="retry", max_retries=1, retry_delay_seconds=0, now=0,
+        )
+        run_id = store.materialize_due(now=0)[0]
+        store.claim_next_run(owner_id="host", now=0)
+        store.start_run(run_id, owner_id="host", now=0)
+        store.record_tool_intent(
+            run_id=run_id, call_id="effect", tool_name="write_file", arguments={},
+            permission={}, environment={}, now=0,
+        )
+        store.mark_tool_started(run_id, "effect", now=0)
+        if effect_status == "unknown":
+            store.record_tool_result(run_id, "effect", {"outcome": "unknown"}, status="unknown", now=0)
+        run = store.finish_run(run_id, status=requested_status, owner_id="host", now=1)
+        assert run.status == "unknown"
+        assert store.list_tool_executions(run_id)[0]["status"] == "unknown"
+        assert store.claim_next_run(owner_id="host", now=2) is None
+    finally:
+        store.close()
+
+
+def test_sessions_sharing_host_share_dispatch_capacity(tmp_path):
+    from ...tools.base import ToolResult
+
+    workspace, first = _store(tmp_path)
+    second = AutonomyStore(first.path, session_id="second", workspace_dir=workspace)
+    entered = threading.Event()
+    release = threading.Event()
+    all_done = threading.Event()
+    completions = []
+
+    def effect(_args, _runtime):
+        entered.set()
+        assert release.wait(3)
+        return ToolResult.success()
+
+    class Model:
+        context_limit = 128_000
+
+        def __call__(self, messages, **_kwargs):
+            yield (response(content="done") if messages[-1]["role"] == "tool"
+                   else response(calls=[{"name": "effect", "arguments": {}}]))
+
+    def completed(event_name, run_id):
+        if event_name == "DURABLE_RUN_FINISHED":
+            completions.append(run_id)
+            if len(completions) == 2:
+                all_done.set()
+
+    host = ApplicationHost(
+        workspace_dir=workspace, store=first, llm=Model(),
+        base_tools=[Tool("effect", "work", {"type": "object"}, effect)],
+        permission_settings=PermissionSettings(), poll_interval=0.01, on_event=completed,
+    )
+    try:
+        first.create_automation(name="first", prompt="work", trigger=TriggerSpec(type="once", run_at=0))
+        host.start()
+        assert entered.wait(3)
+        second.create_automation(name="second", prompt="work", trigger=TriggerSpec(type="once", run_at=0))
+        scheduler = host.scheduler_for(second)
+        second.materialize_due()
+        assert host._claim_next_run(scheduler) is None
+        assert host.snapshot().active_runs == 1
+        release.set()
+        assert all_done.wait(3)
+        assert first.list_runs()[0].status == second.list_runs()[0].status == "completed"
+    finally:
+        release.set()
+        host.close()
+    assert first.closed and second.closed
+
+
+@pytest.mark.parametrize("queued_status", ["waiting_retry", "queued"])
+def test_old_retry_records_with_effects_are_not_claimed(tmp_path, queued_status):
+    _workspace, store = _store(tmp_path)
+    try:
+        store.create_automation(name="legacy", prompt="work", trigger=TriggerSpec(type="once", run_at=0))
+        run_id = store.materialize_due(now=0)[0]
+        store.claim_next_run(owner_id="old-host", now=0)
+        store.start_run(run_id, owner_id="old-host", now=0)
+        store.record_tool_intent(
+            run_id=run_id, call_id="effect", tool_name="write_file", arguments={},
+            permission={}, environment={}, now=0,
+        )
+        store.mark_tool_started(run_id, "effect", now=0)
+        # Reproduce a persisted retry from the old implementation, before
+        # terminal classification began consulting the tool journal.
+        with store._write():
+            store._conn.execute("UPDATE durable_runs SET status = ? WHERE id = ?", (queued_status, run_id))
+        assert store.claim_next_run(owner_id="new-host", now=2) is None
+        assert store.get_run(run_id).status == "unknown"
+        assert store.list_tool_executions(run_id)[0]["status"] == "unknown"
+    finally:
+        store.close()

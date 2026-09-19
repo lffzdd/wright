@@ -35,6 +35,7 @@ class AutonomyScheduler:
         # isolation.
         max_inflight: int = 1,
         dispatch_run: Callable[[str], None] | None = None,
+        claim_run: Callable[[], DurableRunRecord | None] | None = None,
         host_id: str | None = None,
     ) -> None:
         if poll_interval <= 0:
@@ -48,6 +49,7 @@ class AutonomyScheduler:
         self.max_inflight = int(max_inflight)
         self.host_id = host_id or f"host_{uuid4().hex}"
         self._dispatch_run = dispatch_run
+        self._claim_run = claim_run
         self._wake = threading.Event()
         self._lock = threading.RLock()
         self._thread: threading.Thread | None = None
@@ -150,20 +152,22 @@ class AutonomyScheduler:
                     return
                 self.store.materialize_due()
                 self._poll_web_changes()
-                if self.store.count_active_runs() < self.max_inflight:
+                if self._claim_run is not None:
+                    run = self._claim_run()
+                elif self.store.count_active_runs() < self.max_inflight:
                     run = self.store.claim_next_run(owner_id=self.host_id)
-                    if run is not None:
-                        with self._lock:
-                            if self._closed:
-                                return
-                        if self._dispatch_run is not None:
-                            # Dispatch is deliberately outside SQLite's claim
-                            # transaction. A process failure before the worker
-                            # starts leaves a durable dispatched row that the
-                            # next host safely requeues.
-                            self._dispatch_run(run.id)
-                        else:
-                            self.event_queue.put(("DURABLE_RUN_DUE", run.id))
+                else:
+                    run = None
+                if run is not None:
+                    with self._lock:
+                        if self._closed:
+                            return
+                    if self._dispatch_run is not None:
+                        # A failure before worker start leaves a dispatched
+                        # row that recovery can safely requeue.
+                        self._dispatch_run(run.id)
+                    else:
+                        self.event_queue.put(("DURABLE_RUN_DUE", run.id))
             except Exception as exc:
                 if self._closed or self.store.closed:
                     return
