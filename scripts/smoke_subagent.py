@@ -16,11 +16,11 @@ from wright.tests.responses import event, response
 
 from pathlib import Path
 
-from wright.agent import Agent
+from wright.engine.agent import Agent
 from wright.events import ContentDone
 from wright.renderer import SilentRenderer
-from wright.session import Session
-from wright.subagent import build_agent_tools, make_spawn_agent_tool
+from wright.domain.session import Session
+from wright.engine.subagent import build_agent_tools, make_spawn_agent_tool
 from wright.tools.base import Tool, ToolResult
 
 

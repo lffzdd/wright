@@ -4,10 +4,10 @@ import json
 from copy import deepcopy
 from pathlib import Path
 
-from wright.agent import Agent
-from wright.context import ContextBuilder, ContextCompactor
+from wright.domain.session import Session
+from wright.engine.agent import Agent
+from wright.engine.context import ContextBuilder, ContextCompactor
 from wright.renderer import SilentRenderer
-from wright.session import Session
 from wright.tools.base import ToolCall, ToolResult
 
 

@@ -2,7 +2,7 @@ from pathlib import Path
 
 from jsonschema import validators
 
-from ...session import Session
+from ...domain.session import Session
 from ...skills.registry import SkillRegistry
 from ...skills.store import write_skill
 from ...tools.base import tool_runtime_for_session

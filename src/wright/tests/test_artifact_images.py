@@ -6,11 +6,11 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from wright.agent import Agent
 from wright.artifacts import ArtifactStore
-from wright.checkpoint import SessionCheckpointStore
+from wright.domain.checkpoint import SessionCheckpointStore
+from wright.domain.session import Session
+from wright.engine.agent import Agent
 from wright.renderer import SilentRenderer
-from wright.session import Session
 from wright.tools.base import Tool, ToolResult
 from wright.tools.mcp_client import _to_tool_result
 

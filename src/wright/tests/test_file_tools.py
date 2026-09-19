@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 
-from ..session import Session
+from ..domain.session import Session
 from ..tools.base import tool_runtime_for_session
 from ..tools.file_tools import (
     FILE_UNCHANGED,

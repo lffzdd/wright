@@ -1,6 +1,6 @@
+from ...app.services import RuntimeServices
 from ...autonomy import AutonomyStore
-from ...services import RuntimeServices
-from ...session import Session
+from ...domain.session import Session
 from ...tools.autonomy_tools import (
     cancel_schedule_tool,
     get_schedule_tool,

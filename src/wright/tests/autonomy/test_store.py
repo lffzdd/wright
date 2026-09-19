@@ -3,6 +3,7 @@ import threading
 
 import pytest
 
+from ...app.services import RuntimeServices
 from ...autonomy import (
     AutonomyScheduler,
     AutonomyStore,
@@ -10,8 +11,7 @@ from ...autonomy import (
     TriggerSpec,
 )
 from ...autonomy.triggers import probe_public_web_page
-from ...services import RuntimeServices
-from ...session import Session
+from ...domain.session import Session
 from ...tasks import TaskService
 
 

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from ..agent import Agent
+from ..domain.session import Session
+from ..engine.agent import Agent
 from ..prompt import build_system_prompt
 from ..renderer import SilentRenderer
-from ..session import Session
 from ..tools.base import Tool, ToolResult, split_tool_catalog
 from ..tools.tool_search import make_tool_search_tool
 

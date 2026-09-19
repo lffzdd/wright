@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from wright.session import Session, UsageRecord
+from wright.domain.session import Session, UsageRecord
 from wright.tools.base import ToolCall, ToolResult
 
 

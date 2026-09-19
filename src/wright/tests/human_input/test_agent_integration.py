@@ -2,10 +2,10 @@
 
 from wright.tests.responses import event, response
 
-from ...agent import Agent
+from ...domain.session import Session
+from ...engine.agent import Agent
 from ...permission import PermissionCheckResult, PermissionResolver
 from ...renderer import SilentRenderer
-from ...session import Session
 from ...tools.ask_user_tool import ask_user_tool
 
 

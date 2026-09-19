@@ -1,4 +1,4 @@
-from ..executor import ToolExecutor
+from ..engine.executor import ToolExecutor
 from ..permission import PermissionCheckResult, PermissionResolver
 from ..tools.base import Tool, ToolCall, ToolResult
 

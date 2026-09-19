@@ -1,12 +1,12 @@
 import queue
 import threading
 
+from wright.app.services import RuntimeServices
 from wright.autonomy import AutonomyScheduler, AutonomyStore
-from wright.executor import ToolExecutor
-from wright.looping import SessionLoopRegistry
+from wright.domain.session import Session
+from wright.engine.executor import ToolExecutor
+from wright.engine.looping import SessionLoopRegistry
 from wright.permission import PermissionCheckResult, PermissionResolver
-from wright.services import RuntimeServices
-from wright.session import Session
 from wright.tools.autonomy_tools import autonomy_tools
 from wright.tools.base import ToolCall
 from wright.tools.loop_tools import manage_loop_tool

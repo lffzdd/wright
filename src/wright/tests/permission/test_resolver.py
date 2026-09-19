@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ...executor import ToolExecutor
+from ...engine.executor import ToolExecutor
 from ...permission import PermissionCheckResult, PermissionPolicy
 from ...tools.base import Tool, ToolCall, ToolResult
 from ...tools.command_tools import execute_command_tool

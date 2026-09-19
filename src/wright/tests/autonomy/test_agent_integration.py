@@ -3,18 +3,18 @@ import time
 
 from wright.tests.responses import event, response
 
-from ...agent import Agent
-from ...agent_background import AgentBackgroundRuntime
+from ...app.services import RuntimeServices
 from ...autonomy import AutonomyScheduler, AutonomyStore, TriggerSpec
 from ...autonomy.runner import _DurableToolJournal, launch_durable_run
 from ...capabilities import AgentProfile
+from ...domain.session import Session
+from ...engine.agent import Agent
+from ...engine.agent_background import AgentBackgroundRuntime
+from ...engine.subagent import build_agent_tools
 from ...permission import PermissionSettings
 from ...renderer import SilentRenderer
-from ...services import RuntimeServices
-from ...session import Session
 from ...skills.registry import SkillRegistry
 from ...skills.store import write_skill
-from ...subagent import build_agent_tools
 from ...tools.ask_user_tool import ask_user_tool
 from ...tools.autonomy_tools import autonomy_tools
 from ...tools.base import Tool, ToolResult

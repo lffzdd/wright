@@ -8,17 +8,17 @@ import pytest
 
 from wright.tests.responses import event, response
 
-from ...agent import Agent
-from ...checkpoint import SessionCheckpointStore
-from ...execution import LocalExecutionBackend
-from ...looping import (
+from ...domain.checkpoint import SessionCheckpointStore
+from ...domain.session import Session
+from ...engine.agent import Agent
+from ...engine.looping import (
     LoopError,
     SessionLoopRegistry,
     parse_interval,
     parse_loop_command,
 )
+from ...execution import LocalExecutionBackend
 from ...renderer import SilentRenderer
-from ...session import Session
 from ...tool_capabilities import RunScope, ToolCapabilities
 from ...tools.base import ToolRuntime
 from ...tools.loop_tools import manage_loop_tool

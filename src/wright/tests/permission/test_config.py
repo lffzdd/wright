@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from ...executor import ToolExecutor
+from ...engine.executor import ToolExecutor
 from ...permission import (
     PermissionCheckResult,
     PermissionResolver,

@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from ...checkpoint import CheckpointError, SessionCheckpointStore
-from ...session import Session
+from ...domain.checkpoint import CheckpointError, SessionCheckpointStore
+from ...domain.session import Session
 from ...skills.store import write_skill
 
 

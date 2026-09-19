@@ -1,9 +1,9 @@
 
 from wright.tests.responses import event, response
 
-from ...agent import Agent
+from ...domain.session import Session
+from ...engine.agent import Agent
 from ...renderer import SilentRenderer
-from ...session import Session
 from ...tools.plan_tools import create_plan_tool
 
 

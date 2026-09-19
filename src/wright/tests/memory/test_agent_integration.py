@@ -8,12 +8,12 @@ from pathlib import Path
 
 from wright.tests.responses import event, response
 
-from ...agent import Agent
+from ...domain.session import Session
+from ...engine.agent import Agent
 from ...events import UsageEvent
 from ...memory import MemoryManager
 from ...memory.store import write_memory_file
 from ...renderer import SilentRenderer
-from ...session import Session
 
 
 class _Usage:

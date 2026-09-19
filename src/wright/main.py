@@ -7,13 +7,13 @@ Wright 主入口：终端里的 coding agent。
 import os
 import sys
 
-from .repl import Repl
-from .runtime import (
+from .app.runtime import (
     assemble_runtime,
     load_env,
     parse_cli_args,
     runtime_config_from_args,
 )
+from .repl import Repl
 from .terminal import configure_terminal
 
 

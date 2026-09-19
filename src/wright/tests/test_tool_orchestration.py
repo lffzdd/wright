@@ -2,8 +2,8 @@ import threading
 import time
 from pathlib import Path
 
-from ..executor import ToolExecutor
-from ..session import Session
+from ..domain.session import Session
+from ..engine.executor import ToolExecutor
 from ..tasks import TaskNotFoundError, TaskService
 from ..tools.base import Tool, ToolCall, ToolResult, tool_runtime_for_session
 from ..tools.command_permissions import is_execute_command_concurrency_safe

@@ -1,8 +1,8 @@
 import queue
 
-from ..session import Session
-from ..session_host import _task_notification_event
-from ..subagent import build_agent_tools
+from ..app.event_dispatch import _task_notification_event
+from ..domain.session import Session
+from ..engine.subagent import build_agent_tools
 from ..tasks import TaskService
 from ..tools.base import tool_runtime_for_session
 from ..tools.command_tools import execute_command

@@ -2,10 +2,10 @@ from pathlib import Path
 
 from wright.tests.responses import event, response
 
-from ...agent import Agent
-from ...checkpoint import SessionCheckpointStore
+from ...domain.checkpoint import SessionCheckpointStore
+from ...domain.session import Session
+from ...engine.agent import Agent
 from ...renderer import SilentRenderer
-from ...session import Session
 from ...skills.registry import SkillRegistry
 from ...skills.store import write_skill
 from ...tools.skill_tools import build_skill_tools

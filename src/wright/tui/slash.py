@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..session_host import SlashCommand, slash_command_matches
+from ..app.event_dispatch import SlashCommand, slash_command_matches
 
 TUI_SLASH_COMMANDS = (
     SlashCommand("/new", "start a new session", "/new"),

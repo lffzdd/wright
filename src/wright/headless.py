@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 
-from .runtime import RuntimeConfig, assemble_runtime, shutdown_runtime
+from .app.runtime import RuntimeConfig, assemble_runtime, shutdown_runtime
 
 
 def run_headless_host(

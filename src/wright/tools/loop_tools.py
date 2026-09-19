@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..looping import LoopError, SessionLoopRegistry
+from ..engine.looping import LoopError, SessionLoopRegistry
 from .base import Tool, ToolResult, ToolRuntime
 
 

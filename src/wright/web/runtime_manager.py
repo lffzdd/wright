@@ -8,23 +8,23 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from ..application_host import ApplicationHost
-from ..attachments import AttachmentError, AttachmentRecord
-from ..autonomy import AutonomyNotFoundError, AutonomyStore
-from ..checkpoint import CheckpointError, SessionCheckpointStore
-from ..interaction import InteractionBroker
-from ..paths import project_id, session_dir, task_db_path
-from ..project import ProjectContext
-from ..renderer import SilentRenderer
-from ..runtime import (
+from ..app.application_host import ApplicationHost
+from ..app.event_dispatch import process_session_event
+from ..app.runtime import (
     WrightRuntime,
     assemble_runtime,
     runtime_config_from_args,
     shutdown_runtime,
 )
-from ..session_host import process_session_event
-from ..session_models import available_models, process_model_name
-from ..session_service import SessionService, SessionServiceError
+from ..app.session_service import SessionService, SessionServiceError
+from ..attachments import AttachmentError, AttachmentRecord
+from ..autonomy import AutonomyNotFoundError, AutonomyStore
+from ..domain.checkpoint import CheckpointError, SessionCheckpointStore
+from ..domain.session_models import available_models, process_model_name
+from ..interaction import InteractionBroker
+from ..paths import project_id, session_dir, task_db_path
+from ..project import ProjectContext
+from ..renderer import SilentRenderer
 from ..tools.base import ArtifactRef
 from ..ui_events import EventPublisher
 from ..worktrees import ArchiveResult, WorktreeManager

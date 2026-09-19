@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from wright.tests.responses import event, response
 
-from ..agent import Agent
+from ..domain.session import Session
+from ..engine.agent import Agent
 from ..protocol import encode_tools
 from ..renderer import SilentRenderer
-from ..session import Session
 from ..tools import tools as built_in_tools
 from ..tools.base import Tool, ToolResult, ToolRuntime
 from ..tools.tool_search import make_tool_search_tool
@@ -201,7 +201,7 @@ def test_builtin_capabilities_use_hybrid_loading():
 
 
 def test_web_memory_and_spawn_are_baseline():
-    from ..subagent import build_agent_tools
+    from ..engine.subagent import build_agent_tools
     from ..tools.memory_tools import build_memory_tools
 
     class UnusedLLM:

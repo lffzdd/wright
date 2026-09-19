@@ -2,14 +2,14 @@ import time
 
 from wright.tests.responses import event, response
 
-from ...agent import Agent
-from ...checkpoint import SessionCheckpointStore
-from ...coordination import AgentControlConfig, AgentControlPlane
+from ...domain.checkpoint import SessionCheckpointStore
+from ...domain.coordination import AgentControlConfig, AgentControlPlane
+from ...domain.session import Session
+from ...engine.agent import Agent
+from ...engine.executor import ToolExecutor
+from ...engine.subagent import build_agent_tools, make_spawn_agent_tool
 from ...events import UsageEvent
-from ...executor import ToolExecutor
 from ...renderer import SilentRenderer
-from ...session import Session
-from ...subagent import build_agent_tools, make_spawn_agent_tool
 from ...tools.base import ToolCall, tool_runtime_for_session
 from ...tools.command_tools import execute_command
 

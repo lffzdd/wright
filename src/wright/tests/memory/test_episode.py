@@ -4,6 +4,7 @@ import pytest
 
 from wright.tests.responses import event
 
+from ...domain.session import Session, UsageRecord
 from ...memory.episode import (
     EpisodeNotFoundError,
     EpisodeStore,
@@ -11,7 +12,6 @@ from ...memory.episode import (
     episode_from_session,
 )
 from ...memory.recall import build_recall_block
-from ...session import Session, UsageRecord
 from ...tools.base import ToolCall, ToolResult
 from ...tools.episode_tools import build_episode_tools
 

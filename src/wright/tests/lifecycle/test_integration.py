@@ -4,11 +4,11 @@ import pytest
 
 from wright.tests.responses import event, response
 
-from ...agent import Agent
-from ...lifecycle import HookRegistration, LifecycleManager, TraceRecorder
+from ...app.lifecycle import HookRegistration, LifecycleManager, TraceRecorder
+from ...domain.session import Session
+from ...engine.agent import Agent
+from ...engine.subagent import make_spawn_agent_tool
 from ...renderer import SilentRenderer
-from ...session import Session
-from ...subagent import make_spawn_agent_tool
 from ...tools.base import Tool, ToolResult, tool_runtime_for_session
 
 

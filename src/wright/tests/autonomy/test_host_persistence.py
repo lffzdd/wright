@@ -5,13 +5,13 @@ import pytest
 
 from wright.tests.responses import event, response
 
-from ...agent import Agent
-from ...application_host import ApplicationHost
+from ...app.application_host import ApplicationHost
 from ...autonomy import AutonomyStore, AutonomyStoreError, TriggerSpec
-from ...executor import ToolExecutor
+from ...domain.session import Session
+from ...engine.agent import Agent
+from ...engine.executor import ToolExecutor
 from ...permission import PermissionSettings
 from ...renderer import SilentRenderer
-from ...session import Session
 from ...tools.base import Tool, ToolCall, ToolResult
 
 

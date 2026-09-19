@@ -4,14 +4,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from wright.interaction import InteractionHub
-from wright.renderer import SilentRenderer, collect_history_pairs
-from wright.runtime import _trusted_mcp_config_paths, parse_cli_args
-from wright.session_host import (
+from wright.app.event_dispatch import (
     dispatch_slash,
     process_session_event,
     slash_command_matches,
 )
+from wright.app.runtime import _trusted_mcp_config_paths, parse_cli_args
+from wright.interaction import InteractionHub
+from wright.renderer import SilentRenderer, collect_history_pairs
 from wright.tools.base import ToolCall, ToolResult
 from wright.tui import app as tui_app_module
 from wright.tui.app import WrightTUI, _context_ring, require_interactive_tty

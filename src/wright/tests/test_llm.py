@@ -5,15 +5,15 @@ import httpx
 import pytest
 from openai import OpenAI
 
-from ..agent import Agent
 from ..attachments import AttachmentStore
+from ..domain.session import Session
+from ..engine.agent import Agent
 from ..events import ContentDone, UsageEvent
 from ..llm import LLMClient
 from ..memory.llm_util import side_query
 from ..model import ModelRequest
 from ..protocol import TurnAbort, parse_turn
 from ..renderer import SilentRenderer
-from ..session import Session
 from ..tools.base import Tool, ToolResult
 
 

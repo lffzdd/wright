@@ -3,14 +3,14 @@ import sys
 import threading
 import time
 
-from ...executor import ToolExecutor
-from ...lifecycle import (
+from ...app.lifecycle import (
     HookDecision,
     HookRegistration,
     LifecycleManager,
     TraceRecorder,
     load_lifecycle_manager,
 )
+from ...engine.executor import ToolExecutor
 from ...tools.base import Tool, ToolCall, ToolResult
 
 

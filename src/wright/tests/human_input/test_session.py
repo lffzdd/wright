@@ -1,5 +1,5 @@
 
-from ...session import Session
+from ...domain.session import Session
 
 
 def test_session_lifecycle_is_independent_of_run_status(tmp_path):

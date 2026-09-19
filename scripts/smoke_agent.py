@@ -19,11 +19,11 @@ from types import SimpleNamespace
 _TMP = tempfile.TemporaryDirectory(prefix="wright-test-", ignore_cleanup_errors=True)
 _WORKSPACE = Path(_TMP.name)
 
-from wright.agent import Agent
+from wright.engine.agent import Agent
 from wright.events import ContentDelta, ContentDone, UsageEvent
 from wright.llm import LLMClient
 from wright.renderer import SilentRenderer
-from wright.session import Session, UsageRecord
+from wright.domain.session import Session, UsageRecord
 from wright.tools.base import Tool, ToolCall, ToolResult, ToolRuntime
 
 

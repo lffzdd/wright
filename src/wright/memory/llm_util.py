@@ -7,9 +7,9 @@ selector(召回选择)和 extractor(记忆提取)都需要「给一组消息、�
 
 from __future__ import annotations
 
+from ..domain.session import UsageRecord
 from ..events import ContentDone, UsageEvent
 from ..llm import LLMClient
-from ..session import UsageRecord
 
 
 def side_query(llm: LLMClient, system: str, user: str) -> str:

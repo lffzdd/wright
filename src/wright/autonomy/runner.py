@@ -12,10 +12,16 @@ from copy import copy
 from dataclasses import dataclass
 from typing import Any
 
-from ..agent import Agent
-from ..agent_background import AgentBackgroundRuntime
+from ..app.services import RuntimeServices
 from ..capabilities import AgentProfile
-from ..coordination import AgentControlError, AgentControlPlane
+from ..domain.coordination import AgentControlError, AgentControlPlane
+from ..domain.session import Session, UsageRecord
+from ..engine.agent import Agent
+from ..engine.agent_background import AgentBackgroundRuntime
+from ..engine.subagent import (
+    _child_base_tools,
+    build_agent_tools,
+)
 from ..llm import LLMClient, resolve_transport
 from ..logger import get_logger
 from ..permission import (
@@ -26,12 +32,6 @@ from ..permission import (
     RuleBasedApprovalHandler,
 )
 from ..renderer import SilentRenderer
-from ..services import RuntimeServices
-from ..session import Session, UsageRecord
-from ..subagent import (
-    _child_base_tools,
-    build_agent_tools,
-)
 from ..tools.base import Tool
 from .models import DurableRunRecord
 from .scheduler import AutonomyScheduler

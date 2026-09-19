@@ -43,7 +43,7 @@ def _make_background_task(
     on_done: Callable[[], None] | None = None,
 ):
     # 延迟导入避免 session -> tools.base -> tools.__init__ -> command_tools 的环。
-    from ..session import BackgroundTask
+    from ..domain.session import BackgroundTask
 
     task = BackgroundTask(
         task_id=task_id,

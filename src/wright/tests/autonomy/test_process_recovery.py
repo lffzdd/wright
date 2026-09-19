@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from ...application_host import ApplicationHost
+from ...app.application_host import ApplicationHost
 from ...autonomy import AutonomyStore
 from ...permission import PermissionSettings
 from ...tests.autonomy.test_host_persistence import ScriptLLM
@@ -61,7 +61,7 @@ def test_real_process_command_crash_windows_are_recovered_honestly(
         from types import SimpleNamespace
         from wright.autonomy import AutonomyStore, TriggerSpec
         from wright.interaction import InteractionBroker
-        from wright.session_service import SessionService
+        from wright.app.session_service import SessionService
         from wright.ui_events import EventPublisher
 
         from pathlib import Path
@@ -127,7 +127,7 @@ def test_real_process_command_crash_windows_are_recovered_honestly(
         seen.set()
         return False
 
-    from ...session_service import SessionService
+    from ...app.session_service import SessionService
 
     service = SessionService(runtime, event_processor=consume, shutdown=lambda _rt: None)
     service.start()
@@ -170,7 +170,7 @@ def test_real_host_process_lock_is_released_for_takeover_after_crash(tmp_path):
     child = r'''
         import sys
         from pathlib import Path
-        from wright.application_host import ApplicationHost
+        from wright.app.application_host import ApplicationHost
         from wright.autonomy import AutonomyStore, TriggerSpec
         from wright.permission import PermissionSettings
         class Fake:
@@ -227,7 +227,7 @@ def test_real_process_child_agent_side_effect_becomes_unknown_without_replay(tmp
     child = r'''
         import sys, time
         from pathlib import Path
-        from wright.application_host import ApplicationHost
+        from wright.app.application_host import ApplicationHost
         from wright.autonomy import AutonomyStore, TriggerSpec
         from wright.permission import PermissionSettings
         from wright.tests.responses import event, response

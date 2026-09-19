@@ -5,7 +5,7 @@ from __future__ import annotations
 from argparse import Namespace
 from dataclasses import dataclass
 
-from ..session_models import available_models, process_model_name
+from ..domain.session_models import available_models, process_model_name
 
 __all__ = ["SessionControlRequest", "available_models", "process_model_name", "runtime_args_for_transition"]
 

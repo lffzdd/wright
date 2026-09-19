@@ -4,14 +4,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from wright.agent import Agent
 from wright.artifacts import ArtifactStore
 from wright.capabilities import AgentProfile, CapabilityCatalog, CapabilityError
-from wright.checkpoint import SessionCheckpointStore
+from wright.domain.checkpoint import SessionCheckpointStore
+from wright.domain.session import Session
+from wright.engine.agent import Agent
+from wright.engine.executor import ToolExecutor
 from wright.execution import LocalExecutionBackend
-from wright.executor import ToolExecutor
 from wright.renderer import SilentRenderer
-from wright.session import Session
 from wright.tests.responses import response
 from wright.tools.base import Tool, ToolCall, ToolResult, tool_runtime_for_session
 from wright.tools.command_tools import execute_command
@@ -172,7 +172,7 @@ def test_production_tools_cannot_reach_session_or_service_containers():
     root = Path(__file__).parents[1]
     sources = [
         *sorted((root / "tools").glob("*.py")),
-        root / "subagent.py",
+        root / "engine" / "subagent.py",
     ]
     forbidden = ("runtime.session_state", "runtime.services")
     offenders = {

@@ -4,10 +4,10 @@ import pytest
 
 from wright.tests.responses import event, response
 
-from ..agent import Agent
-from ..checkpoint import CheckpointError, SessionCheckpointStore
+from ..domain.checkpoint import CheckpointError, SessionCheckpointStore
+from ..domain.session import Session, UsageRecord
+from ..engine.agent import Agent
 from ..renderer import SilentRenderer
-from ..session import Session, UsageRecord
 from ..tools.base import ArtifactRef, ToolCall, ToolResult
 from ..util import build_tool_results_messages
 
@@ -208,7 +208,7 @@ def test_unknown_checkpoint_version_is_rejected(tmp_path):
 
 
 def test_phase_two_v5_checkpoint_loads_without_request_context_estimate(tmp_path):
-    from wright.checkpoint import _deserialize_session, _serialize_session
+    from wright.domain.checkpoint import _deserialize_session, _serialize_session
 
     session = _populated_session(tmp_path)
     payload = _serialize_session(session)

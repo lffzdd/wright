@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ...executor import ToolExecutor
+from ...engine.executor import ToolExecutor
 from ...permission import (
     FallbackApprovalHandler,
     InteractiveApprovalHandler,

@@ -17,14 +17,14 @@ from .processes import RuntimeResources
 from .tasks import TaskService
 
 if TYPE_CHECKING:
-    from .agent_background import AgentBackgroundRuntime
+    from .app.services import RuntimeServices
     from .autonomy.scheduler import AutonomyScheduler
     from .autonomy.store import AutonomyStore
-    from .coordination import AgentControlPlane
-    from .looping import SessionLoopRegistry
+    from .domain.coordination import AgentControlPlane
+    from .domain.session import BackgroundTask, Session
+    from .engine.agent_background import AgentBackgroundRuntime
+    from .engine.looping import SessionLoopRegistry
     from .planning import PlanManager
-    from .services import RuntimeServices
-    from .session import BackgroundTask, Session
 
 
 @dataclass(frozen=True)

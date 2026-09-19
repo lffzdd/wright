@@ -5,13 +5,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from wright.autonomy import AutonomyStore
-from wright.interaction import InteractionBroker
-from wright.session_service import (
+from wright.app.session_service import (
     SessionClosedError,
     SessionService,
     SessionServiceError,
 )
+from wright.autonomy import AutonomyStore
+from wright.interaction import InteractionBroker
 from wright.ui_events import EventPublisher
 
 

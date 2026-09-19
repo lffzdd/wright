@@ -6,10 +6,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from ..domain.session import Session
 from ..interaction import InteractionBroker
 from ..processes import RuntimeResources
 from ..project import ProjectContext
-from ..session import Session
 from ..tools.base import ArtifactRef, ToolCall, ToolResult
 from ..ui_events import EventPublisher
 from ..web import runtime_manager as runtime_module
@@ -371,7 +371,7 @@ def test_project_exposes_configured_models_not_a_hardcoded_default(monkeypatch, 
 
 
 def test_closed_local_session_can_be_replaced_without_losing_its_schedules(monkeypatch, tmp_path):
-    from .. import runtime as assembly
+    from ..app import runtime as assembly
     from ..autonomy import TriggerSpec
     from .responses import response
 
