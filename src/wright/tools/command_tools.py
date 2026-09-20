@@ -247,13 +247,27 @@ def execute_command(
     if cwd_result and capabilities.set_cwd is not None:
         capabilities.set_cwd(cwd_result[0])
 
+    reset_cwd = False
+    current = capabilities.execution.cwd()
+    if not capabilities.execution.access.contains(current):
+        origin = capabilities.execution.workspace_dir
+        if capabilities.set_cwd is not None:
+            capabilities.set_cwd(origin)
+            reset_cwd = True
+
     with output_lock:
         output = "".join(output_lines)
     if len(output) > MAX_OUTPUT_CHARS:
         output = f"[...truncated, showing tail]\n{output[-MAX_OUTPUT_CHARS:]}"
 
     returncode = proc.returncode
-    data = result_data({"returncode": returncode, "output": output})
+    payload = {"returncode": returncode, "output": output}
+    if reset_cwd:
+        payload["cwd_reset"] = True
+        payload["message"] = (
+            f"Shell cwd was reset to {capabilities.execution.workspace_dir}"
+        )
+    data = result_data(payload)
 
     if returncode == 0:
         return ToolResult.success(data)
@@ -261,13 +275,7 @@ def execute_command(
 
 
 def _format_cwd(capabilities) -> str:
-    cwd = capabilities.execution.cwd()
-    workspace = capabilities.execution.workspace_dir
-    try:
-        relative = cwd.relative_to(workspace)
-        return str(relative) if str(relative) != "." else "."
-    except ValueError:
-        return str(cwd)
+    return capabilities.execution.display_path(capabilities.execution.cwd())
 
 
 def _consume_cwd_file(cwd_file: Path) -> Path | None:

@@ -183,6 +183,9 @@ def _serialize_session(session: Session) -> dict[str, Any]:
             "workspace_dir": str(session.workspace_dir),
             "cwd": str(session.get_cwd()),
             "project_root": str(session.project_root or session.workspace_dir),
+            "additional_working_directories": [
+                str(path) for path in session.additional_working_directories
+            ],
             "environment": session.environment,
             "base_commit": session.base_commit,
             "branch_name": session.branch_name,
@@ -314,7 +317,13 @@ def _deserialize_session(payload: Any) -> Session:
     if not workspace_dir.is_dir():
         raise CheckpointError(f"workspace_dir 不存在: {workspace_dir}")
     saved_cwd = Path(_string(data.get("cwd"), "cwd")).resolve()
+    additional_working_directories = _deserialize_additional_directories(
+        data.get("additional_working_directories", []),
+        workspace_dir,
+    )
     cwd = saved_cwd if saved_cwd.is_dir() else workspace_dir
+    if not _cwd_in_granted_roots(cwd, workspace_dir, additional_working_directories):
+        cwd = workspace_dir
     project_root_value = data.get("project_root")
     project_root = (
         Path(_string(project_root_value, "project_root")).resolve()
@@ -414,6 +423,7 @@ def _deserialize_session(payload: Any) -> Session:
         workspace_dir=workspace_dir,
         cwd=cwd,
         project_root=project_root,
+        additional_working_directories=additional_working_directories,
         environment=environment,
         base_commit=base_commit,
         branch_name=branch_name,
@@ -808,6 +818,33 @@ def _message_param(value: dict[str, Any]) -> dict[str, Any]:
     if value.get("role") not in _MESSAGE_ROLES:
         raise CheckpointError(f"非法 message role: {value.get('role')}")
     return value
+
+
+def _deserialize_additional_directories(
+    value: Any, workspace_dir: Path
+) -> list[Path]:
+    if value in (None, []):
+        return []
+    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+        raise CheckpointError("additional_working_directories 必须是非空字符串数组")
+    unique: list[Path] = []
+    seen: set[Path] = {workspace_dir.resolve()}
+    for item in value:
+        resolved = Path(item).expanduser().resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique.append(resolved)
+    return unique
+
+
+def _cwd_in_granted_roots(
+    cwd: Path, workspace_dir: Path, additional: list[Path]
+) -> bool:
+    from ..access import is_under
+
+    resolved = cwd.resolve()
+    return any(is_under(resolved, root) for root in (workspace_dir, *additional))
 
 
 def _optional_string(value: Any, field: str) -> str | None:

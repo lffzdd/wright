@@ -8,9 +8,11 @@ from ...permission import (
     PermissionRule,
     PermissionSettings,
     RuleBasedApprovalHandler,
+    append_additional_directory,
     append_allow_rule,
     load_permission_settings,
 )
+from ...tools.file_tools import write_file_tool
 from ...tools.base import Tool, ToolCall, ToolResult
 
 
@@ -189,9 +191,9 @@ def test_accept_edits_allows_file_writes_only(tmp_path):
     ).ok
 
 
-# ── 系统边界:越出 workspace 任何模式都拒 ─────────────────────────────────────
+# ── cwd 越出 granted roots 不再一票否决 origin 内写入 ─────────────────────────
 
-def test_cwd_outside_workspace_denied_even_in_bypass(tmp_path):
+def test_cwd_outside_granted_roots_does_not_deny_in_origin_write(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     settings = PermissionSettings.from_dict({"mode": "bypass", "permissions": {}})
@@ -199,14 +201,21 @@ def test_cwd_outside_workspace_denied_even_in_bypass(tmp_path):
         approval_handler=RuleBasedApprovalHandler(settings)
     )
     executor = ToolExecutor(
-        {"write_file": _ask_tool("write_file", ("writes_files",))},
+        {"write_file": write_file_tool},
         workspace_dir=workspace,
-        cwd_provider=lambda: tmp_path,  # cwd 在 workspace 之外
+        cwd_provider=lambda: tmp_path,
         permission_resolver=resolver,
     )
-    result = _run(executor, ToolCall("write_file", {"file": "a.txt"}, "c1"))
-    assert not result.ok
-    assert "workspace" in result.data["permission"]["reason"]
+    result = _run(
+        executor,
+        ToolCall(
+            "write_file",
+            {"file": "workspace/a.txt", "content": "hello\n"},
+            "c1",
+        ),
+    )
+    assert result.ok
+    assert (workspace / "a.txt").read_text(encoding="utf-8") == "hello\n"
 
 
 # ── 配置加载 ──────────────────────────────────────────────────────────────────
@@ -302,6 +311,33 @@ def test_append_allow_rule_creates_missing_file(tmp_path):
     append_allow_rule("write_file", cfg)
     assert cfg.is_file()
     assert load_permission_settings(cfg).allow[0].tool_name == "write_file"
+
+
+def test_additional_directories_load_and_persist(tmp_path):
+    extra = tmp_path / "extra"
+    extra.mkdir()
+    cfg = tmp_path / "perm.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "mode": "default",
+                "permissions": {
+                    "allow": [],
+                    "additionalDirectories": [str(extra)],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    settings = load_permission_settings(cfg)
+    assert settings.additional_directories == [str(extra)]
+
+    sibling = tmp_path / "other"
+    sibling.mkdir()
+    append_additional_directory(str(sibling), cfg)
+    append_additional_directory(str(sibling), cfg)
+    reloaded = load_permission_settings(cfg)
+    assert reloaded.additional_directories == [str(extra), str(sibling.resolve())]
 
 
 def test_user_permission_file_overrides_packaged_defaults(tmp_path, monkeypatch):

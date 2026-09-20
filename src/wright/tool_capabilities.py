@@ -117,7 +117,16 @@ def assemble_tool_capabilities(
     resources = runtime_resources
     if resources is None and session is not None:
         resources = RuntimeResources.for_session(session.session_id)
-    backend = execution_backend or LocalExecutionBackend(workspace, cwd)
+    additional = ()
+    if session is not None:
+        additional = tuple(getattr(session, "additional_working_directories", ()) or ())
+    backend = execution_backend or LocalExecutionBackend(
+        workspace, cwd, additional=additional
+    )
+    if execution_backend is not None and session is not None:
+        execution_backend.sync_additional(
+            getattr(session, "additional_working_directories", ()) or ()
+        )
     if session is None:
         scope = RunScope("")
         return ToolCapabilities(scope, backend), resources

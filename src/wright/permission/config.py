@@ -10,14 +10,13 @@ Tool.check_permission 只会把有副作用的工具(写文件/改文件/跑命�
 
 判定顺序(fail-closed:拿不准就拒)
 ----------------------------------
-1. 系统边界:带 `cwd_outside_workspace` 风险的一律拒(越出 workspace 不容商量)。
-2. deny 规则命中 → 拒(deny 永远压过 allow)。
-3. 权限模式特判:
-   - bypass     → 放行(只受 deny 与系统边界约束),给可信无人值守。
+1. deny 规则命中 → 拒(deny 永远压过 allow)。
+2. 权限模式特判:
+   - bypass     → 放行(只受 deny 约束),给可信无人值守。
    - plan       → 拒一切有副作用的调用(能走到这里的本就都带副作用)。
    - acceptEdits→ 风险只涉及读写本地文件(无 shell/网络)时自动放行。
-4. allow 规则命中 → 放行。
-5. 都没命中 → 拒,并在 reason 里说明"没有匹配的 allow 规则"。
+3. allow 规则命中 → 放行。
+4. 都没命中 → 拒,并在 reason 里说明"没有匹配的 allow 规则"。
 
 规则字符串语法
 --------------
@@ -49,9 +48,6 @@ _VALID_MODES = ("default", "acceptEdits", "bypass", "plan")
 # acceptEdits 只为"本地文件读写"开绿灯:风险标志全落在这个集合内才算"纯编辑"。
 # 一旦掺入 shell/网络/git 等更重的副作用,就不在 acceptEdits 的自动放行范围。
 _EDIT_ONLY_FLAGS = frozenset({"reads_files", "writes_files"})
-
-# 走到 handler 的调用本就都带副作用;这个标志表示"系统边界被破坏",任何模式都不放行。
-_HARD_DENY_FLAG = "cwd_outside_workspace"
 
 
 @dataclass(frozen=True)
@@ -95,6 +91,7 @@ class PermissionSettings:
     allow: list[PermissionRule] = field(default_factory=list)
     deny: list[PermissionRule] = field(default_factory=list)
     ask: list[PermissionRule] = field(default_factory=list)
+    additional_directories: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict) -> PermissionSettings:
@@ -109,6 +106,10 @@ class PermissionSettings:
             allow=[PermissionRule.parse(r) for r in perms.get("allow", [])],
             deny=[PermissionRule.parse(r) for r in perms.get("deny", [])],
             ask=[PermissionRule.parse(r) for r in perms.get("ask", [])],
+            additional_directories=[
+                str(item) for item in perms.get("additionalDirectories", [])
+                if isinstance(item, str) and item.strip()
+            ],
         )
 
 
@@ -168,6 +169,27 @@ def append_allow_rule(rule: str, path: Path | None = None) -> None:
         )
 
 
+def append_additional_directory(directory: str, path: Path | None = None) -> None:
+    """Append an extra working directory to permissions.additionalDirectories."""
+    target = path or default_settings_path()
+    resolved = str(Path(directory).expanduser().resolve())
+    if target.is_file():
+        data = json.loads(target.read_text(encoding="utf-8"))
+    elif path is None and _packaged_path().is_file():
+        data = json.loads(_packaged_path().read_text(encoding="utf-8"))
+    else:
+        data = {"mode": "default", "permissions": {"allow": [], "deny": []}}
+
+    perms = data.setdefault("permissions", {})
+    extra = perms.setdefault("additionalDirectories", [])
+    if resolved not in extra:
+        extra.append(resolved)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+
+
 def _env_path() -> Path | None:
     raw = os.getenv("WRIGHT_PERMISSION_CONFIG")
     return Path(raw).expanduser().resolve() if raw else None
@@ -207,11 +229,7 @@ class RuleBasedApprovalHandler:
         subject = _subject_of(tool_name, request.arguments)
         flags = request.check.risk_flags
 
-        # 1. 系统边界:越出 workspace,任何模式都不放行。
-        if _HARD_DENY_FLAG in flags:
-            return self._deny(request, "越出 workspace 边界,拒绝执行")
-
-        # 2. deny 规则压过一切。
+        # 1. deny 规则压过一切。
         if self._any_match(self.settings.deny, tool_name, subject):
             return self._deny(request, f"命中 deny 规则: {tool_name}({subject})")
 
@@ -224,6 +242,8 @@ class RuleBasedApprovalHandler:
                 f"命中 ask 规则,需确认: {tool_name}({subject})",
                 request.check.risk_flags,
                 source="rule_config",
+                added_directories=request.check.added_directories,
+                invocation_paths=request.check.invocation_paths,
             )
 
         mode = self.settings.mode
@@ -251,7 +271,12 @@ class RuleBasedApprovalHandler:
         reason = f"无匹配的 allow 规则({mode} 模式): {tool_name}({subject})"
         if self.on_no_match == "ask":
             return PermissionCheckResult(
-                "ask", reason, request.check.risk_flags, source="rule_config"
+                "ask",
+                reason,
+                request.check.risk_flags,
+                source="rule_config",
+                added_directories=request.check.added_directories,
+                invocation_paths=request.check.invocation_paths,
             )
         return self._deny(request, reason + ",默认拒绝")
 
@@ -264,7 +289,11 @@ class RuleBasedApprovalHandler:
     @staticmethod
     def _allow(request: PermissionRequest, reason: str) -> PermissionCheckResult:
         return PermissionCheckResult(
-            "allow", reason, request.check.risk_flags, source="rule_config"
+            "allow",
+            reason,
+            request.check.risk_flags,
+            source="rule_config",
+            invocation_paths=request.check.invocation_paths,
         )
 
     @staticmethod

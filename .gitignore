@@ -17,3 +17,4 @@ web/*.tsbuildinfo
 .cursorindexingignore
 .specstory
 .design-qa/
+.cursor/

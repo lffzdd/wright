@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from ...engine.executor import ToolExecutor
+from ...domain.session import Session
 from ...permission import (
     FallbackApprovalHandler,
     InteractiveApprovalHandler,
@@ -11,6 +12,7 @@ from ...permission import (
 )
 from ...renderer import SilentRenderer
 from ...tools.base import Tool, ToolCall, ToolResult
+from ...tools.file_tools import edit_file_tool, read_file_tool, write_file_tool
 
 
 def _ask_tool(name: str, risk_flags: tuple[str, ...] = ()) -> Tool:
@@ -156,6 +158,70 @@ def test_always_scope_does_not_cover_a_different_directory(tmp_path):
     assert _run(executor, ToolCall("write_file", {"file": "src/a.txt"}, "c1")).ok
     assert not _run(executor, ToolCall("write_file", {"file": "tests/b.txt"}, "c2")).ok
     assert len(renderer.prompts) == 2
+
+
+def test_always_on_outside_file_grants_parent_directory(tmp_path):
+    workspace = tmp_path / "workspace"
+    extra = tmp_path / "extra"
+    workspace.mkdir()
+    extra.mkdir()
+    session = Session.create("outside grant", workspace)
+    renderer = _MockRenderer("a", "y")
+    remembered_rules: list[str] = []
+    remembered_dirs: list[str] = []
+    handler = FallbackApprovalHandler(
+        RuleBasedApprovalHandler(
+            PermissionSettings.from_dict({"mode": "default", "permissions": {}}),
+            on_no_match="ask",
+        ),
+        InteractiveApprovalHandler(
+            renderer,
+            on_remember=remembered_rules.append,
+            on_remember_directory=remembered_dirs.append,
+        ),
+    )
+    executor = ToolExecutor(
+        {
+            write_file_tool.name: write_file_tool,
+            read_file_tool.name: read_file_tool,
+            edit_file_tool.name: edit_file_tool,
+        },
+        workspace_dir=workspace,
+        cwd_provider=session.get_cwd,
+        session=session,
+        permission_resolver=PermissionResolver(approval_handler=handler),
+    )
+
+    written = _run(
+        executor,
+        ToolCall(
+            "write_file",
+            {"file": str(extra / "a.txt"), "content": "old line\n"},
+            "c1",
+        ),
+    )
+    assert written.ok
+    assert remembered_rules == []
+    assert remembered_dirs == [str(extra.resolve())]
+    assert extra.resolve() in session.additional_working_directories
+
+    assert _run(
+        executor, ToolCall("read_file", {"file": str(extra / "a.txt")}, "c2")
+    ).ok
+    edited = _run(
+        executor,
+        ToolCall(
+            "edit_file",
+            {
+                "file": str(extra / "a.txt"),
+                "old_text": "old line\n",
+                "new_text": "new line\n",
+            },
+            "c3",
+        ),
+    )
+    assert edited.ok
+    assert extra.joinpath("a.txt").read_text(encoding="utf-8") == "new line\n"
 
 
 # ── 高风险不提供 a;输 a 当作未知输入被拒 ─────────────────────────────────────

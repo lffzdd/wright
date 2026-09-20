@@ -4,7 +4,14 @@ import os
 from dataclasses import replace
 
 from ..domain.session import Session
-from ..tools.base import tool_runtime_for_session
+from ..engine.executor import ToolExecutor
+from ..permission import (
+    PermissionCheckResult,
+    PermissionResolver,
+    PermissionSettings,
+    RuleBasedApprovalHandler,
+)
+from ..tools.base import ToolCall, tool_runtime_for_session
 from ..tools.file_tools import (
     FILE_UNCHANGED,
     FileView,
@@ -15,7 +22,9 @@ from ..tools.file_tools import (
     grep_files,
     list_directory,
     read_file,
+    read_file_tool,
     write_file,
+    write_file_tool,
 )
 
 
@@ -72,7 +81,7 @@ def test_read_file_supports_line_ranges_and_continuation(tmp_path):
     assert continued.data["content"] == "2|o\n3|three\n"
 
 
-def test_relative_file_paths_follow_session_cwd_but_stay_in_workspace(tmp_path):
+def test_relative_file_paths_follow_session_cwd(tmp_path):
     nested = tmp_path / "nested"
     nested.mkdir()
     (nested / "a.txt").write_text("inside", encoding="utf-8")
@@ -80,13 +89,140 @@ def test_relative_file_paths_follow_session_cwd_but_stay_in_workspace(tmp_path):
     runtime.capabilities.set_cwd(nested)
 
     result = read_file("a.txt", runtime=runtime)
-    escaped = read_file("../../outside.txt", runtime=runtime)
+    ungranted = read_file("../../outside.txt", runtime=runtime)
 
     assert result.ok and result.data["content"] == "1|inside"
-    assert not escaped.ok and "Unsafe path" in escaped.err
+    assert not ungranted.ok and "Unsafe path" in ungranted.err
 
 
-def test_edit_file_replaces_unique_text_and_rejects_escape(tmp_path):
+def test_once_allow_writes_outside_via_invocation_path(tmp_path):
+    workspace = tmp_path / "workspace"
+    extra = tmp_path / "extra"
+    workspace.mkdir()
+    extra.mkdir()
+    runtime = _runtime(workspace)
+    target = extra / "a.txt"
+    runtime.capabilities.execution.set_invocation_paths([target])
+
+    result = write_file(str(target), "hello\n", runtime=runtime)
+
+    assert result.ok
+    assert target.read_text(encoding="utf-8") == "hello\n"
+    assert result.data["file"] == str(target.resolve())
+
+
+def test_granted_extra_root_allows_edit_and_glob_with_absolute_paths(tmp_path):
+    workspace = tmp_path / "workspace"
+    extra = tmp_path / "extra"
+    workspace.mkdir()
+    extra.mkdir()
+    (extra / "a.txt").write_text("old line\n", encoding="utf-8")
+    session = Session.create("extra root", workspace)
+    session.add_working_directory(extra)
+    runtime = tool_runtime_for_session(session, workspace_dir=workspace)
+
+    assert read_file(str(extra / "a.txt"), runtime=runtime).ok
+    edited = edit_file(str(extra / "a.txt"), "old line\n", "new line\n", runtime=runtime)
+    listed = glob_files("*.txt", directory=str(extra), runtime=runtime)
+
+    assert edited.ok and edited.data["replacements"] == 1
+    assert extra.joinpath("a.txt").read_text(encoding="utf-8") == "new line\n"
+    assert listed.ok
+    assert listed.data["matches"] == [
+        {"path": str((extra / "a.txt").resolve()), "type": "file"}
+    ]
+
+
+def test_read_outside_asks_until_permission_allows(tmp_path):
+    workspace = tmp_path / "workspace"
+    extra = tmp_path / "extra"
+    workspace.mkdir()
+    extra.mkdir()
+    (extra / "a.txt").write_text("secret\n", encoding="utf-8")
+    session = Session.create("read outside", workspace)
+    denied = _file_executor(
+        session, [read_file_tool]
+    ).execute([ToolCall("read_file", {"file": str(extra / "a.txt")}, "c1")])[0].result
+    allowed = _file_executor(
+        session,
+        [read_file_tool],
+        handler=lambda request: PermissionCheckResult(
+            "allow",
+            "once",
+            request.check.risk_flags,
+            source="user",
+            invocation_paths=request.check.invocation_paths,
+        ),
+    ).execute([ToolCall("read_file", {"file": str(extra / "a.txt")}, "c2")])[0].result
+
+    assert not denied.ok
+    assert "path_outside_workspace" in denied.data["permission"]["risk_flags"]
+    assert allowed.ok
+    assert allowed.data["content"] == "1|secret\n"
+
+
+def test_always_allow_outside_write_then_edit_in_same_extra_root(tmp_path):
+    workspace = tmp_path / "workspace"
+    extra = tmp_path / "extra"
+    workspace.mkdir()
+    extra.mkdir()
+    session = Session.create("always extra", workspace)
+
+    def grant_then_allow(request):
+        return PermissionCheckResult(
+            "allow",
+            "grant extra root",
+            request.check.risk_flags,
+            source="user",
+            added_directories=request.check.added_directories,
+            invocation_paths=request.check.invocation_paths,
+        )
+
+    executor = _file_executor(
+        session, [write_file_tool, read_file_tool, edit_file_tool], handler=grant_then_allow
+    )
+    written = executor.execute([
+        ToolCall(
+            "write_file",
+            {"file": str(extra / "a.txt"), "content": "old line\n"},
+            "c1",
+        )
+    ])[0].result
+    read = executor.execute([
+        ToolCall("read_file", {"file": str(extra / "a.txt")}, "c2")
+    ])[0].result
+    edited = executor.execute([
+        ToolCall(
+            "edit_file",
+            {
+                "file": str(extra / "a.txt"),
+                "old_text": "old line\n",
+                "new_text": "new line\n",
+            },
+            "c3",
+        )
+    ])[0].result
+
+    assert written.ok and read.ok and edited.ok
+    assert extra.resolve() in session.additional_working_directories
+    assert extra.joinpath("a.txt").read_text(encoding="utf-8") == "new line\n"
+
+
+def _file_executor(session, tools, handler=None):
+    settings = PermissionSettings.from_dict({"mode": "default", "permissions": {}})
+    resolver = PermissionResolver(
+        approval_handler=handler or RuleBasedApprovalHandler(settings)
+    )
+    return ToolExecutor(
+        {tool.name: tool for tool in tools},
+        workspace_dir=session.workspace_dir,
+        cwd_provider=session.get_cwd,
+        session=session,
+        permission_resolver=resolver,
+    )
+
+
+def test_edit_file_replaces_unique_text_and_rejects_ungranted_escape(tmp_path):
     (tmp_path / "a.txt").write_text("old line\n", encoding="utf-8")
     runtime = _runtime(tmp_path)
     assert read_file("a.txt", runtime=runtime).ok

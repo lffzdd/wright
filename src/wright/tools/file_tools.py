@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from ..access import PathClass
 from ..permission import PermissionCheckResult
 from .base import Tool, ToolResult, ToolRuntime
 
@@ -47,7 +48,7 @@ def _path_lock(path: Path) -> threading.RLock:
 
 
 def _relative_file(path: Path, runtime: ToolRuntime) -> str:
-    return str(path.relative_to(_workspace(runtime))) or "."
+    return _backend(runtime).display_path(path)
 
 
 def _detect_encoding(path: Path, runtime: ToolRuntime) -> str:
@@ -269,7 +270,7 @@ def list_directory(
             kind = "directory" if _backend(runtime).is_dir(entry) else "file" if _backend(runtime).is_file(entry) else "other"
             entries.append({
                 "name": entry.name,
-                "path": str(entry.relative_to(_workspace(runtime))),
+                "path": _backend(runtime).display_path(entry),
                 "type": kind,
                 "size": _backend(runtime).stat(entry).st_size if kind == "file" else None,
             })
@@ -278,7 +279,7 @@ def list_directory(
         truncated = len(entries) > max_entries
         entries = entries[:max_entries]
         return ToolResult.success({
-            "directory": str(safe_directory.relative_to(_workspace(runtime))) or ".",
+            "directory": _backend(runtime).display_path(safe_directory),
             "entries": entries,
             "truncated": truncated,
         })
@@ -304,16 +305,22 @@ def glob_files(
             return ToolResult.fail("Not a directory", data={"matches": []})
         max_results = max(1, min(int(max_results), 2_000))
         matches: list[dict[str, Any]] = []
-        for path in _backend(runtime).glob(root, pattern):
+        backend = _backend(runtime)
+        for path in backend.glob(root, pattern):
             runtime.raise_if_cancelled()
-            if not path.resolve().is_relative_to(_workspace(runtime)):
+            resolved = path.resolve()
+            if not backend.access.contains(resolved) and not backend.invocation_allows(resolved):
                 continue
-            relative = path.relative_to(_workspace(runtime))
-            if not include_hidden and any(part.startswith(".") for part in relative.parts):
+            displayed = backend.display_path(path)
+            try:
+                hidden_parts = resolved.relative_to(root.resolve()).parts
+            except ValueError:
+                hidden_parts = Path(displayed).parts
+            if not include_hidden and any(part.startswith(".") for part in hidden_parts):
                 continue
             matches.append({
-                "path": str(relative),
-                "type": "directory" if _backend(runtime).is_dir(path) else "file" if _backend(runtime).is_file(path) else "other",
+                "path": displayed,
+                "type": "directory" if backend.is_dir(path) else "file" if backend.is_file(path) else "other",
             })
         matches.sort(key=lambda item: item["path"])
         truncated = len(matches) > max_results
@@ -374,16 +381,19 @@ def grep_files(
                 continue
             data = event["data"]
             match_path = Path(data["path"]["text"])
-            try:
-                relative = match_path.resolve().relative_to(_workspace(runtime))
-            except ValueError:
+            displayed = _backend(runtime).display_path(match_path)
+            resolved = match_path.resolve()
+            if (
+                not _backend(runtime).access.contains(resolved)
+                and not _backend(runtime).invocation_allows(resolved)
+            ):
                 continue
             line_number = int(data["line_number"])
             line_text = str(data["lines"]["text"]).rstrip("\r\n")
             submatches = data.get("submatches") or [{}]
             for submatch in submatches:
                 matches.append({
-                    "path": str(relative),
+                    "path": displayed,
                     "line": line_number,
                     "column": int(submatch.get("start", 0)) + 1,
                     "text": line_text,
@@ -553,7 +563,7 @@ def write_file(
         return ToolResult.success(
             {
                 "message": "File written",
-                "file": str(safe_path.relative_to(_workspace(runtime))),
+                "file": _relative_file(safe_path, runtime),
                 "chars": len(content),
             }
         )
@@ -669,31 +679,89 @@ def edit_file(
 
         return ToolResult.success({
             "message": "File updated",
-            "file": str(safe_path.relative_to(_workspace(runtime))),
+            "file": _relative_file(safe_path, runtime),
             "replacements": replacements,
         })
     except Exception as e:
         return ToolResult.fail(str(e))
 
 
-def _ask_file_write(args: dict, runtime) -> PermissionCheckResult:
-    flags = ("writes_files",)
+def _path_argument(args: dict) -> str:
+    for key in ("file", "directory", "path"):
+        value = args.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return "."
+
+
+def _classify_file_permission(
+    args: dict, runtime, *, writes: bool
+) -> PermissionCheckResult:
+    target = _path_argument(args)
+    try:
+        resolved, classification = _backend(runtime).classify_path(target)
+    except Exception as exc:
+        return PermissionCheckResult(
+            "deny",
+            f"{runtime.tool_name}: path classification failed: {exc}",
+            source="tool",
+        )
+    if classification == PathClass.FORBIDDEN:
+        return PermissionCheckResult(
+            "deny",
+            f"{runtime.tool_name}: path is forbidden",
+            ("path_forbidden",),
+            source="tool",
+        )
+    outside = classification == PathClass.OUTSIDE
+    grant = _grant_directory(resolved, args)
+    if writes:
+        flags = ("writes_files",) if runtime.tool_name == "write_file" else ("reads_files", "writes_files")
+        if outside:
+            flags = (*flags, "path_outside_workspace")
+        return PermissionCheckResult(
+            "ask",
+            f"{runtime.tool_name}: requires user approval by file tool policy; risks={', '.join(flags)}",
+            flags,
+            source="tool",
+            added_directories=(grant,) if outside else (),
+            invocation_paths=(str(resolved),) if outside else (),
+        )
+    if not outside:
+        return PermissionCheckResult(
+            "allow",
+            f"{runtime.tool_name}: allowed by default tool permission",
+            source="tool_default",
+        )
+    flags = ("reads_files", "path_outside_workspace")
     return PermissionCheckResult(
         "ask",
-        f"{runtime.tool_name}: requires user approval by file tool policy; risks={', '.join(flags)}",
+        f"{runtime.tool_name}: path is outside the working directories",
         flags,
         source="tool",
+        added_directories=(grant,),
+        invocation_paths=(str(resolved),),
     )
+
+
+def _grant_directory(resolved: Path, args: dict) -> str:
+    if args.get("file"):
+        return str(resolved.parent)
+    if resolved.exists() and resolved.is_file():
+        return str(resolved.parent)
+    return str(resolved)
+
+
+def _ask_file_write(args: dict, runtime) -> PermissionCheckResult:
+    return _classify_file_permission(args, runtime, writes=True)
 
 
 def _ask_file_edit(args: dict, runtime) -> PermissionCheckResult:
-    flags = ("reads_files", "writes_files")
-    return PermissionCheckResult(
-        "ask",
-        f"{runtime.tool_name}: requires user approval by file tool policy; risks={', '.join(flags)}",
-        flags,
-        source="tool",
-    )
+    return _classify_file_permission(args, runtime, writes=True)
+
+
+def _ask_file_read(args: dict, runtime) -> PermissionCheckResult:
+    return _classify_file_permission(args, runtime, writes=False)
 
 
 list_directory_tool = Tool(
@@ -711,6 +779,7 @@ list_directory_tool = Tool(
         },
     },
     call=lambda args, runtime: list_directory(**args, runtime=runtime),
+    check_permission=_ask_file_read,
     is_concurrency_safe=lambda args: True,
     required_capabilities=frozenset({"execution"}),
 )
@@ -729,6 +798,7 @@ glob_tool = Tool(
         "required": ["pattern"],
     },
     call=lambda args, runtime: glob_files(**args, runtime=runtime),
+    check_permission=_ask_file_read,
     is_concurrency_safe=lambda args: True,
     required_capabilities=frozenset({"execution"}),
 )
@@ -749,6 +819,7 @@ grep_tool = Tool(
         "required": ["pattern"],
     },
     call=lambda args, runtime: grep_files(**args, runtime=runtime),
+    check_permission=_ask_file_read,
     is_concurrency_safe=lambda args: True,
     required_capabilities=frozenset({"execution"}),
 )
@@ -775,6 +846,7 @@ read_file_tool = Tool(
         "required": ["file"],
     },
     call=lambda args, runtime: read_file(**args, runtime=runtime),
+    check_permission=_ask_file_read,
     is_concurrency_safe=lambda args: True,
     required_capabilities=frozenset({"execution"}),
 )

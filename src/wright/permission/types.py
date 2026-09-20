@@ -14,3 +14,7 @@ class PermissionCheckResult:
     updated_arguments: dict | None = None
     # 记录判定来源:policy / tool / user / hook / approval_handler / error...
     source: str = "policy"
+    # Extra working-directory roots to grant after an allow (absolute paths).
+    added_directories: tuple[str, ...] = ()
+    # One-shot resolved paths authorized for this invocation only.
+    invocation_paths: tuple[str, ...] = ()

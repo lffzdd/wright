@@ -24,7 +24,8 @@ class PermissionPolicy:
     """通用权限策略层。
 
     不认识具体工具名,也不解析具体工具参数。工具相关策略由 Tool.check_permission
-    提供;这里只追加所有工具都适用的系统边界检查。
+    提供。Access scope（origin + granted roots）由执行后端分类，权限层只消费
+    工具给出的 path_outside_workspace / path_forbidden 标志。
     """
 
     def apply(
@@ -33,31 +34,8 @@ class PermissionPolicy:
         cwd: Path,
         workspace_dir: Path,
     ) -> PermissionCheckResult:
-        risk_flags = list(check.risk_flags)
-
-        resolved_cwd = cwd.resolve()
-        resolved_workspace = workspace_dir.resolve()
-        if not resolved_cwd.is_relative_to(resolved_workspace):
-            risk_flags.append("cwd_outside_workspace")
-
-        merged_flags = tuple(dict.fromkeys(risk_flags))
-        if "cwd_outside_workspace" in merged_flags:
-            return PermissionCheckResult(
-                "deny",
-                self._format_reason(
-                    "working directory is outside the workspace", merged_flags
-                ),
-                merged_flags,
-                source="system_policy",
-            )
-        if merged_flags == check.risk_flags:
-            return check
-
-        return replace(
-            check,
-            risk_flags=merged_flags,
-            reason=self._format_reason(check.reason, merged_flags),
-        )
+        del cwd, workspace_dir
+        return check
 
     def _format_reason(self, reason: str, risk_flags: tuple[str, ...]) -> str:
         prefix = reason.split("; risks=", 1)[0]

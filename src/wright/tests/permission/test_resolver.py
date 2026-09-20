@@ -215,7 +215,7 @@ def test_permission_policy_has_no_tool_name_lists():
     assert not hasattr(PermissionPolicy, "ASK_TOOLS")
 
 
-def test_cwd_outside_workspace_is_generic_policy_risk(tmp_path):
+def test_cwd_outside_granted_roots_does_not_blanket_deny(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     executor = ToolExecutor(
@@ -233,6 +233,5 @@ def test_cwd_outside_workspace_is_generic_policy_risk(tmp_path):
     ])[0].result
 
     assert not result.ok
-    assert result.data["permission"]["decision"] == "deny"
-    assert "cwd_outside_workspace" in result.data["permission"]["risk_flags"]
-    assert result.data["permission"]["source"] == "system_policy"
+    assert "cwd_outside_workspace" not in result.data["permission"]["risk_flags"]
+    assert result.data["permission"]["source"] != "system_policy"

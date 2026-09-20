@@ -81,6 +81,7 @@ class ToolExecutor:
         self.tool_timeout = tool_timeout
         self._services = services
         self._execution_backend = execution_backend
+        self.session = session
         self.permission_resolver = permission_resolver or PermissionResolver(
             permission_policy or PermissionPolicy(),
             permission_approval_handler,
@@ -108,6 +109,7 @@ class ToolExecutor:
 
     def bind_run(self, session) -> None:
         """Refresh the immutable tool capability view after a Run is selected."""
+        self.session = session
         self._active_step_id = ""
         capabilities, resources = assemble_tool_capabilities(
             session,
@@ -268,6 +270,54 @@ class ToolExecutor:
                 },
             )
 
+        self._apply_access_grant(arguments, permission)
+        try:
+            return self._run_allowed_tool(
+                tool,
+                tool_call,
+                arguments,
+                runtime,
+                permission,
+                effective_timeout,
+                on_call_start,
+                timings,
+            )
+        finally:
+            backend = self.capabilities.execution
+            if backend is not None:
+                backend.clear_invocation_paths()
+
+    def _apply_access_grant(self, arguments: dict, permission) -> None:
+        backend = self.capabilities.execution
+        if backend is None:
+            return
+        for raw in permission.added_directories:
+            directory = Path(raw)
+            backend.access.add(directory)
+            if self.session is not None:
+                self.session.add_working_directory(directory)
+        invocation = [Path(item) for item in permission.invocation_paths]
+        if not invocation and not permission.added_directories:
+            target = (
+                arguments.get("file")
+                or arguments.get("directory")
+                or arguments.get("path")
+            )
+            if isinstance(target, str) and target:
+                invocation.append(backend.resolve_path(target))
+        backend.set_invocation_paths(invocation)
+
+    def _run_allowed_tool(
+        self,
+        tool,
+        tool_call,
+        arguments: dict,
+        runtime,
+        permission,
+        effective_timeout: float,
+        on_call_start,
+        timings: dict[str, float] | None,
+    ):
         # 浅拷贝再改:钳超时是执行期的局部需要,不能回写 tool_call.arguments
         # ——那个 dict 同一对象被 session 记账引用着,原地改会篡改"已记录的历史输入"。
         if permission.updated_arguments is None:
@@ -296,7 +346,10 @@ class ToolExecutor:
                         "reason": permission.reason,
                         "source": permission.source,
                     },
-                    environment={"workspace_dir": str(self.workspace_dir), "cwd": str(self._current_cwd())},
+                    environment={
+                        "workspace_dir": str(self.workspace_dir),
+                        "cwd": str(self._current_cwd()),
+                    },
                 )
                 journal.mark_started(tool_call.id)
             except Exception as exc:

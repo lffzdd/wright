@@ -49,6 +49,7 @@ from ..permission import (
     PermissionResolver,
     PermissionSettings,
     RuleBasedApprovalHandler,
+    append_additional_directory,
     append_allow_rule,
     load_permission_settings,
 )
@@ -535,6 +536,8 @@ def assemble_runtime(
     # 写文件、网络和 shell 等副作用调用会落到规则或人工确认。
     # 主 Agent 与所有子 Agent 共用这同一份 resolver,规则/记忆全树一致。
     settings = load_permission_settings()
+    for raw in settings.additional_directories:
+        session_state.add_working_directory(Path(raw))
     env_interactive = os.getenv("WRIGHT_PERMISSION_INTERACTIVE")
     interactive = interaction_broker is not None or (
         env_interactive == "1" if env_interactive is not None else sys.stdin.isatty()
@@ -544,7 +547,11 @@ def assemble_runtime(
             RuleBasedApprovalHandler(settings, on_no_match="ask"),
             # on_remember:用户选"别再问"时把规则写回 settings.json,下次同工具在规则层
             # 就自动放行(连这个交互 handler 都到不了)——对标 Claude Code 的"Yes, don't ask again"。
-            InteractiveApprovalHandler(renderer=event_renderer, on_remember=append_allow_rule),
+            InteractiveApprovalHandler(
+                renderer=event_renderer,
+                on_remember=append_allow_rule,
+                on_remember_directory=append_additional_directory,
+            ),
         )
     else:
         approval_handler = RuleBasedApprovalHandler(settings)

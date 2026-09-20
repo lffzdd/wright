@@ -49,6 +49,7 @@ class Session:
     lifecycle: SessionLifecycle = "open"
     # Durable state is grouped by project_root. workspace_dir remains the
     # actual execution directory for compatibility with existing tools.
+    additional_working_directories: list[Path] = field(default_factory=list)
     project_root: Path | None = None
     environment: ExecutionEnvironment = "local"
     base_commit: str | None = None
@@ -143,6 +144,19 @@ class Session:
     def set_cwd(self, cwd: Path) -> None:
         with self._cwd_lock:
             self.cwd = cwd.resolve()
+
+    def add_working_directory(self, directory: Path) -> Path:
+        """Grant an extra working-directory root for this session."""
+        from ..access import is_under, resolve_path
+
+        resolved = resolve_path(directory)
+        origin = self.workspace_dir.resolve()
+        if resolved == origin or is_under(resolved, origin):
+            return resolved
+        if any(item == resolved or is_under(resolved, item) for item in self.additional_working_directories):
+            return resolved
+        self.additional_working_directories.append(resolved)
+        return resolved
 
     def register_background_task(self, task: BackgroundTask) -> None:
         """Persist task metadata; RuntimeResources owns its live handles."""

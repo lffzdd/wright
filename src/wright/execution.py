@@ -4,33 +4,84 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from threading import Lock
 from typing import Any
+
+from .access import AccessScope, PathClass, is_under, resolve_path
 
 
 class LocalExecutionBackend:
-    """Own path containment for the existing local/worktree execution root.
+    """Own path containment for authorized working directories.
 
     This is an architectural boundary, not a sandbox: commands still run on
-    the host and worktrees only isolate the checkout contents.
+    the host and worktrees only isolate the checkout contents. After permission
+    allows a call, this backend accepts origin roots, extra granted roots, and
+    one-shot invocation paths. Forbidden paths stay blocked.
     """
 
-    def __init__(self, workspace_dir: Path, cwd_provider) -> None:
+    def __init__(
+        self,
+        workspace_dir: Path,
+        cwd_provider,
+        additional: tuple[Path, ...] | list[Path] = (),
+    ) -> None:
         self.workspace_dir = workspace_dir.resolve()
         self._cwd_provider = cwd_provider
+        self.access = AccessScope(self.workspace_dir, additional)
+        self._invocation_lock = Lock()
+        self._invocation_paths: tuple[Path, ...] = ()
 
     def cwd(self) -> Path:
         return self._cwd_provider().resolve()
 
-    def path(self, requested: str) -> Path:
-        candidate = Path(requested)
-        resolved = candidate.resolve() if candidate.is_absolute() else (self.cwd() / candidate).resolve()
+    def resolve_path(self, requested: str) -> Path:
+        candidate = Path(requested).expanduser()
+        if candidate.is_absolute():
+            return candidate.resolve()
+        return (self.cwd() / candidate).resolve()
+
+    def set_invocation_paths(self, paths: list[Path] | tuple[Path, ...]) -> None:
+        resolved = tuple(resolve_path(path) for path in paths)
+        with self._invocation_lock:
+            self._invocation_paths = resolved
+
+    def clear_invocation_paths(self) -> None:
+        with self._invocation_lock:
+            self._invocation_paths = ()
+
+    def invocation_allows(self, path: Path) -> bool:
+        resolved = resolve_path(path)
+        with self._invocation_lock:
+            allowed = self._invocation_paths
+        return any(
+            resolved == item or is_under(resolved, item) for item in allowed
+        )
+
+    def classify_path(self, requested: str) -> tuple[Path, PathClass]:
+        resolved = self.resolve_path(requested)
+        return resolved, self.access.classify(resolved)
+
+    def display_path(self, path: Path) -> str:
+        resolved = resolve_path(path)
         try:
-            resolved.relative_to(self.workspace_dir)
-        except ValueError as exc:
-            # Keep the long-standing user-visible file-tool diagnostic while
-            # centralising the containment decision in the execution backend.
-            raise ValueError("Unsafe path") from exc
-        return resolved
+            relative = resolved.relative_to(self.workspace_dir)
+        except ValueError:
+            return str(resolved)
+        text = str(relative)
+        return text if text != "." else "."
+
+    def path(self, requested: str) -> Path:
+        resolved, classification = self.classify_path(requested)
+        if classification == PathClass.FORBIDDEN:
+            raise ValueError("Unsafe path")
+        if classification in {PathClass.IN_ORIGIN, PathClass.IN_GRANTED}:
+            return resolved
+        if self.invocation_allows(resolved):
+            return resolved
+        raise ValueError("Unsafe path")
+
+    def sync_additional(self, directories: tuple[Path, ...] | list[Path]) -> None:
+        self.access.sync_additional(directories)
 
     # These operations intentionally remain small.  File tools keep their
     # validation/edit semantics, while this backend owns the actual local

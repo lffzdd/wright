@@ -21,6 +21,9 @@ def _populated_session(tmp_path):
     session.append_message({"role": "system", "content": "system"})
     session.append_message({"role": "user", "content": "do it"})
     session.set_cwd(cwd)
+    extra = tmp_path / "extra-root"
+    extra.mkdir()
+    session.add_working_directory(extra)
 
     session.plan_manager.create_plan("ship", ["write", "test"])
     session.plan_manager.update_step("step_1", "completed", note="written")
@@ -88,6 +91,7 @@ def test_checkpoint_round_trips_complete_session_state(tmp_path):
     }
     assert restored.active_deferred_tools == ["web_search", "schedule_task"]
     assert restored.project_root == original.workspace_dir
+    assert restored.additional_working_directories == original.additional_working_directories
     assert restored.environment == "local"
     assert restored.committed_turn_ids == [original.agent_root_turn_id]
     assert restored.plan_manager.snapshot() == original.plan_manager.snapshot()
@@ -355,3 +359,24 @@ def test_recovery_inserts_all_missing_results_before_later_messages(tmp_path):
     assert json.loads(wire[2]["content"])["ok"] is False
     store.save(restored)
     assert store.load(session.session_id).wire_messages() == wire
+
+
+def test_checkpoint_snaps_cwd_back_when_outside_granted_roots(tmp_path):
+    workspace = tmp_path / "workspace"
+    extra = tmp_path / "extra"
+    workspace.mkdir()
+    extra.mkdir()
+    session = Session.create("outside cwd", workspace)
+    session.add_working_directory(extra)
+    session.set_cwd(tmp_path)
+    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    store.save(session)
+
+    restored = store.load(session.session_id)
+    assert restored.get_cwd() == workspace
+    assert restored.additional_working_directories == [extra.resolve()]
+
+    session.set_cwd(extra)
+    store.save(session)
+    kept = store.load(session.session_id)
+    assert kept.get_cwd() == extra.resolve()

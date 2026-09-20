@@ -39,6 +39,7 @@ class InteractiveApprovalHandler:
         self,
         renderer: Renderer,
         on_remember: Callable[[str], None] | None = None,
+        on_remember_directory: Callable[[str], None] | None = None,
     ):
         # UI 展示 + 输入收集全部委托给 Renderer。handler 只管决策。
         self._renderer = renderer
@@ -46,6 +47,7 @@ class InteractiveApprovalHandler:
         # 做成回调而非在 handler 里直接写文件——handler 不该知道"配置存在哪、什么格式",
         # 那是装配层的事;不接这个钩子时 a 就只在本会话内存里生效。
         self._on_remember = on_remember
+        self._on_remember_directory = on_remember_directory
         # Remember scoped rules, never a bare capability name.  A single
         # approval must not silently authorize every future URL or file.
         self._always_allow: set[str] = set()
@@ -57,7 +59,10 @@ class InteractiveApprovalHandler:
         if remembered_rule is not None and remembered_rule in self._always_allow:
             return self._allow(request, f"本会话已记住:允许 {remembered_rule}")
 
-        offer_always = remembered_rule is not None and self._allow_always_offered(request)
+        outside = "path_outside_workspace" in request.check.risk_flags
+        offer_always = (
+            remembered_rule is not None or outside
+        ) and self._allow_always_offered(request)
         try:
             self._renderer.on_tool_phase(request.tool_call, "awaiting_approval")
         except Exception:
@@ -70,7 +75,13 @@ class InteractiveApprovalHandler:
             reason=request.check.reason,
             offer_always=offer_always,
             remember_rule=remembered_rule or "",
-            remember_persists=bool(offer_always and self._on_remember is not None),
+            remember_persists=bool(
+                offer_always
+                and (
+                    self._on_remember is not None
+                    or (outside and self._on_remember_directory is not None)
+                )
+            ),
             revoke_hint=(
                 f"Remove this rule from {_permission_settings_path()}."
                 if offer_always and self._on_remember is not None
@@ -79,6 +90,17 @@ class InteractiveApprovalHandler:
         )
 
         if answer == "a" and offer_always:
+            if outside:
+                directories = request.check.added_directories
+                for directory in directories:
+                    if self._on_remember_directory is not None:
+                        self._on_remember_directory(directory)
+                return self._allow(
+                    request,
+                    "用户批准,并授权该目录为额外工作区",
+                    added_directories=directories,
+                    invocation_paths=request.check.invocation_paths,
+                )
             assert remembered_rule is not None
             self._always_allow.add(remembered_rule)
             if self._on_remember is not None:
@@ -86,7 +108,11 @@ class InteractiveApprovalHandler:
             scope = "并已写入配置(跨会话生效)" if self._on_remember else "本会话内"
             return self._allow(request, f"用户批准,记住允许 {remembered_rule}({scope})")
         if answer == "y":
-            return self._allow(request, "用户批准本次执行")
+            return self._allow(
+                request,
+                "用户批准本次执行",
+                invocation_paths=request.check.invocation_paths,
+            )
         return self._deny(request, f"用户拒绝(输入 {answer!r})")
 
     # ── 策略 ──────────────────────────────────────────────────────────────────
@@ -103,9 +129,20 @@ class InteractiveApprovalHandler:
     # ── 判定构造 ──────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _allow(request: PermissionRequest, reason: str) -> PermissionCheckResult:
+    def _allow(
+        request: PermissionRequest,
+        reason: str,
+        *,
+        added_directories: tuple[str, ...] = (),
+        invocation_paths: tuple[str, ...] = (),
+    ) -> PermissionCheckResult:
         return PermissionCheckResult(
-            "allow", reason, request.check.risk_flags, source="user"
+            "allow",
+            reason,
+            request.check.risk_flags,
+            source="user",
+            added_directories=added_directories,
+            invocation_paths=invocation_paths,
         )
 
     @staticmethod
