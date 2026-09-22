@@ -9,6 +9,7 @@ from ...engine.agent import Agent
 from ...engine.executor import ToolExecutor
 from ...engine.subagent import build_agent_tools, make_spawn_agent_tool
 from ...events import UsageEvent
+from ...permission import PermissionPolicy, PermissionResolver, PermissionSettings
 from ...renderer import SilentRenderer
 from ...tools.base import ToolCall, tool_runtime_for_session
 from ...tools.command_tools import execute_command
@@ -41,11 +42,18 @@ def test_nested_agents_form_one_shared_task_tree(tmp_path):
         _final("root done"),
     ])
     session = Session.create("root", tmp_path)
+    permission_resolver = PermissionResolver(
+        PermissionPolicy(PermissionSettings(mode="bypass"))
+    )
     tools = build_agent_tools(
-        llm, [], max_depth=2, render_subagents=False
+        llm, [], max_depth=2, render_subagents=False,
+        permission_resolver=permission_resolver,
     )
 
-    result = Agent(llm, tools, session, SilentRenderer()).run("root task")
+    result = Agent(
+        llm, tools, session, SilentRenderer(),
+        permission_resolver=permission_resolver,
+    ).run("root task")
 
     assert result == "root done"
     tree = session.control_plane.tree(session.agent_root_turn_id)
@@ -115,6 +123,7 @@ def test_executor_deadline_propagates_to_child_control_state(tmp_path):
         {"spawn_agent": spawn},
         tool_timeout=0.01,
         session=session,
+        permission_policy=PermissionPolicy(PermissionSettings(mode="bypass")),
     )
 
     outcome = executor.execute([

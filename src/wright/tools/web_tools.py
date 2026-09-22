@@ -3,7 +3,7 @@ from typing import Any
 
 import httpx
 
-from ..permission import PermissionCheckResult
+from ..permission import AccessTarget, ToolAccess
 from .base import Tool, ToolResult
 
 
@@ -68,28 +68,30 @@ def http_request(
     return ToolResult.success({"response": body, "truncated": truncated})
 
 
-def _ask_http_request(args: dict, runtime) -> PermissionCheckResult:
+def _describe_http_request(args: dict) -> ToolAccess:
     method = str(args.get("method", "GET")).upper()
-    flags = (
-        ("accesses_network",)
-        if method in {"GET", "HEAD", "OPTIONS"}
-        else ("accesses_network", "mutates_remote_state")
+    operation = "network_read" if method in {"GET", "HEAD", "OPTIONS"} else "network_write"
+    flags = ("network_read",) if operation == "network_read" else (
+        "network_write", "mutates_remote_state"
     )
-    return PermissionCheckResult(
-        "ask",
-        f"{runtime.tool_name}: requires user approval by web tool policy; risks={', '.join(flags)}",
-        flags,
-        source="tool",
+    url = str(args.get("url", ""))
+    return ToolAccess(
+        frozenset({operation}),
+        targets=(AccessTarget("url", url, operation, kind="url"),),
+        subject=url,
+        risk_flags=flags,
+        reason=f"HTTP {method} request",
     )
 
 
-def _ask_web_search(args: dict, runtime) -> PermissionCheckResult:
-    flags = ("accesses_network",)
-    return PermissionCheckResult(
-        "ask",
-        f"{runtime.tool_name}: sends a query to the configured search provider; risks={', '.join(flags)}",
-        flags,
-        source="tool",
+def _describe_web_search(args: dict) -> ToolAccess:
+    query = str(args.get("query", ""))
+    return ToolAccess(
+        frozenset({"network_read"}),
+        targets=(AccessTarget("provider", "https://api.tavily.com/search", "network_read", kind="url"),),
+        subject=query,
+        risk_flags=("network_read",),
+        reason="web search sends a query to the configured provider",
     )
 
 
@@ -108,7 +110,7 @@ web_search_tool = Tool(
         "required": ["query", "max_results"],
     },
     call=lambda args, runtime: web_search(**args),
-    check_permission=_ask_web_search,
+    access_descriptor=_describe_web_search,
     is_concurrency_safe=lambda args: True,
 )
 
@@ -139,7 +141,7 @@ http_request_tool = Tool(
         "required": ["url"],
     },
     call=lambda args, runtime: http_request(**args),
-    check_permission=_ask_http_request,
+    access_descriptor=_describe_http_request,
     is_concurrency_safe=lambda args: str(args.get("method", "GET")).upper()
     in {"GET", "HEAD"},
 )

@@ -29,7 +29,7 @@ const snapshot = (session: Session) => ({
   },
 });
 
-test("creates two isolated sessions and settles a streamed answer once", async ({ page }) => {
+test("isolates sessions and completes a structured permission flow", async ({ page }) => {
   const sessions: Session[] = [];
   const snapshots = new Map<string, ReturnType<typeof snapshot>>();
 
@@ -58,8 +58,7 @@ test("creates two isolated sessions and settles a streamed answer once", async (
       }
 
       send(raw: string) {
-        const command = JSON.parse(raw) as { type: string; prompt?: string };
-        if (command.type !== "turn.submit") return;
+        const command = JSON.parse(raw) as { type: string; prompt?: string; request_id?: string };
         const sessionId = this.url.match(/sessions\/([^/]+)\/stream/)?.[1] ?? "unknown";
         const turnId = "turn-e2e";
         const emit = (seq: number, type: string, payload: Record<string, unknown>) => {
@@ -77,10 +76,46 @@ test("creates two isolated sessions and settles a streamed answer once", async (
           };
           this.onmessage?.(new MessageEvent("message", { data: JSON.stringify(event) }));
         };
+        if (command.type === "interaction.respond") {
+          setTimeout(() => emit(6, "interaction.resolved", {
+            request_id: command.request_id ?? "",
+            kind: "permission",
+          }), 0);
+          setTimeout(() => emit(7, "content.final", { content: "Web smoke passed." }), 10);
+          setTimeout(() => emit(8, "turn.completed", {}), 20);
+          return;
+        }
+        if (command.type !== "turn.submit") return;
         setTimeout(() => emit(1, "turn.started", { prompt: command.prompt }), 0);
         setTimeout(() => emit(2, "content.delta", { piece: "Web smoke " }), 10);
-        setTimeout(() => emit(3, "content.final", { content: "Web smoke passed." }), 20);
-        setTimeout(() => emit(4, "turn.completed", {}), 30);
+        setTimeout(() => emit(3, "tool.planned", {
+          call_id: "call-permission",
+          name: "write_file",
+          arguments: { file: "/tmp/outside/result.txt" },
+          phase: "planned",
+        }), 20);
+        setTimeout(() => emit(4, "tool.awaiting_approval", {
+          call_id: "call-permission",
+          name: "write_file",
+          arguments: { file: "/tmp/outside/result.txt" },
+          phase: "awaiting_approval",
+        }), 25);
+        setTimeout(() => emit(5, "interaction.requested", {
+          request_id: "transport-request",
+          kind: "permission",
+          tool_name: "write_file",
+          subject: "/tmp/outside/result.txt",
+          reason: "Target is outside the current session scope",
+          risk_flags: ["path_outside_scope", "writes_files"],
+          targets: ["/tmp/outside/result.txt"],
+          principal: sessionId,
+          choices: [
+            { id: "allow_once", label: "Allow once", scope: "This invocation", persistence: "No save" },
+            { id: "allow_session_directory", label: "Allow directory for this session", scope: "Candidate parent/directory", persistence: "Save in session checkpoint" },
+            { id: "allow_persistent_directory", label: "Allow directory permanently", scope: "Candidate parent/directory", persistence: "Save in user permissions" },
+            { id: "deny", label: "Deny", scope: "No execution", persistence: "No save" },
+          ],
+        }), 30);
       }
 
       close() {
@@ -150,5 +185,7 @@ test("creates two isolated sessions and settles a streamed answer once", async (
 
   await page.getByLabel("Message Wright").fill("Run deterministic smoke");
   await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByRole("button", { name: "Allow directory for this session" })).toBeVisible();
+  await page.getByRole("button", { name: "Allow directory for this session" }).click();
   await expect(page.getByText("Web smoke passed.", { exact: true })).toHaveCount(1);
 });

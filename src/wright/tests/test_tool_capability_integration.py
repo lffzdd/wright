@@ -6,7 +6,7 @@ from wright.autonomy import AutonomyScheduler, AutonomyStore
 from wright.domain.session import Session
 from wright.engine.executor import ToolExecutor
 from wright.engine.looping import SessionLoopRegistry
-from wright.permission import PermissionCheckResult, PermissionResolver
+from wright.permission import PermissionResolver, PermissionResponse
 from wright.tools.autonomy_tools import autonomy_tools
 from wright.tools.base import ToolCall
 from wright.tools.loop_tools import manage_loop_tool
@@ -26,7 +26,7 @@ def test_registered_management_tools_work_through_capability_restriction(tmp_pat
         {t.name: t for t in [*autonomy_tools, *task_tools, manage_loop_tool]},
         session=session, services=services,
         permission_resolver=PermissionResolver(
-            approval_handler=lambda _: PermissionCheckResult("allow", "test authorization"),
+            approval_handler=lambda _: PermissionResponse("allow_once"),
         ),
     )
 

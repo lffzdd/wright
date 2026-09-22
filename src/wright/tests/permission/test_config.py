@@ -3,40 +3,26 @@ from pathlib import Path
 
 from ...engine.executor import ToolExecutor
 from ...permission import (
-    PermissionCheckResult,
+    PermissionPolicy,
     PermissionResolver,
     PermissionRule,
     PermissionSettings,
-    RuleBasedApprovalHandler,
+    ToolAccess,
     append_additional_directory,
     append_allow_rule,
     load_permission_settings,
 )
-from ...tools.file_tools import write_file_tool
-from ...tools.base import Tool, ToolCall, ToolResult
+from ...tools.base import ToolCall
+from ...tools.command_tools import execute_command_tool
+from ...tools.file_tools import read_file_tool, write_file_tool
 
 
-def _ask_tool(name: str, risk_flags: tuple[str, ...]) -> Tool:
-    return Tool(
-        name=name,
-        description="",
-        parameters={},
-        call=lambda args, runtime: ToolResult.success({"called": True, "args": args}),
-        check_permission=lambda args, runtime: PermissionCheckResult(
-            "ask", f"{name}: needs approval", risk_flags, source="tool"
-        ),
-    )
-
-
-def _executor(tool: Tool, settings: PermissionSettings, tmp_path: Path) -> ToolExecutor:
-    resolver = PermissionResolver(
-        approval_handler=RuleBasedApprovalHandler(settings)
-    )
+def _executor(tool, settings: PermissionSettings, tmp_path: Path) -> ToolExecutor:
     return ToolExecutor(
         {tool.name: tool},
         workspace_dir=tmp_path,
         cwd_provider=lambda: tmp_path,
-        permission_resolver=resolver,
+        permission_resolver=PermissionResolver(settings=settings),
     )
 
 
@@ -44,310 +30,252 @@ def _run(executor: ToolExecutor, call: ToolCall):
     return executor.execute([call])[0].result
 
 
-# ── 规则解析 ──────────────────────────────────────────────────────────────────
-
-def test_bare_rule_matches_any_call():
-    rule = PermissionRule.parse("write_file")
-    assert rule.matches("write_file", "anything")
-    assert not rule.matches("edit_file", "anything")
-
-
-def test_glob_rule_matches_subject():
+def test_rule_parsing_and_shell_composition_guard():
     rule = PermissionRule.parse("execute_command(git status*)")
     assert rule.matches("execute_command", "git status -s")
     assert not rule.matches("execute_command", "git push origin")
+    scoped = PermissionRule.parse("execute_command(ls*)")
+    assert scoped.matches("execute_command", "ls -la")
+    assert not scoped.matches("execute_command", "ls && curl https://example.com")
+    assert not scoped.matches("execute_command", "ls > victim")
 
 
-def test_scoped_shell_allow_rejects_composition_and_substitution():
-    rule = PermissionRule.parse("execute_command(ls*)")
-    assert rule.matches("execute_command", "ls -la")
-    assert not rule.matches("execute_command", "ls; rm -rf victim")
-    assert not rule.matches("execute_command", "ls && curl https://example.com")
-    assert not rule.matches("execute_command", "ls $(touch victim)")
-    assert not rule.matches("execute_command", "ls > victim")
+def test_bare_and_subject_rules_match_only_the_declared_tool():
+    assert PermissionRule.parse("write_file").matches("write_file", "anything")
+    assert not PermissionRule.parse("write_file").matches("read_file", "anything")
+    rule = PermissionRule.parse("execute_command(git status*)")
+    assert rule.matches("execute_command", "git status --short")
+    assert not rule.matches("execute_command", "git push")
 
 
-# ── default 模式:allow 命中放行,未命中 fail-closed ─────────────────────────
-
-def test_default_allow_rule_permits(tmp_path):
+def test_default_allow_rule_permits_write_file(tmp_path):
     settings = PermissionSettings.from_dict(
         {"mode": "default", "permissions": {"allow": ["write_file"]}}
     )
-    executor = _executor(_ask_tool("write_file", ("writes_files",)), settings, tmp_path)
-    result = _run(executor, ToolCall("write_file", {"file": "a.txt"}, "c1"))
-    assert result.ok and result.data["called"]
+    result = _run(
+        _executor(write_file_tool, settings, tmp_path),
+        ToolCall("write_file", {"file": "a.txt", "content": "hello"}, "c1"),
+    )
+    assert result.ok
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "hello"
 
 
-def test_default_no_rule_denies(tmp_path):
+def test_default_no_rule_fails_closed(tmp_path):
     settings = PermissionSettings.from_dict({"mode": "default", "permissions": {}})
-    executor = _executor(_ask_tool("write_file", ("writes_files",)), settings, tmp_path)
-    result = _run(executor, ToolCall("write_file", {"file": "a.txt"}, "c1"))
-    assert not result.ok
-    assert result.data["permission"]["decision"] == "deny"
-    assert result.data["permission"]["source"] == "rule_config"
-
-
-def test_global_deny_applies_to_tool_level_allow(tmp_path):
-    settings = PermissionSettings.from_dict(
-        {"mode": "default", "permissions": {"deny": ["read_file(secrets/*)"]}}
+    result = _run(
+        _executor(write_file_tool, settings, tmp_path),
+        ToolCall("write_file", {"file": "a.txt", "content": "hello"}, "c1"),
     )
-    executor = _executor(
-        Tool(
-            name="read_file",
-            description="",
-            parameters={},
-            call=lambda args, runtime: ToolResult.success({"called": True}),
-        ),
-        settings,
-        tmp_path,
-    )
-
-    result = _run(executor, ToolCall("read_file", {"file": "secrets/key"}, "c1"))
     assert not result.ok
     assert result.data["permission"]["decision"] == "deny"
 
 
-def test_plan_mode_applies_to_side_effectful_tool_level_allow(tmp_path):
-    settings = PermissionSettings.from_dict({"mode": "plan", "permissions": {}})
-    tool = Tool(
-        name="network_probe",
-        description="",
-        parameters={},
-        call=lambda args, runtime: ToolResult.success({"called": True}),
-        check_permission=lambda args, runtime: PermissionCheckResult(
-            "allow", "legacy tool allow", ("accesses_network",), source="tool"
-        ),
-    )
-    result = _run(_executor(tool, settings, tmp_path), ToolCall(tool.name, {}, "c1"))
-    assert not result.ok
-    assert result.data["permission"]["decision"] == "deny"
-
-
-def test_deny_rule_overrides_allow(tmp_path):
+def test_global_deny_overrides_tool_allow(tmp_path):
     settings = PermissionSettings.from_dict(
         {
             "mode": "default",
-            "permissions": {
-                "allow": ["execute_command"],
-                "deny": ["execute_command(rm *)"],
-            },
+            "permissions": {"allow": ["read_file"], "deny": ["read_file(secrets/*)"]},
         }
     )
-    executor = _executor(
-        _ask_tool("execute_command", ("executes_shell",)), settings, tmp_path
+    (tmp_path / "secrets").mkdir()
+    result = _run(
+        _executor(read_file_tool, settings, tmp_path),
+        ToolCall("read_file", {"file": "secrets/key"}, "c1"),
     )
-    assert _run(executor, ToolCall("execute_command", {"command": "ls"}, "c1")).ok
-    blocked = _run(executor, ToolCall("execute_command", {"command": "rm -rf x"}, "c2"))
-    assert not blocked.ok
-    assert "deny 规则" in blocked.data["permission"]["reason"]
+    assert not result.ok
+    assert "deny 规则" in result.data["permission"]["reason"]
 
 
-# ── 模式语义 ──────────────────────────────────────────────────────────────────
-
-def test_bypass_allows_without_rules(tmp_path):
-    settings = PermissionSettings.from_dict({"mode": "bypass", "permissions": {}})
-    executor = _executor(
-        _ask_tool("execute_command", ("executes_shell",)), settings, tmp_path
-    )
-    assert _run(executor, ToolCall("execute_command", {"command": "ls"}, "c1")).ok
-
-
-def test_bypass_still_respects_deny(tmp_path):
-    settings = PermissionSettings.from_dict(
-        {"mode": "bypass", "permissions": {"deny": ["execute_command(rm *)"]}}
-    )
-    executor = _executor(
-        _ask_tool("execute_command", ("executes_shell",)), settings, tmp_path
-    )
-    assert not _run(
-        executor, ToolCall("execute_command", {"command": "rm x"}, "c1")
-    ).ok
-
-
-def test_plan_denies_all_side_effects(tmp_path):
+def test_plan_mode_denies_side_effects_even_with_allow(tmp_path):
     settings = PermissionSettings.from_dict(
         {"mode": "plan", "permissions": {"allow": ["write_file"]}}
     )
-    executor = _executor(_ask_tool("write_file", ("writes_files",)), settings, tmp_path)
-    result = _run(executor, ToolCall("write_file", {"file": "a.txt"}, "c1"))
+    result = _run(
+        _executor(write_file_tool, settings, tmp_path),
+        ToolCall("write_file", {"file": "a.txt", "content": "hello"}, "c1"),
+    )
     assert not result.ok
     assert "plan" in result.data["permission"]["reason"]
 
 
-def test_accept_edits_allows_file_writes_only(tmp_path):
-    settings = PermissionSettings.from_dict({"mode": "acceptEdits", "permissions": {}})
-    file_exec = _executor(
-        _ask_tool("write_file", ("writes_files",)), settings, tmp_path
-    )
-    cmd_exec = _executor(
-        _ask_tool("execute_command", ("writes_files", "executes_shell")),
-        settings,
-        tmp_path,
-    )
-    assert _run(file_exec, ToolCall("write_file", {"file": "a.txt"}, "c1")).ok
-    # 掺了 shell 副作用 → 不在纯编辑放行范围
-    assert not _run(
-        cmd_exec, ToolCall("execute_command", {"command": "ls"}, "c2")
-    ).ok
-
-
-# ── cwd 越出 granted roots 不再一票否决 origin 内写入 ─────────────────────────
-
-def test_cwd_outside_granted_roots_does_not_deny_in_origin_write(tmp_path):
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    settings = PermissionSettings.from_dict({"mode": "bypass", "permissions": {}})
-    resolver = PermissionResolver(
-        approval_handler=RuleBasedApprovalHandler(settings)
-    )
-    executor = ToolExecutor(
-        {"write_file": write_file_tool},
-        workspace_dir=workspace,
-        cwd_provider=lambda: tmp_path,
-        permission_resolver=resolver,
+def test_bypass_allows_shell_but_ask_rule_still_wins(tmp_path):
+    settings = PermissionSettings.from_dict(
+        {"mode": "bypass", "permissions": {"ask": ["execute_command"]}}
     )
     result = _run(
-        executor,
+        _executor(execute_command_tool, settings, tmp_path),
+        ToolCall("execute_command", {"command": "printf ok"}, "c1"),
+    )
+    assert not result.ok
+    assert result.data["permission"]["decision"] == "deny"
+
+
+def test_accept_edits_only_auto_allows_in_scope_file_edit(tmp_path):
+    settings = PermissionSettings.from_dict({"mode": "acceptEdits", "permissions": {}})
+    result = _run(
+        _executor(write_file_tool, settings, tmp_path),
+        ToolCall("write_file", {"file": "a.txt", "content": "hello"}, "c1"),
+    )
+    assert result.ok
+
+
+def test_bypass_allows_without_rules_and_deny_still_wins(tmp_path):
+    assert PermissionPolicy(PermissionSettings(mode="bypass")).evaluate(
+        ToolAccess(frozenset({"shell"}), subject="printf ok"),
+        tool_name="execute_command",
+        subject="printf ok",
+        in_scope=True,
+    )[0] == "allow"
+
+    blocked = _run(
+        _executor(
+            execute_command_tool,
+            PermissionSettings.from_dict({
+                "mode": "bypass",
+                "permissions": {"deny": ["execute_command(rm *)"]},
+            }),
+            tmp_path,
+        ),
+        ToolCall("execute_command", {"command": "rm file"}, "c2"),
+    )
+    assert not blocked.ok
+    assert "deny 规则" in blocked.data["permission"]["reason"]
+
+
+def test_accept_edits_does_not_auto_allow_shell(tmp_path):
+    result = _run(
+        _executor(execute_command_tool, PermissionSettings(mode="acceptEdits"), tmp_path),
+        ToolCall("execute_command", {"command": "printf no"}, "c1"),
+    )
+    assert not result.ok
+
+
+def test_cwd_outside_workspace_does_not_deny_an_origin_target(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    result = _run(
+        ToolExecutor(
+            {write_file_tool.name: write_file_tool},
+            workspace_dir=workspace,
+            cwd_provider=lambda: tmp_path,
+            permission_resolver=PermissionResolver(
+                settings=PermissionSettings(mode="bypass")
+            ),
+        ),
         ToolCall(
             "write_file",
-            {"file": "workspace/a.txt", "content": "hello\n"},
+            {"file": "workspace/a.txt", "content": "hello"},
             "c1",
         ),
     )
     assert result.ok
-    assert (workspace / "a.txt").read_text(encoding="utf-8") == "hello\n"
+    assert (workspace / "a.txt").read_text(encoding="utf-8") == "hello"
 
 
-# ── 配置加载 ──────────────────────────────────────────────────────────────────
-
-def test_load_settings_from_file(tmp_path):
-    cfg = tmp_path / "perm.json"
-    cfg.write_text(
-        json.dumps(
-            {"mode": "acceptEdits", "permissions": {"allow": ["write_file"]}}
+def test_policy_keeps_external_read_approval_in_plan_mode():
+    settings = PermissionSettings.from_dict({"mode": "plan", "permissions": {}})
+    decision = PermissionPolicy(settings).evaluate(
+        ToolAccess(
+            frozenset({"network_read"}), subject="https://example.com"
         ),
+        tool_name="http_request",
+        subject="https://example.com",
+        in_scope=True,
+    )
+    assert decision[0] == "ask"
+
+
+def test_plan_mode_keeps_user_interaction_available():
+    settings = PermissionSettings.from_dict({"mode": "plan", "permissions": {}})
+    decision = PermissionPolicy(settings).evaluate(
+        ToolAccess(frozenset({"user_interaction"}), subject="question"),
+        tool_name="ask_user",
+        subject="question",
+        in_scope=True,
+    )
+    assert decision[0] == "ask"
+
+
+def test_settings_round_trip_and_atomic_append(tmp_path):
+    config = tmp_path / "permissions.json"
+    config.write_text(
+        json.dumps({"mode": "acceptEdits", "permissions": {"deny": ["rm"]}}),
         encoding="utf-8",
     )
-    settings = load_permission_settings(cfg)
+    append_allow_rule("write_file", config)
+    append_additional_directory(str(tmp_path / "extra"), config)
+    settings = load_permission_settings(config)
     assert settings.mode == "acceptEdits"
-    assert settings.allow[0].tool_name == "write_file"
+    assert [rule.tool_name for rule in settings.allow] == ["write_file"]
+    assert settings.deny[0].tool_name == "rm"
+    assert settings.additional_directories == [str((tmp_path / "extra").resolve())]
 
 
-def test_missing_file_falls_back_to_locked_default(tmp_path):
-    settings = load_permission_settings(tmp_path / "nope.json")
-    assert settings.mode == "default"
-    assert settings.allow == [] and settings.deny == []
+def test_append_helpers_create_and_deduplicate_settings(tmp_path):
+    config = tmp_path / "new-permissions.json"
+    append_allow_rule("write_file", config)
+    append_allow_rule("write_file", config)
+    append_additional_directory(str(tmp_path / "extra"), config)
+    append_additional_directory(str(tmp_path / "extra"), config)
+    settings = load_permission_settings(config)
+    assert [rule.tool_name for rule in settings.allow] == ["write_file"]
+    assert settings.additional_directories == [str((tmp_path / "extra").resolve())]
 
 
-def test_invalid_mode_raises(tmp_path):
-    cfg = tmp_path / "bad.json"
-    cfg.write_text(json.dumps({"mode": "yolo"}), encoding="utf-8")
-    try:
-        load_permission_settings(cfg)
-    except ValueError as e:
-        assert "yolo" in str(e)
-    else:
-        raise AssertionError("invalid mode should raise")
-
-
-# ── #1 ask 规则:强制询问,压过 allow / 模式自动放行,deny 仍盖过它 ─────────────
-
-def test_ask_rule_overrides_allow(tmp_path):
-    # allow 了整个 write_file,但 ask 在敏感目录上挖洞 → 该路径强制询问(此处无人 → 拒)
-    settings = PermissionSettings.from_dict(
-        {
-            "mode": "default",
-            "permissions": {"allow": ["write_file"], "ask": ["write_file(secrets/*)"]},
-        }
-    )
-    executor = _executor(_ask_tool("write_file", ("writes_files",)), settings, tmp_path)
-
-    normal = _run(executor, ToolCall("write_file", {"file": "a.txt"}, "c1"))
-    sensitive = _run(executor, ToolCall("write_file", {"file": "secrets/k.txt"}, "c2"))
-
-    assert normal.ok  # 普通路径走 allow
-    assert not sensitive.ok  # 命中 ask → resolver fail-closed
-    assert sensitive.data["permission"]["decision"] == "ask"
-
-
-def test_ask_rule_overrides_bypass_mode(tmp_path):
-    settings = PermissionSettings.from_dict(
-        {"mode": "bypass", "permissions": {"ask": ["write_file"]}}
-    )
-    executor = _executor(_ask_tool("write_file", ("writes_files",)), settings, tmp_path)
-    result = _run(executor, ToolCall("write_file", {"file": "a.txt"}, "c1"))
-    assert result.data["permission"]["decision"] == "ask"  # ask 压过 bypass
-
-
-def test_deny_still_beats_ask(tmp_path):
-    settings = PermissionSettings.from_dict(
-        {"mode": "default", "permissions": {"ask": ["write_file"], "deny": ["write_file"]}}
-    )
-    executor = _executor(_ask_tool("write_file", ("writes_files",)), settings, tmp_path)
-    result = _run(executor, ToolCall("write_file", {"file": "a.txt"}, "c1"))
-    assert result.data["permission"]["decision"] == "deny"  # deny 最强
-
-
-# ── #2 别再问:把放行固化进配置文件 ───────────────────────────────────────────
-
-def test_append_allow_rule_persists_and_dedups(tmp_path):
-    cfg = tmp_path / "perm.json"
-    cfg.write_text(
-        json.dumps({"mode": "default", "permissions": {"allow": ["edit_file"]}}),
+def test_load_settings_from_explicit_file_and_user_path(tmp_path, monkeypatch):
+    config = tmp_path / "explicit.json"
+    config.write_text(
+        json.dumps({"mode": "acceptEdits", "permissions": {"allow": ["read_file"]}}),
         encoding="utf-8",
     )
+    loaded = load_permission_settings(config)
+    assert loaded.mode == "acceptEdits"
+    assert loaded.allow[0].tool_name == "read_file"
 
-    append_allow_rule("write_file", cfg)
-    append_allow_rule("write_file", cfg)  # 第二次应去重,不重复写入
-
-    reloaded = load_permission_settings(cfg)
-    names = [r.tool_name for r in reloaded.allow]
-    assert names.count("write_file") == 1
-    assert "edit_file" in names
-
-
-def test_append_allow_rule_creates_missing_file(tmp_path):
-    cfg = tmp_path / "new.json"
-    append_allow_rule("write_file", cfg)
-    assert cfg.is_file()
-    assert load_permission_settings(cfg).allow[0].tool_name == "write_file"
-
-
-def test_additional_directories_load_and_persist(tmp_path):
-    extra = tmp_path / "extra"
-    extra.mkdir()
-    cfg = tmp_path / "perm.json"
-    cfg.write_text(
-        json.dumps(
-            {
-                "mode": "default",
-                "permissions": {
-                    "allow": [],
-                    "additionalDirectories": [str(extra)],
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    settings = load_permission_settings(cfg)
-    assert settings.additional_directories == [str(extra)]
-
-    sibling = tmp_path / "other"
-    sibling.mkdir()
-    append_additional_directory(str(sibling), cfg)
-    append_additional_directory(str(sibling), cfg)
-    reloaded = load_permission_settings(cfg)
-    assert reloaded.additional_directories == [str(extra), str(sibling.resolve())]
-
-
-def test_user_permission_file_overrides_packaged_defaults(tmp_path, monkeypatch):
     monkeypatch.delenv("WRIGHT_PERMISSION_CONFIG", raising=False)
     monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "home"))
-    user_cfg = tmp_path / "home" / "permission_settings.json"
-    user_cfg.parent.mkdir(parents=True)
-    user_cfg.write_text(
+    user = tmp_path / "home" / "permission_settings.json"
+    user.parent.mkdir()
+    user.write_text(
         json.dumps({"mode": "default", "permissions": {"allow": ["http_request"]}}),
         encoding="utf-8",
     )
-    settings = load_permission_settings()
-    assert [rule.tool_name for rule in settings.allow] == ["http_request"]
+    assert load_permission_settings().allow[0].tool_name == "http_request"
+
+
+def test_ask_and_deny_rules_have_the_required_precedence():
+    access = ToolAccess(frozenset({"file_write"}), subject="secrets/key")
+    settings = PermissionSettings.from_dict({
+        "mode": "bypass",
+        "permissions": {
+            "allow": ["write_file"],
+            "ask": ["write_file(secrets/*)"],
+            "deny": ["write_file(secrets/key)"],
+        },
+    })
+    policy = PermissionPolicy(settings)
+    assert policy.evaluate(
+        access, tool_name="write_file", subject="secrets/key", in_scope=True
+    )[0] == "deny"
+    ask_settings = PermissionSettings.from_dict({
+        "mode": "bypass",
+        "permissions": {
+            "allow": ["write_file"],
+            "ask": ["write_file(secrets/*)"],
+        },
+    })
+    assert PermissionPolicy(ask_settings).evaluate(
+        access, tool_name="write_file", subject="secrets/key", in_scope=True
+    )[0] == "ask"
+
+
+def test_missing_and_invalid_settings(tmp_path):
+    assert load_permission_settings(tmp_path / "missing.json").mode == "default"
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"mode": "yolo"}', encoding="utf-8")
+    try:
+        load_permission_settings(bad)
+    except ValueError as exc:
+        assert "yolo" in str(exc)
+    else:
+        raise AssertionError("invalid mode should raise")

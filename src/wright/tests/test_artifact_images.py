@@ -10,6 +10,7 @@ from wright.artifacts import ArtifactStore
 from wright.domain.checkpoint import SessionCheckpointStore
 from wright.domain.session import Session
 from wright.engine.agent import Agent
+from wright.permission import ToolAccess
 from wright.renderer import SilentRenderer
 from wright.tools.base import Tool, ToolResult
 from wright.tools.mcp_client import _to_tool_result
@@ -98,8 +99,19 @@ def test_agent_tool_images_reach_provider_and_survive_checkpoint(tmp_path, trans
     try:
         session = Session.create("report", tmp_path)
         agent = Agent(llm, [
-            Tool("report", "image report", {"type": "object"}, report),
-            Tool("text", "text report", {"type": "object"}, lambda *_: ToolResult.success("text")),
+            Tool(
+                "report", "image report", {"type": "object"}, report,
+                access_descriptor=lambda args: ToolAccess.internal_read(
+                    reason="artifact transport test"
+                ),
+            ),
+            Tool(
+                "text", "text report", {"type": "object"},
+                lambda *_: ToolResult.success("text"),
+                access_descriptor=lambda args: ToolAccess.internal_read(
+                    reason="artifact transport test"
+                ),
+            ),
         ], session, SilentRenderer())
         assert agent.run("make and inspect the report") == "seen"
         history = deepcopy(session.wire_messages())

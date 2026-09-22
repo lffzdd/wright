@@ -13,7 +13,7 @@ from ..llm import LLMClient
 from ..logger import get_logger
 from ..memory import MemoryManager
 from ..model import ModelRequest
-from ..permission import PermissionResolver
+from ..permission import AuthorizationChange, PermissionResolver
 from ..processes import RuntimeResources
 from ..prompt import build_system_prompt
 from ..protocol import TurnAbort, encode_tools, parse_turn
@@ -72,6 +72,8 @@ class Agent:
         execution_journal=None,
         execution_journal_factory=None,
         on_run_started: Callable[[str], None] | None = None,
+        authorization_commit: Callable[[AuthorizationChange], None] | None = None,
+        authorization_commit_factory=None,
     ):
         self.llm = llm
         self.session_state = session_state
@@ -189,6 +191,8 @@ class Agent:
             capability_snapshot=self.capabilities,
             execution_journal=execution_journal,
             execution_journal_factory=execution_journal_factory,
+            authorization_commit=authorization_commit,
+            authorization_commit_factory=authorization_commit_factory,
         )
         if (
             checkpoint_store is not None

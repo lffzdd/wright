@@ -1,13 +1,13 @@
 from ..engine.executor import ToolExecutor
-from ..permission import PermissionCheckResult, PermissionResolver
+from ..permission import PermissionResolver, PermissionResponse, ToolAccess
 from ..tools.base import Tool, ToolCall, ToolResult
 
 
 def _schema_tool(calls, permission_calls=None):
-    def check_permission(args, runtime):
+    def describe_access(args):
         if permission_calls is not None:
             permission_calls.append(dict(args))
-        return PermissionCheckResult("allow", "test tool policy")
+        return ToolAccess.internal_read()
 
     return Tool(
         name="structured",
@@ -29,7 +29,7 @@ def _schema_tool(calls, permission_calls=None):
         call=lambda args, runtime: (
             calls.append(args) or ToolResult.success(args)
         ),
-        check_permission=check_permission,
+        access_descriptor=describe_access,
     )
 
 
@@ -39,7 +39,7 @@ def test_invalid_arguments_fail_before_permission_and_tool(tmp_path):
 
     def approval_handler(request):
         permission_calls.append(request)
-        return PermissionCheckResult("allow", "test")
+        return PermissionResponse("allow_once")
 
     tool = _schema_tool(tool_calls, permission_calls)
     executor = ToolExecutor(
@@ -79,19 +79,24 @@ def test_missing_required_argument_returns_repairable_result(tmp_path):
 def test_permission_rewritten_arguments_are_revalidated(tmp_path):
     calls = []
     tool = _schema_tool(calls)
-    tool.check_permission = lambda args, runtime: PermissionCheckResult(
-        "allow",
-        "rewritten by permission",
-        updated_arguments={"name": "x", "mode": "delete"},
+    tool.access_descriptor = lambda args: ToolAccess(
+        frozenset({"network_write"}), subject="structured"
     )
     outcome = ToolExecutor(
-        {tool.name: tool}, workspace_dir=tmp_path
+        {tool.name: tool},
+        workspace_dir=tmp_path,
+        permission_resolver=PermissionResolver(
+            approval_handler=lambda request: PermissionResponse(
+                "allow_once", {"name": "x", "mode": "delete"}
+            )
+        ),
     ).execute([
         ToolCall("structured", {"name": "ok", "mode": "read"}, "c1")
     ])[0]
 
     assert outcome.status == "failed"
-    assert outcome.result.data["error"]["type"] == "tool_input_validation"
+    assert outcome.result.data["permission"]["source"] == "updated_arguments_invalid"
+    assert "参数无效" in outcome.result.err
     assert calls == []
 
 

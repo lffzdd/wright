@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..permission import PermissionCheckResult
+from ..permission import ToolAccess
 from .base import Tool, ToolResult, ToolRuntime
 
 MAX_QUESTION_LENGTH = 1_000
@@ -69,9 +69,7 @@ def ask_user(
         return ToolResult.fail(str(e))
 
 
-def check_ask_user_permission(
-    arguments: dict, runtime: ToolRuntime
-) -> PermissionCheckResult:
+def describe_ask_user_access(arguments: dict) -> ToolAccess:
     """校验提问形状并强制进入统一用户交互层。"""
     try:
         question = _clean_text(arguments.get("question"), "question", MAX_QUESTION_LENGTH)
@@ -82,14 +80,12 @@ def check_ask_user_permission(
             raise ValueError(f"context 不能超过 {MAX_CONTEXT_LENGTH} 个字符")
         _clean_options(arguments.get("options"))
     except (TypeError, ValueError) as e:
-        return PermissionCheckResult(
-            "deny", f"ask_user input invalid: {e}", source="tool_validation"
-        )
+        raise ValueError(f"ask_user input invalid: {e}") from e
 
-    return PermissionCheckResult(
-        "ask",
-        f"ask_user needs a user answer: {question}",
-        source="tool_interaction",
+    return ToolAccess(
+        frozenset({"user_interaction"}),
+        subject=question,
+        reason="ask_user needs a user answer",
     )
 
 
@@ -121,6 +117,6 @@ ask_user_tool = Tool(
         "required": ["question"],
     },
     call=lambda args, runtime: ask_user(**args, runtime=runtime),
-    check_permission=check_ask_user_permission,
+    access_descriptor=describe_ask_user_access,
     requires_user_interaction=True,
 )

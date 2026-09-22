@@ -2,8 +2,7 @@ import re
 import shlex
 from pathlib import Path
 
-from ..permission import PermissionCheckResult
-from .base import ToolRuntime
+from ..permission import AccessTarget, ToolAccess
 
 _READ_ONLY_COMMANDS = {
     "cat",
@@ -63,9 +62,7 @@ def is_execute_command_concurrency_safe(args: dict) -> bool:
     return names <= _READ_ONLY_COMMANDS
 
 
-def check_execute_command_permission(
-    args: dict, runtime: ToolRuntime
-) -> PermissionCheckResult:
+def describe_execute_command_access(args: dict) -> ToolAccess:
     command = str(args.get("command", ""))
     risk_flags = (
         "writes_files",
@@ -75,15 +72,16 @@ def check_execute_command_permission(
         "may_delete_files",
         *_command_risk_flags(command),
     )
-    return PermissionCheckResult(
-        "ask",
-        _format_reason(
-            runtime.tool_name or "execute_command",
+    return ToolAccess(
+        frozenset({"shell"}),
+        (AccessTarget("command", command, "shell", kind="command"),),
+        subject=command,
+        risk_flags=tuple(dict.fromkeys(risk_flags)),
+        reason=_format_reason(
+            "execute_command",
             "requires user approval by command tool policy",
             tuple(dict.fromkeys(risk_flags)),
         ),
-        tuple(dict.fromkeys(risk_flags)),
-        source="tool",
     )
 
 

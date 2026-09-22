@@ -61,11 +61,15 @@ export type Interaction = {
   tool_name?: string;
   subject?: string;
   reason?: string;
-  risk_flags?: string;
-  offer_always?: boolean;
-  remember_rule?: string;
-  remember_persists?: boolean;
-  revoke_hint?: string;
+  risk_flags?: string[];
+  targets?: string[];
+  principal?: string;
+  choices?: Array<{
+    id: string;
+    label: string;
+    scope: string;
+    persistence: string;
+  }>;
 };
 
 export type QueuedCommand = { command_id: string; prompt: string; attachments?: Attachment[] };

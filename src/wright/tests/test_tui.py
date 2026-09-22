@@ -11,6 +11,7 @@ from wright.app.event_dispatch import (
 )
 from wright.app.runtime import _trusted_mcp_config_paths, parse_cli_args
 from wright.interaction import InteractionHub
+from wright.permission import PermissionChoice, PermissionPrompt
 from wright.renderer import SilentRenderer, collect_history_pairs
 from wright.tools.base import ToolCall, ToolResult
 from wright.tui import app as tui_app_module
@@ -198,7 +199,11 @@ def test_tui_renderer_tracks_tools_without_app():
 
 def test_tui_renderer_permission_fail_closed_without_app():
     renderer = TUIRenderer()
-    assert renderer.prompt_permission("write_file", "a.txt", "无", "ask", True) == "n"
+    prompt = PermissionPrompt(
+        "request", "write_file", "a.txt", "ask", (), targets=(),
+        choices=(PermissionChoice("allow_once", "Allow once", "call", "none"),),
+    )
+    assert renderer.prompt_permission(prompt) == "deny"
     assert renderer.prompt_user("q") is None
 
 
@@ -207,11 +212,14 @@ def test_tui_renderer_permission_uses_hub_off_collector_thread():
     renderer = TUIRenderer()
     renderer.bind_interaction(hub)
     answers: list[str] = []
+    permission_prompt = PermissionPrompt(
+        "request", "write_file", "file=a.txt", "ask", (), targets=(),
+        choices=(PermissionChoice("allow_once", "Allow once", "call", "none"),
+                 PermissionChoice("deny", "Deny", "none", "none")),
+    )
 
     def agent() -> None:
-        answers.append(
-            renderer.prompt_permission("write_file", "file=a.txt", "无", "ask", True)
-        )
+        answers.append(renderer.prompt_permission(permission_prompt))
 
     import threading
     import time
@@ -224,9 +232,9 @@ def test_tui_renderer_permission_uses_hub_off_collector_thread():
     request = hub.poll()
     assert request is not None
     assert request.kind == "permission"
-    request.reply.put("y")
+    request.reply.put("allow_once")
     thread.join(timeout=2)
-    assert answers == ["y"]
+    assert answers == ["allow_once"]
 
 
 def test_tui_renderer_completion_rejected_is_a_notice():

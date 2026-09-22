@@ -10,7 +10,7 @@ from ...autonomy import AutonomyStore, AutonomyStoreError, TriggerSpec
 from ...domain.session import Session
 from ...engine.agent import Agent
 from ...engine.executor import ToolExecutor
-from ...permission import PermissionSettings
+from ...permission import PermissionPolicy, PermissionResolver, PermissionSettings
 from ...renderer import SilentRenderer
 from ...tools.base import Tool, ToolCall, ToolResult
 
@@ -241,7 +241,12 @@ def test_effect_is_not_called_when_intent_cannot_be_persisted(tmp_path):
             raise AssertionError("must not start after failed intent")
 
     tool = Tool("effect", "effect", {"type": "object"}, lambda args, _rt: called.append(args))
-    executor = ToolExecutor({"effect": tool}, workspace_dir=tmp_path, execution_journal=FailingJournal())
+    executor = ToolExecutor(
+        {"effect": tool},
+        workspace_dir=tmp_path,
+        execution_journal=FailingJournal(),
+        permission_policy=PermissionPolicy(PermissionSettings(mode="bypass")),
+    )
 
     outcome = executor.execute([ToolCall("effect", {"target": "x"}, "call-1")])[0]
 
@@ -274,6 +279,9 @@ def test_result_persistence_failure_stops_agent_without_retrying_effect(tmp_path
         [Tool("effect", "effect", {"type": "object"}, lambda _args, _rt: calls.append("ran") or ToolResult.success())],
         Session.create("effect", tmp_path),
         SilentRenderer(),
+        permission_resolver=PermissionResolver(
+            PermissionPolicy(PermissionSettings(mode="bypass"))
+        ),
         execution_journal=ResultFailJournal(),
     )
     assert agent.run("perform effect") is None
@@ -322,7 +330,7 @@ def test_host_does_not_retry_unknown_effect_even_with_retry_policy(tmp_path, mon
     host = ApplicationHost(
         workspace_dir=workspace, store=store, llm=Model(),
         base_tools=[Tool("effect", "append marker", {"type": "object"}, effect)],
-        permission_settings=PermissionSettings(), poll_interval=0.01,
+        permission_settings=PermissionSettings(mode="bypass"), poll_interval=0.01,
         on_event=lambda *_: finished.set(),
     )
     try:
@@ -396,7 +404,7 @@ def test_sessions_sharing_host_share_dispatch_capacity(tmp_path):
     host = ApplicationHost(
         workspace_dir=workspace, store=first, llm=Model(),
         base_tools=[Tool("effect", "work", {"type": "object"}, effect)],
-        permission_settings=PermissionSettings(), poll_interval=0.01, on_event=completed,
+        permission_settings=PermissionSettings(mode="bypass"), poll_interval=0.01, on_event=completed,
     )
     try:
         first.create_automation(name="first", prompt="work", trigger=TriggerSpec(type="once", run_at=0))

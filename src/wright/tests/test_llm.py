@@ -12,6 +12,7 @@ from ..events import ContentDone, UsageEvent
 from ..llm import LLMClient
 from ..memory.llm_util import side_query
 from ..model import ModelRequest
+from ..permission import ToolAccess
 from ..protocol import TurnAbort, parse_turn
 from ..renderer import SilentRenderer
 from ..tools.base import Tool, ToolResult
@@ -222,6 +223,9 @@ def test_real_sdk_round_trip_sends_each_result_with_original_id(tmp_path, stream
             "required": ["value"],
         },
         lambda args, runtime: ToolResult.success(args["value"]),
+        access_descriptor=lambda args: ToolAccess.internal_read(
+            reason="LLM round-trip test operation"
+        ),
     )
     session = Session.create("test", tmp_path)
     try:
@@ -485,6 +489,9 @@ def test_mcp_alias_executes_original_tool_and_preserves_wire_name(tmp_path):
         {},
         lambda args, runtime: (
             observed.append(runtime.tool_name) or ToolResult.success("ok")
+        ),
+        access_descriptor=lambda args: ToolAccess.internal_read(
+            reason="MCP alias wire-name test operation"
         ),
     )
 

@@ -118,6 +118,7 @@ class Session:
         environment: ExecutionEnvironment = "local",
         base_commit: str | None = None,
         branch_name: str | None = None,
+        additional_working_directories: list[Path] | None = None,
     ) -> Session:
         execution_root = workspace_dir.resolve()
         return cls(
@@ -129,6 +130,10 @@ class Session:
             environment=environment,
             base_commit=base_commit,
             branch_name=branch_name,
+            additional_working_directories=[
+                Path(item).expanduser().absolute()
+                for item in (additional_working_directories or ())
+            ],
             turns=[],
             message_records=[],
             tool_executions={},
@@ -142,21 +147,38 @@ class Session:
             return self.cwd
 
     def set_cwd(self, cwd: Path) -> None:
+        if not isinstance(cwd, Path):
+            raise TypeError("Session.set_cwd requires pathlib.Path")
         with self._cwd_lock:
             self.cwd = cwd.resolve()
 
     def add_working_directory(self, directory: Path) -> Path:
         """Grant an extra working-directory root for this session."""
-        from ..access import is_under, resolve_path
+        from ..permission.scope import is_under, resolve_root
 
-        resolved = resolve_path(directory)
-        origin = self.workspace_dir.resolve()
-        if resolved == origin or is_under(resolved, origin):
+        resolved = resolve_root(directory)
+        origin = resolve_root(self.workspace_dir)
+        with self._cwd_lock:
+            if resolved == origin or is_under(resolved, origin):
+                return resolved
+            if any(
+                item == resolved or is_under(resolved, item)
+                for item in self.additional_working_directories
+            ):
+                return resolved
+            self.additional_working_directories.append(resolved)
             return resolved
-        if any(item == resolved or is_under(resolved, item) for item in self.additional_working_directories):
-            return resolved
-        self.additional_working_directories.append(resolved)
-        return resolved
+
+    def working_directories_snapshot(self) -> tuple[Path, ...]:
+        """Return the current session roots without exposing mutable state."""
+        with self._cwd_lock:
+            return tuple(self.additional_working_directories)
+
+    def access_scope(self):
+        """Build an immutable permission snapshot at a composition boundary."""
+        from ..permission.scope import AccessScope
+
+        return AccessScope(self.workspace_dir, self.working_directories_snapshot())
 
     def register_background_task(self, task: BackgroundTask) -> None:
         """Persist task metadata; RuntimeResources owns its live handles."""

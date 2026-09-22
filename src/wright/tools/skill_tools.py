@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ..permission import ToolAccess
 from ..skills.registry import SkillRegistry
 from ..skills.types import SkillNotFoundError, SkillStoreError
 from .base import Tool, ToolResult, ToolRuntime
@@ -62,6 +63,11 @@ def build_skill_tools(registry: SkillRegistry) -> list[Tool]:
                 "additionalProperties": False,
             },
             call=bind(invoke_skill),
+            access_descriptor=lambda args: ToolAccess(
+                frozenset({"internal_read"}),
+                subject=str(args.get("skill_id", "")),
+                reason="load a registered skill definition",
+            ),
             is_concurrency_safe=lambda args: True,
         )
     return [load_skill]

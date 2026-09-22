@@ -11,7 +11,7 @@ from ...domain.session import Session
 from ...engine.agent import Agent
 from ...engine.agent_background import AgentBackgroundRuntime
 from ...engine.subagent import build_agent_tools
-from ...permission import PermissionSettings
+from ...permission import PermissionPolicy, PermissionResolver, PermissionSettings
 from ...renderer import SilentRenderer
 from ...skills.registry import SkillRegistry
 from ...skills.store import write_skill
@@ -284,11 +284,15 @@ def test_durable_run_persists_history_and_child_side_effect_identity(tmp_path):
 
     llm = Script()
     root_journal = _DurableToolJournal(scheduler, run_id, agent_task_id="root-task")
+    permission_resolver = PermissionResolver(
+        PermissionPolicy(PermissionSettings(mode="bypass"))
+    )
     tools = build_agent_tools(
         llm,
         [Tool("write_marker", "write marker", {"type": "object"}, write_marker)],
         max_depth=1,
         render_subagents=False,
+        permission_resolver=permission_resolver,
     )
     root = Agent(
         llm,
@@ -296,6 +300,7 @@ def test_durable_run_persists_history_and_child_side_effect_identity(tmp_path):
         session,
         SilentRenderer(),
         services=services,
+        permission_resolver=permission_resolver,
         execution_journal=root_journal,
         execution_journal_factory=lambda task_id, parent_id: root_journal.child(task_id, parent_id),
         profile=AgentProfile(

@@ -10,6 +10,7 @@ import json
 from collections.abc import Sequence
 from copy import copy
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from ..app.services import RuntimeServices
@@ -25,11 +26,10 @@ from ..engine.subagent import (
 from ..llm import LLMClient, resolve_transport
 from ..logger import get_logger
 from ..permission import (
-    PermissionCheckResult,
-    PermissionRequest,
     PermissionResolver,
     PermissionSettings,
-    RuleBasedApprovalHandler,
+    append_additional_directory,
+    append_allow_rule,
 )
 from ..renderer import SilentRenderer
 from ..tools.base import Tool
@@ -179,27 +179,6 @@ class DurableLaunch:
     tool_names: tuple[str, ...]
 
 
-class _UnattendedApprovalHandler:
-    """Rule-based approval that can never fall through to a terminal prompt."""
-
-    def __init__(self, settings: PermissionSettings) -> None:
-        self._inner = RuleBasedApprovalHandler(settings)
-
-    def __call__(self, request: PermissionRequest) -> PermissionCheckResult:
-        result = self._inner(request)
-        if result.decision == "allow":
-            return result
-        reason = result.reason
-        if _UNATTENDED_DENY_NOTE not in reason:
-            reason = f"{reason}; {_UNATTENDED_DENY_NOTE}"
-        return PermissionCheckResult(
-            "deny",
-            reason,
-            result.risk_flags,
-            source=result.source or "durable_unattended",
-        )
-
-
 def _durable_base_tools(base_tools: Sequence[Tool]) -> list[Tool]:
     return [
         tool
@@ -234,7 +213,9 @@ def _user_prompt_for_run(scheduler: AutonomyScheduler, run_id: str) -> str:
 
 
 def _fail_closed_resolver(settings: PermissionSettings) -> PermissionResolver:
-    return PermissionResolver(approval_handler=_UnattendedApprovalHandler(settings))
+    # The policy is the single source of truth.  With no approval adapter,
+    # every policy-level ask fails closed without an interactive fallback.
+    return PermissionResolver(settings=settings)
 
 
 def _commit_durable_run(
@@ -339,6 +320,18 @@ def launch_durable_run(
         return None
 
     permission_resolver = _fail_closed_resolver(permission_settings)
+
+    def authorization_commit_factory(target_session: Session):
+        def commit_authorization(change) -> None:
+            for directory in change.session_directories:
+                target_session.add_working_directory(Path(directory.value))
+            for rule in change.persistent_rules:
+                append_allow_rule(rule)
+            for directory in change.persistent_directories:
+                append_additional_directory(directory.value)
+
+        return commit_authorization
+
     root_journal = _DurableToolJournal(
         scheduler, run_id, agent_task_id=record.id
     )
@@ -353,12 +346,17 @@ def launch_durable_run(
         max_depth=min(max_depth, control.config.max_depth),
         render_subagents=False,
         permission_resolver=permission_resolver,
+        authorization_commit_factory=authorization_commit_factory,
         enable_autonomy=False,
     )
     child_session = Session.create(
         initial_goal=prompt,
         workspace_dir=(root_session.workspace_dir if root_session is not None else workspace_dir),
         max_steps=record.step_budget,
+        additional_working_directories=(
+            list(root_session.working_directories_snapshot())
+            if root_session is not None else None
+        ),
     )
     child_session.control_plane = control
     child_session.agent_task_id = record.id
@@ -415,6 +413,8 @@ def launch_durable_run(
         ),
         execution_journal=root_journal,
         execution_journal_factory=child_journal_factory,
+        authorization_commit=authorization_commit_factory(child_session),
+        authorization_commit_factory=authorization_commit_factory,
     )
     user_prompt = _user_prompt_for_run(scheduler, run_id)
 

@@ -11,6 +11,7 @@ from ...app.lifecycle import (
     load_lifecycle_manager,
 )
 from ...engine.executor import ToolExecutor
+from ...permission import ToolAccess
 from ...tools.base import Tool, ToolCall, ToolResult
 
 
@@ -25,6 +26,9 @@ def _tool(call):
             "additionalProperties": False,
         },
         call=call,
+        access_descriptor=lambda args: ToolAccess.internal_read(
+            reason="lifecycle test operation"
+        ),
     )
 
 
@@ -165,6 +169,9 @@ def test_hook_rewrite_is_applied_before_concurrency_partition(tmp_path):
             "additionalProperties": False,
         },
         call=call,
+        access_descriptor=lambda args: ToolAccess.internal_read(
+            reason="concurrency classification test operation"
+        ),
         is_concurrency_safe=lambda arguments: arguments["mode"] == "read",
     )
     manager = LifecycleManager("session")

@@ -2,7 +2,21 @@
 
 from __future__ import annotations
 
+from ..permission import ToolAccess
 from .base import Tool, ToolResult, ToolRuntime
+
+
+def _describe_plan_update(arguments: dict) -> ToolAccess:
+    return ToolAccess(
+        frozenset({"plan_update"}),
+        subject=str(arguments.get("step_id") or arguments.get("objective") or ""),
+        reason="update the current session plan",
+    )
+
+
+def _describe_plan_read(arguments: dict) -> ToolAccess:
+    del arguments
+    return ToolAccess.internal_read(reason="read the current session plan")
 
 
 def _manager(runtime: ToolRuntime | None):
@@ -88,6 +102,7 @@ create_plan_tool = Tool(
         "required": ["objective", "steps"],
     },
     call=lambda args, runtime: create_plan(**args, runtime=runtime),
+    access_descriptor=_describe_plan_update,
     required_capabilities=frozenset({"plan"}),
 )
 
@@ -124,6 +139,7 @@ update_plan_tool = Tool(
         "required": ["step_id", "status"],
     },
     call=lambda args, runtime: update_plan(**args, runtime=runtime),
+    access_descriptor=_describe_plan_update,
     required_capabilities=frozenset({"plan"}),
 )
 
@@ -132,6 +148,7 @@ get_plan_tool = Tool(
     description="Read the current task plan: overall status, revision, and all steps.",
     parameters={"type": "object", "properties": {}, "required": []},
     call=lambda args, runtime: get_plan(runtime=runtime),
+    access_descriptor=_describe_plan_read,
     required_capabilities=frozenset({"plan"}),
     is_concurrency_safe=lambda args: True,
 )
@@ -161,6 +178,7 @@ replan_tool = Tool(
         "required": ["steps", "reason"],
     },
     call=lambda args, runtime: replan(**args, runtime=runtime),
+    access_descriptor=_describe_plan_update,
     required_capabilities=frozenset({"plan"}),
 )
 

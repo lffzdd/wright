@@ -1,13 +1,12 @@
 # 文件操作工具链
-import json
-import subprocess
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from ..access import PathClass
-from ..permission import PermissionCheckResult
+from ..execution import AuthorizedExecution, ExecutionPath
+from ..permission import AccessTarget, ToolAccess
 from .base import Tool, ToolResult, ToolRuntime
 
 MAX_READ_CHARS = 1_000_000  # 单次最多读 100 万字符,够用又不撑爆内存
@@ -24,34 +23,26 @@ _path_locks_guard = threading.Lock()
 _path_locks: dict[Path, threading.RLock] = {}
 
 
-def _workspace(runtime: ToolRuntime) -> Path:
-    if runtime.capabilities is None or runtime.capabilities.execution is None:
-        raise RuntimeError("file tool requires execution capability")
-    return runtime.capabilities.execution.workspace_dir
+def _backend(runtime: ToolRuntime) -> AuthorizedExecution:
+    if runtime.execution is None:
+        raise RuntimeError("file tool requires an invocation authorization")
+    return runtime.execution
 
 
-def _backend(runtime: ToolRuntime):
-    if runtime.capabilities is None or runtime.capabilities.execution is None:
-        raise RuntimeError("file tool requires execution capability")
-    return runtime.capabilities.execution
+def _safe_path(path: str, runtime: ToolRuntime) -> ExecutionPath:
+    return _backend(runtime).resolve_path(path)
 
 
-def _safe_path(path: str, runtime: ToolRuntime) -> Path:
-    if runtime.capabilities is None or runtime.capabilities.execution is None:
-        raise RuntimeError("file tool requires execution capability")
-    return runtime.capabilities.execution.path(path)
-
-
-def _path_lock(path: Path) -> threading.RLock:
+def _path_lock(path: ExecutionPath) -> threading.RLock:
     with _path_locks_guard:
-        return _path_locks.setdefault(path, threading.RLock())
+        return _path_locks.setdefault(Path(path.value), threading.RLock())
 
 
-def _relative_file(path: Path, runtime: ToolRuntime) -> str:
+def _relative_file(path: ExecutionPath, runtime: ToolRuntime) -> str:
     return _backend(runtime).display_path(path)
 
 
-def _detect_encoding(path: Path, runtime: ToolRuntime) -> str:
+def _detect_encoding(path: ExecutionPath, runtime: ToolRuntime) -> str:
     head = _backend(runtime).read_bytes(path, 4)
     if head.startswith((b"\xff\xfe", b"\xfe\xff")):
         return "utf-16"
@@ -60,13 +51,13 @@ def _detect_encoding(path: Path, runtime: ToolRuntime) -> str:
     return "utf-8"
 
 
-def _read_text(path: Path, runtime: ToolRuntime, *, replace: bool = False) -> tuple[str, str]:
+def _read_text(path: ExecutionPath, runtime: ToolRuntime, *, replace: bool = False) -> tuple[str, str]:
     encoding = _detect_encoding(path, runtime)
     errors = "replace" if replace else "strict"
     return _backend(runtime).read_text(path, encoding=encoding, errors=errors), encoding
 
 
-def _write_text(path: Path, content: str, encoding: str, runtime: ToolRuntime) -> None:
+def _write_text(path: ExecutionPath, content: str, encoding: str, runtime: ToolRuntime) -> None:
     _backend(runtime).write_text(path, content, encoding=encoding)
 
 
@@ -107,8 +98,8 @@ def _file_views(runtime: ToolRuntime) -> dict[str, FileView]:
     return views
 
 
-def _remember_file_view(runtime: ToolRuntime, path: Path, view: FileView) -> None:
-    key = str(path.resolve())
+def _remember_file_view(runtime: ToolRuntime, path: ExecutionPath, view: FileView) -> None:
+    key = path.value
     with runtime.scratch_lock:
         views = _file_views(runtime)
         views.pop(key, None)
@@ -124,16 +115,16 @@ def _remember_file_view(runtime: ToolRuntime, path: Path, view: FileView) -> Non
             total -= len(evicted.content)
 
 
-def _remembered_file_view(runtime: ToolRuntime, path: Path) -> FileView | None:
+def _remembered_file_view(runtime: ToolRuntime, path: ExecutionPath) -> FileView | None:
     with runtime.scratch_lock:
         views = runtime.scratch.get(_FILE_VIEWS_KEY)
         if not views:
             return None
-        return views.get(str(path.resolve()))
+        return views.get(path.value)
 
 
 def _stamp_read_view(
-    path: Path,
+    path: ExecutionPath,
     runtime: ToolRuntime,
     *,
     content: str,
@@ -146,13 +137,13 @@ def _stamp_read_view(
     next_start_line: int | None,
     next_start_column: int | None,
 ) -> None:
-    stat = _backend(runtime).stat(path)
+    stat = _backend(runtime).metadata(path)
     _remember_file_view(
         runtime,
         path,
         FileView(
-            mtime_ns=stat.st_mtime_ns,
-            size=stat.st_size,
+            mtime_ns=stat.modified_ns,
+            size=stat.size,
             content=content,
             origin="read",
             start_line=start_line,
@@ -167,14 +158,14 @@ def _stamp_read_view(
     )
 
 
-def _stamp_write_view(path: Path, runtime: ToolRuntime, content: str) -> None:
-    stat = _backend(runtime).stat(path)
+def _stamp_write_view(path: ExecutionPath, runtime: ToolRuntime, content: str) -> None:
+    stat = _backend(runtime).metadata(path)
     _remember_file_view(
         runtime,
         path,
         FileView(
-            mtime_ns=stat.st_mtime_ns,
-            size=stat.st_size,
+            mtime_ns=stat.modified_ns,
+            size=stat.size,
             content=content,
             origin="write",
         ),
@@ -182,7 +173,7 @@ def _stamp_write_view(path: Path, runtime: ToolRuntime, content: str) -> None:
 
 
 def _unread_or_stale(
-    path: Path,
+    path: ExecutionPath,
     runtime: ToolRuntime,
     *,
     require_complete: bool = False,
@@ -199,8 +190,8 @@ def _unread_or_stale(
             "read the whole file before overwriting it",
             data={"reason": "incomplete", "file": relative},
         )
-    stat = _backend(runtime).stat(path)
-    if stat.st_mtime_ns == viewed.mtime_ns and stat.st_size == viewed.size:
+    stat = _backend(runtime).metadata(path)
+    if stat.modified_ns == viewed.mtime_ns and stat.size == viewed.size:
         return None
     if viewed.is_complete and _read_text(path, runtime, replace=True)[0] == viewed.content:
         return None
@@ -259,20 +250,21 @@ def list_directory(
         assert runtime is not None
         runtime.raise_if_cancelled()
         safe_directory = _safe_path(directory, runtime)
-        if not _backend(runtime).is_dir(safe_directory):
+        directory_meta = _backend(runtime).metadata(safe_directory)
+        if directory_meta.kind != "directory":
             return ToolResult.fail("Not a directory", data={"entries": []})
         max_entries = max(1, min(int(max_entries), 2_000))
         entries = []
-        for entry in sorted(_backend(runtime).iter_directory(safe_directory), key=lambda item: item.name.lower()):
+        for entry in sorted(_backend(runtime).iter_directory(safe_directory), key=lambda item: item.path.name.lower()):
             runtime.raise_if_cancelled()
-            if not include_hidden and entry.name.startswith("."):
+            if not include_hidden and entry.path.name.startswith("."):
                 continue
-            kind = "directory" if _backend(runtime).is_dir(entry) else "file" if _backend(runtime).is_file(entry) else "other"
+            kind = entry.metadata.kind
             entries.append({
-                "name": entry.name,
-                "path": _backend(runtime).display_path(entry),
+                "name": entry.path.name,
+                "path": _backend(runtime).display_path(entry.path),
                 "type": kind,
-                "size": _backend(runtime).stat(entry).st_size if kind == "file" else None,
+                "size": entry.metadata.size if kind == "file" else None,
             })
             if len(entries) > max_entries:
                 break
@@ -301,26 +293,21 @@ def glob_files(
         if not pattern or Path(pattern).is_absolute() or ".." in Path(pattern).parts:
             return ToolResult.fail("pattern must be a non-empty workspace-relative glob")
         root = _safe_path(directory, runtime)
-        if not _backend(runtime).is_dir(root):
+        if _backend(runtime).metadata(root).kind != "directory":
             return ToolResult.fail("Not a directory", data={"matches": []})
         max_results = max(1, min(int(max_results), 2_000))
         matches: list[dict[str, Any]] = []
         backend = _backend(runtime)
-        for path in backend.glob(root, pattern):
+        root_parts = tuple(part for part in root.value.rstrip("/").split("/") if part)
+        for entry in backend.glob(root, pattern):
             runtime.raise_if_cancelled()
-            resolved = path.resolve()
-            if not backend.access.contains(resolved) and not backend.invocation_allows(resolved):
-                continue
-            displayed = backend.display_path(path)
-            try:
-                hidden_parts = resolved.relative_to(root.resolve()).parts
-            except ValueError:
-                hidden_parts = Path(displayed).parts
+            displayed = backend.display_path(entry.path)
+            hidden_parts = tuple(part for part in entry.path.value.rstrip("/").split("/") if part)[len(root_parts):]
             if not include_hidden and any(part.startswith(".") for part in hidden_parts):
                 continue
             matches.append({
                 "path": displayed,
-                "type": "directory" if backend.is_dir(path) else "file" if backend.is_file(path) else "other",
+                "type": entry.metadata.kind,
             })
         matches.sort(key=lambda item: item["path"])
         truncated = len(matches) > max_results
@@ -348,66 +335,47 @@ def grep_files(
         if not pattern:
             return ToolResult.fail("pattern cannot be empty", data={"matches": []})
         target = _safe_path(path, runtime)
-        if not _backend(runtime).exists(target):
+        if _backend(runtime).metadata(target).kind == "missing":
             return ToolResult.fail("Path does not exist", data={"matches": []})
         max_results = max(1, min(int(max_results), 2_000))
-        command = ["rg", "--json", "--color", "never"]
-        if not case_sensitive:
-            command.append("--ignore-case")
-        if fixed_string:
-            command.append("--fixed-strings")
-        if glob:
-            command.extend(["--glob", glob])
-        command.extend([pattern, str(target)])
-        completed = _backend(runtime).run_process(
-            command,
-            cwd=_workspace(runtime),
-            capture_output=True,
-            text=True,
-            timeout=20,
-            check=False,
-        )
-        if completed.returncode not in {0, 1}:
-            return ToolResult.fail(
-                completed.stderr.strip() or f"ripgrep exited with {completed.returncode}",
-                data={"matches": []},
-            )
         matches: list[dict[str, Any]] = []
         truncated = False
-        for raw_line in completed.stdout.splitlines():
-            runtime.raise_if_cancelled()
-            event = json.loads(raw_line)
-            if event.get("type") != "match":
-                continue
-            data = event["data"]
-            match_path = Path(data["path"]["text"])
-            displayed = _backend(runtime).display_path(match_path)
-            resolved = match_path.resolve()
-            if (
-                not _backend(runtime).access.contains(resolved)
-                and not _backend(runtime).invocation_allows(resolved)
-            ):
-                continue
-            line_number = int(data["line_number"])
-            line_text = str(data["lines"]["text"]).rstrip("\r\n")
-            submatches = data.get("submatches") or [{}]
-            for submatch in submatches:
+        backend = _backend(runtime)
+        deadline = time.monotonic() + 20
+        candidates = backend.iter_search_candidates(
+            target,
+            glob=glob,
+            deadline=deadline,
+            cancellation_check=runtime.is_cancelled,
+        )
+        search = backend.search_files(
+            candidates,
+            pattern,
+            case_sensitive=case_sensitive,
+            fixed_string=fixed_string,
+            deadline=deadline,
+            cancellation_check=runtime.is_cancelled,
+        )
+        try:
+            for match in search:
+                runtime.raise_if_cancelled()
                 matches.append({
-                    "path": displayed,
-                    "line": line_number,
-                    "column": int(submatch.get("start", 0)) + 1,
-                    "text": line_text,
+                    "path": backend.display_path(match.path),
+                    "line": match.line,
+                    "column": match.column,
+                    "text": match.text,
                 })
                 if len(matches) >= max_results:
                     truncated = True
                     break
-            if truncated:
-                break
+        finally:
+            close = getattr(search, "close", None)
+            if callable(close):
+                close()
+            close = getattr(candidates, "close", None)
+            if callable(close):
+                close()
         return ToolResult.success({"matches": matches, "truncated": truncated})
-    except FileNotFoundError:
-        return ToolResult.fail("ripgrep (rg) is not installed", data={"matches": []})
-    except subprocess.TimeoutExpired:
-        return ToolResult.fail("grep timed out after 20 seconds", data={"matches": []})
     except Exception as e:
         return ToolResult.fail(str(e), data={"matches": []})
 
@@ -425,7 +393,7 @@ def read_file(
         runtime.raise_if_cancelled()
         safe_path = _safe_path(file, runtime)
 
-        if not _backend(runtime).is_file(safe_path):
+        if _backend(runtime).metadata(safe_path).kind != "file":
             return ToolResult.fail("Not a file", data={"content": ""})
 
         # max_chars 来自 LLM,可能是负数/字符串/小数/None。
@@ -444,11 +412,11 @@ def read_file(
                 return ToolResult.fail("end_line must be greater than or equal to start_line")
 
         viewed = _remembered_file_view(runtime, safe_path)
-        stat = _backend(runtime).stat(safe_path)
+        stat = _backend(runtime).metadata(safe_path)
         if _unchanged_read_view(
             viewed,
-            mtime_ns=stat.st_mtime_ns,
-            size=stat.st_size,
+            mtime_ns=stat.modified_ns,
+            size=stat.size,
             start_line=start_line,
             start_column=start_column,
             end_line=end_line,
@@ -541,12 +509,13 @@ def write_file(
 
         with _path_lock(safe_path):
             runtime.raise_if_cancelled()
-            if _backend(runtime).exists(safe_path) and _backend(runtime).is_dir(safe_path):
+            existing = _backend(runtime).metadata(safe_path)
+            if existing.kind == "directory":
                 return ToolResult.fail("Path is a directory")
 
-            if _backend(runtime).exists(safe_path) and not overwrite:
+            if existing.kind != "missing" and not overwrite:
                 return ToolResult.fail("File already exists")
-            if _backend(runtime).is_file(safe_path):
+            if existing.kind == "file":
                 blocked = _unread_or_stale(
                     safe_path, runtime, require_complete=True
                 )
@@ -554,7 +523,7 @@ def write_file(
                     return blocked
 
             encoding = (
-                _detect_encoding(safe_path, runtime) if _backend(runtime).is_file(safe_path) else "utf-8"
+                _detect_encoding(safe_path, runtime) if existing.kind == "file" else "utf-8"
             )
             _backend(runtime).ensure_directory(safe_path.parent)
             _write_text(safe_path, content, encoding, runtime)
@@ -652,7 +621,7 @@ def edit_file(
 
         with _path_lock(safe_path):
             runtime.raise_if_cancelled()
-            if not _backend(runtime).is_file(safe_path):
+            if _backend(runtime).metadata(safe_path).kind != "file":
                 return ToolResult.fail("Not a file")
             if not old_text:
                 return ToolResult.fail("old_text must be non-empty")
@@ -694,74 +663,49 @@ def _path_argument(args: dict) -> str:
     return "."
 
 
-def _classify_file_permission(
-    args: dict, runtime, *, writes: bool
-) -> PermissionCheckResult:
-    target = _path_argument(args)
-    try:
-        resolved, classification = _backend(runtime).classify_path(target)
-    except Exception as exc:
-        return PermissionCheckResult(
-            "deny",
-            f"{runtime.tool_name}: path classification failed: {exc}",
-            source="tool",
-        )
-    if classification == PathClass.FORBIDDEN:
-        return PermissionCheckResult(
-            "deny",
-            f"{runtime.tool_name}: path is forbidden",
-            ("path_forbidden",),
-            source="tool",
-        )
-    outside = classification == PathClass.OUTSIDE
-    grant = _grant_directory(resolved, args)
-    if writes:
-        flags = ("writes_files",) if runtime.tool_name == "write_file" else ("reads_files", "writes_files")
-        if outside:
-            flags = (*flags, "path_outside_workspace")
-        return PermissionCheckResult(
-            "ask",
-            f"{runtime.tool_name}: requires user approval by file tool policy; risks={', '.join(flags)}",
-            flags,
-            source="tool",
-            added_directories=(grant,) if outside else (),
-            invocation_paths=(str(resolved),) if outside else (),
-        )
-    if not outside:
-        return PermissionCheckResult(
-            "allow",
-            f"{runtime.tool_name}: allowed by default tool permission",
-            source="tool_default",
-        )
-    flags = ("reads_files", "path_outside_workspace")
-    return PermissionCheckResult(
-        "ask",
-        f"{runtime.tool_name}: path is outside the working directories",
-        flags,
-        source="tool",
-        added_directories=(grant,),
-        invocation_paths=(str(resolved),),
+def _file_access(
+    args: dict,
+    *,
+    operations: frozenset,
+    recursive: bool = False,
+    reason: str,
+) -> ToolAccess:
+    key = "directory" if "directory" in args else "path" if "path" in args else "file"
+    value = _path_argument(args)
+    targets = tuple(
+        AccessTarget(key, value, operation, recursive, "directory" if recursive else "file")
+        for operation in operations
+    )
+    flags = tuple(
+        flag
+        for flag, operation in (("reads_files", "file_read"), ("writes_files", "file_write"))
+        if operation in operations
+    )
+    return ToolAccess(operations, targets, subject=value, risk_flags=flags, reason=reason)
+
+
+def _describe_file_read(args: dict) -> ToolAccess:
+    # ``grep.path`` is optional and defaults to the current directory; only
+    # the required ``read_file.file`` shape denotes an exact-file read.
+    recursive = "file" not in args
+    return _file_access(
+        args,
+        operations=frozenset({"file_read"}),
+        recursive=recursive,
+        reason="read files or directory entries",
     )
 
 
-def _grant_directory(resolved: Path, args: dict) -> str:
-    if args.get("file"):
-        return str(resolved.parent)
-    if resolved.exists() and resolved.is_file():
-        return str(resolved.parent)
-    return str(resolved)
+def _describe_file_write(args: dict) -> ToolAccess:
+    return _file_access(
+        args,
+        operations=frozenset({"file_read", "file_write"}),
+        reason="read and write the requested file",
+    )
 
 
-def _ask_file_write(args: dict, runtime) -> PermissionCheckResult:
-    return _classify_file_permission(args, runtime, writes=True)
-
-
-def _ask_file_edit(args: dict, runtime) -> PermissionCheckResult:
-    return _classify_file_permission(args, runtime, writes=True)
-
-
-def _ask_file_read(args: dict, runtime) -> PermissionCheckResult:
-    return _classify_file_permission(args, runtime, writes=False)
+def _describe_file_edit(args: dict) -> ToolAccess:
+    return _describe_file_write(args)
 
 
 list_directory_tool = Tool(
@@ -779,7 +723,7 @@ list_directory_tool = Tool(
         },
     },
     call=lambda args, runtime: list_directory(**args, runtime=runtime),
-    check_permission=_ask_file_read,
+    access_descriptor=_describe_file_read,
     is_concurrency_safe=lambda args: True,
     required_capabilities=frozenset({"execution"}),
 )
@@ -798,7 +742,7 @@ glob_tool = Tool(
         "required": ["pattern"],
     },
     call=lambda args, runtime: glob_files(**args, runtime=runtime),
-    check_permission=_ask_file_read,
+    access_descriptor=_describe_file_read,
     is_concurrency_safe=lambda args: True,
     required_capabilities=frozenset({"execution"}),
 )
@@ -819,7 +763,7 @@ grep_tool = Tool(
         "required": ["pattern"],
     },
     call=lambda args, runtime: grep_files(**args, runtime=runtime),
-    check_permission=_ask_file_read,
+    access_descriptor=_describe_file_read,
     is_concurrency_safe=lambda args: True,
     required_capabilities=frozenset({"execution"}),
 )
@@ -846,7 +790,7 @@ read_file_tool = Tool(
         "required": ["file"],
     },
     call=lambda args, runtime: read_file(**args, runtime=runtime),
-    check_permission=_ask_file_read,
+    access_descriptor=_describe_file_read,
     is_concurrency_safe=lambda args: True,
     required_capabilities=frozenset({"execution"}),
 )
@@ -877,7 +821,7 @@ write_file_tool = Tool(
         "required": ["file", "content"],
     },
     call=lambda args, runtime: write_file(**args, runtime=runtime),
-    check_permission=_ask_file_write,
+    access_descriptor=_describe_file_write,
     required_capabilities=frozenset({"execution"}),
 )
 
@@ -916,6 +860,6 @@ edit_file_tool = Tool(
         "required": ["file", "old_text", "new_text"],
     },
     call=lambda args, runtime: edit_file(**args, runtime=runtime),
-    check_permission=_ask_file_edit,
+    access_descriptor=_describe_file_edit,
     required_capabilities=frozenset({"execution"}),
 )

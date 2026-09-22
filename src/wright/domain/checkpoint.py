@@ -841,7 +841,7 @@ def _deserialize_additional_directories(
 def _cwd_in_granted_roots(
     cwd: Path, workspace_dir: Path, additional: list[Path]
 ) -> bool:
-    from ..access import is_under
+    from ..permission.scope import is_under
 
     resolved = cwd.resolve()
     return any(is_under(resolved, root) for root in (workspace_dir, *additional))

@@ -72,7 +72,7 @@ class InteractionHub:
         item = InteractionRequest(kind=kind, payload=payload)
         with self._lock:
             if self._closed:
-                return "n" if kind == "permission" else None
+                return "deny" if kind == "permission" else None
             self._pending.append(item)
             self._requests[item.request_id] = item
             callback = self._on_requested
@@ -112,7 +112,7 @@ class InteractionHub:
             self._pending.clear()
         for item in pending:
             if not item.reply.full():
-                item.reply.put_nowait(None if item.kind == "ask_user" else "n")
+                item.reply.put_nowait(None if item.kind == "ask_user" else "deny")
             callback = self._on_resolved
             if callback is not None:
                 callback(item.request_id, item.kind, {"cancelled": True})
@@ -161,15 +161,14 @@ class InteractionBroker:
         item = _BrokerRequest(kind=kind, payload=dict(payload))
         with self._lock:
             if self._closed:
-                return "n" if kind == "permission" else None
+                return "deny" if kind == "permission" else None
             self._pending[request_id] = item
             callback = self._on_requested
         if callback is not None:
             callback(request_id, kind, dict(payload))
-        self.publisher.publish(
-            "interaction.requested",
-            {"request_id": request_id, "kind": kind, **payload},
-        )
+        event_payload = dict(payload)
+        event_payload.update({"request_id": request_id, "kind": kind})
+        self.publisher.publish("interaction.requested", event_payload)
         answer = item.reply.get()
         with self._lock:
             self._pending.pop(request_id, None)
@@ -193,7 +192,7 @@ class InteractionBroker:
     def snapshot(self) -> list[dict[str, Any]]:
         with self._lock:
             return [
-                {"request_id": request_id, "kind": item.kind, **item.payload}
+                {**item.payload, "request_id": request_id, "kind": item.kind}
                 for request_id, item in self._pending.items()
             ]
 
@@ -203,7 +202,7 @@ class InteractionBroker:
             pending = list(self._pending.items())
             self._pending.clear()
         for request_id, item in pending:
-            item.reply.put_nowait("n" if item.kind == "permission" else None)
+            item.reply.put_nowait("deny" if item.kind == "permission" else None)
             self.publisher.publish(
                 "interaction.resolved",
                 {"request_id": request_id, "kind": item.kind, "cancelled": True},
@@ -217,7 +216,7 @@ class InteractionBroker:
             pending = list(self._pending.items())
             self._pending.clear()
         for request_id, item in pending:
-            item.reply.put_nowait("n" if item.kind == "permission" else None)
+            item.reply.put_nowait("deny" if item.kind == "permission" else None)
             self.publisher.publish(
                 "interaction.resolved",
                 {"request_id": request_id, "kind": item.kind, "cancelled": True},

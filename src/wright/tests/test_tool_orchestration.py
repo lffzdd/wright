@@ -4,6 +4,7 @@ from pathlib import Path
 
 from ..domain.session import Session
 from ..engine.executor import ToolExecutor
+from ..permission import ToolAccess
 from ..tasks import TaskNotFoundError, TaskService
 from ..tools.base import Tool, ToolCall, ToolResult, tool_runtime_for_session
 from ..tools.command_permissions import is_execute_command_concurrency_safe
@@ -35,6 +36,9 @@ def test_tool_owned_timeout_is_not_reclassified_by_executor(tmp_path):
         "",
         {},
         tool_timeout,
+        access_descriptor=lambda args: ToolAccess.internal_read(
+            reason="timeout ownership test operation"
+        ),
         timeout_owner="tool",
     )
     executor = ToolExecutor(
@@ -58,7 +62,12 @@ def test_parent_cancellation_produces_a_complete_failed_result(tmp_path):
         called = True
         return ToolResult.success()
 
-    tool = Tool("cancelled", "", {}, should_not_run)
+    tool = Tool(
+        "cancelled", "", {}, should_not_run,
+        access_descriptor=lambda args: ToolAccess.internal_read(
+            reason="cancellation test operation"
+        ),
+    )
     executor = ToolExecutor(
         {tool.name: tool},
         workspace_dir=tmp_path,
@@ -243,7 +252,12 @@ def test_on_result_includes_the_tool_call(tmp_path):
     def ping(args, runtime):
         return ToolResult.success("pong")
 
-    tool = Tool("ping", "", {}, ping)
+    tool = Tool(
+        "ping", "", {}, ping,
+        access_descriptor=lambda args: ToolAccess.internal_read(
+            reason="result callback test operation"
+        ),
+    )
     executor = ToolExecutor({tool.name: tool}, workspace_dir=tmp_path)
     call = ToolCall("ping", {}, "c1")
     executor.execute([call], on_result=lambda tc, result: seen.append((tc, result)))

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from ..memory.episode import EpisodeStore, EpisodeStoreError
-from ..permission import PermissionCheckResult
+from ..permission import ToolAccess
 from .base import Tool, ToolResult, ToolRuntime
 
 
@@ -68,14 +68,20 @@ def delete_episode(
         return ToolResult.fail(str(exc))
 
 
-def _delete_permission(
-    arguments: dict[str, Any], runtime: ToolRuntime
-) -> PermissionCheckResult:
-    return PermissionCheckResult(
-        "ask",
-        f"Delete historical episode {arguments.get('episode_id', '')}",
-        ("deletes_data",),
-        source="episode_tool",
+def _describe_episode_read(arguments: dict[str, Any]) -> ToolAccess:
+    return ToolAccess(
+        frozenset({"internal_read"}),
+        subject=str(arguments.get("episode_id") or arguments.get("query") or ""),
+        reason="read historical episode data",
+    )
+
+
+def _describe_episode_delete(arguments: dict[str, Any]) -> ToolAccess:
+    return ToolAccess(
+        frozenset({"persistent_write"}),
+        subject=str(arguments.get("episode_id", "")),
+        risk_flags=("persistent_state", "deletes_data"),
+        reason="delete historical episode data",
     )
 
 
@@ -106,6 +112,7 @@ def build_episode_tools(directory: Path | None = None) -> list[Tool]:
                 "additionalProperties": False,
             },
             call=bind(search_episodes),
+            access_descriptor=_describe_episode_read,
             is_concurrency_safe=lambda args: True,
             defer_to_model=True,
         ),
@@ -119,6 +126,7 @@ def build_episode_tools(directory: Path | None = None) -> list[Tool]:
                 "additionalProperties": False,
             },
             call=bind(get_episode),
+            access_descriptor=_describe_episode_read,
             is_concurrency_safe=lambda args: True,
             defer_to_model=True,
         ),
@@ -132,7 +140,7 @@ def build_episode_tools(directory: Path | None = None) -> list[Tool]:
                 "additionalProperties": False,
             },
             call=bind(delete_episode),
-            check_permission=_delete_permission,
+            access_descriptor=_describe_episode_delete,
             defer_to_model=True,
         ),
     ]

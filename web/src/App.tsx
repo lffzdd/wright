@@ -255,17 +255,19 @@ function InteractionCard({ interaction, respond }: { interaction: Interaction; r
     <section className="interaction-card" role="alert">
       <div className="interaction-title"><Warning size={18} weight="fill" /><strong>{isPermission ? `Permission · ${interaction.tool_name}` : "Wright needs input"}</strong></div>
       <p>{isPermission ? interaction.subject || interaction.reason : interaction.question}</p>
-      {isPermission && interaction.risk_flags && <small>Risk: {interaction.risk_flags}</small>}
-      {isPermission && interaction.offer_always && interaction.remember_rule && <div className="permission-scope">
-        <small><strong>Scope:</strong> <code>{interaction.remember_rule}</code></small>
-        <small><strong>Persistence:</strong> {interaction.remember_persists ? "Across sessions" : "This session only"}</small>
-        {interaction.revoke_hint && <small><strong>Revoke:</strong> {interaction.revoke_hint}</small>}
+      {isPermission && interaction.risk_flags?.length && <small>Risk: {interaction.risk_flags.join(", ")}</small>}
+      {isPermission && interaction.targets?.length && <div className="permission-scope">
+        <small><strong>Targets:</strong> <code>{interaction.targets.join("; ")}</code></small>
+        {interaction.principal && <small><strong>Principal:</strong> {interaction.principal}</small>}
       </div>}
       {interaction.context && <small>{interaction.context}</small>}
       {isPermission ? <div className="interaction-actions">
-        <button className="button secondary" onClick={() => respond(interaction.request_id, "n")}>Deny</button>
-        <button className="button primary" onClick={() => respond(interaction.request_id, "y")}>Allow once</button>
-        {interaction.offer_always && <button className="button subtle" onClick={() => respond(interaction.request_id, "a")}>Allow this scope</button>}
+        {interaction.choices?.map((choice) => <button
+          key={choice.id}
+          className={`button ${choice.id === "deny" ? "secondary" : "primary"}`}
+          onClick={() => respond(interaction.request_id, choice.id)}
+          title={`${choice.scope} · ${choice.persistence}`}
+        >{choice.label}</button>)}
       </div> : <form className="ask-form" onSubmit={(event) => { event.preventDefault(); if (answer.trim()) respond(interaction.request_id, answer.trim()); }}>
         {interaction.options?.map((option) => <button type="button" className="option-button" key={option} onClick={() => respond(interaction.request_id, option)}>{option}</button>)}
         <input aria-label="Answer" value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="Type an answer…" />

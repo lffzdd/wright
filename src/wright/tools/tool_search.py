@@ -7,6 +7,7 @@ import unicodedata
 from collections.abc import Sequence
 from typing import Any
 
+from ..permission import ToolAccess
 from .base import Tool, ToolResult, ToolRuntime, split_tool_catalog
 
 MAX_ACTIVE_DEFERRED_TOOLS = 12
@@ -272,4 +273,9 @@ def make_tool_search_tool(tools: Sequence[Tool], active: list[str]) -> Tool:
             "additionalProperties": False,
         },
         call=search,
+        access_descriptor=lambda args: ToolAccess(
+            frozenset({"internal_read"}),
+            subject=str(args.get("query") or ",".join(args.get("names") or ())),
+            reason="search the registered tool catalog",
+        ),
     )

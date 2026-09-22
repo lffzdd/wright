@@ -132,7 +132,7 @@ def test_episode_tools_are_read_only_except_permissioned_forget(tmp_path):
     assert [tool.name for tool in tools] == [
         "search_episodes", "get_episode", "delete_episode"
     ]
-    assert tools[-1].check_permission is not None
+    assert tools[-1].describe_access({"episode_id": "ep"}).operations == frozenset({"persistent_write"})
 
 
 def test_episode_captures_compact_subagent_execution_summary(tmp_path):

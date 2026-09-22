@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from ..autonomy import AutonomyStoreError, TriggerSpec
-from ..permission import PermissionCheckResult
+from ..permission import ToolAccess
 from .base import Tool, ToolResult, ToolRuntime
 
 
@@ -164,14 +164,20 @@ def list_task_runs(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResul
     })
 
 
-def _persistent_mutation_permission(
-    arguments: dict[str, Any], runtime: ToolRuntime
-) -> PermissionCheckResult:
-    return PermissionCheckResult(
-        "ask",
-        "This changes a durable automation that can wake the Agent later",
-        ("persistent_automation",),
-        source="autonomy_tool",
+def _describe_persistent_mutation(arguments: dict[str, Any]) -> ToolAccess:
+    return ToolAccess(
+        frozenset({"persistent_write"}),
+        subject=str(arguments.get("schedule_id") or arguments.get("name") or ""),
+        risk_flags=("persistent_automation",),
+        reason="change a durable automation that can wake the Agent later",
+    )
+
+
+def _describe_schedule_read(arguments: dict[str, Any]) -> ToolAccess:
+    return ToolAccess(
+        frozenset({"internal_read"}),
+        subject=str(arguments.get("schedule_id") or ""),
+        reason="read durable automation state",
     )
 
 
@@ -262,7 +268,7 @@ schedule_task_tool = Tool(
     },
     call=schedule_task,
     required_capabilities=frozenset({"durable", "autonomy"}),
-    check_permission=_persistent_mutation_permission,
+    access_descriptor=_describe_persistent_mutation,
     defer_to_model=True,
 )
 
@@ -278,6 +284,7 @@ get_schedule_tool = Tool(
     },
     call=get_schedule,
     required_capabilities=frozenset({"durable"}),
+    access_descriptor=_describe_schedule_read,
     is_concurrency_safe=lambda args: True,
     defer_to_model=True,
 )
@@ -299,6 +306,7 @@ list_schedules_tool = Tool(
     },
     call=list_schedules,
     required_capabilities=frozenset({"durable"}),
+    access_descriptor=_describe_schedule_read,
     is_concurrency_safe=lambda args: True,
     defer_to_model=True,
 )
@@ -321,7 +329,7 @@ def _schedule_mutation_tool(name: str, description: str, call) -> Tool:
         },
         call=call,
         required_capabilities=frozenset({"durable", "autonomy"}),
-        check_permission=_persistent_mutation_permission,
+        access_descriptor=_describe_persistent_mutation,
         defer_to_model=True,
     )
 
@@ -353,6 +361,7 @@ list_task_runs_tool = Tool(
     },
     call=list_task_runs,
     required_capabilities=frozenset({"durable"}),
+    access_descriptor=_describe_schedule_read,
     is_concurrency_safe=lambda args: True,
     defer_to_model=True,
 )

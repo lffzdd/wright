@@ -5,6 +5,7 @@ import time
 import pytest
 
 from wright.interaction import InteractionHub
+from wright.permission import PermissionChoice, PermissionPrompt
 from wright.renderer import ConsoleRenderer, SilentRenderer
 from wright.repl import _start_input_reader
 
@@ -24,9 +25,9 @@ def test_hub_delivers_reply_from_collector():
     request = hub.poll()
     assert request is not None
     assert request.payload["tool_name"] == "write_file"
-    request.reply.put("y")
+    request.reply.put("allow_once")
     thread.join(timeout=2)
-    assert result == ["y"]
+    assert result == ["allow_once"]
 
 
 def test_hub_serializes_two_agent_threads():
@@ -52,11 +53,11 @@ def test_hub_serializes_two_agent_threads():
     first = hub.poll()
     second = hub.poll()
     assert first is not None and second is not None
-    first.reply.put("y")
-    second.reply.put("n")
+    first.reply.put("allow_once")
+    second.reply.put("deny")
     for thread in threads:
         thread.join(timeout=2)
-    assert sorted(results) == ["a:y", "b:n"] or sorted(results) == ["a:n", "b:y"]
+    assert sorted(results) == ["a:allow_once", "b:deny"] or sorted(results) == ["a:deny", "b:allow_once"]
 
 
 def test_console_permission_uses_hub_off_collector_thread():
@@ -64,11 +65,14 @@ def test_console_permission_uses_hub_off_collector_thread():
     renderer = ConsoleRenderer()
     renderer.bind_interaction(hub)
     answers: list[str] = []
+    permission_prompt = PermissionPrompt(
+        "request", "write_file", "file=a.txt", "ask", (), targets=(),
+        choices=(PermissionChoice("allow_once", "Allow once", "call", "none"),
+                 PermissionChoice("deny", "Deny", "none", "none")),
+    )
 
     def agent() -> None:
-        answers.append(
-            renderer.prompt_permission("write_file", "file=a.txt", "无", "ask", True)
-        )
+        answers.append(renderer.prompt_permission(permission_prompt))
 
     thread = threading.Thread(target=agent)
     thread.start()
@@ -79,9 +83,9 @@ def test_console_permission_uses_hub_off_collector_thread():
     assert request is not None
     assert request.kind == "permission"
     assert request.payload["tool_name"] == "write_file"
-    request.reply.put("y")
+    request.reply.put("allow_once")
     thread.join(timeout=2)
-    assert answers == ["y"]
+    assert answers == ["allow_once"]
 
 
 def test_input_reader_holds_main_prompt_until_idle():

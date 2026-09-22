@@ -76,10 +76,10 @@ def test_interaction_broker_accepts_only_first_answer_and_closes_fail_closed():
         time.sleep(0.005)
     request_id = broker.snapshot()[0]["request_id"]
 
-    assert broker.resolve(request_id, "y") is True
-    assert broker.resolve(request_id, "n") is False
+    assert broker.resolve(request_id, "allow_once") is True
+    assert broker.resolve(request_id, "deny") is False
     thread.join(timeout=1)
-    assert result == ["y"]
+    assert result == ["allow_once"]
 
     cancelled: list[object] = []
     thread = threading.Thread(
@@ -94,3 +94,29 @@ def test_interaction_broker_accepts_only_first_answer_and_closes_fail_closed():
     assert cancelled == [None]
     resolved = [event for event in publisher.retained_events() if event.type == "interaction.resolved"]
     assert resolved[-1].payload["cancelled"] is True
+
+
+def test_interaction_broker_keeps_transport_request_id_distinct_from_tool_call_id():
+    publisher = EventPublisher(project_id="project", session_id="session")
+    broker = InteractionBroker(publisher)
+    result: list[object] = []
+    thread = threading.Thread(
+        target=lambda: result.append(
+            broker.request("permission", {"request_id": "tool-call-1", "tool_name": "write"})
+        )
+    )
+    thread.start()
+    deadline = time.monotonic() + 1
+    while not broker.snapshot() and time.monotonic() < deadline:
+        time.sleep(0.005)
+    request_id = broker.snapshot()[0]["request_id"]
+
+    assert request_id != "tool-call-1"
+    requested = [
+        event for event in publisher.retained_events()
+        if event.type == "interaction.requested"
+    ][-1]
+    assert requested.payload["request_id"] == request_id
+    assert broker.resolve(request_id, "allow_once") is True
+    thread.join(timeout=1)
+    assert result == ["allow_once"]

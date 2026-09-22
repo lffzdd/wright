@@ -1,9 +1,17 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from threading import RLock
 from typing import Any, Literal
 
-from ..permission import PermissionCheckResult
+from ..execution import AuthorizedExecution
+from ..permission.scope import AccessScope
+from ..permission.types import (
+    GrantTarget,
+    InvocationGrant,
+    InvocationIdentity,
+    ToolAccess,
+)
 from ..processes import RuntimeResources
 from ..tool_capabilities import ToolCapabilities, assemble_tool_capabilities
 
@@ -34,6 +42,12 @@ class ToolRuntime:
     # Explicit, bounded domain operations assembled by ToolExecutor.  Tools
     # never receive Session, RunStore, or RuntimeServices.
     capabilities: ToolCapabilities | None = None
+    # The only execution surface a tool may use.  It is constructed by the
+    # executor from the immutable grant for this one invocation.
+    execution: AuthorizedExecution | None = None
+    # Immutable authorization snapshot for this invocation.  Unlike
+    # ToolCapabilities it is refreshed after a successful directory approval.
+    access_scope: AccessScope | None = None
     # Owns process handles, locks, threads and streaming projections.  It is
     # intentionally separate from checkpointed Session data.
     runtime_resources: RuntimeResources | None = None
@@ -95,26 +109,75 @@ def tool_runtime_for_session(
     The Session is consumed at this composition boundary and is not retained by
     :class:`ToolRuntime`.
     """
-    capabilities, resources = assemble_tool_capabilities(
+    assembly = assemble_tool_capabilities(
         session, services, runtime_resources,
         workspace_dir=workspace_dir, cwd_provider=cwd_provider,
         execution_backend=execution_backend,
     )
+    capabilities = assembly.capabilities
+    resources = assembly.runtime_resources
+    backend = assembly.backend
+    workspace = (
+        workspace_dir or getattr(session, "workspace_dir", None) or Path.cwd()
+    ).resolve()
+    additional = ()
+    if session is not None:
+        snapshot = getattr(session, "working_directories_snapshot", None)
+        additional = (
+            tuple(snapshot())
+            if callable(snapshot)
+            else tuple(getattr(session, "additional_working_directories", ()) or ())
+        )
+    access_scope = AccessScope(workspace, additional)
+    execution = None
+    if backend is not None:
+        # Direct tool tests are a composition adapter, not a production
+        # execution path.  They receive a deliberately broad grant over the
+        # session roots so the tool function can be exercised without
+        # bypassing AuthorizedExecution entirely.  ToolExecutor always builds
+        # a narrower per-call grant.
+        roots = access_scope.roots
+        targets = tuple(
+            target
+            for root in roots
+            for target in (
+                GrantTarget(
+                    backend.resolve_path(str(root)),
+                    "file_read",
+                    True,
+                ),
+                GrantTarget(
+                    backend.resolve_path(str(root)),
+                    "file_write",
+                    True,
+                ),
+            )
+        )
+        cwd = backend.cwd()
+        execution = AuthorizedExecution(
+            backend,
+            InvocationGrant(
+                InvocationIdentity(capabilities.scope.session_id, call_id="adapter"),
+                cwd.environment_id,
+                cwd,
+                frozenset({"file_read", "file_write", "shell"}),
+                targets,
+                command=None,
+            ),
+            dynamic_cwd=True,
+        )
     return ToolRuntime(
         capabilities=capabilities,
+        execution=execution,
+        access_scope=access_scope,
         runtime_resources=resources,
         **kwargs,
     )
 
 
-def _default_check_permission(
-    args: dict[str, Any], runtime: ToolRuntime
-) -> PermissionCheckResult:
-    return PermissionCheckResult(
-        "allow",
-        f"{runtime.tool_name or 'tool'}: allowed by default tool permission",
-        source="tool_default",
-    )
+def _default_describe_access(args: dict[str, Any]) -> ToolAccess:
+    del args
+    return ToolAccess.unknown()
 
 
 @dataclass
@@ -123,9 +186,7 @@ class Tool:
     description: str
     parameters: dict
     call: Callable[[dict[str, Any], ToolRuntime], "ToolResult"]
-    check_permission: Callable[[dict[str, Any], ToolRuntime], PermissionCheckResult] = (
-        _default_check_permission
-    )
+    access_descriptor: Callable[[dict[str, Any]], ToolAccess] = _default_describe_access
     is_concurrency_safe: Callable[[dict[str, Any]], bool] = _not_concurrency_safe
     # 这类工具不能被普通的 allow/bypass 规则直接放行。执行器会把它们交给
     # PermissionResolver 的 interaction_handler，由交互层回填已确认的 arguments
@@ -141,10 +202,9 @@ class Tool:
     # Specialized tools stay executable but can be omitted from the baseline
     # schema payload until tool_search activates them for this Agent session.
     defer_to_model: bool = False
-    # Descriptive metadata is registered once; executor still checks the
-    # immutable Run capability snapshot before any side effect occurs.
+    # Descriptive metadata is registered once; the resolver consumes only the
+    # immutable ToolAccess value returned for the current arguments.
     source: str = "builtin"
-    effect: Literal["read", "write", "process", "network", "internal"] = "internal"
     # Declared owner operations, reduced by ToolExecutor for each call.  Empty
     # means this legacy/internal tool requires only execution identity.
     required_capabilities: frozenset[str] = frozenset()
@@ -156,6 +216,11 @@ class Tool:
             "description": self.description,
             "parameters": self.parameters,
         }
+
+    def describe_access(self, arguments: dict[str, Any]) -> ToolAccess:
+        """Describe this invocation without performing any side effect."""
+
+        return self.access_descriptor(dict(arguments))
 
 
 @dataclass(frozen=True)

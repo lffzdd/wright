@@ -42,13 +42,12 @@ from ..paths import (
     user_mcp_config_path,
 )
 from ..permission import (
-    FallbackApprovalHandler,
+    AuthorizationChange,
     InteractiveApprovalHandler,
-    PermissionCheckResult,
     PermissionRequest,
     PermissionResolver,
+    PermissionResponse,
     PermissionSettings,
-    RuleBasedApprovalHandler,
     append_additional_directory,
     append_allow_rule,
     load_permission_settings,
@@ -216,9 +215,9 @@ def parse_cli_args() -> argparse.Namespace:
 
 
 def _make_interaction_handler(renderer: Renderer):
-    """ask_user 的交互 adapter 工厂：UI 委托给 renderer，这里只做「原始回答 → PermissionCheckResult」的翻译。"""
+    """Adapt the user-question UI to the dedicated interaction protocol."""
 
-    def handler(request: PermissionRequest) -> PermissionCheckResult:
+    def handler(request: PermissionRequest) -> PermissionResponse:
         arguments = request.arguments
         answer = renderer.prompt_user(
             question=arguments["question"].strip(),
@@ -226,18 +225,9 @@ def _make_interaction_handler(renderer: Renderer):
             options=tuple(arguments.get("options") or ()),
         )
         if answer is None:
-            return PermissionCheckResult(
-                "deny",
-                "用户取消回答问题",
-                request.check.risk_flags,
-                source="user_interaction",
-            )
-        return PermissionCheckResult(
-            "allow",
-            "用户已回答问题",
-            request.check.risk_flags,
-            updated_arguments={**arguments, "answer": answer},
-            source="user_interaction",
+            return PermissionResponse("deny")
+        return PermissionResponse(
+            "allow_once", updated_arguments={**arguments, "answer": answer}
         )
 
     return handler
@@ -525,16 +515,8 @@ def assemble_runtime(
         runtime_resources=runtime_resources,
     )
 
-    # 权限裁决:加载持久化配置(模式 + allow/deny 规则),按"要不要人"两种装配。
-    #
-    # 要不要人,默认看有没有真终端,不用记环境变量(env 仍可强制覆盖):
-    #   - 有 TTY(你坐在终端前) → 规则 + 人:规则 on_no_match=ask 对灰色地带"弃权",
-    #     落到交互式 handler 弹窗问你;rm/sudo 等 deny 仍直接拒、不打扰你。
-    #   - 无 TTY(管道/CI/后台) → 纯规则,on_no_match=deny 直接 fail-closed,绝不阻塞。
-    # 关键:能不能被问到,取决于规则有没有提前 allow 它——allow 列得越全,落到人手里越少。
-    # 只读工具保留自身的 allow 分类；默认配置不再用宽泛命令前缀放行 shell。
-    # 写文件、网络和 shell 等副作用调用会落到规则或人工确认。
-    # 主 Agent 与所有子 Agent 共用这同一份 resolver,规则/记忆全树一致。
+    # Permission policy is centralized in the resolver.  Approval adapters only
+    # collect a structured choice and never mutate settings themselves.
     settings = load_permission_settings()
     for raw in settings.additional_directories:
         session_state.add_working_directory(Path(raw))
@@ -542,20 +524,30 @@ def assemble_runtime(
     interactive = interaction_broker is not None or (
         env_interactive == "1" if env_interactive is not None else sys.stdin.isatty()
     )
-    if interactive:
-        approval_handler = FallbackApprovalHandler(
-            RuleBasedApprovalHandler(settings, on_no_match="ask"),
-            # on_remember:用户选"别再问"时把规则写回 settings.json,下次同工具在规则层
-            # 就自动放行(连这个交互 handler 都到不了)——对标 Claude Code 的"Yes, don't ask again"。
-            InteractiveApprovalHandler(
-                renderer=event_renderer,
-                on_remember=append_allow_rule,
-                on_remember_directory=append_additional_directory,
-            ),
-        )
-    else:
-        approval_handler = RuleBasedApprovalHandler(settings)
+    approval_handler = (
+        InteractiveApprovalHandler(renderer=event_renderer)
+        if interactive else None
+    )
+
+    def authorization_commit_factory(target_session: Session):
+        """Create the commit route owned by one root or child Session."""
+
+        def commit_authorization(change: AuthorizationChange) -> None:
+            for directory in change.session_directories:
+                target_session.add_working_directory(Path(directory.value))
+            if change.session_directories and not config.no_session_persistence:
+                checkpoint_store.save(target_session)
+            for rule in change.persistent_rules:
+                append_allow_rule(rule)
+            for directory in change.persistent_directories:
+                append_additional_directory(directory.value)
+
+        return commit_authorization
+
+    commit_authorization = authorization_commit_factory(session_state)
+
     permission_resolver = PermissionResolver(
+        settings=settings,
         approval_handler=approval_handler,
         interaction_handler=(
             _make_interaction_handler(event_renderer) if interactive else None
@@ -578,6 +570,7 @@ def assemble_runtime(
         depth=0,
         max_depth=1,
         permission_resolver=permission_resolver,
+        authorization_commit_factory=authorization_commit_factory,
         enable_autonomy=True,
     )
 
@@ -619,6 +612,8 @@ def assemble_runtime(
         skills=skill_registry if skill_tools else None,
         services=services,
         runtime_resources=runtime_resources,
+        authorization_commit=commit_authorization,
+        authorization_commit_factory=authorization_commit_factory,
     )
 
     # Automation is process/application owned, not consumed by this Session's

@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from .permission.types import PermissionPrompt, PermissionResponse
 from .processes import RuntimeResources
 from .renderer import Renderer
 from .tools.base import ToolCall, ToolResult
@@ -404,28 +405,14 @@ class PublishingRenderer(Renderer):
         self.publisher.publish("system.notice", {"text": text})
 
     def prompt_permission(
-        self,
-        tool_name: str,
-        subject: str,
-        risk_flags: str,
-        reason: str,
-        offer_always: bool,
-        remember_rule: str = "",
-        remember_persists: bool = False,
-        revoke_hint: str = "",
-    ) -> str:
-        payload = {
-            "tool_name": tool_name, "subject": subject, "risk_flags": risk_flags,
-            "reason": reason, "offer_always": offer_always,
-            "remember_rule": remember_rule,
-            "remember_persists": remember_persists,
-            "revoke_hint": revoke_hint,
-        }
+        self, permission_prompt: PermissionPrompt,
+    ) -> str | PermissionResponse:
+        payload = permission_prompt.to_dict()
         if self.interaction is not None:
             return str(self.interaction.request("permission", payload))
         if self.direct_renderer is None:
-            return "n"
-        return self.direct_renderer.prompt_permission(**payload)
+            return "deny"
+        return self.direct_renderer.prompt_permission(permission_prompt)
 
     def prompt_user(
         self,

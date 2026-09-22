@@ -39,6 +39,7 @@ from .interaction import (
     InteractionKind,
     InteractionRequest,
 )
+from .permission.types import PermissionPrompt, PermissionResponse
 from .tools.base import ToolCall, ToolResult
 
 _COMMAND_OUTPUT_LINES = 24
@@ -112,22 +113,15 @@ class Renderer(ABC):
     # ── 双向交互（子类按能力覆盖，默认 fail-closed） ──
 
     def prompt_permission(
-        self,
-        tool_name: str,
-        subject: str,
-        risk_flags: str,
-        reason: str,
-        offer_always: bool,
-        remember_rule: str = "",
-        remember_persists: bool = False,
-        revoke_hint: str = "",
-    ) -> str:
-        """展示权限确认请求并收集用户选择，返回原始输入字符串。
+        self, permission_prompt: PermissionPrompt,
+    ) -> str | PermissionResponse:
+        """展示结构化权限请求并返回 choice ID。
 
-        默认实现直接返回 ``"n"``（fail-closed），不支持交互的渲染器
+        默认实现直接返回 ``"deny"``（fail-closed），不支持交互的渲染器
         （SilentRenderer / SubAgentRenderer）继承此默认即可。
         """
-        return "n"
+        del permission_prompt
+        return "deny"
 
     def prompt_user(
         self,
@@ -162,7 +156,7 @@ class Renderer(ABC):
         if request.kind == "ask_user":
             request.reply.put(None)
         else:
-            request.reply.put("n")
+            request.reply.put("deny")
 
 
 @dataclass
@@ -613,9 +607,9 @@ class ConsoleRenderer(Renderer):
             elif request.kind == "ask_user":
                 result = self._collect_user(**request.payload)
             else:
-                result = "n"
+                result = "deny"
         except Exception:  # 必须给 reply 队列一个值，否则 Agent 线程会挂
-            result = None if request.kind == "ask_user" else "n"
+            result = None if request.kind == "ask_user" else "deny"
         request.reply.put(result)
 
     def _route_prompt(self, kind: InteractionKind, payload: dict[str, Any], local):
@@ -625,26 +619,9 @@ class ConsoleRenderer(Renderer):
         return local(**payload)
 
     def prompt_permission(
-        self,
-        tool_name: str,
-        subject: str,
-        risk_flags: str,
-        reason: str,
-        offer_always: bool,
-        remember_rule: str = "",
-        remember_persists: bool = False,
-        revoke_hint: str = "",
-    ) -> str:
-        payload = {
-            "tool_name": tool_name,
-            "subject": subject,
-            "risk_flags": risk_flags,
-            "reason": reason,
-            "offer_always": offer_always,
-            "remember_rule": remember_rule,
-            "remember_persists": remember_persists,
-            "revoke_hint": revoke_hint,
-        }
+        self, permission_prompt: PermissionPrompt,
+    ) -> str | PermissionResponse:
+        payload = permission_prompt.to_dict()
         return self._route_prompt("permission", payload, self._collect_permission)
 
     def prompt_user(
@@ -662,14 +639,14 @@ class ConsoleRenderer(Renderer):
 
     def _collect_permission(
         self,
+        request_id: str,
         tool_name: str,
         subject: str,
-        risk_flags: str,
+        risk_flags: list[str] | tuple[str, ...],
         reason: str,
-        offer_always: bool,
-        remember_rule: str = "",
-        remember_persists: bool = False,
-        revoke_hint: str = "",
+        targets: list[str] | tuple[str, ...],
+        choices: list[dict[str, str]] | tuple[dict[str, str], ...],
+        principal: str = "",
     ) -> str:
         with self._prompt_lock:
             self._suspend_live()
@@ -680,17 +657,15 @@ class ConsoleRenderer(Renderer):
                 info.append("参数: ", style="bold")
                 info.append(f"{subject}\n")
             info.append("风险: ", style="bold")
-            info.append(f"{risk_flags}\n")
+            info.append(f"{', '.join(risk_flags)}\n")
             info.append("说明: ", style="bold")
             info.append(reason)
-            if offer_always and remember_rule:
-                info.append("\n范围: ", style="bold")
-                info.append(remember_rule)
-                info.append("\n持久化: ", style="bold")
-                info.append("跨会话" if remember_persists else "仅本会话")
-                if revoke_hint:
-                    info.append("\n撤销: ", style="bold")
-                    info.append(revoke_hint)
+            if targets:
+                info.append("\n目标: ", style="bold")
+                info.append("; ".join(targets))
+            if principal:
+                info.append("\n主体: ", style="bold")
+                info.append(principal)
             self._console.print()
             self._console.print(
                 Panel(
@@ -700,17 +675,35 @@ class ConsoleRenderer(Renderer):
                     padding=(0, 1),
                 )
             )
-            choices = "  [bold]y[/]=允许一次  [bold]n[/]=拒绝"
-            if offer_always:
-                scope = "跨会话允许此范围" if remember_persists else "本会话允许此范围"
-                choices += f"  [bold]a[/]={scope}"
-            self._console.print(choices)
+            for choice in choices:
+                self._console.print(
+                    f"  [bold]{choice['id']}[/] {choice['label']} "
+                    f"— {choice['scope']} ({choice['persistence']})"
+                )
 
         prompt_text = HTML("  <b><ansiyellow>允许执行? </ansiyellow></b>")
         try:
-            return prompt(prompt_text).strip().lower()
+            answer = prompt(prompt_text).strip().lower()
+            choice_ids = {str(choice["id"]) for choice in choices}
+            if answer == "y":
+                answer = "allow_once"
+            elif answer == "n" or not answer:
+                answer = "deny"
+            elif answer == "a":
+                answer = next(
+                    (
+                        choice_id
+                        for choice_id in (
+                            "allow_session_directory",
+                            "allow_persistent_directory",
+                        )
+                        if choice_id in choice_ids
+                    ),
+                    "deny",
+                )
+            return answer if answer in choice_ids else "deny"
         except (EOFError, KeyboardInterrupt):
-            return "n"
+            return "deny"
         finally:
             with self._prompt_lock:
                 self._ensure_live()

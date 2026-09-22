@@ -14,6 +14,7 @@ from typing import Any
 from textual.message import Message
 
 from ..interaction import InteractionHub, InteractionKind, InteractionRequest
+from ..permission.types import PermissionPrompt, PermissionResponse
 from ..renderer import Renderer
 from ..tools.base import ToolCall, ToolResult
 
@@ -207,7 +208,7 @@ class TUIRenderer(Renderer):
         if request.kind == "ask_user":
             request.reply.put(None)
         else:
-            request.reply.put("n")
+            request.reply.put("deny")
 
     def _route_prompt(self, kind: InteractionKind, payload: dict[str, Any], closed):
         hub = self._hub
@@ -216,27 +217,11 @@ class TUIRenderer(Renderer):
         return closed()
 
     def prompt_permission(
-        self,
-        tool_name: str,
-        subject: str,
-        risk_flags: str,
-        reason: str,
-        offer_always: bool,
-        remember_rule: str = "",
-        remember_persists: bool = False,
-        revoke_hint: str = "",
-    ) -> str:
-        payload = {
-            "tool_name": tool_name,
-            "subject": subject,
-            "risk_flags": risk_flags,
-            "reason": reason,
-            "offer_always": offer_always,
-            "remember_rule": remember_rule,
-            "remember_persists": remember_persists,
-            "revoke_hint": revoke_hint,
-        }
-        return self._route_prompt("permission", payload, lambda: "n")
+        self, permission_prompt: PermissionPrompt,
+    ) -> str | PermissionResponse:
+        return self._route_prompt(
+            "permission", permission_prompt.to_dict(), lambda: "deny"
+        )
 
     def prompt_user(
         self,

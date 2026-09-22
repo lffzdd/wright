@@ -46,7 +46,7 @@ from mcp.client.streamable_http import streamablehttp_client
 
 from ..artifacts import ArtifactStore
 from ..logger import get_logger
-from ..permission import PermissionCheckResult
+from ..permission import ToolAccess
 from .base import ArtifactRef, Tool, ToolResult, ToolRuntime
 
 logger = get_logger(__name__)
@@ -302,15 +302,15 @@ class McpManager:
                 call_id=runtime.tool_call_id,
             )
 
-        def check_permission(
-            args: dict[str, Any], runtime: ToolRuntime
-        ) -> PermissionCheckResult:
-            # 外部工具默认走审批(对标 web 工具的 _ask_http_request)。
-            return PermissionCheckResult(
-                "ask",
-                f"{runtime.tool_name}: external MCP tool from server {server!r}",
-                ("external_mcp",),
-                source="tool",
+        def describe_access(args: dict[str, Any]) -> ToolAccess:
+            del args
+            # MCP schemas do not reliably describe side effects.  Keep the
+            # conservative external_unknown classification at this boundary.
+            return ToolAccess(
+                frozenset({"external_unknown"}),
+                subject=f"{server}:{mcp_tool.name}",
+                risk_flags=("external_mcp",),
+                reason=f"external MCP tool from server {server!r}",
             )
 
         return Tool(
@@ -318,7 +318,7 @@ class McpManager:
             description=mcp_tool.description or "",
             parameters=mcp_tool.inputSchema,  # JSON Schema 同构,直接透传
             call=call,
-            check_permission=check_permission,
+            access_descriptor=describe_access,
             # is_concurrency_safe 不传:沿用默认(排他执行)。远程副作用未知,延续
             # base.py 的保守默认最稳妥。
             # timeout_owner="tool":MCP 调用用 read_timeout_seconds 自带超时语义,

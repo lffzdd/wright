@@ -6,6 +6,7 @@ import json
 from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from rich.console import Console
@@ -14,16 +15,12 @@ from ..capabilities import AgentProfile
 from ..domain.coordination import AgentControlError, AgentTaskRecord
 from ..domain.session import Session, UsageRecord
 from ..llm import LLMClient
-from ..logger import get_logger
-from ..permission import PermissionResolver
+from ..permission import PermissionResolver, ToolAccess
 from ..renderer import Renderer, SilentRenderer
 from ..tools.autonomy_tools import autonomy_tools
 from ..tools.base import Tool, ToolResult, ToolRuntime
 from ..tools.task_tools import task_tools
 from .agent import Agent
-
-logger = get_logger(__name__)
-
 
 DEFAULT_CHILD_MAX_STEPS = 20
 # Interactive default: root spawns leaves only. Nested spawn stays available
@@ -196,6 +193,7 @@ def make_spawn_agent_tool(
     child_timeout: float = DEFAULT_CHILD_TIMEOUT,
     render_subagents: bool = True,
     permission_resolver: PermissionResolver | None = None,
+    authorization_commit_factory=None,
 ) -> Tool:
     if depth < 0 or max_depth < 1 or depth >= max_depth:
         raise ValueError("spawn_agent 只能在 0 <= depth < max_depth 时创建")
@@ -209,9 +207,10 @@ def make_spawn_agent_tool(
         run_in_background = bool(arguments.get("run_in_background", False))
         capabilities = runtime.capabilities
         delegation = capabilities.delegation if capabilities is not None else None
+        execution = runtime.execution
         if (
             capabilities is None
-            or capabilities.execution is None
+            or execution is None
             or delegation is None
         ):
             return ToolResult.fail("spawn_agent requires delegation capability")
@@ -223,6 +222,23 @@ def make_spawn_agent_tool(
         root_turn_id = capabilities.scope.root_turn_id
         if not root_turn_id:
             return ToolResult.fail("spawn_agent requires an active run scope")
+        access_scope = runtime.access_scope
+        if access_scope is None:
+            return ToolResult.fail("spawn_agent requires an execution access scope")
+        if execution.environment_id != "local":
+            return ToolResult.fail(
+                f"spawn_agent does not support execution environment {execution.environment_id}"
+            )
+        try:
+            parent_cwd = execution.cwd()
+        except Exception as exc:
+            return ToolResult.fail(
+                f"spawn_agent could not read the parent cwd: {type(exc).__name__}: {exc}"
+            )
+        if parent_cwd.environment_id != "local":
+            return ToolResult.fail(
+                f"spawn_agent does not support cwd environment {parent_cwd.environment_id}"
+            )
         try:
             record = control.begin_task(
                 root_turn_id=root_turn_id,
@@ -260,21 +276,35 @@ def make_spawn_agent_tool(
             child_timeout=child_timeout,
             render_subagents=render_subagents,
             permission_resolver=permission_resolver,
+            authorization_commit_factory=(
+                delegation.authorization_commit_factory
+                or authorization_commit_factory
+            ),
         )
 
-        workspace_dir = capabilities.execution.workspace_dir
+        workspace_dir = access_scope.origin
         child_session = Session.create(
             initial_goal=task,
             workspace_dir=workspace_dir,
             max_steps=record.step_budget,
+            # A child receives the parent's current session roots, but not any
+            # one-call InvocationGrant that may have led to this delegation.
+            additional_working_directories=list(access_scope.additional),
         )
         child_session.control_plane = control
         child_session.agent_task_id = record.id
         child_session.agent_root_turn_id = root_turn_id
         try:
-            child_session.set_cwd(capabilities.execution.cwd())
-        except Exception:
-            logger.debug("child session set_cwd failed", exc_info=True)
+            child_session.set_cwd(Path(parent_cwd.value))
+        except Exception as exc:
+            finished = control.finish_task(
+                record.id,
+                status="failed",
+                steps_used=0,
+                error=f"could not set child cwd: {type(exc).__name__}: {exc}",
+            )
+            _emit(runtime, finished)
+            return ToolResult.fail(finished.error, data={"task_id": finished.id})
         control.bind_child_session(record.id, child_session.session_id)
 
         child_journal = None
@@ -312,6 +342,13 @@ def make_spawn_agent_tool(
                 usage.total_tokens,
             )
 
+        child_authorization_commit = None
+        child_commit_factory = (
+            delegation.authorization_commit_factory or authorization_commit_factory
+        )
+        if child_commit_factory is not None:
+            child_authorization_commit = child_commit_factory(child_session)
+
         child_agent = Agent(
             llm,
             child_tools,
@@ -330,6 +367,8 @@ def make_spawn_agent_tool(
             ),
             execution_journal=child_journal,
             execution_journal_factory=journal_factory,
+            authorization_commit=child_authorization_commit,
+            authorization_commit_factory=child_commit_factory,
         )
 
         def run_child() -> ToolResult:
@@ -401,6 +440,12 @@ def make_spawn_agent_tool(
         description=SPAWN_AGENT_DESCRIPTION,
         parameters=SPAWN_AGENT_PARAMETERS,
         call=_call,
+        access_descriptor=lambda args: ToolAccess(
+            frozenset({"execution_control"}),
+            subject=str(args.get("task") or ""),
+            risk_flags=("starts_agent_execution",),
+            reason="start a child Agent execution",
+        ),
         is_concurrency_safe=lambda args: True,
         execution_timeout=child_timeout,
         required_capabilities=frozenset({"execution", "delegation"}),
@@ -435,6 +480,9 @@ get_agent_tree_tool = Tool(
         "additionalProperties": False,
     },
     call=_get_agent_tree,
+    access_descriptor=lambda args: ToolAccess.internal_read(
+        reason="read the Agent control-plane tree"
+    ),
     is_concurrency_safe=lambda args: True,
     required_capabilities=frozenset({"delegation"}),
 )
@@ -450,6 +498,7 @@ def build_agent_tools(
     child_timeout: float = DEFAULT_CHILD_TIMEOUT,
     render_subagents: bool = True,
     permission_resolver: PermissionResolver | None = None,
+    authorization_commit_factory=None,
     enable_autonomy: bool = False,
 ) -> list[Tool]:
     if depth < 0 or max_depth < 1 or depth > max_depth:
@@ -466,6 +515,7 @@ def build_agent_tools(
                 child_timeout=child_timeout,
                 render_subagents=render_subagents,
                 permission_resolver=permission_resolver,
+                authorization_commit_factory=authorization_commit_factory,
             )
         )
     # 只有 root 读取全树；子 Agent 只通过自己的 spawn 结果观察直接孩子。

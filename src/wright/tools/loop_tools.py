@@ -5,7 +5,19 @@ from __future__ import annotations
 from typing import Any
 
 from ..engine.looping import LoopError, SessionLoopRegistry
+from ..permission import ToolAccess
 from .base import Tool, ToolResult, ToolRuntime
+
+
+def _describe_loop(arguments: dict[str, Any]) -> ToolAccess:
+    action = str(arguments.get("action") or "create")
+    operation = "internal_read" if action == "list" else "execution_control"
+    return ToolAccess(
+        frozenset({operation}),
+        subject=str(arguments.get("loop_id") or action),
+        risk_flags=() if operation == "internal_read" else ("controls_live_execution",),
+        reason=f"manage in-session loop: {action}",
+    )
 
 
 def _registry(runtime: ToolRuntime) -> SessionLoopRegistry:
@@ -89,6 +101,7 @@ manage_loop_tool = Tool(
         "additionalProperties": False,
     },
     call=loop_tool_call,
+    access_descriptor=_describe_loop,
     required_capabilities=frozenset({"loop"}),
     defer_to_model=True,
 )

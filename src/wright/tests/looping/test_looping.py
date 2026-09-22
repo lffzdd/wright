@@ -2,7 +2,6 @@ import json
 import queue
 import threading
 import time
-from pathlib import Path
 
 import pytest
 
@@ -17,7 +16,6 @@ from ...engine.looping import (
     parse_interval,
     parse_loop_command,
 )
-from ...execution import LocalExecutionBackend
 from ...renderer import SilentRenderer
 from ...tool_capabilities import RunScope, ToolCapabilities
 from ...tools.base import ToolRuntime
@@ -132,8 +130,7 @@ def test_loop_rejects_short_interval_and_capacity():
         registry.create(prompt="one more", interval_seconds=5)
 
     runtime = ToolRuntime(capabilities=ToolCapabilities(
-        RunScope(""), LocalExecutionBackend(Path.cwd(), Path.cwd),
-        loop_registry=registry,
+        RunScope(""), loop_registry=registry,
     ))
     failed = manage_loop_tool.call(
         {"action": "create", "interval_seconds": 1, "prompt": "nope"},

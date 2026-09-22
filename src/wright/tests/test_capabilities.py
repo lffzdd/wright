@@ -11,6 +11,7 @@ from wright.domain.session import Session
 from wright.engine.agent import Agent
 from wright.engine.executor import ToolExecutor
 from wright.execution import LocalExecutionBackend
+from wright.permission import ToolAccess
 from wright.renderer import SilentRenderer
 from wright.tests.responses import response
 from wright.tools.base import Tool, ToolCall, ToolResult, tool_runtime_for_session
@@ -26,7 +27,13 @@ def _png_base64():
 
 
 def _tool(name: str) -> Tool:
-    return Tool(name, name, {}, lambda _args, _runtime: ToolResult.success(name))
+    return Tool(
+        name,
+        name,
+        {},
+        lambda _args, _runtime: ToolResult.success(name),
+        access_descriptor=lambda _args: ToolAccess.internal_read(),
+    )
 
 
 def test_catalog_is_the_single_snapshot_for_schema_and_execution():
@@ -141,7 +148,10 @@ def test_agent_mcp_artifact_survives_checkpoint_and_is_readable(tmp_path):
     session = Session.create("report", tmp_path, session_id="artifact-e2e")
     result = Agent(
         Model(),
-        [Tool("mcp_report", "fake MCP", {"type": "object"}, fake_mcp)],
+        [Tool(
+            "mcp_report", "fake MCP", {"type": "object"}, fake_mcp,
+            access_descriptor=lambda _args: ToolAccess.internal_read(),
+        )],
         session,
         SilentRenderer(),
     ).run("make a report")
@@ -217,15 +227,17 @@ def test_executor_only_injects_the_capabilities_declared_by_each_tool(tmp_path):
     def observe(args, runtime):
         capabilities = runtime.capabilities
         assert capabilities is not None
-        observed[args["kind"]] = capabilities
+        observed[args["kind"]] = runtime
         return ToolResult.success()
 
     planning = Tool(
         "planning", "planning", {"type": "object"}, observe,
+        access_descriptor=lambda _args: ToolAccess.internal_read(),
         required_capabilities=frozenset({"plan"}),
     )
     file_access = Tool(
         "file_access", "file_access", {"type": "object"}, observe,
+        access_descriptor=lambda _args: ToolAccess.internal_read(),
         required_capabilities=frozenset({"execution"}),
     )
     session = Session.create("test", tmp_path)
@@ -236,10 +248,10 @@ def test_executor_only_injects_the_capabilities_declared_by_each_tool(tmp_path):
     ])
     assert all(outcome.result.ok for outcome in outcomes)
     assert observed["planning"].execution is None
-    assert observed["planning"].plan_manager is session.plan_manager
-    assert observed["planning"].delegation is None
+    assert observed["planning"].capabilities.plan_manager is session.plan_manager
+    assert observed["planning"].capabilities.delegation is None
     assert observed["file"].execution is not None
-    assert observed["file"].plan_manager is None
+    assert observed["file"].capabilities.plan_manager is None
 
 
 def test_command_tool_starts_and_waits_through_execution_backend(tmp_path):
@@ -248,13 +260,33 @@ def test_command_tool_starts_and_waits_through_execution_backend(tmp_path):
             super().__init__(tmp_path, lambda: tmp_path)
             self.events = []
 
-        def start_process(self, argv, *, cwd, **kwargs):
-            self.events.append(("start", tuple(argv), cwd))
-            return super().start_process(argv, cwd=cwd, **kwargs)
+        def start_shell(self, command, *, cwd):
+            self.events.append(("start", command, cwd))
+            handle = super().start_shell(command, cwd=cwd)
+            backend = self
 
-        def wait_process(self, process, timeout=None):
-            self.events.append(("wait", process.pid))
-            return super().wait_process(process, timeout)
+            class RecordingHandle:
+                def iter_output(self):
+                    return handle.iter_output()
+
+                def wait(self, timeout=None):
+                    backend.events.append(("wait", None))
+                    return handle.wait(timeout)
+
+                def poll(self):
+                    return handle.poll()
+
+                @property
+                def returncode(self):
+                    return handle.returncode
+
+                def terminate(self):
+                    return handle.terminate()
+
+                def cwd_result(self):
+                    return handle.cwd_result()
+
+            return RecordingHandle()
 
     backend = RecordingBackend()
     session = Session.create("test", tmp_path)

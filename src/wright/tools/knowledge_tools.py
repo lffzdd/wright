@@ -12,18 +12,16 @@ from ..knowledge.provider import (
     KnowledgeUnavailable,
     truncate_hits,
 )
-from ..permission import PermissionCheckResult
+from ..permission import ToolAccess
 from .base import Tool, ToolResult, ToolRuntime
 
 
-def _ask_network(args: dict[str, Any], runtime: ToolRuntime) -> PermissionCheckResult:
-    flags = ("accesses_network",)
-    return PermissionCheckResult(
-        "ask",
-        f"{runtime.tool_name}: knowledge search calls an external embedding API; "
-        f"risks={', '.join(flags)}",
-        flags,
-        source="tool",
+def _describe_network(args: dict[str, Any]) -> ToolAccess:
+    return ToolAccess(
+        frozenset({"network_read"}),
+        subject=str(args.get("query", "")),
+        risk_flags=("network_read", "external_embedding_api"),
+        reason="knowledge search may call an external embedding API",
     )
 
 
@@ -105,7 +103,7 @@ def build_knowledge_tools(provider: KnowledgeProvider) -> list[Tool]:
                 "additionalProperties": False,
             },
             call=call,
-            check_permission=_ask_network,
+            access_descriptor=_describe_network,
             is_concurrency_safe=lambda args: True,
             defer_to_model=True,
         )

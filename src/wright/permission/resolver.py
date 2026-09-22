@@ -1,83 +1,53 @@
+"""Single permission policy and invocation-authority resolver."""
+
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import replace
-from pathlib import Path
-from typing import TYPE_CHECKING
+import json
+import threading
+from dataclasses import dataclass, replace
+from glob import escape
+from pathlib import PurePosixPath
+from typing import TYPE_CHECKING, Protocol
+from urllib.parse import urlsplit
 
-from .types import PermissionCheckResult
+from ..execution.protocols import ExecutionBackend
+from ..execution.types import ExecutionPath
+from .scope import AccessScope, PathClass, forbidden_paths
+from .types import (
+    AccessTarget,
+    AuthorizationChange,
+    GrantTarget,
+    InvocationGrant,
+    InvocationIdentity,
+    PermissionChoice,
+    PermissionDecision,
+    PermissionPrompt,
+    PermissionResolution,
+    PermissionResponse,
+    ToolAccess,
+)
 
 if TYPE_CHECKING:
-    # 只在类型注解里用到(配合文件首的 from __future__ import annotations 全部惰性求值),
-    # 放进 TYPE_CHECKING 就不会在运行时 import tools——否则 permission 包与 tools 包会
-    # 形成 import 环(tools/* 要从本包拿 PermissionCheckResult)。
     from ..tools.base import Tool, ToolCall, ToolRuntime
+    from .config import PermissionSettings
 
 
-PermissionApprovalHandler = Callable[["PermissionRequest"], "PermissionCheckResult"]
-# 与普通安全权限确认采用同一份 request/result 契约，但语义不同：交互 handler
-# 必须收集用户提供的数据，并以 updated_arguments 回填后才能放行工具调用。
+class PermissionApprovalHandler(Protocol):
+    def __call__(self, request: PermissionRequest) -> PermissionResponse | str: ...
+
+
 UserInteractionHandler = PermissionApprovalHandler
 
 
-class PermissionPolicy:
-    """通用权限策略层。
-
-    不认识具体工具名,也不解析具体工具参数。工具相关策略由 Tool.check_permission
-    提供。Access scope（origin + granted roots）由执行后端分类，权限层只消费
-    工具给出的 path_outside_workspace / path_forbidden 标志。
-    """
-
-    def apply(
-        self,
-        check: PermissionCheckResult,
-        cwd: Path,
-        workspace_dir: Path,
-    ) -> PermissionCheckResult:
-        del cwd, workspace_dir
-        return check
-
-    def _format_reason(self, reason: str, risk_flags: tuple[str, ...]) -> str:
-        prefix = reason.split("; risks=", 1)[0]
-        suffix = f"; risks={', '.join(risk_flags)}" if risk_flags else ""
-        return f"{prefix}{suffix}"
-
-
-class FallbackApprovalHandler:
-    """把多个 handler 串成责任链:第一个明确表态(allow/deny)的说了算。
-
-    机制全靠那条共享签名:每个 handler 吃 PermissionRequest、吐 PermissionCheckResult。
-    约定一个 handler 返回 `ask` 表示"我弃权,交给下一个";返回 allow/deny 即定案,
-    链就此短路。典型用法:[规则式(on_no_match="ask"), 交互式]——规则能自动判的自动判,
-    判不了的(规则弃权)才弹终端问人。全员弃权则 fail-closed 拒。
-
-    它本身也满足 handler 签名,所以可以再被嵌进别的链——组合是闭合的。
-    """
-
-    def __init__(self, *handlers: PermissionApprovalHandler):
-        self.handlers = handlers
-
-    def __call__(self, request: PermissionRequest) -> PermissionCheckResult:
-        for handler in self.handlers:
-            result = handler(request)
-            if result.decision in ("allow", "deny"):
-                return result
-            # decision == "ask":该 handler 弃权,继续问下一个
-        return PermissionCheckResult(
-            "deny",
-            "no approval handler made a decision",
-            request.check.risk_flags,
-            source="fallback_exhausted",
-        )
+@dataclass(frozen=True)
+class ResolvedTarget:
+    declaration: AccessTarget
+    path: ExecutionPath | None
+    classification: PathClass | None
 
 
 class PermissionRequest:
-    """可交给全局策略或交互层复核的权限请求。
-
-    类似 Claude Code 的 canUseTool/permission dialog 边界:工具先做能力与风险分类，
-    全局 handler 仍可用模式和 deny/ask 规则收紧 allow。没有 handler 时，工具自己的
-    ask 会由执行层 fail closed。
-    """
+    """All context an approval adapter may inspect; it cannot grant directly."""
 
     def __init__(
         self,
@@ -85,106 +55,639 @@ class PermissionRequest:
         tool: Tool,
         arguments: dict,
         runtime: ToolRuntime,
-        check: PermissionCheckResult,
-        cwd: Path,
-        workspace_dir: Path,
-    ):
+        access: ToolAccess,
+        targets: tuple[ResolvedTarget, ...],
+        cwd: ExecutionPath,
+        scope: AccessScope,
+        identity: InvocationIdentity,
+        prompt: PermissionPrompt,
+    ) -> None:
         self.tool_call = tool_call
         self.tool = tool
         self.arguments = arguments
         self.runtime = runtime
-        self.check = check
+        self.access = access
+        self.targets = targets
         self.cwd = cwd
-        self.workspace_dir = workspace_dir
+        self.scope = scope
+        self.identity = identity
+        self.prompt = prompt
+
+    @property
+    def subject(self) -> str:
+        return self.access.subject
+
+    @property
+    def risk_flags(self) -> tuple[str, ...]:
+        return self.access.risk_flags
+
+
+class PermissionPolicy:
+    """Hard policy layer; tool names and arguments remain outside this class."""
+
+    _AUTO_DEFAULT = frozenset({"file_read", "internal_read", "plan_update"})
+    _EDIT_OPERATIONS = frozenset({"file_read", "file_write"})
+
+    def __init__(self, settings: PermissionSettings | None = None):
+        self.settings = settings
+        self._session_allow_rules: list[object] = []
+        self._session_rules_lock = threading.RLock()
+
+    def add_session_rules(self, rules: tuple[str, ...]) -> None:
+        """Apply rules approved for this resolver after their commit succeeds."""
+        if not rules:
+            return
+        # Imported lazily so config parsing stays independent during module
+        # initialization.
+        from .config import PermissionRule
+
+        with self._session_rules_lock:
+            known = {
+                (rule.tool_name, rule.subject_glob)
+                for rule in self._session_allow_rules
+            }
+            for raw in rules:
+                rule = PermissionRule.parse(raw)
+                key = (rule.tool_name, rule.subject_glob)
+                if key not in known:
+                    self._session_allow_rules.append(rule)
+                    known.add(key)
+
+    def _session_rule_matches(self, tool_name: str, subject: str) -> bool:
+        with self._session_rules_lock:
+            return any(
+                rule.matches(tool_name, subject) for rule in self._session_allow_rules
+            )
+
+    def evaluate(
+        self,
+        access: ToolAccess,
+        *,
+        tool_name: str,
+        subject: str,
+        in_scope: bool,
+    ) -> tuple[PermissionDecision, str, str]:
+        """Return decision/source before an approval adapter is consulted."""
+
+        settings = self.settings
+        mode = settings.mode if settings is not None else "default"
+
+        # Hard mode restrictions precede configurable rules.  In particular,
+        # bypass and an allow rule cannot turn a plan-mode write/MCP/control
+        # operation into an executable call.
+        if mode == "plan" and (
+            "unknown" in access.operations
+            or any(
+                operation not in {
+                    "file_read",
+                    "internal_read",
+                    "plan_update",
+                    "network_read",
+                    "user_interaction",
+                }
+                for operation in access.operations
+            )
+        ):
+            return "deny", "plan 模式禁止该操作", "mode"
+
+        if settings is not None and _matches(settings.deny, tool_name, subject):
+            return "deny", f"命中 deny 规则: {tool_name}({subject})", "rule_config"
+        if settings is not None and _matches(settings.ask, tool_name, subject):
+            return "ask", f"命中 ask 规则,需确认: {tool_name}({subject})", "rule_config"
+
+        if mode == "bypass":
+            return "allow", "bypass 模式放行", "mode"
+        if mode == "acceptEdits" and access.operations <= self._EDIT_OPERATIONS:
+            if in_scope:
+                return "allow", "acceptEdits 模式放行范围内文件编辑", "mode"
+
+        if (
+            settings is not None and _matches(settings.allow, tool_name, subject)
+        ) or self._session_rule_matches(tool_name, subject):
+            return "allow", f"命中 allow 规则: {tool_name}({subject})", "rule_config"
+
+        if "unknown" in access.operations:
+            return "ask", "未声明的工具操作需要明确审批", "policy"
+        if not in_scope and any(
+            operation in {"file_read", "file_write"}
+            for operation in access.operations
+        ):
+            return "ask", "目标不在当前会话 AccessScope 内", "scope"
+
+        if access.operations <= self._AUTO_DEFAULT and in_scope:
+            return "allow", "默认策略允许范围内读取/内部查询", "default"
+        return "ask", "该操作需要审批", "policy"
+
+    def apply(
+        self,
+        access: ToolAccess,
+        *,
+        tool_name: str,
+        subject: str,
+        in_scope: bool,
+    ) -> tuple[PermissionDecision, str, str]:
+        return self.evaluate(
+            access,
+            tool_name=tool_name,
+            subject=subject,
+            in_scope=in_scope,
+        )
+
+
+class FallbackApprovalHandler:
+    """Ask each adapter until one returns a concrete choice."""
+
+    def __init__(self, *handlers: PermissionApprovalHandler):
+        self.handlers = handlers
+
+    def __call__(self, request: PermissionRequest) -> PermissionResponse:
+        for handler in self.handlers:
+            response = _normalize_response(handler(request))
+            if response.choice not in {"ask", "abstain"}:
+                return response
+        return PermissionResponse("deny")
 
 
 class PermissionResolver:
-    """把工具权限判断解析成最终执行判定。
-
-    分层目的:
-    - Tool.check_permission: 工具自己的 allow/ask/deny 与内容风险识别。
-    - PermissionPolicy: 通用系统边界检查,不硬编码具体工具。
-    - PermissionApprovalHandler: 用户确认、CLI prompt、测试注入、未来 hooks。
-    - ToolExecutor: 只消费最终 allow/deny/ask,不硬编码交互细节。
-    """
+    """Resolve a ToolAccess description into a one-call InvocationGrant."""
 
     def __init__(
         self,
         policy: PermissionPolicy | None = None,
         approval_handler: PermissionApprovalHandler | None = None,
         interaction_handler: UserInteractionHandler | None = None,
+        *,
+        settings: PermissionSettings | None = None,
     ):
-        self.policy = policy or PermissionPolicy()
+        self.policy = policy or PermissionPolicy(settings)
+        if settings is not None and self.policy.settings is None:
+            self.policy = PermissionPolicy(settings)
         self.approval_handler = approval_handler
         self.interaction_handler = interaction_handler
+
+    def commit_authorization_change(self, change: AuthorizationChange) -> None:
+        """Apply resolver-local memory after the executor commits the change."""
+        add_session_rules = getattr(self.policy, "add_session_rules", None)
+        if callable(add_session_rules):
+            add_session_rules(change.session_rules)
 
     def resolve(
         self,
         tool_call: ToolCall,
         tool: Tool,
         runtime: ToolRuntime,
-        cwd: Path,
-        workspace_dir: Path,
-    ) -> PermissionCheckResult:
+        *,
+        backend: ExecutionBackend | None,
+        scope: AccessScope,
+        identity: InvocationIdentity,
+        cwd: ExecutionPath | None = None,
+        _rewrite_depth: int = 0,
+    ) -> PermissionResolution:
         arguments = dict(tool_call.arguments)
+        if backend is not None:
+            fixed_cwd = cwd or backend.cwd()
+        elif cwd is not None:
+            fixed_cwd = cwd
+        else:
+            return self._deny(arguments, "没有可用的固定执行环境", source="resolver")
+
         try:
-            tool_check = tool.check_permission(arguments, runtime)
-        except Exception as e:
-            tool_check = PermissionCheckResult(
-                "deny",
-                f"{tool.name}: permission check failed: {type(e).__name__}: {e}",
-                source="tool_permission_error",
+            access = tool.describe_access(arguments)
+            if not isinstance(access, ToolAccess) or not access.operations:
+                raise TypeError("describe_access must return ToolAccess with operations")
+        except Exception as exc:
+            return self._deny(
+                arguments,
+                f"{tool.name}: access description failed: {type(exc).__name__}: {exc}",
+                source="access_description_error",
             )
 
-        check = self.policy.apply(tool_check, cwd, workspace_dir)
-        if check.decision == "deny":
-            return check
-
-        # 对标 Claude Code 的 requiresUserInteraction：即便一般权限规则会放行，
-        # 这种调用仍必须经过专属交互 adapter，拿到回填参数后才能执行。
-        handler = (
-            self.interaction_handler
-            if tool.requires_user_interaction
-            else self.approval_handler
+        resolved = self._resolve_targets(access.targets, backend, fixed_cwd, scope)
+        if resolved is None:
+            return self._deny(arguments, "无法解析工具资源", source="resolver")
+        forbidden = next(
+            (item for item in resolved if item.classification == PathClass.FORBIDDEN),
+            None,
         )
-        handler_kind = "interaction" if tool.requires_user_interaction else "approval"
+        if forbidden is not None:
+            return self._deny(
+                arguments,
+                "目标属于受保护权限配置，禁止直接访问",
+                risk_flags=(*access.risk_flags, "protected_path"),
+                source="protected_path",
+            )
+
+        in_scope = all(
+            item.classification in {None, PathClass.IN_ORIGIN, PathClass.IN_GRANTED}
+            for item in resolved
+        )
+        effective_access = access
+        if not in_scope and "path_outside_scope" not in access.risk_flags:
+            effective_access = replace(
+                access, risk_flags=(*access.risk_flags, "path_outside_scope")
+            )
+        subject = access.subject or _subject_from_arguments(arguments)
+        if effective_access.subject != subject:
+            effective_access = replace(effective_access, subject=subject)
+        decision, reason, source = self.policy.apply(
+            effective_access,
+            tool_name=tool.name,
+            subject=subject,
+            in_scope=in_scope,
+        )
+
+        remember_rule = _rememberable_rule(tool.name, arguments, effective_access)
+
+        if tool.requires_user_interaction and decision != "deny":
+            decision = "ask"
+            reason = reason or "需要用户交互"
+            source = "user_interaction"
+
+        prompt = self._prompt(
+            tool_call,
+            tool.name,
+            effective_access,
+            resolved,
+            identity,
+            reason,
+            remember_rule=remember_rule,
+            subject=subject,
+        )
+        request = PermissionRequest(
+            tool_call,
+            tool,
+            arguments,
+            runtime,
+            effective_access,
+            resolved,
+            fixed_cwd,
+            scope,
+            identity,
+            prompt,
+        )
+
+        if decision == "deny":
+            return PermissionResolution(
+                arguments, "deny", reason, effective_access.risk_flags, source, prompt=prompt
+            )
+        if decision == "allow":
+            return self._allowed(
+                arguments,
+                effective_access,
+                resolved,
+                fixed_cwd,
+                identity,
+                reason,
+                source,
+                backend=backend,
+                remember_rule=remember_rule,
+            )
+
+        handler = self.interaction_handler if tool.requires_user_interaction else self.approval_handler
         if handler is None:
-            return check
-
+            return PermissionResolution(
+                arguments,
+                "deny",
+                f"{reason}; 没有可用交互适配器",
+                effective_access.risk_flags,
+                "no_interaction",
+                prompt=prompt,
+            )
         try:
-            decision = handler(
-                PermissionRequest(
-                    tool_call=tool_call,
-                    tool=tool,
-                    arguments=arguments,
-                    runtime=runtime,
-                    check=check,
-                    cwd=cwd,
-                    workspace_dir=workspace_dir,
+            response = _normalize_response(handler(request))
+        except Exception as exc:
+            return PermissionResolution(
+                arguments,
+                "deny",
+                f"权限审批适配器失败: {type(exc).__name__}: {exc}",
+                effective_access.risk_flags,
+                "approval_error",
+                prompt=prompt,
+            )
+        if response.choice in {"ask", "abstain", "deny", ""}:
+            return PermissionResolution(
+                arguments,
+                "deny",
+                f"审批拒绝: {response.choice or 'empty choice'}",
+                effective_access.risk_flags,
+                "approval",
+                prompt=prompt,
+            )
+        if response.choice not in {choice.id for choice in prompt.choices}:
+            return PermissionResolution(
+                arguments,
+                "deny",
+                f"审批返回了本次请求未提供的选择: {response.choice}",
+                effective_access.risk_flags,
+                "invalid_choice",
+                prompt=prompt,
+            )
+
+        final_arguments = dict(response.updated_arguments or arguments)
+        if response.updated_arguments is not None:
+            try:
+                updated_access = tool.describe_access(final_arguments)
+            except Exception as exc:
+                return self._deny(
+                    final_arguments,
+                    f"审批改写后的访问描述失败: {exc}",
+                    source="updated_access_description_error",
                 )
-            )
-        except Exception as e:
-            return PermissionCheckResult(
-                "deny",
-                f"permission {handler_kind} handler failed: {type(e).__name__}: {e}",
-                check.risk_flags,
-                source=f"{handler_kind}_handler_error",
-            )
+            from ..tools.validation import validate_tool_arguments
 
-        if decision.decision not in ("allow", "deny", "ask"):
-            return PermissionCheckResult(
-                "deny",
-                f"permission {handler_kind} handler returned invalid decision: {decision.decision!r}",
-                check.risk_flags,
-                source=f"{handler_kind}_handler_error",
-            )
+            validation_error = validate_tool_arguments(tool, final_arguments)
+            if validation_error is not None:
+                return self._deny(
+                    final_arguments,
+                    f"审批改写后的参数无效: {validation_error.err}",
+                    source="updated_arguments_invalid",
+                )
+            if _permission_shape(updated_access) != _permission_shape(access):
+                # The old decision cannot authorize a changed path, command,
+                # URL, operation, or subject.  One explicit re-evaluation is
+                # allowed; a second rewrite is rejected by the executor.
+                updated_call = type(tool_call)(tool_call.name, final_arguments, tool_call.id)
+                if _rewrite_depth >= 1:
+                    return self._deny(
+                        final_arguments,
+                        "审批器第二次改写了权限相关参数，已拒绝本次调用",
+                        source="rewrite_loop",
+                    )
+                return self._resolve_updated(
+                    updated_call,
+                    tool,
+                    runtime,
+                    backend=backend,
+                    scope=scope,
+                    identity=identity,
+                    cwd=fixed_cwd,
+                    _rewrite_depth=_rewrite_depth + 1,
+                )
 
-        merged_flags = tuple(dict.fromkeys((*check.risk_flags, *decision.risk_flags)))
-        if merged_flags != decision.risk_flags:
-            return replace(
-                decision,
-                risk_flags=merged_flags,
-                reason=self.policy._format_reason(decision.reason, merged_flags),
-            )
+        resolution = self._allowed(
+            final_arguments,
+            effective_access,
+            resolved,
+            fixed_cwd,
+            identity,
+            f"{reason}; approved by {response.choice}",
+            "approval",
+            backend=backend,
+            remember_rule=remember_rule,
+            choice=response.choice,
+        )
+        return resolution
 
-        return decision
+    def _resolve_updated(self, *args, **kwargs) -> PermissionResolution:
+        # A rewritten request is deliberately resolved from scratch.  The
+        # executor tracks one rewrite round and rejects a second resource
+        # change rather than allowing an approval loop.
+        return self.resolve(*args, **kwargs)
+
+    def _resolve_targets(
+        self,
+        targets: tuple[AccessTarget, ...],
+        backend: ExecutionBackend | None,
+        cwd: ExecutionPath,
+        scope: AccessScope,
+    ) -> tuple[ResolvedTarget, ...] | None:
+        result: list[ResolvedTarget] = []
+        for target in targets:
+            if target.kind in {"file", "directory"}:
+                if backend is None:
+                    return None
+                try:
+                    path = backend.resolve_path(target.value, cwd=cwd)
+                except Exception:
+                    return None
+                result.append(ResolvedTarget(target, path, scope.classify(path.value)))
+            else:
+                result.append(ResolvedTarget(target, None, None))
+        return tuple(result)
+
+    def _prompt(
+        self,
+        tool_call: ToolCall,
+        tool_name: str,
+        access: ToolAccess,
+        targets: tuple[ResolvedTarget, ...],
+        identity: InvocationIdentity,
+        reason: str,
+        *,
+        remember_rule: str | None,
+        subject: str,
+    ) -> PermissionPrompt:
+        outside = any(item.classification == PathClass.OUTSIDE for item in targets)
+        if outside:
+            choices = (
+                PermissionChoice("allow_once", "Allow once", "This invocation", "No save"),
+                PermissionChoice(
+                    "allow_session_directory",
+                    "Allow directory for this session",
+                    "Candidate parent/directory",
+                    "Save in session checkpoint",
+                ),
+                PermissionChoice(
+                    "allow_persistent_directory",
+                    "Allow directory permanently",
+                    "Candidate parent/directory",
+                    "Save in user permissions",
+                ),
+                PermissionChoice("deny", "Deny", "No execution", "No save"),
+            )
+        elif remember_rule is not None:
+            choices = (
+                PermissionChoice("allow_once", "Allow once", "This invocation", "No save"),
+                PermissionChoice(
+                    "allow_session_rule",
+                    "Allow this rule for the session",
+                    remember_rule,
+                    "Save in session memory",
+                ),
+                PermissionChoice(
+                    "allow_persistent_rule",
+                    "Allow this rule permanently",
+                    remember_rule,
+                    "Save in user permissions",
+                ),
+                PermissionChoice("deny", "Deny", "No execution", "No save"),
+            )
+        else:
+            choices = (
+                PermissionChoice("allow_once", "Allow once", "This invocation", "No save"),
+                PermissionChoice("deny", "Deny", "No execution", "No save"),
+            )
+        target_display = tuple(dict.fromkeys(
+            item.path.value if item.path is not None else item.declaration.value
+            for item in targets
+        ))
+        return PermissionPrompt(
+            request_id=tool_call.id or f"{identity.session_id}:{identity.call_id}",
+            tool_name=tool_name,
+            subject=subject,
+            reason=reason,
+            risk_flags=access.risk_flags,
+            targets=target_display,
+            choices=choices,
+            principal=identity.agent_task_id or identity.session_id,
+        )
+
+    def _allowed(
+        self,
+        arguments: dict,
+        access: ToolAccess,
+        targets: tuple[ResolvedTarget, ...],
+        cwd: ExecutionPath,
+        identity: InvocationIdentity,
+        reason: str,
+        source: str,
+        *,
+        backend: ExecutionBackend | None,
+        remember_rule: str | None = None,
+        choice: str = "allow_once",
+    ) -> PermissionResolution:
+        session_dirs: list[ExecutionPath] = []
+        persistent_dirs: list[ExecutionPath] = []
+        session_rules: list[str] = []
+        persistent_rules: list[str] = []
+        if choice in {"allow_session_directory", "allow_persistent_directory"}:
+            for target in targets:
+                if target.path is None or target.classification != PathClass.OUTSIDE:
+                    continue
+                directory = target.path.parent if target.declaration.kind == "file" else target.path
+                if directory not in session_dirs:
+                    session_dirs.append(directory)
+                if choice == "allow_persistent_directory" and directory not in persistent_dirs:
+                    persistent_dirs.append(directory)
+        if remember_rule is not None:
+            if choice == "allow_session_rule":
+                session_rules.append(remember_rule)
+            elif choice == "allow_persistent_rule":
+                session_rules.append(remember_rule)
+                persistent_rules.append(remember_rule)
+        grant_targets = tuple(
+            GrantTarget(item.path, item.declaration.operation, item.declaration.recursive)
+            for item in targets
+            if item.path is not None
+        )
+        grant = InvocationGrant(
+            identity,
+            cwd.environment_id,
+            cwd,
+            access.operations,
+            grant_targets,
+            access.subject,
+            access.subject if "shell" in access.operations else None,
+            _blocked_paths(backend, cwd),
+        )
+        return PermissionResolution(
+            arguments,
+            "allow",
+            reason,
+            access.risk_flags,
+            source,
+            grant,
+            AuthorizationChange(
+                tuple(session_dirs),
+                tuple(persistent_dirs),
+                tuple(session_rules),
+                tuple(persistent_rules),
+            ),
+        )
+
+    @staticmethod
+    def _deny(
+        arguments: dict,
+        reason: str,
+        *,
+        risk_flags: tuple[str, ...] = (),
+        source: str,
+    ) -> PermissionResolution:
+        return PermissionResolution(arguments, "deny", reason, risk_flags, source)
+
+
+def _normalize_response(value: PermissionResponse | str) -> PermissionResponse:
+    if isinstance(value, PermissionResponse):
+        return value
+    if isinstance(value, str):
+        # Renderer adapters may still be convenient to write as a choice
+        # function, but only fixed IDs are meaningful at this boundary.
+        return PermissionResponse(value)
+    raise TypeError("approval adapter must return PermissionResponse or choice ID")
+
+
+def _matches(rules, tool_name: str, subject: str) -> bool:
+    return any(rule.matches(tool_name, subject) for rule in rules)
+
+
+def _subject_from_arguments(arguments: dict) -> str:
+    for key in ("command", "file", "directory", "path", "url"):
+        value = arguments.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return json.dumps(arguments, ensure_ascii=False, sort_keys=True)
+
+
+def _rememberable_rule(
+    tool_name: str,
+    arguments: dict,
+    access: ToolAccess,
+) -> str | None:
+    """Return a bounded low-risk rule that the approval UI may offer."""
+    if any(target.kind == "directory" for target in access.targets):
+        return None
+    if access.operations & {
+        "shell",
+        "network_write",
+        "external_unknown",
+        "execution_control",
+        "persistent_write",
+    }:
+        return None
+    if {
+        "executes_shell",
+        "deletes_files",
+        "modifies_git_state",
+        "mutates_remote_state",
+        "network_fetch",
+        "package_manager",
+    } & set(access.risk_flags):
+        return None
+
+    file_value = arguments.get("file")
+    if isinstance(file_value, str) and file_value:
+        parent = PurePosixPath(file_value).parent.as_posix()
+        subject = escape(file_value) if parent == "." else f"{escape(parent)}/*"
+        return f"{tool_name}({subject})"
+
+    url_value = arguments.get("url")
+    if isinstance(url_value, str) and url_value:
+        parsed = urlsplit(url_value)
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            return f"{tool_name}({escape(parsed.scheme + '://' + parsed.netloc)}*)"
+    return None
+
+
+def _permission_shape(access: ToolAccess) -> tuple:
+    return (
+        access.operations,
+        tuple((target.kind, target.operation, target.value, target.recursive) for target in access.targets),
+        access.subject,
+    )
+
+
+def _blocked_paths(
+    backend: ExecutionBackend | None,
+    cwd: ExecutionPath,
+) -> tuple[ExecutionPath, ...]:
+    if backend is None:
+        return ()
+    paths: list[ExecutionPath] = []
+    for forbidden in forbidden_paths():
+        try:
+            path = backend.resolve_path(str(forbidden), cwd=cwd)
+        except Exception:
+            continue
+        if path not in paths:
+            paths.append(path)
+    return tuple(paths)

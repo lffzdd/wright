@@ -6,7 +6,7 @@ from ...knowledge import optional_knowledge_tools
 from ...knowledge.provider import MAX_HIT_CONTENT_CHARS, KnowledgeHit
 from ...skills.registry import SkillRegistry
 from ...skills.store import write_skill
-from ...tools.base import ToolCall, ToolRuntime
+from ...tools.base import ToolCall
 from ...tools.knowledge_tools import build_knowledge_tools
 from ...tools.skill_tools import build_skill_tools
 
@@ -45,12 +45,11 @@ def test_schema_is_valid_json_schema():
     validator_cls.check_schema(tool.parameters)
 
 
-def test_check_permission_declares_network_access():
+def test_access_descriptor_declares_network_access():
     tool = build_knowledge_tools(FakeProvider())[0]
-    runtime = ToolRuntime(tool_name="knowledge_search")
-    result = tool.check_permission({"query": "q"}, runtime)
-    assert result.decision == "ask"
-    assert "accesses_network" in result.risk_flags
+    result = tool.describe_access({"query": "q"})
+    assert result.operations == frozenset({"network_read"})
+    assert "network_read" in result.risk_flags
 
 
 def test_tool_wraps_untrusted_content_and_truncates():

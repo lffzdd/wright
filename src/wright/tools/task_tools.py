@@ -4,8 +4,26 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..permission import ToolAccess
 from ..tasks import TaskNotFoundError, TaskService, TaskWaitCancelled
 from .base import Tool, ToolResult, ToolRuntime
+
+
+def _describe_task_read(arguments: dict[str, Any]) -> ToolAccess:
+    return ToolAccess(
+        frozenset({"internal_read"}),
+        subject=str(arguments.get("task_id") or arguments.get("kind") or ""),
+        reason="observe task state",
+    )
+
+
+def _describe_task_control(arguments: dict[str, Any]) -> ToolAccess:
+    return ToolAccess(
+        frozenset({"execution_control"}),
+        subject=str(arguments.get("task_id") or ""),
+        risk_flags=("controls_live_execution",),
+        reason="control a live task",
+    )
 
 
 def _service(runtime: ToolRuntime) -> TaskService:
@@ -93,6 +111,7 @@ get_task_tool = Tool(
         "additionalProperties": False,
     },
     call=get_task,
+    access_descriptor=_describe_task_read,
     required_capabilities=frozenset({"tasks"}),
     is_concurrency_safe=lambda args: True,
 )
@@ -119,6 +138,7 @@ wait_task_tool = Tool(
         "additionalProperties": False,
     },
     call=wait_task,
+    access_descriptor=_describe_task_read,
     required_capabilities=frozenset({"tasks"}),
     is_concurrency_safe=lambda args: True,
     timeout_owner="tool",
@@ -141,6 +161,7 @@ cancel_task_tool = Tool(
         "additionalProperties": False,
     },
     call=cancel_task,
+    access_descriptor=_describe_task_control,
     required_capabilities=frozenset({"tasks"}),
     # Shell cancellation mutates a live process tree; serialize it with other
     # exclusive tools in the same model turn.
@@ -174,6 +195,7 @@ list_tasks_tool = Tool(
         "additionalProperties": False,
     },
     call=list_tasks,
+    access_descriptor=_describe_task_read,
     required_capabilities=frozenset({"tasks"}),
     is_concurrency_safe=lambda args: True,
 )

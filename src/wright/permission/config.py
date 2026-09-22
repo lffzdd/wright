@@ -2,11 +2,9 @@
 
 为什么要这一层
 --------------
-Tool.check_permission 只会把有副作用的工具(写文件/改文件/跑命令/发网络)标成
-`ask`——它不知道"这次该不该放行",那是策略问题。`PermissionResolver` 在拿到 `ask`
-后会回调一个 `approval_handler` 来裁决;本模块就是这个 handler 的【非交互】实现:
-不弹终端、不等人回车,而是按一份持久化配置(权限模式 + 规则)自动给出 allow/deny。
-这正好补上"main.py 全自动跑、没人逐个确认导致 ask 一律 fail-closed"的缺口。
+Tool.describe_access 只描述工具本次可能涉及的操作——它不知道"这次该不该放行",那是策略问题。
+`PermissionResolver` 直接消费本模块提供的持久化配置，不把规则判断放在可被遗漏的普通审批
+handler 中。
 
 判定顺序(fail-closed:拿不准就拒)
 ----------------------------------
@@ -34,20 +32,18 @@ from __future__ import annotations
 import json
 import os
 import re
+import tempfile
+import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Literal
 
-from .resolver import PermissionRequest
-from .types import PermissionCheckResult
-
 PermissionMode = Literal["default", "acceptEdits", "bypass", "plan"]
 _VALID_MODES = ("default", "acceptEdits", "bypass", "plan")
 
-# acceptEdits 只为"本地文件读写"开绿灯:风险标志全落在这个集合内才算"纯编辑"。
-# 一旦掺入 shell/网络/git 等更重的副作用,就不在 acceptEdits 的自动放行范围。
-_EDIT_ONLY_FLAGS = frozenset({"reads_files", "writes_files"})
+_CONFIG_LOCK = threading.RLock()
 
 
 @dataclass(frozen=True)
@@ -151,43 +147,57 @@ def append_allow_rule(rule: str, path: Path | None = None) -> None:
     首次写用户文件时从包内默认配置拷一份再追加,避免丢掉预置 allow 规则。
     保持 indent=2,人能直接看/改。
     """
-    target = path or default_settings_path()
-    if target.is_file():
-        data = json.loads(target.read_text(encoding="utf-8"))
-    elif path is None and _packaged_path().is_file():
-        data = json.loads(_packaged_path().read_text(encoding="utf-8"))
-    else:
-        data = {"mode": "default", "permissions": {"allow": [], "deny": []}}
+    def update(data: dict) -> None:
+        allow = data.setdefault("permissions", {}).setdefault("allow", [])
+        if rule not in allow:
+            allow.append(rule)
 
-    perms = data.setdefault("permissions", {})
-    allow = perms.setdefault("allow", [])
-    if rule not in allow:
-        allow.append(rule)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+    _update_settings(update, path)
 
 
 def append_additional_directory(directory: str, path: Path | None = None) -> None:
     """Append an extra working directory to permissions.additionalDirectories."""
-    target = path or default_settings_path()
     resolved = str(Path(directory).expanduser().resolve())
-    if target.is_file():
-        data = json.loads(target.read_text(encoding="utf-8"))
-    elif path is None and _packaged_path().is_file():
-        data = json.loads(_packaged_path().read_text(encoding="utf-8"))
-    else:
-        data = {"mode": "default", "permissions": {"allow": [], "deny": []}}
 
-    perms = data.setdefault("permissions", {})
-    extra = perms.setdefault("additionalDirectories", [])
-    if resolved not in extra:
-        extra.append(resolved)
+    def update(data: dict) -> None:
+        extra = data.setdefault("permissions", {}).setdefault("additionalDirectories", [])
+        if resolved not in extra:
+            extra.append(resolved)
+
+    _update_settings(update, path)
+
+
+def _update_settings(update: Callable[[dict], None], path: Path | None) -> None:
+    """Read/merge/atomically replace settings under one process lock."""
+
+    target = path or default_settings_path()
+    with _CONFIG_LOCK:
+        if target.is_file():
+            data = json.loads(target.read_text(encoding="utf-8"))
+        elif path is None and _packaged_path().is_file():
+            data = json.loads(_packaged_path().read_text(encoding="utf-8"))
+        else:
+            data = {"mode": "default", "permissions": {"allow": [], "deny": []}}
+        before = json.dumps(data, ensure_ascii=False, sort_keys=True)
+        update(data)
+        if json.dumps(data, ensure_ascii=False, sort_keys=True) == before:
+            return
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
         )
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(data, handle, ensure_ascii=False, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, target)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
 
 
 def _env_path() -> Path | None:
@@ -203,113 +213,6 @@ def _user_path() -> Path:
 
 def _packaged_path() -> Path:
     return Path(__file__).resolve().parent / "permission_settings.json"
-
-
-class RuleBasedApprovalHandler:
-    """按 PermissionSettings 自动裁决 ask 的非交互 handler。
-
-    设计成可调用对象,直接传给 PermissionResolver(approval_handler=...) 即可。
-    线程安全:只读 settings、不持有可变状态,可被并发/串行批共用。
-    """
-
-    def __init__(
-        self,
-        settings: PermissionSettings,
-        on_no_match: Literal["deny", "ask"] = "deny",
-    ):
-        self.settings = settings
-        # 没有任何规则命中时怎么收口:
-        # - "deny"(默认):独立使用时 fail-closed,无人值守跑就该拒。
-        # - "ask" :作为组合链的一环时"弃权",把这次决定让给后面的 handler(如交互式)。
-        #   规则只对"明确该 allow / 明确该 deny"表态,灰色地带交给人。
-        self.on_no_match = on_no_match
-
-    def __call__(self, request: PermissionRequest) -> PermissionCheckResult:
-        tool_name = request.tool.name
-        subject = _subject_of(tool_name, request.arguments)
-        flags = request.check.risk_flags
-
-        # 1. deny 规则压过一切。
-        if self._any_match(self.settings.deny, tool_name, subject):
-            return self._deny(request, f"命中 deny 规则: {tool_name}({subject})")
-
-        # 3. ask 规则:强制询问,压过 allow 与各模式的自动放行(deny 之外谁也盖不住它)。
-        #    返回 ask——独立用时 resolver 会 fail-closed(没人可问就拒),组合链里则落到
-        #    后面的交互式 handler 真去问人。这就是"在宽 allow 里挖洞"的实现。
-        if self._any_match(self.settings.ask, tool_name, subject):
-            return PermissionCheckResult(
-                "ask",
-                f"命中 ask 规则,需确认: {tool_name}({subject})",
-                request.check.risk_flags,
-                source="rule_config",
-                added_directories=request.check.added_directories,
-                invocation_paths=request.check.invocation_paths,
-            )
-
-        mode = self.settings.mode
-
-        # 4. 模式特判。
-        if mode == "bypass":
-            return self._allow(request, "bypass 模式放行")
-        if mode == "plan" and flags:
-            return self._deny(request, "plan 模式:计划阶段不执行任何副作用操作")
-        if mode == "acceptEdits" and flags and set(flags) <= _EDIT_ONLY_FLAGS:
-            return self._allow(request, "acceptEdits 模式:本地文件编辑自动放行")
-
-        # 5. allow 规则命中。
-        if self._any_match(self.settings.allow, tool_name, subject):
-            return self._allow(request, f"命中 allow 规则: {tool_name}({subject})")
-
-        # Tool-level allow is only a capability classification, not a way to
-        # skip global policy.  Once deny/ask/mode rules have had their say, a
-        # genuinely read-only/default-allowed tool keeps that decision.
-        if request.check.decision == "allow":
-            return request.check
-
-        # 6. 没有任何规则命中:按 on_no_match 收口——独立用就 fail-closed 拒,
-        #    组合用就返回 ask"弃权",让链上后一个 handler(如交互式)接手。
-        reason = f"无匹配的 allow 规则({mode} 模式): {tool_name}({subject})"
-        if self.on_no_match == "ask":
-            return PermissionCheckResult(
-                "ask",
-                reason,
-                request.check.risk_flags,
-                source="rule_config",
-                added_directories=request.check.added_directories,
-                invocation_paths=request.check.invocation_paths,
-            )
-        return self._deny(request, reason + ",默认拒绝")
-
-    @staticmethod
-    def _any_match(
-        rules: list[PermissionRule], tool_name: str, subject: str
-    ) -> bool:
-        return any(rule.matches(tool_name, subject) for rule in rules)
-
-    @staticmethod
-    def _allow(request: PermissionRequest, reason: str) -> PermissionCheckResult:
-        return PermissionCheckResult(
-            "allow",
-            reason,
-            request.check.risk_flags,
-            source="rule_config",
-            invocation_paths=request.check.invocation_paths,
-        )
-
-    @staticmethod
-    def _deny(request: PermissionRequest, reason: str) -> PermissionCheckResult:
-        return PermissionCheckResult(
-            "deny", reason, request.check.risk_flags, source="rule_config"
-        )
-
-
-def _subject_of(tool_name: str, arguments: dict) -> str:
-    """取一个工具最有判别力的参数作为规则匹配主体。"""
-    for key in ("command", "file", "directory", "url"):
-        value = arguments.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return json.dumps(arguments, ensure_ascii=False, sort_keys=True)
 
 
 def _has_shell_composition(command: str) -> bool:

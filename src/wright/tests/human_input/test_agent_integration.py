@@ -4,7 +4,7 @@ from wright.tests.responses import event, response
 
 from ...domain.session import Session
 from ...engine.agent import Agent
-from ...permission import PermissionCheckResult, PermissionResolver
+from ...permission import PermissionResolver, PermissionResponse
 from ...renderer import SilentRenderer
 from ...tools.ask_user_tool import ask_user_tool
 
@@ -22,11 +22,8 @@ def _interaction_handler(answer, calls=None):
     def handler(request):
         if calls is not None:
             calls.append(request)
-        return PermissionCheckResult(
-            "allow",
-            "test user answered",
-            updated_arguments={**request.arguments, "answer": answer},
-            source="test_interaction",
+        return PermissionResponse(
+            "allow_once", updated_arguments={**request.arguments, "answer": answer}
         )
     return handler
 
@@ -120,11 +117,8 @@ def test_ask_user_can_be_called_multiple_times(tmp_path):
 
     answers = iter(["one", "two"])
     def interaction_handler(request):
-        return PermissionCheckResult(
-            "allow",
-            "test user answered",
-            updated_arguments={**request.arguments, "answer": next(answers)},
-            source="test_interaction",
+        return PermissionResponse(
+            "allow_once", updated_arguments={**request.arguments, "answer": next(answers)}
         )
 
     session = Session.create("twice", tmp_path)
@@ -181,11 +175,8 @@ def test_ask_user_cannot_be_auto_approved_by_normal_permission_handler(tmp_path)
         session,
         SilentRenderer(),
         permission_resolver=PermissionResolver(
-            approval_handler=lambda request: PermissionCheckResult(
-                "allow",
-                "this must not be used for ask_user",
-                updated_arguments={**request.arguments, "answer": "forged"},
-                source="test_approval",
+            approval_handler=lambda request: PermissionResponse(
+                "allow_once", {**request.arguments, "answer": "forged"}
             )
         ),
     )

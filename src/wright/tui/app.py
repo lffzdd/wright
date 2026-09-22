@@ -326,9 +326,6 @@ def _tool_body(tool: ToolView) -> Any:
 
 class PermissionModal(ModalScreen[str]):
     BINDINGS: ClassVar[list[Binding]] = [
-        Binding("y", "allow", "Allow", show=True),
-        Binding("n", "deny", "Deny", show=True),
-        Binding("a", "always", "Always", show=True),
         Binding("escape", "deny", "Deny", show=False),
     ]
 
@@ -336,22 +333,20 @@ class PermissionModal(ModalScreen[str]):
         self,
         tool_name: str,
         subject: str,
-        risk_flags: str,
+        risk_flags: list[str] | tuple[str, ...],
         reason: str,
-        offer_always: bool,
-        remember_rule: str = "",
-        remember_persists: bool = False,
-        revoke_hint: str = "",
+        targets: list[str] | tuple[str, ...] = (),
+        choices: list[dict[str, str]] | tuple[dict[str, str], ...] = (),
+        principal: str = "",
     ) -> None:
         super().__init__()
         self.tool_name = tool_name
         self.subject = subject
-        self.risk_flags = risk_flags
+        self.risk_flags = tuple(risk_flags)
         self.reason = reason
-        self.offer_always = offer_always
-        self.remember_rule = remember_rule
-        self.remember_persists = remember_persists
-        self.revoke_hint = revoke_hint
+        self.targets = tuple(targets)
+        self.choices = tuple(choices)
+        self.principal = principal
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
@@ -359,38 +354,28 @@ class PermissionModal(ModalScreen[str]):
             yield Static(self.tool_name, classes="dialog-title")
             if self.subject:
                 yield Static(self.subject, classes="dialog-subject")
-            yield Static(f"risk  {self.risk_flags}", classes="dialog-meta")
+            yield Static(f"risk  {', '.join(self.risk_flags)}", classes="dialog-meta")
             yield Static(self.reason, classes="dialog-reason")
-            if self.offer_always and self.remember_rule:
-                persistence = "cross-session" if self.remember_persists else "this session"
-                yield Static(
-                    f"scope  {self.remember_rule}\npersistence  {persistence}",
-                    classes="dialog-meta",
-                )
-                if self.revoke_hint:
-                    yield Static(f"revoke  {self.revoke_hint}", classes="dialog-reason")
+            if self.targets:
+                yield Static("targets  " + "; ".join(self.targets), classes="dialog-meta")
+            if self.principal:
+                yield Static(f"principal  {self.principal}", classes="dialog-meta")
             with Horizontal(classes="dialog-actions"):
-                yield Button("allow", id="allow", variant="success")
-                yield Button("deny", id="deny", variant="error")
-                if self.offer_always:
-                    yield Button("always", id="always", variant="primary")
+                for choice in self.choices:
+                    variant = "error" if choice.get("id") == "deny" else "primary"
+                    yield Button(
+                        f"{choice.get('label', choice.get('id', 'choice'))}",
+                        id=f"choice-{choice.get('id', 'deny')}",
+                        variant=variant,
+                    )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "allow":
-            self.dismiss("y")
-        elif event.button.id == "always":
-            self.dismiss("a")
-        else:
-            self.dismiss("n")
-
-    def action_allow(self) -> None:
-        self.dismiss("y")
+        ident = event.button.id or ""
+        if ident.startswith("choice-"):
+            self.dismiss(ident.removeprefix("choice-") or "deny")
 
     def action_deny(self) -> None:
-        self.dismiss("n")
-
-    def action_always(self) -> None:
-        self.dismiss("a" if self.offer_always else "n")
+        self.dismiss("deny")
 
 
 class AskUserModal(ModalScreen[str | None]):
@@ -1175,7 +1160,7 @@ class WrightTUI(App):
                     result = await self._collect(request)
                 except Exception:
                     logger.exception("tui interaction failed")
-                    result = None if request.kind == "ask_user" else "n"
+                    result = None if request.kind == "ask_user" else "deny"
                 assert self.service is not None
                 try:
                     self.service.respond_interaction(uuid4().hex, request.request_id, result)
@@ -1206,12 +1191,11 @@ class WrightTUI(App):
                 PermissionModal(
                     tool_name=str(payload.get("tool_name", "tool")),
                     subject=str(payload.get("subject", "")),
-                    risk_flags=str(payload.get("risk_flags", "")),
+                    risk_flags=tuple(payload.get("risk_flags") or ()),
                     reason=str(payload.get("reason", "")),
-                    offer_always=bool(payload.get("offer_always")),
-                    remember_rule=str(payload.get("remember_rule", "")),
-                    remember_persists=bool(payload.get("remember_persists")),
-                    revoke_hint=str(payload.get("revoke_hint", "")),
+                    targets=tuple(payload.get("targets") or ()),
+                    choices=tuple(payload.get("choices") or ()),
+                    principal=str(payload.get("principal", "")),
                 )
             )
         if request.kind == "ask_user":
@@ -1223,7 +1207,7 @@ class WrightTUI(App):
                     options=tuple(options),
                 )
             )
-        return "n"
+        return "deny"
 
     def on_multiline_composer_submitted(self, event: MultilineComposer.Submitted) -> None:
         value = event.value.strip()
@@ -1375,7 +1359,7 @@ class WrightTUI(App):
         self.service.cancel_current()
         screen = self.screen
         if isinstance(screen, PermissionModal):
-            screen.dismiss("n")
+            screen.dismiss("deny")
         elif isinstance(screen, AskUserModal):
             screen.dismiss(None)
         self.renderer.on_system_notice("stopping current task…")

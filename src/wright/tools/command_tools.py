@@ -1,18 +1,15 @@
-import shlex
-import subprocess
-import tempfile
 import threading
 import time
 import uuid
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
+from ..execution import ExecutionPath, ProcessHandle
 from ..logger import get_logger
 from ..processes import ProcessResources
 from .base import Tool, ToolCancelledError, ToolResult, ToolRuntime
 from .command_permissions import (
-    check_execute_command_permission,
+    describe_execute_command_access,
     is_execute_command_concurrency_safe,
 )
 
@@ -20,18 +17,16 @@ logger = get_logger(__name__)
 
 def _capabilities(runtime: ToolRuntime | None):
     capabilities = runtime.capabilities if runtime is not None else None
-    if (
-        capabilities is None
-        or capabilities.execution is None
-        or capabilities.background_tasks is None
-    ):
+    if capabilities is None or capabilities.background_tasks is None:
         raise RuntimeError("command tool requires execution and background-task capabilities")
+    if runtime is None or runtime.execution is None:
+        raise RuntimeError("command tool requires an invocation authorization")
     return capabilities
 
 
 def _make_background_task(
     task_id: str,
-    proc: subprocess.Popen,
+    proc: ProcessHandle,
     output_lines: list[str],
     done_event: threading.Event,
     output_lock: threading.RLock,
@@ -82,9 +77,13 @@ def execute_command(
     try:
         capabilities = _capabilities(runtime)
 
-        def result_data(payload: dict | None = None) -> dict:
+        def result_data(
+            payload: dict | None = None,
+            *,
+            cwd: ExecutionPath | None = None,
+        ) -> dict:
             data = dict(payload or {})
-            data["cwd"] = _format_cwd(capabilities)
+            data["cwd"] = _format_cwd(runtime, cwd=cwd)
             return data
 
         if (
@@ -96,31 +95,9 @@ def execute_command(
                 "This Agent cannot create background tasks",
                 data=result_data(),
             )
-        cwd = capabilities.execution.cwd()
-
-        # 注入 cwd 追踪：用临时文件，和 Claude Code 的 claude-{id}-cwd 一致
-        with tempfile.NamedTemporaryFile(prefix="wright-cwd-", delete=False) as tmp:
-            cwd_file = Path(tmp.name)
-        cwd_file.unlink(missing_ok=True)
-        # 末尾追加 `&& pwd -P > tmpfile`，无论命令成败都不影响返回码
-        # （pwd -P 只在主命令成功时才写，和 Claude Code 的 &&  行为一致）
-        injected = (
-            f"eval {shlex.quote(command)} && pwd -P > {shlex.quote(str(cwd_file))}"
-        )
-
         # The tool owns shell-specific cwd tracking and output semantics; the
         # execution backend owns where/how the approved process is created.
-        proc = capabilities.execution.start_process(
-            ["/bin/bash", "-c", injected],
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # stderr 合并进 stdout，和 Claude Code 一致
-            text=True,
-            bufsize=1,
-            # A task owns the whole command tree, so cancel_task can terminate
-            # descendants instead of orphaning them.
-            start_new_session=True,
-        )
+        proc = runtime.execution.start_shell(command)
     except FileNotFoundError:
         return ToolResult.fail(
             f"command not found: {command.split()[0] if command.split() else command}"
@@ -131,7 +108,7 @@ def execute_command(
     output_lines: list[str] = []
     output_lock = threading.RLock()
     done_event = threading.Event()
-    cwd_result: list[Path] = []
+    cwd_result: list[ExecutionPath] = []
 
     # 后台 task 可能在 reader 启动后才创建（前台 timeout 转后台）。holder
     # 让 reader 在完成时补 ended_at 和通知；极短命令先结束时，注册路径会补发。
@@ -154,15 +131,15 @@ def execute_command(
             logger.debug("background command on_done callback failed", exc_info=True)
 
     def _reader():
-        for line in capabilities.execution.iter_process_output(proc):
+        for line in proc.iter_output():
             with output_lock:
                 output_lines.append(line)
             if runtime and runtime.emit_output:
                 runtime.emit_output(line)
-        capabilities.execution.wait_process(proc)
+        proc.wait()
         # reader 只采集命令结束时的 cwd，不负责提交。只有前台调用路径确认命令
         # 没有转后台后才会更新 session，彻底消除 timeout 临界点的提交竞态。
-        new_cwd = _consume_cwd_file(cwd_file)
+        new_cwd = proc.cwd_result()
         if new_cwd is not None:
             cwd_result.append(new_cwd)
         background = background_holder[0]
@@ -200,7 +177,7 @@ def execute_command(
     finished = False
     while not finished:
         if runtime and runtime.is_cancelled():
-            capabilities.execution.terminate_process(proc)
+            proc.terminate()
             done_event.wait(timeout=2)
             raise ToolCancelledError("execute_command cancelled")
         remaining = deadline - time.monotonic()
@@ -210,7 +187,7 @@ def execute_command(
 
     if not finished:
         if runtime is not None and not runtime.allow_background_tasks:
-            capabilities.execution.terminate_process(proc)
+            proc.terminate()
             done_event.wait(timeout=2)
             with output_lock:
                 output_so_far = "".join(output_lines)[-MAX_OUTPUT_CHARS:]
@@ -244,16 +221,18 @@ def execute_command(
             "output_so_far": output_so_far,
         }))
 
+    current_cwd = cwd_result[0] if cwd_result else runtime.execution.cwd()
     if cwd_result and capabilities.set_cwd is not None:
-        capabilities.set_cwd(cwd_result[0])
+        capabilities.set_cwd(current_cwd)
 
     reset_cwd = False
-    current = capabilities.execution.cwd()
-    if not capabilities.execution.access.contains(current):
-        origin = capabilities.execution.workspace_dir
+    scope = runtime.access_scope
+    if scope is not None and not scope.contains(current_cwd.value):
+        origin = ExecutionPath(current_cwd.environment_id, str(scope.origin))
         if capabilities.set_cwd is not None:
             capabilities.set_cwd(origin)
             reset_cwd = True
+        current_cwd = origin
 
     with output_lock:
         output = "".join(output_lines)
@@ -265,35 +244,24 @@ def execute_command(
     if reset_cwd:
         payload["cwd_reset"] = True
         payload["message"] = (
-            f"Shell cwd was reset to {capabilities.execution.workspace_dir}"
+            f"Shell cwd was reset to "
+            f"{scope.origin if scope is not None else current_cwd.value}"
         )
-    data = result_data(payload)
+    data = result_data(payload, cwd=current_cwd)
 
     if returncode == 0:
         return ToolResult.success(data)
     return ToolResult.fail(err=f"Command exited with code {returncode}", data=data)
 
 
-def _format_cwd(capabilities) -> str:
-    return capabilities.execution.display_path(capabilities.execution.cwd())
-
-
-def _consume_cwd_file(cwd_file: Path) -> Path | None:
-    """读取并删除 pwd -P 写入的临时文件，返回可用 cwd 候选值。
-
-    和 Claude Code Shell.ts 里的 readFileSync + unlinkSync 逻辑对应。
-    是否提交给 session 由前台调用路径决定；后台 reader 永远不能直接改 cwd。
-    """
-    try:
-        new_cwd = Path(cwd_file.read_text().strip())
-        return new_cwd if new_cwd.is_dir() else None
-    except Exception:
-        return None  # 文件不存在（命令失败）或路径非法，静默忽略
-    finally:
-        try:
-            cwd_file.unlink()
-        except Exception:
-            pass
+def _format_cwd(
+    runtime: ToolRuntime | None,
+    *,
+    cwd: ExecutionPath | None = None,
+) -> str:
+    if runtime is None or runtime.execution is None:
+        return "."
+    return runtime.execution.display_path(cwd or runtime.execution.cwd())
 
 
 # ── 工具定义 ──────────────────────────────────────────────────────────────────
@@ -328,7 +296,7 @@ execute_command_tool = Tool(
         "required": ["command"],
     },
     call=lambda args, runtime: execute_command(**args, runtime=runtime),
-    check_permission=check_execute_command_permission,
+    access_descriptor=describe_execute_command_access,
     is_concurrency_safe=is_execute_command_concurrency_safe,
     required_capabilities=frozenset({"execution", "cwd", "background"}),
     # shell 自己负责前台 timeout → 后台 task 的语义。

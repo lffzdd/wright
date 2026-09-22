@@ -26,7 +26,7 @@ from ..memory.store import (
     update_memory as store_update_memory,
 )
 from ..memory.types import MEMORY_TYPES
-from ..permission import PermissionCheckResult
+from ..permission import ToolAccess
 from .base import Tool, ToolResult, ToolRuntime
 
 
@@ -142,14 +142,20 @@ def search_memory(
         return ToolResult.fail(str(exc))
 
 
-def _delete_permission(
-    arguments: dict[str, Any], runtime: ToolRuntime
-) -> PermissionCheckResult:
-    return PermissionCheckResult(
-        "ask",
-        f"Delete long-term memory {arguments.get('memory_id', '')}; this affects future sessions",
-        ("deletes_data",),
-        source="memory_tool",
+def _describe_memory_read(arguments: dict[str, Any]) -> ToolAccess:
+    return ToolAccess(
+        frozenset({"internal_read"}),
+        subject=str(arguments.get("memory_id") or arguments.get("query") or ""),
+        reason="read semantic memory",
+    )
+
+
+def _describe_memory_write(arguments: dict[str, Any]) -> ToolAccess:
+    return ToolAccess(
+        frozenset({"persistent_write"}),
+        subject=str(arguments.get("memory_id") or arguments.get("name") or ""),
+        risk_flags=("persistent_state",),
+        reason="change cross-session semantic memory",
     )
 
 
@@ -182,6 +188,7 @@ def build_memory_tools(
             "additionalProperties": False,
         },
         call=bind(create_memory),
+        access_descriptor=_describe_memory_write,
     )
     get_tool = Tool(
         name="get_memory",
@@ -193,6 +200,7 @@ def build_memory_tools(
             "additionalProperties": False,
         },
         call=bind(get_memory),
+        access_descriptor=_describe_memory_read,
         is_concurrency_safe=lambda args: True,
     )
     update_tool = Tool(
@@ -217,6 +225,7 @@ def build_memory_tools(
             "additionalProperties": False,
         },
         call=bind(update_memory),
+        access_descriptor=_describe_memory_write,
     )
     delete_tool = Tool(
         name="delete_memory",
@@ -228,7 +237,7 @@ def build_memory_tools(
             "additionalProperties": False,
         },
         call=bind(delete_memory),
-        check_permission=_delete_permission,
+        access_descriptor=_describe_memory_write,
     )
     search_tool = Tool(
         name="search_memory",
@@ -247,6 +256,7 @@ def build_memory_tools(
             "additionalProperties": False,
         },
         call=bind(search_memory),
+        access_descriptor=_describe_memory_read,
         is_concurrency_safe=lambda args: True,
     )
     tools = [create_tool, get_tool, update_tool, delete_tool, search_tool]

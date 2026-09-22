@@ -1,78 +1,43 @@
-from pathlib import Path
-
-from ...engine.executor import ToolExecutor
 from ...domain.session import Session
+from ...engine.executor import ToolExecutor
 from ...permission import (
-    FallbackApprovalHandler,
     InteractiveApprovalHandler,
-    PermissionCheckResult,
     PermissionResolver,
-    PermissionSettings,
-    RuleBasedApprovalHandler,
 )
 from ...renderer import SilentRenderer
-from ...tools.base import Tool, ToolCall, ToolResult
+from ...tools.base import ToolCall
 from ...tools.file_tools import edit_file_tool, read_file_tool, write_file_tool
 
 
-def _ask_tool(name: str, risk_flags: tuple[str, ...] = ()) -> Tool:
-    return Tool(
-        name=name,
-        description="",
-        parameters={},
-        call=lambda args, runtime: ToolResult.success({"called": True}),
-        check_permission=lambda args, runtime: PermissionCheckResult(
-            "ask", f"{name}: needs approval", risk_flags, source="tool"
-        ),
-    )
-
-
 class _MockRenderer(SilentRenderer):
-    """继承 SilentRenderer，只覆盖 prompt_permission 来模拟用户输入。
-
-    按脚本逐次返回预设答案，记录每次收到的展示信息，完全不碰真 stdin。
-    比原来的 input_fn/output_fn 更贴近真实调用路径——走的是同一个 Renderer 接口。
-    """
-
-    def __init__(self, *answers: str):
+    def __init__(self, *choices: str):
         super().__init__()
-        self._answers = list(answers)
-        self.prompts: list[dict] = []  # 记录每次 prompt 的参数
-        self.phases: list[tuple[str, str]] = []
+        self.choices = list(choices)
+        self.prompts = []
+        self.phases = []
 
     def on_tool_phase(self, tool_call, phase: str) -> None:
         self.phases.append((tool_call.id, phase))
 
-    def prompt_permission(
-        self,
-        tool_name: str,
-        subject: str,
-        risk_flags: str,
-        reason: str,
-        offer_always: bool,
-        remember_rule: str = "",
-        remember_persists: bool = False,
-        revoke_hint: str = "",
-    ) -> str:
-        self.prompts.append({
-            "tool_name": tool_name,
-            "subject": subject,
-            "risk_flags": risk_flags,
-            "reason": reason,
-            "offer_always": offer_always,
-            "remember_rule": remember_rule,
-            "remember_persists": remember_persists,
-            "revoke_hint": revoke_hint,
-        })
-        return self._answers.pop(0) if self._answers else "n"
+    def prompt_permission(self, prompt):
+        self.prompts.append(prompt)
+        return self.choices.pop(0) if self.choices else "deny"
 
 
-def _executor(tool: Tool, handler, tmp_path: Path) -> ToolExecutor:
+def _executor(session: Session, renderer: _MockRenderer) -> ToolExecutor:
+    resolver = PermissionResolver(
+        approval_handler=InteractiveApprovalHandler(renderer)
+    )
     return ToolExecutor(
-        {tool.name: tool},
-        workspace_dir=tmp_path,
-        cwd_provider=lambda: tmp_path,
-        permission_resolver=PermissionResolver(approval_handler=handler),
+        {
+            write_file_tool.name: write_file_tool,
+            read_file_tool.name: read_file_tool,
+            edit_file_tool.name: edit_file_tool,
+        },
+        workspace_dir=session.workspace_dir,
+        cwd_provider=session.get_cwd,
+        session=session,
+        permission_resolver=resolver,
     )
 
 
@@ -80,120 +45,33 @@ def _run(executor: ToolExecutor, call: ToolCall):
     return executor.execute([call])[0].result
 
 
-# ── 基本 y / n ────────────────────────────────────────────────────────────────
-
-def test_yes_allows(tmp_path):
-    renderer = _MockRenderer("y")
-    handler = InteractiveApprovalHandler(renderer)
-    executor = _executor(_ask_tool("write_file", ("writes_files",)), handler, tmp_path)
-    assert _run(executor, ToolCall("write_file", {"file": "a.txt"}, "c1")).ok
-    assert renderer.phases == [("c1", "awaiting_approval")]
-
-
-def test_execution_starts_only_after_permission_resolution(tmp_path):
-    renderer = _MockRenderer("y")
-    handler = InteractiveApprovalHandler(renderer)
-    executor = _executor(_ask_tool("write_file", ("writes_files",)), handler, tmp_path)
-    phases: list[tuple[str, str]] = []
-
-    outcome = executor.execute(
-        [ToolCall("write_file", {"file": "a.txt"}, "c1")],
-        on_phase=lambda call, phase: phases.append((call.id, phase)),
-    )[0]
-
-    assert outcome.result.ok
-    assert renderer.phases == [("c1", "awaiting_approval")]
-    assert phases == [("c1", "running")]
-
-
-def test_no_denies(tmp_path):
-    renderer = _MockRenderer("n")
-    handler = InteractiveApprovalHandler(renderer)
-    executor = _executor(_ask_tool("write_file", ("writes_files",)), handler, tmp_path)
-    assert not _run(executor, ToolCall("write_file", {"file": "a.txt"}, "c1")).ok
-
-
-def test_empty_input_fail_closed(tmp_path):
-    renderer = _MockRenderer("")
-    handler = InteractiveApprovalHandler(renderer)
-    executor = _executor(_ask_tool("write_file", ("writes_files",)), handler, tmp_path)
-    assert not _run(executor, ToolCall("write_file", {"file": "a.txt"}, "c1")).ok
-
-
-# ── 会话记忆:a 之后同工具不再问 ─────────────────────────────────────────────
-
-def test_always_remembers_for_session(tmp_path):
-    renderer = _MockRenderer("a")  # 只给一次输入:第二次若再问,pop 会 IndexError
-    handler = InteractiveApprovalHandler(renderer)
-    executor = _executor(_ask_tool("write_file", ("writes_files",)), handler, tmp_path)
-
-    first = _run(executor, ToolCall("write_file", {"file": "a.txt"}, "c1"))
-    second = _run(executor, ToolCall("write_file", {"file": "a.txt"}, "c2"))
-
-    assert first.ok and second.ok
-    # 第二次直接命中记忆,没有再产生提问
-    assert len(renderer.prompts) == 1
-
-
-def test_always_calls_on_remember_to_persist(tmp_path):
-    renderer = _MockRenderer("a")
-    remembered: list[str] = []
-    handler = InteractiveApprovalHandler(
-        renderer, on_remember=remembered.append
+def test_structured_prompt_uses_fixed_choice_ids(tmp_path):
+    session = Session.create("permission", tmp_path)
+    renderer = _MockRenderer("allow_once")
+    result = _run(
+        _executor(session, renderer),
+        ToolCall("write_file", {"file": "a.txt", "content": "hello"}, "c1"),
     )
-    executor = _executor(_ask_tool("write_file", ("writes_files",)), handler, tmp_path)
-
-    assert _run(executor, ToolCall("write_file", {"file": "a.txt"}, "c1")).ok
-    # 选 a → 落盘钩子只收到当前目录范围，不会放行整个工具。
-    assert remembered == ["write_file(a.txt)"]
-    assert renderer.prompts[0]["remember_rule"] == "write_file(a.txt)"
-    assert renderer.prompts[0]["remember_persists"] is True
-
-
-def test_always_scope_does_not_cover_a_different_directory(tmp_path):
-    renderer = _MockRenderer("a", "n")
-    handler = InteractiveApprovalHandler(renderer)
-    executor = _executor(_ask_tool("write_file", ("writes_files",)), handler, tmp_path)
-
-    assert _run(executor, ToolCall("write_file", {"file": "src/a.txt"}, "c1")).ok
-    assert not _run(executor, ToolCall("write_file", {"file": "tests/b.txt"}, "c2")).ok
-    assert len(renderer.prompts) == 2
+    assert result.ok
+    assert [choice.id for choice in renderer.prompts[0].choices] == [
+        "allow_once",
+        "allow_session_rule",
+        "allow_persistent_rule",
+        "deny",
+    ]
+    assert renderer.prompts[0].targets == (str((tmp_path / "a.txt").resolve()),)
+    assert renderer.phases == [("c1", "awaiting_approval")]
 
 
-def test_always_on_outside_file_grants_parent_directory(tmp_path):
+def test_outside_directory_choices_update_session_only_after_allow(tmp_path):
     workspace = tmp_path / "workspace"
     extra = tmp_path / "extra"
     workspace.mkdir()
     extra.mkdir()
     session = Session.create("outside grant", workspace)
-    renderer = _MockRenderer("a", "y")
-    remembered_rules: list[str] = []
-    remembered_dirs: list[str] = []
-    handler = FallbackApprovalHandler(
-        RuleBasedApprovalHandler(
-            PermissionSettings.from_dict({"mode": "default", "permissions": {}}),
-            on_no_match="ask",
-        ),
-        InteractiveApprovalHandler(
-            renderer,
-            on_remember=remembered_rules.append,
-            on_remember_directory=remembered_dirs.append,
-        ),
-    )
-    executor = ToolExecutor(
-        {
-            write_file_tool.name: write_file_tool,
-            read_file_tool.name: read_file_tool,
-            edit_file_tool.name: edit_file_tool,
-        },
-        workspace_dir=workspace,
-        cwd_provider=session.get_cwd,
-        session=session,
-        permission_resolver=PermissionResolver(approval_handler=handler),
-    )
-
+    renderer = _MockRenderer("allow_session_directory")
     written = _run(
-        executor,
+        _executor(session, renderer),
         ToolCall(
             "write_file",
             {"file": str(extra / "a.txt"), "content": "old line\n"},
@@ -201,83 +79,114 @@ def test_always_on_outside_file_grants_parent_directory(tmp_path):
         ),
     )
     assert written.ok
-    assert remembered_rules == []
-    assert remembered_dirs == [str(extra.resolve())]
-    assert extra.resolve() in session.additional_working_directories
-
+    assert session.working_directories_snapshot() == (extra.resolve(),)
+    assert [choice.id for choice in renderer.prompts[0].choices] == [
+        "allow_once",
+        "allow_session_directory",
+        "allow_persistent_directory",
+        "deny",
+    ]
     assert _run(
-        executor, ToolCall("read_file", {"file": str(extra / "a.txt")}, "c2")
+        _executor(session, _MockRenderer()),
+        ToolCall("read_file", {"file": str(extra / "a.txt")}, "c2"),
     ).ok
-    edited = _run(
+
+
+def test_invalid_choice_is_fail_closed(tmp_path):
+    session = Session.create("permission", tmp_path)
+    result = _run(
+        _executor(session, _MockRenderer("y")),
+        ToolCall("write_file", {"file": "a.txt", "content": "hello"}, "c1"),
+    )
+    assert not result.ok
+
+
+def test_approval_handler_cannot_persist_a_rule_or_change_tool_policy(tmp_path):
+    session = Session.create("permission", tmp_path)
+    renderer = _MockRenderer("allow_once")
+    result = _run(
+        _executor(session, renderer),
+        ToolCall("write_file", {"file": "a.txt", "content": "hello"}, "c1"),
+    )
+    assert result.ok
+    assert not hasattr(renderer, "on_remember")
+
+
+def test_session_rule_choice_is_scoped_and_reused_by_the_same_resolver(tmp_path):
+    session = Session.create("permission", tmp_path)
+    renderer = _MockRenderer("allow_session_rule")
+    executor = _executor(session, renderer)
+
+    first = _run(
         executor,
         ToolCall(
-            "edit_file",
-            {
-                "file": str(extra / "a.txt"),
-                "old_text": "old line\n",
-                "new_text": "new line\n",
-            },
-            "c3",
+            "write_file",
+            {"file": "nested/a.txt", "content": "a"},
+            "c1",
         ),
     )
-    assert edited.ok
-    assert extra.joinpath("a.txt").read_text(encoding="utf-8") == "new line\n"
-
-
-# ── 高风险不提供 a;输 a 当作未知输入被拒 ─────────────────────────────────────
-
-def test_always_not_offered_for_heavy_risk(tmp_path):
-    renderer = _MockRenderer("a")
-    handler = InteractiveApprovalHandler(renderer)
-    executor = _executor(
-        _ask_tool("execute_command", ("executes_shell",)), handler, tmp_path
+    second = _run(
+        executor,
+        ToolCall(
+            "write_file",
+            {"file": "nested/b.txt", "content": "b"},
+            "c2",
+        ),
     )
-    result = _run(executor, ToolCall("execute_command", {"command": "ls"}, "c1"))
-    assert not result.ok  # heavy 风险不给 a 选项,'a' 落入拒绝分支
+
+    assert first.ok and second.ok
     assert len(renderer.prompts) == 1
-    assert not renderer.prompts[0]["offer_always"]
+    assert (tmp_path / "nested/b.txt").read_text(encoding="utf-8") == "b"
 
 
-# ── 组合链:规则能判的不打扰人,规则弃权才问 ─────────────────────────────────
-
-def test_fallback_rule_allow_skips_prompt(tmp_path):
-    renderer = _MockRenderer()  # 不该被调用:一旦问人就 IndexError
-    settings = PermissionSettings.from_dict(
-        {"mode": "default", "permissions": {"allow": ["write_file"]}}
+def test_persistent_rule_choice_is_returned_to_the_commit_adapter(tmp_path):
+    session = Session.create("permission", tmp_path)
+    renderer = _MockRenderer("allow_persistent_rule")
+    changes = []
+    resolver = PermissionResolver(
+        approval_handler=InteractiveApprovalHandler(renderer)
     )
-    handler = FallbackApprovalHandler(
-        RuleBasedApprovalHandler(settings, on_no_match="ask"),
-        InteractiveApprovalHandler(renderer),
+    executor = ToolExecutor(
+        {
+            write_file_tool.name: write_file_tool,
+            read_file_tool.name: read_file_tool,
+            edit_file_tool.name: edit_file_tool,
+        },
+        workspace_dir=session.workspace_dir,
+        cwd_provider=session.get_cwd,
+        session=session,
+        permission_resolver=resolver,
+        authorization_commit=changes.append,
     )
-    executor = _executor(_ask_tool("write_file", ("writes_files",)), handler, tmp_path)
-    assert _run(executor, ToolCall("write_file", {"file": "a.txt"}, "c1")).ok
-    assert renderer.prompts == []  # 规则直接放行,人没被打扰
+
+    result = _run(
+        executor,
+        ToolCall(
+            "write_file",
+            {"file": "nested/a.txt", "content": "a"},
+            "c1",
+        ),
+    )
+
+    assert result.ok
+    assert changes[0].persistent_rules == ("write_file(nested/*)",)
+    assert changes[0].session_directories == ()
 
 
-def test_fallback_rule_abstains_then_human_decides(tmp_path):
-    renderer = _MockRenderer("y")
-    settings = PermissionSettings.from_dict({"mode": "default", "permissions": {}})
-    handler = FallbackApprovalHandler(
-        RuleBasedApprovalHandler(settings, on_no_match="ask"),
-        InteractiveApprovalHandler(renderer),
+def test_cancelled_permission_is_denied(tmp_path):
+    session = Session.create("permission", tmp_path)
+    result = _run(
+        _executor(session, _MockRenderer("deny")),
+        ToolCall("edit_file", {"file": "a.txt", "old_text": "a", "new_text": "b"}, "c1"),
     )
-    executor = _executor(_ask_tool("http_request", ("accesses_network",)), handler, tmp_path)
-    result = _run(executor, ToolCall("http_request", {"url": "https://x"}, "c1"))
-    assert result.ok  # 规则无意见 → 人批准
-    assert len(renderer.prompts) == 1
+    assert not result.ok
 
 
-def test_fallback_rule_deny_short_circuits(tmp_path):
-    renderer = _MockRenderer()  # 人不该被问到
-    settings = PermissionSettings.from_dict(
-        {"mode": "default", "permissions": {"deny": ["execute_command"]}}
-    )
-    handler = FallbackApprovalHandler(
-        RuleBasedApprovalHandler(settings, on_no_match="ask"),
-        InteractiveApprovalHandler(renderer),
-    )
-    executor = _executor(
-        _ask_tool("execute_command", ("executes_shell",)), handler, tmp_path
-    )
-    assert not _run(executor, ToolCall("execute_command", {"command": "ls"}, "c1")).ok
-    assert renderer.prompts == []
+def test_empty_or_legacy_permission_answers_fail_closed(tmp_path):
+    for choice in ("", "y", "a", "unknown"):
+        session = Session.create("permission", tmp_path)
+        result = _run(
+            _executor(session, _MockRenderer(choice)),
+            ToolCall("write_file", {"file": "a.txt", "content": "x"}, choice or "c1"),
+        )
+        assert not result.ok

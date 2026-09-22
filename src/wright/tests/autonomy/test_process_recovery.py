@@ -274,8 +274,8 @@ def test_real_process_child_agent_side_effect_becomes_unknown_without_replay(tmp
         )
         host = ApplicationHost(
             workspace_dir=workspace, store=store, llm=Model(),
-            base_tools=[Tool("effect", "append a marker", {"type": "object"}, effect)],
-            permission_settings=PermissionSettings(), poll_interval=0.01,
+                               base_tools=[Tool("effect", "append a marker", {"type": "object"}, effect)],
+                               permission_settings=PermissionSettings(mode="bypass"), poll_interval=0.01,
         )
         host.start()
         while True:

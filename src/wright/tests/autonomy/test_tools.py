@@ -80,8 +80,8 @@ def test_schedule_task_reports_trigger_shape_error_cleanly(tmp_path):
 
 
 def test_durable_mutations_require_explicit_permission(tmp_path):
-    store, runtime = _runtime(tmp_path)
-    decision = schedule_task_tool.check_permission({}, runtime)
-    assert decision.decision == "ask"
+    store, _runtime_context = _runtime(tmp_path)
+    decision = schedule_task_tool.describe_access({})
+    assert decision.operations == frozenset({"persistent_write"})
     assert "persistent_automation" in decision.risk_flags
     store.close()
