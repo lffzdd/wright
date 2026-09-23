@@ -12,6 +12,7 @@ from ...app.lifecycle import (
 )
 from ...engine.executor import ToolExecutor
 from ...permission import ToolAccess
+from ...tool_capabilities import assemble_tool_capabilities
 from ...tools.base import Tool, ToolCall, ToolResult
 
 
@@ -73,7 +74,7 @@ def test_explicit_pre_tool_deny_blocks_execution(tmp_path):
     ))
     executor = ToolExecutor(
         {"sample": _tool(lambda arguments, runtime: called.append(arguments))},
-        workspace_dir=tmp_path,
+        assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         lifecycle=manager,
     )
 
@@ -93,7 +94,9 @@ def test_tool_trace_splits_permission_and_execution_time(tmp_path):
         return ToolResult.success(arguments)
 
     executor = ToolExecutor(
-        {"sample": _tool(run)}, workspace_dir=tmp_path, lifecycle=manager
+        {"sample": _tool(run)},
+        assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
+        lifecycle=manager,
     )
     outcome = executor.execute([ToolCall("sample", {"value": 1}, "call_1")])[0]
 
@@ -122,7 +125,9 @@ def test_hook_rewrite_is_revalidated_and_does_not_mutate_recorded_call(tmp_path)
     original = ToolCall("sample", {"value": 1}, "call_1")
 
     outcome = ToolExecutor(
-        {"sample": tool}, workspace_dir=tmp_path, lifecycle=manager
+        {"sample": tool},
+        assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
+        lifecycle=manager,
     ).execute([original])[0]
 
     assert outcome.result.ok
@@ -137,7 +142,9 @@ def test_hook_rewrite_is_revalidated_and_does_not_mutate_recorded_call(tmp_path)
         callback=lambda event: {"updated_input": {"value": "wrong"}},
     ))
     failed = ToolExecutor(
-        {"sample": tool}, workspace_dir=tmp_path, lifecycle=invalid
+        {"sample": tool},
+        assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
+        lifecycle=invalid,
     ).execute([ToolCall("sample", {"value": 1}, "call_2")])[0]
     assert not failed.result.ok
     assert "InputValidationError" in failed.result.err
@@ -186,7 +193,9 @@ def test_hook_rewrite_is_applied_before_concurrency_partition(tmp_path):
     ))
 
     outcomes = ToolExecutor(
-        {"mode_tool": tool}, workspace_dir=tmp_path, lifecycle=manager
+        {"mode_tool": tool},
+        assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
+        lifecycle=manager,
     ).execute([
         ToolCall("mode_tool", {"mode": "read"}, "c1"),
         ToolCall("mode_tool", {"mode": "read"}, "c2"),

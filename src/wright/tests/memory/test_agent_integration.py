@@ -9,7 +9,7 @@ from pathlib import Path
 from wright.tests.responses import event, response
 
 from ...domain.session import Session
-from ...engine.agent import Agent
+from ...engine.agent import create_agent
 from ...events import UsageEvent
 from ...memory import MemoryManager
 from ...memory.store import write_memory_file
@@ -77,7 +77,7 @@ def test_agent_recall_injection_and_extraction(tmp_path: Path):
     selector = SelectorLLM()
     manager = MemoryManager(MainLLM(), selector_llm=selector, directory=tmp_path)
     session = Session.create(initial_goal="t", workspace_dir=tmp_path)
-    agent = Agent(MainLLM(), [], session, SilentRenderer(), memory=manager)
+    agent = create_agent(MainLLM(), [], session, SilentRenderer(), memory=manager)
 
     answer = agent.run("我该用什么包管理器")
     assert answer == "done"
@@ -114,7 +114,7 @@ def test_agent_recall_injection_and_extraction(tmp_path: Path):
 def test_agent_without_memory_unaffected(tmp_path: Path):
     """memory=None 时:无记忆段、无召回注入,行为与原 Agent 一致。"""
     session = Session.create(initial_goal="t", workspace_dir=tmp_path)
-    agent = Agent(MainLLM(), [], session, SilentRenderer())  # 不传 memory
+    agent = create_agent(MainLLM(), [], session, SilentRenderer())  # 不传 memory
     answer = agent.run("hi")
     assert answer == "done"
     wire = [r.message for r in session.message_records]
@@ -127,7 +127,7 @@ def test_new_user_turn_resets_plan_and_episode_does_not_inherit_old_plan(tmp_pat
     session = Session.create(initial_goal="t", workspace_dir=tmp_path)
     session.plan_manager.create_plan("first task", ["finish first"])
     session.plan_manager.update_step("step_1", "completed")
-    agent = Agent(MainLLM(), [], session, SilentRenderer(), memory=manager)
+    agent = create_agent(MainLLM(), [], session, SilentRenderer(), memory=manager)
 
     assert agent.run("first") == "done"
     assert agent.run("second") == "done"

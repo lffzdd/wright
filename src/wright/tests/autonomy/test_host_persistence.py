@@ -8,10 +8,11 @@ from wright.tests.responses import event, response
 from ...app.application_host import ApplicationHost
 from ...autonomy import AutonomyStore, AutonomyStoreError, TriggerSpec
 from ...domain.session import Session
-from ...engine.agent import Agent
+from ...engine.agent import create_agent
 from ...engine.executor import ToolExecutor
 from ...permission import PermissionPolicy, PermissionResolver, PermissionSettings
 from ...renderer import SilentRenderer
+from ...tool_capabilities import assemble_tool_capabilities
 from ...tools.base import Tool, ToolCall, ToolResult
 
 
@@ -243,7 +244,7 @@ def test_effect_is_not_called_when_intent_cannot_be_persisted(tmp_path):
     tool = Tool("effect", "effect", {"type": "object"}, lambda args, _rt: called.append(args))
     executor = ToolExecutor(
         {"effect": tool},
-        workspace_dir=tmp_path,
+        assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         execution_journal=FailingJournal(),
         permission_policy=PermissionPolicy(PermissionSettings(mode="bypass")),
     )
@@ -274,7 +275,7 @@ def test_result_persistence_failure_stops_agent_without_retrying_effect(tmp_path
         def __call__(self, _messages, **_kwargs):
             yield event(response(calls=[{"name": "effect", "arguments": {}}]))
 
-    agent = Agent(
+    agent = create_agent(
         ToolLLM(),
         [Tool("effect", "effect", {"type": "object"}, lambda _args, _rt: calls.append("ran") or ToolResult.success())],
         Session.create("effect", tmp_path),

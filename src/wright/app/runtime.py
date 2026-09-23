@@ -19,7 +19,13 @@ from ..attachments import AttachmentStore, DraftAttachments
 from ..autonomy import AutonomyStore
 from ..domain.checkpoint import CheckpointError, SessionCheckpointStore
 from ..domain.session import Session
-from ..engine.agent import Agent
+from ..engine.agent import (
+    Agent,
+    assemble_agent_components,
+    bind_root_checkpoint,
+    ensure_system_prompt,
+    prepare_model_tools,
+)
 from ..engine.agent_background import AgentBackgroundRuntime
 from ..engine.looping import SessionLoopRegistry
 from ..engine.subagent import build_agent_tools
@@ -56,12 +62,13 @@ from ..processes import RuntimeResources
 from ..project import ProjectContext
 from ..renderer import ConsoleRenderer, Renderer
 from ..skills import SkillRegistry, optional_skill_tools
+from ..tool_capabilities import assemble_tool_capabilities
 from ..tools import tools as base_tools
 from ..tools.ask_user_tool import ask_user_tool
 from ..tools.base import Tool
 from ..tools.loop_tools import manage_loop_tool
 from ..tools.mcp_client import McpManager, load_mcp_configs
-from ..ui_events import EventPublisher, PublishingRenderer
+from ..ui_events import EventPublisher, RendererEventSubscriber, SessionEvents
 from .application_host import ApplicationHost
 from .lifecycle import LifecycleConfigError, load_lifecycle_manager
 from .services import RuntimeServices
@@ -74,7 +81,7 @@ class WrightRuntime:
     agent: Agent
     session_state: Session
     renderer: Renderer
-    event_renderer: PublishingRenderer
+    event_renderer: SessionEvents
     publisher: EventPublisher
     project_context: ProjectContext
     services: RuntimeServices
@@ -508,12 +515,13 @@ def assemble_runtime(
         project_id=project_id(project_root),
         session_id=session_state.session_id,
     )
-    event_renderer = PublishingRenderer(
+    event_renderer = SessionEvents(
         publisher,
-        interaction=interaction_broker,
-        direct_renderer=renderer,
+        interaction=interaction_target,
+        prompt_renderer=renderer,
         runtime_resources=runtime_resources,
     )
+    publisher.add_listener(RendererEventSubscriber(renderer))
 
     # Permission policy is centralized in the resolver.  Approval adapters only
     # collect a structured choice and never mutate settings themselves.
@@ -572,6 +580,7 @@ def assemble_runtime(
         permission_resolver=permission_resolver,
         authorization_commit_factory=authorization_commit_factory,
         enable_autonomy=True,
+        publisher=publisher,
     )
 
     # ask_user、manage_loop、记忆与 load_skill 只给主 Agent:都在 build_agent_tools 之后
@@ -593,32 +602,10 @@ def assemble_runtime(
         *skill_tools,
     ]
 
-    agent = Agent(
-        llm_client,
-        tools,
-        session_state,
-        event_renderer,
-        keep_recent_tool_results=3,
-        permission_resolver=permission_resolver,
-        memory=memory_manager,
-        verifier=Verifier(),
-        checkpoint_store=(
-            None
-            if config.no_session_persistence
-            else checkpoint_store
-        ),
-        on_shell_task_done=lambda task_id: event_queue.put(("TASK_DONE", task_id)),
-        lifecycle=lifecycle,
-        skills=skill_registry if skill_tools else None,
-        services=services,
-        runtime_resources=runtime_resources,
-        authorization_commit=commit_authorization,
-        authorization_commit_factory=authorization_commit_factory,
-    )
-
     # Automation is process/application owned, not consumed by this Session's
     # event worker.  The foreground Session keeps its own subagent runtime but
     # all scheduling tools resolve this host scheduler through RuntimeServices.
+    # Assign it before tool-capability assembly so the initial view includes it.
     if constructed_application_host is None:
         constructed_application_host = ApplicationHost(
             workspace_dir=workspace_dir,
@@ -632,6 +619,52 @@ def assemble_runtime(
             artifact_store=artifact_store,
         )
     services.autonomy_scheduler = constructed_application_host.scheduler_for(autonomy_store)
+    assembly = assemble_tool_capabilities(
+        session_state,
+        services,
+        runtime_resources,
+        workspace_dir=workspace_dir,
+        authorization_commit_factory=authorization_commit_factory,
+    )
+
+    prepared = prepare_model_tools(session_state, tools)
+    ensure_system_prompt(session_state, prepared, memory_manager)
+    components = assemble_agent_components(
+        session_state=session_state,
+        events=event_renderer,
+        prepared=prepared,
+        assembly=assembly,
+        keep_recent_tool_results=3,
+        permission_resolver=permission_resolver,
+        cancellation_check=cancellation_event.is_set,
+        allow_background_tasks=True,
+        on_shell_task_done=lambda task_id: event_queue.put(("TASK_DONE", task_id)),
+        lifecycle=lifecycle,
+        execution_journal=None,
+        authorization_commit=commit_authorization,
+    )
+    agent = Agent(
+        llm_client,
+        session_state,
+        event_renderer,
+        prepared,
+        assembly,
+        components=components,
+        memory=memory_manager,
+        verifier=Verifier(),
+        checkpoint_store=(
+            None
+            if config.no_session_persistence
+            else checkpoint_store
+        ),
+        lifecycle=lifecycle,
+        skills=skill_registry if skill_tools else None,
+        services=services,
+        runtime_resources=runtime_resources,
+        authorization_commit=commit_authorization,
+        authorization_commit_factory=authorization_commit_factory,
+    )
+    bind_root_checkpoint(agent)
 
     try:
         if start_automation:

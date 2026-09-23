@@ -6,7 +6,7 @@ from wright.tests.responses import event, response
 
 from ...app.lifecycle import HookRegistration, LifecycleManager, TraceRecorder
 from ...domain.session import Session
-from ...engine.agent import Agent
+from ...engine.agent import create_agent
 from ...engine.subagent import make_spawn_agent_tool
 from ...renderer import SilentRenderer
 from ...tools.base import Tool, ToolResult, tool_runtime_for_session
@@ -63,7 +63,7 @@ def test_agent_emits_root_lifecycle_and_compaction_events(tmp_path):
     )
     llm = ScriptLLM([_final("done")])
     llm.context_limit = 5_000
-    agent = Agent(
+    agent = create_agent(
         llm,
         [specialized],
         session,
@@ -106,7 +106,7 @@ def test_agent_stop_hook_can_reject_candidate_and_continue(tmp_path):
     lifecycle.register(HookRegistration(
         event="agent_stop", name="completion-gate", callback=stop_hook
     ))
-    agent = Agent(
+    agent = create_agent(
         ScriptLLM([_final("first"), _final("second")]),
         [],
         Session.create("goal", tmp_path),
@@ -122,7 +122,7 @@ def test_llm_failure_is_traced_without_destroying_resumable_state(tmp_path):
     recorder = TraceRecorder(tmp_path / "trace.jsonl")
     lifecycle = LifecycleManager("session", recorder)
     session = Session.create("goal", tmp_path)
-    agent = Agent(
+    agent = create_agent(
         BrokenLLM(), [], session, SilentRenderer(), lifecycle=lifecycle
     )
 
@@ -178,7 +178,7 @@ def test_runtime_notification_preserves_user_turn_and_defers_episode(tmp_path):
     lifecycle = LifecycleManager("session", recorder)
     session = Session.create("placeholder", tmp_path)
     memory = RecordingMemory()
-    agent = Agent(
+    agent = create_agent(
         ScriptLLM([_final("initial answer"), _final("background incorporated")]),
         [],
         session,

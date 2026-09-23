@@ -3,7 +3,7 @@ from __future__ import annotations
 from wright.tests.responses import event, response
 
 from ..domain.session import Session
-from ..engine.agent import Agent
+from ..engine.agent import create_agent
 from ..protocol import encode_tools
 from ..renderer import SilentRenderer
 from ..tools import tools as built_in_tools
@@ -272,7 +272,7 @@ def test_agent_refreshes_schemas_after_tool_search(tmp_path):
             yield event(self.script.pop(0))
 
     llm = ScriptLLM()
-    agent = Agent(
+    agent = create_agent(
         llm,
         [specialized],
         Session.create("activate", tmp_path),
@@ -297,7 +297,7 @@ def test_agent_restores_active_deferred_tools_from_session(tmp_path):
         def __call__(self, messages, *, tools):
             raise AssertionError("LLM should not be called")
 
-    agent = Agent(UnusedLLM(), [specialized], session, SilentRenderer())
+    agent = create_agent(UnusedLLM(), [specialized], session, SilentRenderer())
 
     assert session.active_deferred_tools == ["schedule_task"]
     assert [item["name"] for item in agent.tool_schemas] == [
@@ -328,7 +328,7 @@ def test_agent_rejects_deferred_tool_before_activation(tmp_path):
         def __call__(self, messages, *, tools):
             yield event(self.script.pop(0))
 
-    answer = Agent(
+    answer = create_agent(
         ScriptLLM(),
         [specialized],
         Session.create("must-search", tmp_path),

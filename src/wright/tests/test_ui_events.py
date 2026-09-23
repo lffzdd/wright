@@ -4,11 +4,12 @@ import time
 import pytest
 
 from ..interaction import InteractionBroker
-from ..renderer import SilentRenderer
 from ..tools.base import ToolCall, ToolResult
 from ..ui_events import (
     EventPublisher,
-    PublishingRenderer,
+    EventScope,
+    RendererEventSubscriber,
+    SessionEvents,
     UiEventEnvelope,
 )
 
@@ -43,7 +44,7 @@ def test_event_sequence_and_replay_boundary():
 
 def test_tool_events_merge_by_stable_call_id():
     publisher = EventPublisher(project_id="project", session_id="session")
-    renderer = PublishingRenderer(publisher, direct_renderer=SilentRenderer())
+    renderer = SessionEvents(publisher)
     first = ToolCall("read", {"file": "a"}, "call-a")
     second = ToolCall("search", {"query": "x"}, "call-b")
 
@@ -120,3 +121,43 @@ def test_interaction_broker_keeps_transport_request_id_distinct_from_tool_call_i
     assert broker.resolve(request_id, "allow_once") is True
     thread.join(timeout=1)
     assert result == ["allow_once"]
+
+
+def test_child_events_share_the_bus_without_entering_the_root_transcript():
+    class Sink:
+        def __init__(self) -> None:
+            self.deltas: list[str] = []
+            self.notices: list[str] = []
+            self.agent_events: list[dict] = []
+
+        def on_content_delta(self, piece: str) -> None:
+            self.deltas.append(piece)
+
+        def on_system_notice(self, text: str) -> None:
+            self.notices.append(text)
+
+        def on_agent_event(self, event: dict) -> None:
+            self.agent_events.append(event)
+
+    publisher = EventPublisher(project_id="project", session_id="session")
+    sink = Sink()
+    publisher.add_listener(RendererEventSubscriber(sink))
+    root = SessionEvents(publisher)
+    child = SessionEvents(
+        publisher, scope=EventScope(depth=1, task_id="task-1"),
+    )
+
+    root.on_content_delta("root")
+    child.on_content_delta("child draft")
+    child.on_tool_call(ToolCall("read", {"file": "a"}, "call-1"))
+    child.on_final("done")
+
+    assert sink.deltas == ["root"]
+    assert any("子Agent(d1)" in notice and "read" in notice for notice in sink.notices)
+    assert any("收口: done" in notice for notice in sink.notices)
+    child_events = [
+        event for event in publisher.retained_events()
+        if event.payload.get("agent_task_id") == "task-1"
+    ]
+    assert {event.payload["agent_depth"] for event in child_events} == {1}
+    assert all(event.payload.get("agent_depth", 0) == 0 for event in publisher.retained_events() if event.type == "content.delta" and event.payload.get("piece") == "root")

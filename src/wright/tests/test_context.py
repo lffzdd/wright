@@ -5,7 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from wright.domain.session import Session
-from wright.engine.agent import Agent
+from wright.engine.agent import create_agent
 from wright.engine.context import ContextBuilder, ContextCompactor
 from wright.renderer import SilentRenderer
 from wright.tools.base import ToolCall, ToolResult
@@ -114,7 +114,7 @@ def test_agent_fails_explicitly_when_safe_projection_cannot_fit(tmp_path: Path):
 
     llm = NeverCalled()
     session = Session.create("context", tmp_path)
-    agent = Agent(llm, [], session, SilentRenderer())
+    agent = create_agent(llm, [], session, SilentRenderer())
 
     assert agent.run("too small") is None
     assert session.current_run_status() == "failed"

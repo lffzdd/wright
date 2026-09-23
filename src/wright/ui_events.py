@@ -179,8 +179,24 @@ class EventPublisher:
             self._listeners.clear()
 
 
+@dataclass(frozen=True)
+class EventScope:
+    """Which agent produced an event. Depth 0 is the root session."""
+
+    depth: int = 0
+    task_id: str = ""
+
+    def __post_init__(self) -> None:
+        if self.depth < 0:
+            raise ValueError("event scope depth must be >= 0")
+
+
 class RendererEventSubscriber:
-    """Project serializable UI events back into an existing terminal renderer."""
+    """Project serializable UI events back into an existing terminal renderer.
+
+    Root events update the main transcript. Child events stay out of that
+    transcript and become delegation progress lines.
+    """
 
     def __init__(self, renderer: Renderer) -> None:
         self.renderer = renderer
@@ -188,6 +204,9 @@ class RendererEventSubscriber:
 
     def __call__(self, event: UiEventEnvelope) -> None:
         payload = event.payload
+        if _agent_depth(payload) > 0:
+            self._project_child(event)
+            return
         if event.type == "reasoning.delta":
             self.renderer.on_reasoning_delta(str(payload.get("piece", "")))
         elif event.type == "content.delta":
@@ -253,49 +272,142 @@ class RendererEventSubscriber:
             if payload.get("status") == "model_turn_started":
                 self.renderer.on_turn_begin()
 
+    def _project_child(self, event: UiEventEnvelope) -> None:
+        payload = event.payload
+        depth = _agent_depth(payload)
+        prefix = "    " * (depth - 1) + "│ "
+        if event.type == "tool.planned":
+            brief = json.dumps(payload.get("arguments") or {}, ensure_ascii=False)
+            if len(brief) > 80:
+                brief = brief[:77] + "..."
+            name = payload.get("name", "tool")
+            self.renderer.on_system_notice(
+                f"{prefix}🔧 子Agent(d{depth}) › {name} {brief}"
+            )
+        elif event.type == "tool.finished":
+            name = payload.get("name", "tool")
+            if payload.get("ok"):
+                self.renderer.on_system_notice(
+                    f"{prefix}✅ 子Agent(d{depth}) › {name}"
+                )
+            else:
+                self.renderer.on_system_notice(
+                    f"{prefix}❌ 子Agent(d{depth}) › {name}: {payload.get('err', '')}"
+                )
+        elif event.type == "content.final":
+            text = payload.get("content")
+            text = text if isinstance(text, str) else json.dumps(text, ensure_ascii=False)
+            if len(text) > 200:
+                text = text[:197] + "..."
+            self.renderer.on_system_notice(
+                f"{prefix}🎯 子Agent(d{depth}) 收口: {text}"
+            )
+        elif event.type == "system.notice" and payload.get("kind") == "completion_rejected":
+            issues = payload.get("issues") or ()
+            detail = ""
+            if issues:
+                first = issues[0]
+                detail = first.get("message", "") if isinstance(first, dict) else str(first)
+            self.renderer.on_system_notice(
+                f"{prefix}完成检查未通过: {detail or '未说明原因'}"
+            )
+        elif event.type == "task.updated":
+            self.renderer.on_agent_event(dict(payload))
 
-class PublishingRenderer(Renderer):
-    """Renderer implementation that turns Agent callbacks into UI events."""
+
+def _agent_depth(payload: dict[str, Any]) -> int:
+    value = payload.get("agent_depth", 0)
+    return value if isinstance(value, int) and value > 0 else 0
+
+
+def _issue_payload(issues: Any) -> list[Any]:
+    """Keep rejection messages after the event is serialized for subscribers."""
+    payload: list[Any] = []
+    for issue in issues or ():
+        if isinstance(issue, dict):
+            payload.append(issue)
+        elif hasattr(issue, "to_dict"):
+            payload.append(issue.to_dict())
+        else:
+            message = getattr(issue, "message", None)
+            payload.append({"message": str(message if message is not None else issue)})
+    return payload
+
+
+def _as_tool_call(tool_call: ToolCall | dict) -> ToolCall:
+    if isinstance(tool_call, ToolCall):
+        return tool_call
+    return ToolCall(
+        name=str(tool_call.get("name", "tool")),
+        arguments=dict(tool_call.get("arguments") or {}),
+        id=str(tool_call.get("id", "")),
+    )
+
+
+class SessionEvents:
+    """Producer-side UI stream. Callers publish events; renderers only subscribe.
+
+    Session bookkeeping (stream text, tool phase) happens here, before the
+    event is handed to any interface. Questions are not events: they wait on
+    the interaction hub and fall back to a renderer only when no hub exists
+    or the caller is already the collector thread.
+    """
 
     def __init__(
         self,
         publisher: EventPublisher,
         *,
         interaction: Any = None,
-        direct_renderer: Renderer | None = None,
+        prompt_renderer: Renderer | None = None,
         runtime_resources: RuntimeResources | None = None,
+        scope: EventScope | None = None,
     ) -> None:
         self.publisher = publisher
         self.interaction = interaction
-        self.direct_renderer = direct_renderer
+        self.prompt_renderer = prompt_renderer
         self.runtime_resources = runtime_resources
+        self.scope = scope or EventScope()
         self._active_call_id: str | None = None
-        if direct_renderer is not None:
-            publisher.add_listener(RendererEventSubscriber(direct_renderer))
+
+    def emit(self, event_type: str, payload: dict[str, Any] | None = None) -> None:
+        body = dict(payload or {})
+        if self.scope.depth > 0:
+            body.setdefault("agent_depth", self.scope.depth)
+            body.setdefault("agent_task_id", self.scope.task_id)
+        if event_type == "tool.planned":
+            self._active_call_id = str(body.get("call_id", ""))
+        self._record(event_type, body)
+        self.publisher.publish(event_type, body)
+
+    def _record(self, event_type: str, payload: dict[str, Any]) -> None:
+        resources = self.runtime_resources
+        if resources is None:
+            return
+        if event_type == "reasoning.delta":
+            resources.append_reasoning(str(payload.get("piece", "")))
+        elif event_type == "content.delta":
+            resources.append_content(str(payload.get("piece", "")))
+        elif event_type == "content.final":
+            resources.set_content(str(payload.get("content", "")))
+        elif event_type in {"tool.planned", "tool.awaiting_approval", "tool.running"}:
+            call_id = str(payload.get("call_id", ""))
+            resources.update_tool(call_id, dict(payload))
+        elif event_type == "tool.output":
+            resources.append_tool_output(
+                str(payload.get("call_id", "")), str(payload.get("output", ""))
+            )
+        elif event_type == "tool.finished":
+            resources.update_tool(str(payload.get("call_id", "")), dict(payload))
 
     def on_reasoning_delta(self, piece: str) -> None:
-        if self.runtime_resources is not None:
-            self.runtime_resources.append_reasoning(piece)
-        self.publisher.publish("reasoning.delta", {"piece": piece})
+        self.emit("reasoning.delta", {"piece": piece})
 
     def on_content_delta(self, piece: str) -> None:
-        if self.runtime_resources is not None:
-            self.runtime_resources.append_content(piece)
-        self.publisher.publish("content.delta", {"piece": piece})
+        self.emit("content.delta", {"piece": piece})
 
     def on_tool_call(self, tool_call: ToolCall | dict) -> None:
-        call = tool_call if isinstance(tool_call, ToolCall) else ToolCall(
-            name=str(tool_call.get("name", "tool")),
-            arguments=dict(tool_call.get("arguments") or {}),
-            id=str(tool_call.get("id", "")),
-        )
-        self._active_call_id = call.id
-        if self.runtime_resources is not None:
-            self.runtime_resources.update_tool(call.id, {
-                "call_id": call.id, "name": call.name,
-                "arguments": call.arguments, "phase": "planned",
-            })
-        self.publisher.publish("tool.planned", {
+        call = _as_tool_call(tool_call)
+        self.emit("tool.planned", {
             "call_id": call.id, "name": call.name, "arguments": call.arguments,
             "phase": "planned",
         })
@@ -303,27 +415,14 @@ class PublishingRenderer(Renderer):
     def on_tool_phase(self, tool_call: ToolCall | dict, phase: str) -> None:
         if phase not in {"awaiting_approval", "running"}:
             raise ValueError(f"unknown tool phase: {phase}")
-        call = tool_call if isinstance(tool_call, ToolCall) else ToolCall(
-            name=str(tool_call.get("name", "tool")),
-            arguments=dict(tool_call.get("arguments") or {}),
-            id=str(tool_call.get("id", "")),
-        )
-        if self.runtime_resources is not None:
-            self.runtime_resources.update_tool(call.id, {
-                "call_id": call.id, "name": call.name,
-                "arguments": call.arguments, "phase": phase,
-            })
-        self.publisher.publish(f"tool.{phase}", {
-            "call_id": call.id,
-            "name": call.name,
-            "arguments": call.arguments,
+        call = _as_tool_call(tool_call)
+        self.emit(f"tool.{phase}", {
+            "call_id": call.id, "name": call.name, "arguments": call.arguments,
             "phase": phase,
         })
 
     def on_tool_output(self, call_id: str, line: str) -> None:
-        if self.runtime_resources is not None:
-            self.runtime_resources.append_tool_output(call_id, line)
-        self.publisher.publish("tool.output", {"call_id": call_id, "output": line})
+        self.emit("tool.output", {"call_id": call_id, "output": line})
 
     def on_command_output(self, line: str) -> None:
         self.on_tool_output(self._active_call_id or "", line)
@@ -331,33 +430,19 @@ class PublishingRenderer(Renderer):
     def on_tool_result(
         self, tool_call: ToolCall | dict, tool_result: ToolResult | dict,
     ) -> None:
-        call = tool_call if isinstance(tool_call, ToolCall) else ToolCall(
-            name=str(tool_call.get("name", "tool")),
-            arguments=dict(tool_call.get("arguments") or {}),
-            id=str(tool_call.get("id", "")),
-        )
+        call = _as_tool_call(tool_call)
         result = tool_result.to_dict() if isinstance(tool_result, ToolResult) else dict(tool_result)
-        if self.runtime_resources is not None:
-            self.runtime_resources.update_tool(call.id, {
-                "call_id": call.id, "name": call.name, **result,
-            })
-        self.publisher.publish("tool.finished", {
-            "call_id": call.id, "name": call.name, **result,
-        })
+        self.emit("tool.finished", {"call_id": call.id, "name": call.name, **result})
 
     def on_final(self, answer: Any) -> None:
-        if self.runtime_resources is not None:
-            self.runtime_resources.set_content(str(answer))
-        self.publisher.publish("content.final", {"content": _json_value(answer)})
+        self.emit("content.final", {"content": _json_value(answer)})
 
     def on_turn_begin(self) -> None:
-        self.publisher.publish(
-            "session.status_changed", {"status": "model_turn_started"}
-        )
+        self.emit("session.status_changed", {"status": "model_turn_started"})
 
     def on_completion_rejected(self, issues: Any = ()) -> None:
-        self.publisher.publish("system.notice", {
-            "kind": "completion_rejected", "issues": _json_value(issues),
+        self.emit("system.notice", {
+            "kind": "completion_rejected", "issues": _issue_payload(issues),
         })
 
     def on_context_compact(
@@ -367,7 +452,7 @@ class PublishingRenderer(Renderer):
         context_limit: int | None,
         context_watermark: float,
     ) -> None:
-        self.publisher.publish("system.notice", {
+        self.emit("system.notice", {
             "kind": "context_compact",
             "folded_count": folded_count,
             "prompt_tokens": prompt_tokens,
@@ -382,7 +467,7 @@ class PublishingRenderer(Renderer):
         total_tokens: int | None,
         context_limit: int | None,
     ) -> None:
-        self.publisher.publish("usage.request", {
+        self.emit("usage.request", {
             "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
             "total_tokens": total_tokens, "context_limit": context_limit,
         })
@@ -390,29 +475,34 @@ class PublishingRenderer(Renderer):
     def on_usage_summary(
         self, prompt_tokens: int, completion_tokens: int, total_tokens: int,
     ) -> None:
-        self.publisher.publish("usage.task", {
+        self.emit("usage.task", {
             "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
         })
 
     def on_checkpoint_error(self, error: str) -> None:
-        self.publisher.publish("system.checkpoint_error", {"error": error})
+        self.emit("system.checkpoint_error", {"error": error})
 
     def on_agent_event(self, event: dict[str, Any]) -> None:
-        self.publisher.publish("task.updated", event)
+        self.emit("task.updated", dict(event))
 
     def on_system_notice(self, text: str) -> None:
-        self.publisher.publish("system.notice", {"text": text})
+        self.emit("system.notice", {"text": text})
+
+    def _on_collector_thread(self) -> bool:
+        check = getattr(self.interaction, "is_collector_thread", None)
+        return bool(check()) if callable(check) else False
 
     def prompt_permission(
         self, permission_prompt: PermissionPrompt,
     ) -> str | PermissionResponse:
         payload = permission_prompt.to_dict()
-        if self.interaction is not None:
-            return str(self.interaction.request("permission", payload))
-        if self.direct_renderer is None:
+        if self.interaction is not None and not self._on_collector_thread():
+            answer = self.interaction.request("permission", payload)
+            return answer if isinstance(answer, PermissionResponse) else str(answer)
+        if self.prompt_renderer is None:
             return "deny"
-        return self.direct_renderer.prompt_permission(permission_prompt)
+        return self.prompt_renderer.prompt_permission(permission_prompt)
 
     def prompt_user(
         self,
@@ -421,9 +511,9 @@ class PublishingRenderer(Renderer):
         options: tuple[str, ...] = (),
     ) -> str | None:
         payload = {"question": question, "context": context, "options": list(options)}
-        if self.interaction is not None:
+        if self.interaction is not None and not self._on_collector_thread():
             answer = self.interaction.request("ask_user", payload)
             return str(answer) if answer is not None else None
-        if self.direct_renderer is None:
+        if self.prompt_renderer is None:
             return None
-        return self.direct_renderer.prompt_user(question, context, options)
+        return self.prompt_renderer.prompt_user(question, context, options)

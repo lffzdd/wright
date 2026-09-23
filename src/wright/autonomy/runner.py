@@ -17,7 +17,13 @@ from ..app.services import RuntimeServices
 from ..capabilities import AgentProfile
 from ..domain.coordination import AgentControlError, AgentControlPlane
 from ..domain.session import Session, UsageRecord
-from ..engine.agent import Agent
+from ..engine.agent import (
+    Agent,
+    assemble_agent_components,
+    ensure_system_prompt,
+    events_from_renderer,
+    prepare_model_tools,
+)
 from ..engine.agent_background import AgentBackgroundRuntime
 from ..engine.subagent import (
     _child_base_tools,
@@ -32,6 +38,7 @@ from ..permission import (
     append_allow_rule,
 )
 from ..renderer import SilentRenderer
+from ..tool_capabilities import assemble_tool_capabilities
 from ..tools.base import Tool
 from .models import DurableRunRecord
 from .scheduler import AutonomyScheduler
@@ -394,23 +401,44 @@ def launch_durable_run(
             run_llm.base_url, str(configured_transport)
         )
 
-    child_agent = Agent(
-        run_llm,
-        child_tools,
+    child_assembly = assemble_tool_capabilities(
         child_session,
-        SilentRenderer(),
-        max_consecutive_invalid=3,
+        services,
+        None,
+        execution_journal_factory=child_journal_factory,
+        authorization_commit_factory=authorization_commit_factory,
+    )
+    durable_profile = AgentProfile(
+        "durable", frozenset(tool.name for tool in child_tools),
+        max_steps=record.step_budget,
+        allow_delegation=max_depth > 1,
+    )
+    durable_prepared = prepare_model_tools(child_session, child_tools, durable_profile)
+    ensure_system_prompt(child_session, durable_prepared, None)
+    child_events = events_from_renderer(child_session, SilentRenderer())
+    child_components = assemble_agent_components(
+        session_state=child_session,
+        events=child_events,
+        prepared=durable_prepared,
+        assembly=child_assembly,
         permission_resolver=permission_resolver,
         cancellation_check=cancelled,
-        usage_observer=observe_usage,
         allow_background_tasks=False,
         lifecycle=lifecycle,
+        execution_journal=root_journal,
+        authorization_commit=authorization_commit_factory(child_session),
+    )
+    child_agent = Agent(
+        run_llm,
+        child_session,
+        child_events,
+        durable_prepared,
+        child_assembly,
+        components=child_components,
+        max_consecutive_invalid=3,
+        usage_observer=observe_usage,
+        lifecycle=lifecycle,
         services=services,
-        profile=AgentProfile(
-            "durable", frozenset(tool.name for tool in child_tools),
-            max_steps=record.step_budget,
-            allow_delegation=max_depth > 1,
-        ),
         execution_journal=root_journal,
         execution_journal_factory=child_journal_factory,
         authorization_commit=authorization_commit_factory(child_session),

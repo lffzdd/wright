@@ -8,7 +8,7 @@ from ...autonomy import AutonomyScheduler, AutonomyStore, TriggerSpec
 from ...autonomy.runner import _DurableToolJournal, launch_durable_run
 from ...capabilities import AgentProfile
 from ...domain.session import Session
-from ...engine.agent import Agent
+from ...engine.agent import create_agent
 from ...engine.agent_background import AgentBackgroundRuntime
 from ...engine.subagent import build_agent_tools
 from ...permission import PermissionPolicy, PermissionResolver, PermissionSettings
@@ -87,7 +87,7 @@ def test_durable_run_leaves_root_session_untouched(tmp_path):
     workspace, store, session, scheduler, events, background, services = _runtime(tmp_path)
     nested = workspace / "nested"
     nested.mkdir()
-    root_agent = Agent(
+    root_agent = create_agent(
         ScriptLLM(["interactive result"]),
         [],
         session,
@@ -158,7 +158,7 @@ def test_durable_run_does_not_block_root_user_input(tmp_path):
     assert launch is not None
     assert time.monotonic() - started < 0.08
 
-    root_agent = Agent(
+    root_agent = create_agent(
         ScriptLLM(["user heard"]),
         [],
         session,
@@ -294,7 +294,7 @@ def test_durable_run_persists_history_and_child_side_effect_identity(tmp_path):
         render_subagents=False,
         permission_resolver=permission_resolver,
     )
-    root = Agent(
+    root = create_agent(
         llm,
         tools,
         session,

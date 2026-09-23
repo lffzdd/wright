@@ -118,7 +118,7 @@ class Renderer(ABC):
         """展示结构化权限请求并返回 choice ID。
 
         默认实现直接返回 ``"deny"``（fail-closed），不支持交互的渲染器
-        （SilentRenderer / SubAgentRenderer）继承此默认即可。
+        SilentRenderer 继承此默认即可。
         """
         del permission_prompt
         return "deny"

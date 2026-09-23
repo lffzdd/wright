@@ -3,7 +3,7 @@
 from wright.tests.responses import event, response
 
 from ...domain.session import Session
-from ...engine.agent import Agent
+from ...engine.agent import create_agent
 from ...permission import PermissionResolver, PermissionResponse
 from ...renderer import SilentRenderer
 from ...tools.ask_user_tool import ask_user_tool
@@ -59,7 +59,7 @@ def test_ask_user_runs_through_without_pausing(tmp_path):
 
     interaction_calls = []
 
-    agent = Agent(
+    agent = create_agent(
         llm,
         [ask_user_tool],
         session,
@@ -122,7 +122,7 @@ def test_ask_user_can_be_called_multiple_times(tmp_path):
         )
 
     session = Session.create("twice", tmp_path)
-    agent = Agent(
+    agent = create_agent(
         TwiceLLM(),
         [ask_user_tool],
         session,
@@ -153,7 +153,7 @@ def test_ask_user_without_interaction_handler_returns_error(tmp_path):
                 yield event(content=_final("recovered"))
 
     session = Session.create("no-handler", tmp_path)
-    agent = Agent(
+    agent = create_agent(
         AskThenFinalLLM(),
         [ask_user_tool],
         session,
@@ -169,7 +169,7 @@ def test_ask_user_cannot_be_auto_approved_by_normal_permission_handler(tmp_path)
     """requires_user_interaction 必须压过普通 allow 规则，避免答案由策略伪造。"""
 
     session = Session.create("no-auto-answer", tmp_path)
-    agent = Agent(
+    agent = create_agent(
         AskThenAnswerLLM(),
         [ask_user_tool],
         session,
@@ -197,6 +197,6 @@ def test_ask_user_cannot_be_auto_approved_by_normal_permission_handler(tmp_path)
 def test_agent_no_longer_has_resume_method(tmp_path):
     """确认 resume() 方法已被移除。"""
     session = Session.create("goal", tmp_path)
-    agent = Agent(AskThenAnswerLLM(), [ask_user_tool], session, SilentRenderer())
+    agent = create_agent(AskThenAnswerLLM(), [ask_user_tool], session, SilentRenderer())
 
     assert not hasattr(agent, "resume")

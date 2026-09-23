@@ -2,103 +2,35 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from rich.console import Console
-
 from ..capabilities import AgentProfile
 from ..domain.coordination import AgentControlError, AgentTaskRecord
 from ..domain.session import Session, UsageRecord
 from ..llm import LLMClient
 from ..permission import PermissionResolver, ToolAccess
-from ..renderer import Renderer, SilentRenderer
+from ..tool_capabilities import assemble_tool_capabilities
 from ..tools.autonomy_tools import autonomy_tools
 from ..tools.base import Tool, ToolResult, ToolRuntime
 from ..tools.task_tools import task_tools
-from .agent import Agent
+from ..ui_events import EventPublisher, EventScope, SessionEvents
+from .agent import (
+    Agent,
+    assemble_agent_components,
+    ensure_system_prompt,
+    events_from_renderer,
+    prepare_model_tools,
+)
 
 DEFAULT_CHILD_MAX_STEPS = 20
 # Interactive default: root spawns leaves only. Nested spawn stays available
 # when a caller passes a higher max_depth (durable runs use 2).
 DEFAULT_MAX_DEPTH = 1
 DEFAULT_CHILD_TIMEOUT = 300.0
-
-
-class SubAgentRenderer(Renderer):
-    """Compact renderer for an isolated child context."""
-
-    def __init__(self, depth: int, task: str) -> None:
-        self.depth = depth
-        self.task = task
-        self._prefix = "    " * (depth - 1) + "│ "
-        self._console = Console(highlight=False)
-
-    def _line(self, text: str, style: str = "") -> None:
-        try:
-            from ..tui.renderer import TUIRenderer
-
-            if TUIRenderer.is_active():
-                return
-        except Exception:
-            pass
-        self._console.print(
-            f"{self._prefix}{text}", style=style, highlight=False, markup=False
-        )
-
-    def on_reasoning_delta(self, piece: str) -> None: ...
-    def on_content_delta(self, piece: str) -> None: ...
-    def on_command_output(self, line: str) -> None: ...
-
-    def on_tool_call(self, tool_call) -> None:
-        args = getattr(tool_call, "arguments", {}) or {}
-        brief = json.dumps(args, ensure_ascii=False)
-        if len(brief) > 80:
-            brief = brief[:77] + "..."
-        self._line(f"🔧 子Agent(d{self.depth}) › {tool_call.name} {brief}", "yellow")
-
-    def on_tool_result(self, tool_call, tool_result) -> None:
-        name = getattr(tool_call, "name", None) or "tool"
-        if hasattr(tool_result, "to_dict"):
-            tool_result = tool_result.to_dict()
-        if tool_result.get("ok"):
-            self._line(f"✅ 子Agent(d{self.depth}) › {name}", "green")
-        else:
-            self._line(
-                f"❌ 子Agent(d{self.depth}) › {name}: {tool_result.get('err')}",
-                "red",
-            )
-
-    def on_agent_event(self, event: dict[str, Any]) -> None:
-        self._line(
-            f"↳ agent {event.get('task_id')} · d{event.get('depth')} · "
-            f"{event.get('status')}",
-            "cyan" if event.get("status") == "running" else "green",
-        )
-
-    def on_final(self, answer) -> None:
-        text = answer if isinstance(answer, str) else json.dumps(
-            answer, ensure_ascii=False
-        )
-        if len(text) > 200:
-            text = text[:197] + "..."
-        self._line(f"🎯 子Agent(d{self.depth}) 收口: {text}", "green")
-
-    def on_completion_rejected(self, issues=()) -> None:
-        detail = ""
-        if issues:
-            first = issues[0]
-            detail = getattr(first, "message", None) or (
-                first.get("message") if isinstance(first, dict) else ""
-            )
-        self._line(
-            f"完成检查未通过: {detail or '未说明原因'}",
-            "yellow",
-        )
 
 
 SPAWN_AGENT_PARAMETERS = {
@@ -194,6 +126,7 @@ def make_spawn_agent_tool(
     render_subagents: bool = True,
     permission_resolver: PermissionResolver | None = None,
     authorization_commit_factory=None,
+    publisher: EventPublisher | None = None,
 ) -> Tool:
     if depth < 0 or max_depth < 1 or depth >= max_depth:
         raise ValueError("spawn_agent 只能在 0 <= depth < max_depth 时创建")
@@ -280,6 +213,7 @@ def make_spawn_agent_tool(
                 delegation.authorization_commit_factory
                 or authorization_commit_factory
             ),
+            publisher=publisher,
         )
 
         workspace_dir = access_scope.origin
@@ -322,9 +256,13 @@ def make_spawn_agent_tool(
                 _emit(runtime, finished)
                 return ToolResult.fail(finished.error, data={"task_id": finished.id})
 
-        child_renderer: Renderer = (
-            SubAgentRenderer(child_depth, task)
-            if render_subagents else SilentRenderer()
+        child_events = (
+            SessionEvents(
+                publisher,
+                scope=EventScope(depth=child_depth, task_id=record.id),
+            )
+            if render_subagents and publisher is not None
+            else None
         )
 
         def cancelled() -> bool:
@@ -349,22 +287,47 @@ def make_spawn_agent_tool(
         if child_commit_factory is not None:
             child_authorization_commit = child_commit_factory(child_session)
 
-        child_agent = Agent(
-            llm,
-            child_tools,
+        child_assembly = assemble_tool_capabilities(
             child_session,
-            child_renderer,
-            max_consecutive_invalid=3,
+            None,
+            None,
+            execution_journal_factory=journal_factory,
+            authorization_commit_factory=child_commit_factory,
+        )
+        child_profile = AgentProfile(
+            "child", frozenset(tool.name for tool in child_tools),
+            max_steps=record.step_budget, allow_delegation=child_depth < max_depth,
+        )
+        child_prepared = prepare_model_tools(child_session, child_tools, child_profile)
+        ensure_system_prompt(child_session, child_prepared, None)
+        child_events_for_agent = (
+            child_events
+            if child_events is not None
+            else events_from_renderer(child_session, None)
+        )
+        child_components = assemble_agent_components(
+            session_state=child_session,
+            events=child_events_for_agent,
+            prepared=child_prepared,
+            assembly=child_assembly,
             permission_resolver=permission_resolver,
             cancellation_check=cancelled,
-            usage_observer=observe_usage,
             allow_background_tasks=False,
             lifecycle=runtime.lifecycle,
+            execution_journal=child_journal,
+            authorization_commit=child_authorization_commit,
+        )
+        child_agent = Agent(
+            llm,
+            child_session,
+            child_events_for_agent,
+            child_prepared,
+            child_assembly,
+            components=child_components,
+            max_consecutive_invalid=3,
+            usage_observer=observe_usage,
+            lifecycle=runtime.lifecycle,
             services=None,
-            profile=AgentProfile(
-                "child", frozenset(tool.name for tool in child_tools),
-                max_steps=record.step_budget, allow_delegation=child_depth < max_depth,
-            ),
             execution_journal=child_journal,
             execution_journal_factory=journal_factory,
             authorization_commit=child_authorization_commit,
@@ -500,6 +463,7 @@ def build_agent_tools(
     permission_resolver: PermissionResolver | None = None,
     authorization_commit_factory=None,
     enable_autonomy: bool = False,
+    publisher: EventPublisher | None = None,
 ) -> list[Tool]:
     if depth < 0 or max_depth < 1 or depth > max_depth:
         raise ValueError("需要满足 0 <= depth <= max_depth 且 max_depth >= 1")
@@ -516,6 +480,7 @@ def build_agent_tools(
                 render_subagents=render_subagents,
                 permission_resolver=permission_resolver,
                 authorization_commit_factory=authorization_commit_factory,
+                publisher=publisher,
             )
         )
     # 只有 root 读取全树；子 Agent 只通过自己的 spawn 结果观察直接孩子。

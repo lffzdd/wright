@@ -5,6 +5,7 @@ from ...permission import (
     PermissionResolver,
 )
 from ...renderer import SilentRenderer
+from ...tool_capabilities import assemble_tool_capabilities
 from ...tools.base import ToolCall
 from ...tools.file_tools import edit_file_tool, read_file_tool, write_file_tool
 
@@ -34,8 +35,11 @@ def _executor(session: Session, renderer: _MockRenderer) -> ToolExecutor:
             read_file_tool.name: read_file_tool,
             edit_file_tool.name: edit_file_tool,
         },
-        workspace_dir=session.workspace_dir,
-        cwd_provider=session.get_cwd,
+        assemble_tool_capabilities(
+            session, None, None,
+            workspace_dir=session.workspace_dir,
+            cwd_provider=session.get_cwd,
+        ),
         session=session,
         permission_resolver=resolver,
     )
@@ -152,8 +156,11 @@ def test_persistent_rule_choice_is_returned_to_the_commit_adapter(tmp_path):
             read_file_tool.name: read_file_tool,
             edit_file_tool.name: edit_file_tool,
         },
-        workspace_dir=session.workspace_dir,
-        cwd_provider=session.get_cwd,
+        assemble_tool_capabilities(
+            session, None, None,
+            workspace_dir=session.workspace_dir,
+            cwd_provider=session.get_cwd,
+        ),
         session=session,
         permission_resolver=resolver,
         authorization_commit=changes.append,

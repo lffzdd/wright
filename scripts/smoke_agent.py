@@ -19,7 +19,7 @@ from types import SimpleNamespace
 _TMP = tempfile.TemporaryDirectory(prefix="wright-test-", ignore_cleanup_errors=True)
 _WORKSPACE = Path(_TMP.name)
 
-from wright.engine.agent import Agent
+from wright.engine.agent import Agent, create_agent
 from wright.events import ContentDelta, ContentDone, UsageEvent
 from wright.llm import LLMClient
 from wright.renderer import SilentRenderer
@@ -61,7 +61,7 @@ def _make_agent(
     llm = LLMClient(
         base_url="http://x", api_key="sk-x", model="m", context_limit=128_000
     )
-    return Agent(
+    return create_agent(
         llm,
         tools,
         _make_session(),
@@ -77,8 +77,8 @@ def test_agent_does_not_duplicate_system_prompt_for_existing_session():
     )
     session = _make_session()
 
-    first_agent = Agent(llm, [], session, SilentRenderer(), tool_timeout=5)
-    second_agent = Agent(llm, [], session, SilentRenderer(), tool_timeout=5)
+    first_agent = create_agent(llm, [], session, SilentRenderer(), tool_timeout=5)
+    second_agent = create_agent(llm, [], session, SilentRenderer(), tool_timeout=5)
 
     system_messages = [msg for msg in session.messages if msg.get("role") == "system"]
     assert tuple(first_agent.messages) == tuple(second_agent.messages)
@@ -274,7 +274,7 @@ def test_run_turn_records_usage():
                 )
             )
 
-    agent = Agent(FakeLLM(), [], _make_session(), SilentRenderer(), tool_timeout=5)
+    agent = create_agent(FakeLLM(), [], _make_session(), SilentRenderer(), tool_timeout=5)
 
     content, usage = agent._run_turn()
     assert content.content == "content 1"
@@ -309,7 +309,7 @@ def test_run_turn_records_dict_usage():
                 }
             )
 
-    agent = Agent(FakeLLM(), [], _make_session(), SilentRenderer(), tool_timeout=5)
+    agent = create_agent(FakeLLM(), [], _make_session(), SilentRenderer(), tool_timeout=5)
 
     content, usage = agent._run_turn()
     assert content.content == "ok"
@@ -476,7 +476,7 @@ def test_run_defaults_to_session_max_steps():
 
     session = _make_session()
     session.max_steps = 2
-    agent = Agent(InvalidLLM(), [], session, SilentRenderer(), tool_timeout=5)
+    agent = create_agent(InvalidLLM(), [], session, SilentRenderer(), tool_timeout=5)
 
     assert agent.run("keep failing") is None
     assert session.current_run_status() == "failed"
@@ -495,7 +495,7 @@ def test_run_aborts_after_consecutive_invalid():
 
     session = _make_session()
     session.max_steps = 25
-    agent = Agent(
+    agent = create_agent(
         InvalidLLM(),
         [],
         session,
@@ -534,7 +534,7 @@ def test_consecutive_invalid_resets_on_success():
         return ToolResult.success("ok")
 
     session = _make_session()
-    agent = Agent(
+    agent = create_agent(
         ScriptedLLM(),
         [Tool("noop", "", {}, lambda args, runtime: noop())],
         session,
@@ -652,7 +652,7 @@ def _make_compactor_agent(renderer, keep_recent_tool_results, watermark=0.75):
     llm = LLMClient(
         base_url="http://x", api_key="sk-x", model="m", context_limit=100
     )
-    return Agent(
+    return create_agent(
         llm,
         [],
         _make_session(),

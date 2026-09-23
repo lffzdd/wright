@@ -16,6 +16,7 @@ from ..engine.executor import ToolExecutor
 from ..execution import ExecutionPath, LocalExecutionBackend
 from ..execution import local as local_execution
 from ..permission import PermissionResolver, PermissionResponse, ToolAccess
+from ..tool_capabilities import assemble_tool_capabilities
 from ..tools.base import Tool, ToolCall, ToolResult, tool_runtime_for_session
 from ..tools.file_tools import grep_files, grep_tool, write_file_tool
 
@@ -77,7 +78,7 @@ def test_pre_execution_failure_is_published_once(tmp_path, failure_kind):
     callbacks = []
     outcome = ToolExecutor(
         registry,
-        workspace_dir=tmp_path,
+        assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         **kwargs,
     ).execute([call], on_result=lambda tool_call, result: callbacks.append((tool_call, result)))[0]
 
@@ -115,7 +116,7 @@ def test_approval_failure_is_published_once_and_does_not_execute(
     callbacks = []
     outcome = ToolExecutor(
         {write_file_tool.name: write_file_tool},
-        workspace_dir=workspace,
+        assemble_tool_capabilities(None, None, None, workspace_dir=workspace),
         permission_resolver=resolver,
         authorization_commit=commit,
         lifecycle=lifecycle,
@@ -152,7 +153,9 @@ def test_success_publishes_result_once_without_failure(tmp_path):
     )
 
     outcome = ToolExecutor(
-        {tool.name: tool}, workspace_dir=tmp_path, lifecycle=lifecycle
+        {tool.name: tool},
+        assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
+        lifecycle=lifecycle,
     ).execute(
         [ToolCall(tool.name, {}, "success-id")],
         on_result=lambda tool_call, result: callbacks.append((tool_call, result)),
@@ -180,7 +183,9 @@ def test_actual_execution_failure_publishes_once(tmp_path):
     )
 
     outcome = ToolExecutor(
-        {tool.name: tool}, workspace_dir=tmp_path, lifecycle=lifecycle
+        {tool.name: tool},
+        assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
+        lifecycle=lifecycle,
     ).execute(
         [ToolCall(tool.name, {}, "execution-failure-id")],
         on_result=lambda tool_call, result: callbacks.append((tool_call, result)),
@@ -222,7 +227,8 @@ def test_pre_execution_failure_remains_a_concurrency_barrier(tmp_path):
     )
     invalid = _required_tool()
     outcomes = ToolExecutor(
-        {safe.name: safe, invalid.name: invalid}, workspace_dir=tmp_path
+        {safe.name: safe, invalid.name: invalid},
+        assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
     ).execute(
         [
             ToolCall(safe.name, {}, "before"),
@@ -619,9 +625,12 @@ def test_protected_and_external_symlink_candidates_never_reach_search_backend(
     backend = RecordingBackend()
     result = ToolExecutor(
         {grep_tool.name: grep_tool},
-        workspace_dir=tmp_path,
-        cwd_provider=lambda: tmp_path,
-        execution_backend=backend,
+        assemble_tool_capabilities(
+            None, None, None,
+            workspace_dir=tmp_path,
+            cwd_provider=lambda: tmp_path,
+            execution_backend=backend,
+        ),
     ).execute([ToolCall(grep_tool.name, {"pattern": "needle"}, "protected-symlink")])[0].result
 
     assert result.ok

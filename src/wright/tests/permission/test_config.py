@@ -12,6 +12,7 @@ from ...permission import (
     append_allow_rule,
     load_permission_settings,
 )
+from ...tool_capabilities import assemble_tool_capabilities
 from ...tools.base import ToolCall
 from ...tools.command_tools import execute_command_tool
 from ...tools.file_tools import read_file_tool, write_file_tool
@@ -20,8 +21,9 @@ from ...tools.file_tools import read_file_tool, write_file_tool
 def _executor(tool, settings: PermissionSettings, tmp_path: Path) -> ToolExecutor:
     return ToolExecutor(
         {tool.name: tool},
-        workspace_dir=tmp_path,
-        cwd_provider=lambda: tmp_path,
+        assemble_tool_capabilities(
+            None, None, None, workspace_dir=tmp_path, cwd_provider=lambda: tmp_path,
+        ),
         permission_resolver=PermissionResolver(settings=settings),
     )
 
@@ -156,8 +158,9 @@ def test_cwd_outside_workspace_does_not_deny_an_origin_target(tmp_path):
     result = _run(
         ToolExecutor(
             {write_file_tool.name: write_file_tool},
-            workspace_dir=workspace,
-            cwd_provider=lambda: tmp_path,
+            assemble_tool_capabilities(
+                None, None, None, workspace_dir=workspace, cwd_provider=lambda: tmp_path,
+            ),
             permission_resolver=PermissionResolver(
                 settings=PermissionSettings(mode="bypass")
             ),

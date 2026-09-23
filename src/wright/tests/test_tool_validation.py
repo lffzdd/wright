@@ -1,5 +1,6 @@
 from ..engine.executor import ToolExecutor
 from ..permission import PermissionResolver, PermissionResponse, ToolAccess
+from ..tool_capabilities import assemble_tool_capabilities
 from ..tools.base import Tool, ToolCall, ToolResult
 
 
@@ -44,7 +45,7 @@ def test_invalid_arguments_fail_before_permission_and_tool(tmp_path):
     tool = _schema_tool(tool_calls, permission_calls)
     executor = ToolExecutor(
         {tool.name: tool},
-        workspace_dir=tmp_path,
+        assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         permission_resolver=PermissionResolver(approval_handler=approval_handler),
     )
 
@@ -67,7 +68,8 @@ def test_invalid_arguments_fail_before_permission_and_tool(tmp_path):
 def test_missing_required_argument_returns_repairable_result(tmp_path):
     tool = _schema_tool([])
     outcome = ToolExecutor(
-        {tool.name: tool}, workspace_dir=tmp_path
+        {tool.name: tool},
+        assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
     ).execute([ToolCall("structured", {"name": "ok"}, "c1")])[0]
 
     issue = outcome.result.data["error"]["issues"][0]
@@ -84,7 +86,7 @@ def test_permission_rewritten_arguments_are_revalidated(tmp_path):
     )
     outcome = ToolExecutor(
         {tool.name: tool},
-        workspace_dir=tmp_path,
+        assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         permission_resolver=PermissionResolver(
             approval_handler=lambda request: PermissionResponse(
                 "allow_once", {"name": "x", "mode": "delete"}
@@ -104,7 +106,8 @@ def test_valid_arguments_reach_permission_then_tool(tmp_path):
     calls = []
     tool = _schema_tool(calls)
     outcome = ToolExecutor(
-        {tool.name: tool}, workspace_dir=tmp_path
+        {tool.name: tool},
+        assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
     ).execute([
         ToolCall(
             "structured",
@@ -125,7 +128,8 @@ def test_invalid_tool_schema_is_a_configuration_error(tmp_path):
         lambda args, runtime: ToolResult.success(),
     )
     outcome = ToolExecutor(
-        {tool.name: tool}, workspace_dir=tmp_path
+        {tool.name: tool},
+        assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
     ).execute([ToolCall("broken", {}, "c1")])[0]
 
     assert outcome.status == "failed"

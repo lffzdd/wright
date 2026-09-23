@@ -7,6 +7,7 @@ from ...permission import (
     PermissionResponse,
     ToolAccess,
 )
+from ...tool_capabilities import assemble_tool_capabilities
 from ...tools.base import Tool, ToolCall, ToolResult
 from ...tools.command_tools import execute_command_tool
 from ...tools.file_tools import (
@@ -21,8 +22,9 @@ from ...tools.web_tools import http_request_tool
 def _executor(tool: Tool, tmp_path: Path, **kwargs) -> ToolExecutor:
     return ToolExecutor(
         {tool.name: tool},
-        workspace_dir=tmp_path,
-        cwd_provider=lambda: tmp_path,
+        assemble_tool_capabilities(
+            None, None, None, workspace_dir=tmp_path, cwd_provider=lambda: tmp_path,
+        ),
         **kwargs,
     )
 
@@ -205,14 +207,19 @@ def test_cwd_outside_workspace_is_not_a_global_deny(tmp_path):
         ToolAccess(frozenset({"network_write"}), risk_flags=("network_write",)),
     )
     result = ToolExecutor(
-        {tool.name: tool}, workspace_dir=workspace, cwd_provider=lambda: tmp_path
+        {tool.name: tool},
+        assemble_tool_capabilities(
+            None, None, None, workspace_dir=workspace, cwd_provider=lambda: tmp_path,
+        ),
     ).execute([ToolCall(tool.name, {}, "c1")])[0].result
     assert not result.ok
     assert "cwd_outside_workspace" not in result.data["permission"]["risk_flags"]
 
 
 def test_missing_tool_remains_an_unknown_tool_error(tmp_path):
-    result = ToolExecutor({}, workspace_dir=tmp_path).execute([
+    result = ToolExecutor(
+        {}, assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
+    ).execute([
         ToolCall("missing_tool", {}, "c1")
     ])[0].result
     assert not result.ok

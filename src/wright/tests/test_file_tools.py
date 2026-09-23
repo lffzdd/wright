@@ -9,6 +9,7 @@ from ..permission import (
     PermissionResolver,
     PermissionResponse,
 )
+from ..tool_capabilities import assemble_tool_capabilities
 from ..tools.base import ToolCall, tool_runtime_for_session
 from ..tools.file_tools import (
     FILE_UNCHANGED,
@@ -204,8 +205,11 @@ def _file_executor(session, tools, handler=None):
     resolver = PermissionResolver(approval_handler=handler)
     return ToolExecutor(
         {tool.name: tool for tool in tools},
-        workspace_dir=session.workspace_dir,
-        cwd_provider=session.get_cwd,
+        assemble_tool_capabilities(
+            session, None, None,
+            workspace_dir=session.workspace_dir,
+            cwd_provider=session.get_cwd,
+        ),
         session=session,
         permission_resolver=resolver,
     )

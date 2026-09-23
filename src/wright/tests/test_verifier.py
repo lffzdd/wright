@@ -2,7 +2,7 @@ from wright.tests.responses import event, response
 
 from ..app.lifecycle import HookRegistration, LifecycleManager
 from ..domain.session import Session
-from ..engine.agent import Agent
+from ..engine.agent import create_agent
 from ..engine.verifier import Verifier
 from ..renderer import SilentRenderer
 from ..tools.base import ToolCall, ToolResult
@@ -37,7 +37,7 @@ def test_incomplete_plan_blocks_final_and_returns_to_agent_loop(tmp_path):
         _tool("update_plan", {"step_id": "step_1", "status": "completed"}),
         _final("really done"),
     ])
-    agent = Agent(
+    agent = create_agent(
         llm,
         [update_plan_tool],
         session,
@@ -62,7 +62,7 @@ def test_incomplete_plan_blocks_final_and_returns_to_agent_loop(tmp_path):
 def test_structural_verifier_does_not_add_llm_turns_on_chat(tmp_path):
     llm = ScriptLLM([_final("hello")])
     session = Session.create("?", tmp_path)
-    agent = Agent(llm, [], session, SilentRenderer(), verifier=Verifier())
+    agent = create_agent(llm, [], session, SilentRenderer(), verifier=Verifier())
 
     assert agent.run("?") == "hello"
     assert len(llm.messages) == 1
@@ -111,7 +111,7 @@ def test_verifier_and_stop_hook_retries_are_independent(tmp_path):
     lifecycle.register(HookRegistration(
         event="agent_stop", name="completion-gate", callback=stop_hook
     ))
-    agent = Agent(
+    agent = create_agent(
         main_llm,
         [update_plan_tool],
         session,

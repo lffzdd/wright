@@ -18,6 +18,7 @@ from ..permission import (
     ToolAccess,
     forbidden_paths,
 )
+from ..tool_capabilities import assemble_tool_capabilities
 from ..tools.base import Tool, ToolCall, ToolResult, tool_runtime_for_session
 from ..tools.command_tools import execute_command
 from ..tools.file_tools import (
@@ -350,7 +351,10 @@ def test_production_executor_exposes_only_authorized_execution(tmp_path):
         required_capabilities=frozenset({"execution"}),
     )
     result = ToolExecutor(
-        {tool.name: tool}, workspace_dir=tmp_path, cwd_provider=lambda: tmp_path,
+        {tool.name: tool},
+        assemble_tool_capabilities(
+            None, None, None, workspace_dir=tmp_path, cwd_provider=lambda: tmp_path,
+        ),
     ).execute([ToolCall(tool.name, {"file": "allowed.txt"}, "c1")])[0].result
 
     assert result.ok
@@ -379,7 +383,10 @@ def test_internal_tool_without_execution_capability_gets_no_wrapper(tmp_path):
     )
 
     result = ToolExecutor(
-        {tool.name: tool}, workspace_dir=tmp_path, cwd_provider=lambda: tmp_path,
+        {tool.name: tool},
+        assemble_tool_capabilities(
+            None, None, None, workspace_dir=tmp_path, cwd_provider=lambda: tmp_path,
+        ),
     ).execute([ToolCall(tool.name, {}, "c1")])[0].result
 
     assert result.ok
@@ -415,8 +422,10 @@ def test_backend_resolves_paths_but_authorized_wrapper_enforces_scope(tmp_path):
     assert resolved.value == str(outside.resolve())
 
     executor = ToolExecutor(
-        {read_file_tool.name: read_file_tool}, workspace_dir=origin,
-        cwd_provider=lambda: origin,
+        {read_file_tool.name: read_file_tool},
+        assemble_tool_capabilities(
+            None, None, None, workspace_dir=origin, cwd_provider=lambda: origin,
+        ),
     )
     result = executor.execute([
         ToolCall("read_file", {"file": str(outside)}, "c1")
@@ -434,8 +443,10 @@ def test_forbidden_permission_settings_path_is_rejected(tmp_path, monkeypatch):
     origin = tmp_path / "workspace"
     origin.mkdir()
     executor = ToolExecutor(
-        {read_file_tool.name: read_file_tool}, workspace_dir=origin,
-        cwd_provider=lambda: origin,
+        {read_file_tool.name: read_file_tool},
+        assemble_tool_capabilities(
+            None, None, None, workspace_dir=origin, cwd_provider=lambda: origin,
+        ),
     )
     result = executor.execute([
         ToolCall("read_file", {"file": str(settings)}, "c1")
@@ -459,8 +470,9 @@ def test_recursive_search_defaults_to_directory_and_skips_protected_files(
 
     result = ToolExecutor(
         {grep_tool.name: grep_tool},
-        workspace_dir=workspace,
-        cwd_provider=lambda: workspace,
+        assemble_tool_capabilities(
+            None, None, None, workspace_dir=workspace, cwd_provider=lambda: workspace,
+        ),
     ).execute([ToolCall("grep", {"pattern": "needle"}, "c1")])[0].result
 
     assert result.ok

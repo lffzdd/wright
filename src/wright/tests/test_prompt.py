@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..domain.session import Session
-from ..engine.agent import Agent
+from ..engine.agent import create_agent
 from ..prompt import build_system_prompt
 from ..renderer import SilentRenderer
 from ..tools.base import Tool, ToolResult, split_tool_catalog
@@ -75,7 +75,7 @@ def test_agent_system_prompt_uses_the_assembled_catalog(tmp_path):
         context_limit = 128_000
 
     session = Session.create("t", tmp_path)
-    agent = Agent(
+    agent = create_agent(
         UnusedLLM(),
         [_tool("read_file"), _tool("brand_new"), _tool("new_hidden", deferred=True)],
         session,

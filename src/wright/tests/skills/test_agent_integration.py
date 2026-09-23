@@ -4,7 +4,7 @@ from wright.tests.responses import event, response
 
 from ...domain.checkpoint import SessionCheckpointStore
 from ...domain.session import Session
-from ...engine.agent import Agent
+from ...engine.agent import create_agent
 from ...renderer import SilentRenderer
 from ...skills.registry import SkillRegistry
 from ...skills.store import write_skill
@@ -62,7 +62,7 @@ def test_parent_and_child_sessions_isolate_catalog_flag(tmp_path: Path):
 def test_empty_skills_directory_injects_nothing(tmp_path: Path):
     llm = ScriptLLM([_final("done")])
     session = Session.create("task", tmp_path)
-    Agent(llm, [], session, SilentRenderer(), skills=SkillRegistry(tmp_path)).run("hi")
+    create_agent(llm, [], session, SilentRenderer(), skills=SkillRegistry(tmp_path)).run("hi")
     assert not any(
         "<skill-catalog>" in str(message.get("content", ""))
         for batch in llm.seen_messages
@@ -83,7 +83,7 @@ def test_catalog_is_written_once_into_transcript(tmp_path: Path):
     ])
     session = Session.create("task", tmp_path)
     tools = build_skill_tools(registry)
-    answer = Agent(
+    answer = create_agent(
         llm, tools, session, SilentRenderer(), skills=registry
     ).run("准备发布")
 
@@ -114,7 +114,7 @@ def test_second_user_turn_does_not_resend_catalog(tmp_path: Path):
         _final("第二轮完成"),
     ])
     session = Session.create("task", tmp_path)
-    agent = Agent(
+    agent = create_agent(
         llm,
         build_skill_tools(registry),
         session,
@@ -149,7 +149,7 @@ def test_continue_run_keeps_catalog_and_does_not_resend(tmp_path: Path):
     restored = store.load(session.session_id)
     assert restored.skill_catalog_sent is True
     llm = ScriptLLM([_final("继续")])
-    answer = Agent(
+    answer = create_agent(
         llm, [], restored, SilentRenderer(), skills=registry
     ).continue_run()
     assert answer == "继续"

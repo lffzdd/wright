@@ -6,7 +6,7 @@ from wright.tests.responses import event, response
 
 from ..domain.checkpoint import CheckpointError, SessionCheckpointStore
 from ..domain.session import Session, UsageRecord
-from ..engine.agent import Agent
+from ..engine.agent import create_agent
 from ..renderer import SilentRenderer
 from ..tools.base import ArtifactRef, ToolCall, ToolResult
 from ..util import build_tool_results_messages
@@ -124,7 +124,7 @@ def test_committed_turn_marker_prevents_stale_running_checkpoint_replay(tmp_path
         def __call__(self, messages, *, tools):
             raise AssertionError("committed turn must not be replayed")
 
-    agent = Agent(NoReplayLLM(), [], restored, SilentRenderer(), checkpoint_store=store)
+    agent = create_agent(NoReplayLLM(), [], restored, SilentRenderer(), checkpoint_store=store)
 
     assert agent.continue_run() == "done"
     assert restored.current_run_status() == "completed"
@@ -272,7 +272,7 @@ def test_agent_continues_running_checkpoint_without_new_user_message(tmp_path):
     workspace.mkdir()
     store = SessionCheckpointStore(tmp_path / "checkpoints")
     first_session = Session.create("placeholder", workspace)
-    first_agent = Agent(
+    first_agent = create_agent(
         CrashLLM(), [], first_session, SilentRenderer(), checkpoint_store=store
     )
 
@@ -286,7 +286,7 @@ def test_agent_continues_running_checkpoint_without_new_user_message(tmp_path):
     ]
 
     llm = FinalLLM()
-    second_agent = Agent(
+    second_agent = create_agent(
         llm, [], restored, SilentRenderer(), checkpoint_store=store
     )
     assert second_agent.continue_run() == "resumed"

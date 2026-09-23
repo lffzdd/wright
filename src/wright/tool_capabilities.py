@@ -67,11 +67,15 @@ class CapabilityAssembly:
     ``backend`` is intentionally kept beside, rather than inside, the
     long-lived capability view.  Tool code receives only the per-invocation
     :class:`AuthorizedExecution` wrapper built from this private backend.
+    ``workspace_dir`` and ``cwd_provider`` are the environment facts the
+    executor records and consults; it does not derive them from a Session.
     """
 
     capabilities: ToolCapabilities
     runtime_resources: RuntimeResources | None
     backend: ExecutionBackend
+    workspace_dir: Path
+    cwd_provider: Callable[[], Path]
 
 
 @dataclass(frozen=True)
@@ -125,7 +129,11 @@ def assemble_tool_capabilities(
         Callable[[Session], Callable[[AuthorizationChange], None]] | None
     ) = None,
 ) -> CapabilityAssembly:
-    """Build explicit capabilities once, at the application/executor boundary."""
+    """Build explicit capabilities at the application boundary.
+
+    ``ToolExecutor`` receives this result.  It does not interpret a Session
+    or ``RuntimeServices`` container itself.
+    """
 
     workspace = (
         workspace_dir or getattr(session, "workspace_dir", None) or Path.cwd()
@@ -139,7 +147,9 @@ def assemble_tool_capabilities(
     backend = execution_backend or LocalExecutionBackend(workspace, cwd)
     if session is None:
         scope = RunScope("")
-        return CapabilityAssembly(ToolCapabilities(scope), resources, backend)
+        return CapabilityAssembly(
+            ToolCapabilities(scope), resources, backend, workspace, cwd
+        )
 
     active_run = session.active_run()
     scope = RunScope(
@@ -167,4 +177,6 @@ def assemble_tool_capabilities(
         ),
         resources,
         backend,
+        workspace,
+        cwd,
     )

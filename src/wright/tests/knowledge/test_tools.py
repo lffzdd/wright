@@ -6,6 +6,7 @@ from ...knowledge import optional_knowledge_tools
 from ...knowledge.provider import MAX_HIT_CONTENT_CHARS, KnowledgeHit
 from ...skills.registry import SkillRegistry
 from ...skills.store import write_skill
+from ...tool_capabilities import assemble_tool_capabilities
 from ...tools.base import ToolCall
 from ...tools.knowledge_tools import build_knowledge_tools
 from ...tools.skill_tools import build_skill_tools
@@ -27,7 +28,8 @@ class FakeProvider:
 def test_top_k_out_of_range_rejected_by_schema(tmp_path):
     tool = build_knowledge_tools(FakeProvider())[0]
     outcome = ToolExecutor(
-        {tool.name: tool}, workspace_dir=tmp_path
+        {tool.name: tool},
+        assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
     ).execute([
         ToolCall("knowledge_search", {"query": "q", "top_k": 11}, "c1")
     ])[0]

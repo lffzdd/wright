@@ -9,7 +9,7 @@ from wright.tests.responses import event, response
 
 from ...domain.checkpoint import SessionCheckpointStore
 from ...domain.session import Session
-from ...engine.agent import Agent
+from ...engine.agent import create_agent
 from ...engine.looping import (
     LoopError,
     SessionLoopRegistry,
@@ -52,7 +52,7 @@ def test_loop_tick_uses_runtime_event_without_resetting_goal_or_plan(tmp_path):
     workspace.mkdir()
     session = Session.create("keep this goal", workspace)
     events, _idle, registry = _registry()
-    agent = Agent(
+    agent = create_agent(
         ScriptLLM(["initial answer", "loop result"]),
         [],
         session,

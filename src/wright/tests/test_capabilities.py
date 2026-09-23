@@ -8,12 +8,13 @@ from wright.artifacts import ArtifactStore
 from wright.capabilities import AgentProfile, CapabilityCatalog, CapabilityError
 from wright.domain.checkpoint import SessionCheckpointStore
 from wright.domain.session import Session
-from wright.engine.agent import Agent
+from wright.engine.agent import create_agent
 from wright.engine.executor import ToolExecutor
 from wright.execution import LocalExecutionBackend
 from wright.permission import ToolAccess
 from wright.renderer import SilentRenderer
 from wright.tests.responses import response
+from wright.tool_capabilities import assemble_tool_capabilities
 from wright.tools.base import Tool, ToolCall, ToolResult, tool_runtime_for_session
 from wright.tools.command_tools import execute_command
 from wright.tools.file_tools import read_file_tool
@@ -41,7 +42,11 @@ def test_catalog_is_the_single_snapshot_for_schema_and_execution():
     write = _tool("write")
     catalog = CapabilityCatalog([read, write])
     snapshot = catalog.snapshot(AgentProfile("read-only", frozenset({"read"})))
-    executor = ToolExecutor({"read": read, "write": write}, capability_snapshot=snapshot)
+    executor = ToolExecutor(
+        {"read": read, "write": write},
+        assemble_tool_capabilities(None, None, None),
+        capability_snapshot=snapshot,
+    )
 
     assert executor.execute([ToolCall("read", {}, "one")])[0].result.ok
     denied = executor.execute([ToolCall("write", {}, "two")])
@@ -146,7 +151,7 @@ def test_agent_mcp_artifact_survives_checkpoint_and_is_readable(tmp_path):
                 yield response(content="Report delivered")
 
     session = Session.create("report", tmp_path, session_id="artifact-e2e")
-    result = Agent(
+    result = create_agent(
         Model(),
         [Tool(
             "mcp_report", "fake MCP", {"type": "object"}, fake_mcp,
@@ -215,7 +220,9 @@ def test_file_tool_uses_injected_execution_backend(tmp_path):
     session = Session.create("test", tmp_path)
     session.begin_user_turn("test")
     outcome = ToolExecutor(
-        {"read_file": read_file_tool}, session=session, execution_backend=backend
+        {"read_file": read_file_tool},
+        assemble_tool_capabilities(session, None, None, execution_backend=backend),
+        session=session,
     ).execute([ToolCall("read_file", {"file": "report.txt"}, "call")])[0]
     assert outcome.result.ok
     assert backend.reads == [("bytes", "report.txt"), ("text", "report.txt")]
@@ -242,7 +249,11 @@ def test_executor_only_injects_the_capabilities_declared_by_each_tool(tmp_path):
     )
     session = Session.create("test", tmp_path)
     session.begin_user_turn("test")
-    outcomes = ToolExecutor({"planning": planning, "file_access": file_access}, session=session).execute([
+    outcomes = ToolExecutor(
+        {"planning": planning, "file_access": file_access},
+        assemble_tool_capabilities(session, None, None),
+        session=session,
+    ).execute([
         ToolCall("planning", {"kind": "planning"}, "plan"),
         ToolCall("file_access", {"kind": "file"}, "file"),
     ])
@@ -309,7 +320,7 @@ def test_profile_limits_are_enforced_by_agent_not_only_descriptive(tmp_path):
         "ask", "ask", {"type": "object"}, lambda _args, _rt: ToolResult.success(),
         requires_user_interaction=True,
     )
-    agent = Agent(
+    agent = create_agent(
         _tool_llm("done"), [ask], Session.create("goal", tmp_path), SilentRenderer(), profile=profile
     )
     assert "ask" not in agent.executor.tool_registry
@@ -328,7 +339,7 @@ def test_profile_filters_the_system_catalog_as_well_as_execution(tmp_path):
         allow_interaction=False,
     )
     session = Session.create("goal", tmp_path)
-    Agent(_tool_llm("done"), [public, private], session, SilentRenderer(), profile=profile)
+    create_agent(_tool_llm("done"), [public, private], session, SilentRenderer(), profile=profile)
     prompt = session.message_records[0].message["content"]
     assert "public" in prompt
     assert "private_interaction" not in prompt

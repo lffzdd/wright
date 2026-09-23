@@ -19,6 +19,7 @@ from ..permission import (
     append_allow_rule,
     load_permission_settings,
 )
+from ..tool_capabilities import assemble_tool_capabilities
 from ..tools.base import Tool, ToolCall, ToolResult, tool_runtime_for_session
 from ..tools.command_tools import execute_command_tool
 from ..tools.file_tools import grep_tool, write_file_tool
@@ -83,7 +84,7 @@ def test_approval_rewrites_are_prepared_before_any_execution(tmp_path):
     resolver = PermissionResolver(approval_handler=approve)
     outcomes = ToolExecutor(
         {tool.name: tool},
-        workspace_dir=tmp_path,
+        assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         permission_resolver=resolver,
     ).execute([
         ToolCall(tool.name, {"mode": "read", "token": "one"}, "c1"),
@@ -123,7 +124,7 @@ def test_final_safe_calls_overlap_after_sequential_preparation(tmp_path):
     tool = _mode_tool(call)
     outcomes = ToolExecutor(
         {tool.name: tool},
-        workspace_dir=tmp_path,
+        assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         permission_resolver=PermissionResolver(approval_handler=approve),
     ).execute([
         ToolCall(tool.name, {"mode": "read", "token": "one"}, "c1"),
@@ -150,7 +151,7 @@ def test_denied_rewrite_does_not_commit_or_execute(tmp_path):
     )
     outcome = ToolExecutor(
         {tool.name: tool},
-        workspace_dir=tmp_path,
+        assemble_tool_capabilities(session, None, None, workspace_dir=tmp_path),
         session=session,
         permission_resolver=resolver,
         authorization_commit=lambda _change: called.append("commit"),
@@ -305,11 +306,15 @@ def test_one_executor_refreshes_scope_for_shell_and_child(tmp_path):
             execute_command_tool.name: execute_command_tool,
             spawn.name: spawn,
         },
+        assemble_tool_capabilities(
+            parent, None, None,
+            workspace_dir=workspace,
+            cwd_provider=parent.get_cwd,
+            authorization_commit_factory=authorization_commit_factory,
+        ),
         session=parent,
-        workspace_dir=workspace,
-        cwd_provider=parent.get_cwd,
         permission_resolver=resolver,
-        authorization_commit_factory=authorization_commit_factory,
+        authorization_commit=authorization_commit_factory(parent),
     )
     outcomes = executor.execute([
         ToolCall(
@@ -394,11 +399,15 @@ def test_agent_child_persistent_directory_uses_child_checkpoint(tmp_path, monkey
     )
     outcome = ToolExecutor(
         {spawn.name: spawn},
+        assemble_tool_capabilities(
+            parent, None, None,
+            workspace_dir=workspace,
+            cwd_provider=parent.get_cwd,
+            authorization_commit_factory=authorization_commit_factory,
+        ),
         session=parent,
-        workspace_dir=workspace,
-        cwd_provider=parent.get_cwd,
         permission_resolver=resolver,
-        authorization_commit_factory=authorization_commit_factory,
+        authorization_commit=authorization_commit_factory(parent),
     ).execute([ToolCall(spawn.name, {"task": "write outside"}, "spawn")])[0]
 
     assert outcome.result.ok
@@ -424,8 +433,8 @@ def test_persistent_approval_without_commit_callback_fails_closed(tmp_path):
     )
     outcome = ToolExecutor(
         {write_file_tool.name: write_file_tool},
+        assemble_tool_capabilities(session, None, None, workspace_dir=tmp_path),
         session=session,
-        workspace_dir=tmp_path,
         permission_resolver=resolver,
     ).execute([
         ToolCall(
@@ -455,7 +464,7 @@ def test_authorization_commit_failure_prevents_tool_execution(tmp_path):
     )
     outcome = ToolExecutor(
         {write_file_tool.name: write_file_tool},
-        workspace_dir=tmp_path,
+        assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         permission_resolver=resolver,
         authorization_commit=failing_commit,
     ).execute([
@@ -484,8 +493,10 @@ def test_rg_search_literals_globs_and_explicit_hidden_file(tmp_path):
     hidden.write_text("needle\n", encoding="utf-8")
 
     executor = ToolExecutor(
-        {grep_tool.name: grep_tool}, workspace_dir=tmp_path,
-        cwd_provider=lambda: tmp_path,
+        {grep_tool.name: grep_tool},
+        assemble_tool_capabilities(
+            None, None, None, workspace_dir=tmp_path, cwd_provider=lambda: tmp_path,
+        ),
     )
     literal = executor.execute([
         ToolCall(grep_tool.name, {
@@ -536,8 +547,13 @@ def test_rg_candidates_are_authorized_before_content_search(tmp_path, monkeypatc
 
     backend = RecordingBackend()
     result = ToolExecutor(
-        {grep_tool.name: grep_tool}, workspace_dir=tmp_path,
-        cwd_provider=lambda: tmp_path, execution_backend=backend,
+        {grep_tool.name: grep_tool},
+        assemble_tool_capabilities(
+            None, None, None,
+            workspace_dir=tmp_path,
+            cwd_provider=lambda: tmp_path,
+            execution_backend=backend,
+        ),
     ).execute([ToolCall(grep_tool.name, {"pattern": "needle"}, "c1")])[0].result
 
     assert result.ok

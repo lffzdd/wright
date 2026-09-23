@@ -20,9 +20,12 @@ from ..protocol import TurnAbort, encode_tools, parse_turn
 from ..renderer import Renderer
 from ..skills.prompt import catalog_reminder
 from ..skills.registry import SkillRegistry
+from ..tool_capabilities import CapabilityAssembly, assemble_tool_capabilities
 from ..tools.base import Tool, ToolResult
 from ..tools.tool_search import MAX_ACTIVE_DEFERRED_TOOLS, make_tool_search_tool
+from ..ui_events import EventPublisher, RendererEventSubscriber, SessionEvents
 from ..util import build_tool_results_messages, estimate_message_tokens
+from .cancellation import CancellationToken
 from .context import ContextBudgetExceeded, ContextBuilder, ContextCompactor
 from .executor import ToolExecutor
 from .verifier import Verifier
@@ -31,6 +34,238 @@ if TYPE_CHECKING:
     from ..domain.checkpoint import SessionCheckpointStore
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class PreparedTools:
+    """The model-facing tool list for one agent, built once before it runs."""
+
+    profile: AgentProfile
+    capabilities: CapabilitySnapshot
+    tools: list[Tool]
+    schemas: list[dict]
+    names: dict[str, str]
+
+
+@dataclass
+class AgentComponents:
+    """Per-Agent collaborators assembled outside the Agent behavior object."""
+
+    cancellation: CancellationToken
+    context_builder: ContextBuilder
+    executor: ToolExecutor
+
+
+def assemble_agent_components(
+    *,
+    session_state: Session,
+    events: SessionEvents,
+    prepared: PreparedTools,
+    assembly: CapabilityAssembly,
+    tool_timeout: float = 30,
+    context_watermark: float = 0.75,
+    keep_recent_tool_results: int = 3,
+    permission_resolver: PermissionResolver | None = None,
+    cancellation_check: Callable[[], bool] | None = None,
+    allow_background_tasks: bool = True,
+    on_shell_task_done: Callable[[str], None] | None = None,
+    lifecycle=None,
+    execution_journal=None,
+    authorization_commit: Callable[[AuthorizationChange], None] | None = None,
+) -> AgentComponents:
+    """Build the collaborators bound to one Agent and one execution scope."""
+    cancellation = CancellationToken(cancellation_check)
+    compactor = ContextCompactor(
+        on_compact=events.on_context_compact,
+        context_watermark=context_watermark,
+        keep_recent_tool_results=keep_recent_tool_results,
+    )
+    context_builder = ContextBuilder(compactor)
+    executor = ToolExecutor(
+        {tool.name: tool for tool in prepared.tools},
+        assembly,
+        tool_timeout=tool_timeout,
+        on_command_output=events.on_command_output,
+        on_tool_output=events.on_tool_output,
+        on_progress=events.on_agent_event,
+        on_shell_task_done=on_shell_task_done,
+        permission_resolver=permission_resolver,
+        session=session_state,
+        cancellation_check=cancellation.is_cancelled,
+        allow_background_tasks=(
+            allow_background_tasks and prepared.profile.allow_background_tasks
+        ),
+        lifecycle=lifecycle,
+        capability_snapshot=prepared.capabilities,
+        execution_journal=execution_journal,
+        authorization_commit=authorization_commit,
+    )
+    return AgentComponents(cancellation, context_builder, executor)
+
+
+def prepare_model_tools(
+    session: Session,
+    tools: list[Tool],
+    profile: AgentProfile | None = None,
+) -> PreparedTools:
+    """Filter tools for this profile and attach the deferred-tool catalog."""
+    catalog = CapabilityCatalog(tools)
+    resolved = profile or AgentProfile(
+        "root",
+        catalog.names,
+        allow_interaction=True,
+        allow_background_tasks=True,
+        allow_delegation=True,
+    )
+    capabilities = catalog.snapshot(resolved)
+    runtime_tools = [
+        tool for tool in capabilities.tools
+        if (resolved.allow_interaction or not tool.requires_user_interaction)
+        and (resolved.allow_delegation or tool.name not in {"spawn_agent", "get_agent_tree"})
+    ]
+    deferred_names = {
+        tool.name
+        for tool in runtime_tools
+        if tool.expose_to_model and tool.defer_to_model
+    }
+    restored_active = [
+        name
+        for name in session.active_deferred_tools
+        if name in deferred_names
+    ][-MAX_ACTIVE_DEFERRED_TOOLS:]
+    session.active_deferred_tools[:] = restored_active
+    if any(tool.expose_to_model and tool.defer_to_model for tool in runtime_tools):
+        runtime_tools.append(make_tool_search_tool(runtime_tools, session.active_deferred_tools))
+    capabilities = CapabilitySnapshot(resolved, tuple(runtime_tools))
+    schemas, names = encode_tools(
+        runtime_tools, active_deferred=set(session.active_deferred_tools)
+    )
+    return PreparedTools(resolved, capabilities, runtime_tools, schemas, names)
+
+
+def ensure_system_prompt(
+    session: Session,
+    prepared: PreparedTools,
+    memory: MemoryManager | None,
+) -> None:
+    """Write the system prompt once, when the session has no messages yet."""
+    if session.message_records:
+        return
+    memory_section = memory.instructions() if memory else ""
+    prompt_tools = [tool for tool in prepared.tools if tool.name != "tool_search"]
+    session.append_message({
+        "role": "system",
+        "content": build_system_prompt(prompt_tools, memory_section=memory_section),
+    })
+
+
+def events_from_renderer(session: Session, renderer: Renderer | None) -> SessionEvents:
+    """Test and headless adapter: project the event stream onto a renderer."""
+    publisher = EventPublisher(project_id="local", session_id=session.session_id)
+    if renderer is not None:
+        publisher.add_listener(RendererEventSubscriber(renderer))
+    return SessionEvents(publisher)
+
+
+def bind_root_checkpoint(agent: "Agent") -> None:
+    """Persist the root control plane. Child tasks checkpoint through their parent."""
+    if agent.checkpoint_store is None or agent.session_state.agent_task_id is not None:
+        return
+    agent.session_state.control_plane.set_on_change(agent._checkpoint)
+
+
+def create_agent(
+    llm: LLMClient,
+    tools: list[Tool],
+    session_state: Session,
+    renderer: Renderer | None = None,
+    tool_timeout: float = 30,
+    context_watermark: float = 0.75,
+    keep_recent_tool_results: int = 3,
+    max_consecutive_invalid: int = 3,
+    permission_resolver: PermissionResolver | None = None,
+    cancellation_check: Callable[[], bool] | None = None,
+    memory: MemoryManager | None = None,
+    verifier: Verifier | None = None,
+    max_verification_retries: int = 3,
+    checkpoint_store: "SessionCheckpointStore | None" = None,
+    usage_observer: Callable[[UsageRecord], None] | None = None,
+    allow_background_tasks: bool = True,
+    on_shell_task_done: Callable[[str], None] | None = None,
+    lifecycle=None,
+    skills: SkillRegistry | None = None,
+    services: RuntimeServices | None = None,
+    runtime_resources: RuntimeResources | None = None,
+    profile: AgentProfile | None = None,
+    execution_journal=None,
+    execution_journal_factory=None,
+    on_run_started: Callable[[str], None] | None = None,
+    authorization_commit: Callable[[AuthorizationChange], None] | None = None,
+    authorization_commit_factory=None,
+    assembly: CapabilityAssembly | None = None,
+    events: SessionEvents | None = None,
+) -> "Agent":
+    """Prepare tools, the system prompt, and events, then build an Agent.
+
+    Tests and scripts use this. Production hosts call the same steps themselves.
+    """
+    if events is None:
+        events = events_from_renderer(session_state, renderer)
+    if assembly is None:
+        resources = runtime_resources or RuntimeResources.for_session(session_state.session_id)
+        assembly = assemble_tool_capabilities(
+            session_state,
+            services,
+            resources,
+            execution_journal_factory=execution_journal_factory,
+            authorization_commit_factory=authorization_commit_factory,
+        )
+        runtime_resources = assembly.runtime_resources or resources
+    if authorization_commit is None and authorization_commit_factory is not None:
+        authorization_commit = authorization_commit_factory(session_state)
+    prepared = prepare_model_tools(session_state, tools, profile)
+    ensure_system_prompt(session_state, prepared, memory)
+    components = assemble_agent_components(
+        session_state=session_state,
+        events=events,
+        prepared=prepared,
+        assembly=assembly,
+        tool_timeout=tool_timeout,
+        context_watermark=context_watermark,
+        keep_recent_tool_results=keep_recent_tool_results,
+        permission_resolver=permission_resolver,
+        cancellation_check=cancellation_check,
+        allow_background_tasks=allow_background_tasks,
+        on_shell_task_done=on_shell_task_done,
+        lifecycle=lifecycle,
+        execution_journal=execution_journal,
+        authorization_commit=authorization_commit,
+    )
+    agent = Agent(
+        llm,
+        session_state,
+        events,
+        prepared,
+        assembly,
+        components=components,
+        max_consecutive_invalid=max_consecutive_invalid,
+        memory=memory,
+        verifier=verifier,
+        max_verification_retries=max_verification_retries,
+        checkpoint_store=checkpoint_store,
+        usage_observer=usage_observer,
+        lifecycle=lifecycle,
+        skills=skills,
+        services=services,
+        runtime_resources=runtime_resources,
+        execution_journal=execution_journal,
+        execution_journal_factory=execution_journal_factory,
+        on_run_started=on_run_started,
+        authorization_commit=authorization_commit,
+        authorization_commit_factory=authorization_commit_factory,
+    )
+    bind_root_checkpoint(agent)
+    return agent
 
 
 @dataclass
@@ -48,27 +283,22 @@ class Agent:
     def __init__(
         self,
         llm: LLMClient,
-        tools: list[Tool],
         session_state: Session,
-        renderer: Renderer,
-        tool_timeout: float = 30,
-        context_watermark: float = 0.75,
-        keep_recent_tool_results: int = 3,
+        events: SessionEvents,
+        prepared: PreparedTools,
+        assembly: CapabilityAssembly,
+        *,
+        components: AgentComponents,
         max_consecutive_invalid: int = 3,
-        permission_resolver: PermissionResolver | None = None,
-        cancellation_check: Callable[[], bool] | None = None,
         memory: MemoryManager | None = None,
         verifier: Verifier | None = None,
         max_verification_retries: int = 3,
         checkpoint_store: "SessionCheckpointStore | None" = None,
         usage_observer: Callable[[UsageRecord], None] | None = None,
-        allow_background_tasks: bool = True,
-        on_shell_task_done: Callable[[str], None] | None = None,
         lifecycle=None,
         skills: SkillRegistry | None = None,
         services: RuntimeServices | None = None,
         runtime_resources: RuntimeResources | None = None,
-        profile: AgentProfile | None = None,
         execution_journal=None,
         execution_journal_factory=None,
         on_run_started: Callable[[str], None] | None = None,
@@ -77,15 +307,17 @@ class Agent:
     ):
         self.llm = llm
         self.session_state = session_state
-        self.renderer = renderer
+        self.ui = events
         self.services = services
-        self.runtime_resources = runtime_resources or RuntimeResources.for_session(
-            session_state.session_id
-        )
+        self._execution_journal_factory = execution_journal_factory
+        self._authorization_commit_factory = authorization_commit_factory
+        self._authorization_commit = authorization_commit
+        self.runtime_resources = assembly.runtime_resources or runtime_resources
+        if self.runtime_resources is None:
+            self.runtime_resources = RuntimeResources.for_session(session_state.session_id)
         # 长期记忆协作者:只主 Agent 注入,子 Agent 传 None(保持纯净隔离上下文)。
         # Agent 只在主循环里喊它三声:构造时取指令、每轮注入召回、收口后提取落盘。
         self.memory = memory
-        # Skill 目录只写入 transcript 一次；正文走 load_skill 的 tool_result。
         self.skills = skills
         self.verifier = verifier
         self.max_verification_retries = max_verification_retries
@@ -93,114 +325,25 @@ class Agent:
         self.last_checkpoint_error: Exception | None = None
         self._usage_observer = usage_observer
         self._execution_journal = execution_journal
-        self._execution_journal_factory = execution_journal_factory
         if self.memory is not None:
             self.memory.usage_observer = self._record_auxiliary_usage
         self.lifecycle = lifecycle
         self._memory_finalized_turns: set[str] = set()
         if max_verification_retries < 1:
             raise ValueError("max_verification_retries 必须 >= 1")
-        # 权限裁决器可由装配层注入(承载规则/模式配置),并沿主→子 Agent 共用同一份;
-        # 不传则 ToolExecutor 自建一个无 handler 的默认 resolver(ask 一律 fail-closed)。
-        self._permission_resolver = permission_resolver
-        self._cancellation_check = cancellation_check
         self.on_run_started = on_run_started
-        self._active_run_cancellation_check: Callable[[], bool] | None = None
-        # 连续 N 轮响应不完整或工具调用无效就止损,
-        # 与其烧光 max_steps,不如如实标 failed 退出。中间成功一次即清零。
         self.max_consecutive_invalid = max_consecutive_invalid
+        self.profile = prepared.profile
+        self.capabilities = prepared.capabilities
+        self._active_deferred_tools = session_state.active_deferred_tools
+        self._schema_tools = prepared.tools
+        self.tool_schemas = prepared.schemas
+        self._tool_names = prepared.names
 
-        # 上下文压缩独立成 collaborator:Agent 只负责在主循环里喊它一声 +
-        # 折叠后从 running total 扣减省下的 token,折叠逻辑本身归 ContextCompactor。
-        self.compactor = ContextCompactor(
-            renderer,
-            context_watermark=context_watermark,
-            keep_recent_tool_results=keep_recent_tool_results,
-        )
-        self.context_builder = ContextBuilder(self.compactor)
-
-        # Schemas are request-local: parent and child agents may share one client.
-        # Specialized capabilities are activated on demand by tool_search.
-        catalog = CapabilityCatalog(tools)
-        self.profile = profile or AgentProfile("root", catalog.names, allow_interaction=True, allow_background_tasks=True, allow_delegation=True)
-        self.capabilities = catalog.snapshot(self.profile)
-        runtime_tools = [
-            tool for tool in self.capabilities.tools
-            if (self.profile.allow_interaction or not tool.requires_user_interaction)
-            and (self.profile.allow_delegation or tool.name not in {"spawn_agent", "get_agent_tree"})
-        ]
-        deferred_names = {
-            tool.name
-            for tool in runtime_tools
-            if tool.expose_to_model and tool.defer_to_model
-        }
-        restored_active = [
-            name
-            for name in self.session_state.active_deferred_tools
-            if name in deferred_names
-        ][-MAX_ACTIVE_DEFERRED_TOOLS:]
-        self.session_state.active_deferred_tools[:] = restored_active
-        self._active_deferred_tools = self.session_state.active_deferred_tools
-        if any(tool.expose_to_model and tool.defer_to_model for tool in runtime_tools):
-            runtime_tools.append(
-                make_tool_search_tool(runtime_tools, self._active_deferred_tools)
-            )
-        # tool_search is an internal catalog projection, never a route to a
-        # capability absent from the immutable profile snapshot.
-        self.capabilities = CapabilitySnapshot(self.profile, tuple(runtime_tools))
-        self._schema_tools = runtime_tools
-        self.tool_schemas, self._tool_names = encode_tools(
-            runtime_tools, active_deferred=set(self._active_deferred_tools)
-        )
-        if not self.session_state.message_records:
-            memory_section = self.memory.instructions() if self.memory else ""
-            # tool_search is an internal catalog mechanism.  The prompt
-            # describes when to use it, but does not treat it as a product
-            # capability alongside the Profile-authorized tools.
-            prompt_tools = [
-                tool for tool in runtime_tools if tool.name != "tool_search"
-            ]
-            self.session_state.append_message({
-                "role": "system",
-                "content": build_system_prompt(
-                    prompt_tools, memory_section=memory_section
-                ),
-            })
-
-        # 工具调度执行独立成 collaborator:Agent 只在主循环里把这一轮的 tool_calls
-        # 交给它,查表/钳超时/并发分流/异常兜底都归 ToolExecutor。
-        # registry 存整个 Tool:执行要 call,调度要 concurrency 等元数据。
-        self.executor = ToolExecutor(
-            {tool.name: tool for tool in runtime_tools},
-            tool_timeout=tool_timeout,
-            on_command_output=renderer.on_command_output,
-            on_tool_output=renderer.on_tool_output,
-            on_progress=renderer.on_agent_event,
-            on_shell_task_done=on_shell_task_done,
-            permission_resolver=permission_resolver,
-            session=session_state,
-            # Use the composed check so an autonomous durable run can add its
-            # own cancellation signal without rebuilding the executor.
-            cancellation_check=self._is_cancelled,
-            allow_background_tasks=(
-                allow_background_tasks and self.profile.allow_background_tasks
-            ),
-            lifecycle=lifecycle,
-            services=services,
-            runtime_resources=self.runtime_resources,
-            capability_snapshot=self.capabilities,
-            execution_journal=execution_journal,
-            execution_journal_factory=execution_journal_factory,
-            authorization_commit=authorization_commit,
-            authorization_commit_factory=authorization_commit_factory,
-        )
-        if (
-            checkpoint_store is not None
-            and self.session_state.agent_task_id is None
-        ):
-            # 子任务在工具调用内部运行；控制面状态改变时也要主动落 root
-            # checkpoint，否则进程崩溃会只留下一个看不见的 pending spawn。
-            self.session_state.control_plane.set_on_change(self._checkpoint)
+        self.cancellation = components.cancellation
+        self.context_builder = components.context_builder
+        self.compactor = self.context_builder.compactor
+        self.executor = components.executor
 
     @property
     def context_limit(self) -> int | None:
@@ -305,7 +448,7 @@ class Agent:
         self._ensure_skill_catalog()
         response = ContentDone("", finish_reason="incomplete")
         usage_record: UsageRecord | None = None
-        self.renderer.on_turn_begin()
+        self.ui.on_turn_begin()
 
         view = self.context_builder.build(
             self.session_state.message_records,
@@ -362,9 +505,9 @@ class Agent:
             )
             for event in self.llm(request, tools=self.tool_schemas):
                 if isinstance(event, ReasoningDelta):
-                    self.renderer.on_reasoning_delta(event.piece)
+                    self.ui.on_reasoning_delta(event.piece)
                 elif isinstance(event, ContentDelta):
-                    self.renderer.on_content_delta(event.piece)
+                    self.ui.on_content_delta(event.piece)
                 elif isinstance(event, ContentDone):
                     response = event
                 elif isinstance(event, UsageEvent):
@@ -379,7 +522,7 @@ class Agent:
             })
             raise
 
-        self.renderer.on_usage(
+        self.ui.on_usage(
             usage_record.prompt_tokens if usage_record else None,
             usage_record.completion_tokens if usage_record else None,
             usage_record.total_tokens if usage_record else None,
@@ -445,7 +588,7 @@ class Agent:
         if self._has_live_agent_tasks(self.session_state.agent_root_turn_id):
             return
         usage = self.session_state.task_usage()
-        self.renderer.on_usage_summary(
+        self.ui.on_usage_summary(
             usage.prompt_tokens, usage.completion_tokens, usage.total_tokens,
         )
 
@@ -466,14 +609,28 @@ class Agent:
                 # 计量旁路失败不能破坏当前消息账本；控制面仍可用 step 上限止损。
                 logger.debug("usage observer failed", exc_info=True)
 
-    def _is_cancelled(self) -> bool:
-        return bool(
-            (self._cancellation_check and self._cancellation_check())
-            or (
-                self._active_run_cancellation_check
-                and self._active_run_cancellation_check()
+    def _bind_executor_run(self) -> None:
+        """Reassemble tool capabilities after the active Run is known."""
+        if self._authorization_commit_factory is not None:
+            self._authorization_commit = self._authorization_commit_factory(
+                self.session_state
             )
+        assembly = assemble_tool_capabilities(
+            self.session_state,
+            self.services,
+            self.runtime_resources,
+            workspace_dir=self.session_state.workspace_dir,
+            cwd_provider=self.session_state.get_cwd,
+            execution_backend=self.executor.backend,
+            execution_journal_factory=self._execution_journal_factory,
+            authorization_commit_factory=self._authorization_commit_factory,
         )
+        self.executor.bind_run(
+            assembly, authorization_commit=self._authorization_commit
+        )
+
+    def _is_cancelled(self) -> bool:
+        return self.cancellation.is_cancelled()
 
     def _run_with_cancellation(
         self,
@@ -482,12 +639,8 @@ class Agent:
         cancellation_check: Callable[[], bool] | None,
         record_memory: bool,
     ) -> str | None:
-        previous = self._active_run_cancellation_check
-        self._active_run_cancellation_check = cancellation_check
-        try:
+        with self.cancellation.bind_run(cancellation_check):
             return self._run_loop(max_steps, record_memory=record_memory)
-        finally:
-            self._active_run_cancellation_check = previous
 
     def _stop_if_cancelled(self, *, record_memory: bool = True) -> bool:
         if not self._is_cancelled():
@@ -532,7 +685,7 @@ class Agent:
             raise ValueError("a user message needs text or an attachment")
         turn_goal = prompt or f"[{len(records)} attached image(s)]"
         self.session_state.begin_user_turn(turn_goal)
-        self.executor.bind_run(self.session_state)
+        self._bind_executor_run()
         active_run = self.session_state.active_run()
         if active_run is not None:
             self.runtime_resources.begin_response(active_run.run_id)
@@ -555,7 +708,7 @@ class Agent:
             )
             if prompt_decision is not None and prompt_decision.decision == "deny":
                 self.session_state.mark_failed()
-                self.renderer.on_final(
+                self.ui.on_final(
                     f"用户请求被 lifecycle hook 拒绝：{prompt_decision.reason}"
                 )
                 self._checkpoint()
@@ -648,7 +801,7 @@ class Agent:
             active_run = self.session_state.begin_continuation_run(
                 str(event.get("type") or "runtime_event"), source="runtime_event"
             )
-        self.executor.bind_run(self.session_state)
+        self._bind_executor_run()
         self.runtime_resources.begin_response(active_run.run_id)
         self._emit_lifecycle("runtime_event", event)
         self.session_state.append_message(
@@ -714,7 +867,7 @@ class Agent:
                 f"{self.session_state.session_id}:"
                 f"{self.session_state.active_turn_start_message_index}"
             )
-        self.executor.bind_run(self.session_state)
+        self._bind_executor_run()
         self._ensure_skill_catalog()
         self._checkpoint()
         self._emit_agent_start(self.session_state.current_goal(), resumed=True)
@@ -734,7 +887,7 @@ class Agent:
             # Persistence is a reliability sidecar: surface the failure for
             # callers/tests, but do not destroy an otherwise valid agent turn.
             self.last_checkpoint_error = exc
-            self.renderer.on_checkpoint_error(f"{type(exc).__name__}: {exc}")
+            self.ui.on_checkpoint_error(f"{type(exc).__name__}: {exc}")
 
     def checkpoint(self) -> None:
         """Persist process-local orchestration fields changed outside Agent."""
@@ -775,7 +928,7 @@ class Agent:
         record_memory: bool,
     ) -> None:
         """Single exit path: render, mark, persist memory, checkpoint, emit."""
-        self.renderer.on_final(message)
+        self.ui.on_final(message)
         getattr(self.session_state, self._TERMINAL_MARKERS[status])()
         active_run = self.session_state.active_run()
         if active_run is not None:
@@ -842,7 +995,7 @@ class Agent:
             )
             if not verification.approved:
                 counters.verifier += 1
-                self.renderer.on_completion_rejected(verification.issues)
+                self.ui.on_completion_rejected(verification.issues)
                 self.session_state.append_message(
                     verification.feedback_message()
                 )
@@ -895,7 +1048,7 @@ class Agent:
             return None, "retry"
         counters.hook = 0
 
-        self.renderer.on_final(turn.final_answer)
+        self.ui.on_final(turn.final_answer)
         active_run = self.session_state.active_run()
         if active_run is not None:
             self.runtime_resources.finish_response(active_run.run_id)
@@ -974,9 +1127,9 @@ class Agent:
 
         outcomes = self.executor.execute(
             turn.tool_calls,
-            on_call=self.renderer.on_tool_call,
-            on_phase=self.renderer.on_tool_phase,
-            on_result=self.renderer.on_tool_result,
+            on_call=self.ui.on_tool_call,
+            on_phase=self.ui.on_tool_phase,
+            on_result=self.ui.on_tool_result,
         )
 
         for outcome in outcomes:

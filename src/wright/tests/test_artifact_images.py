@@ -9,7 +9,7 @@ import pytest
 from wright.artifacts import ArtifactStore
 from wright.domain.checkpoint import SessionCheckpointStore
 from wright.domain.session import Session
-from wright.engine.agent import Agent
+from wright.engine.agent import create_agent
 from wright.permission import ToolAccess
 from wright.renderer import SilentRenderer
 from wright.tools.base import Tool, ToolResult
@@ -98,7 +98,7 @@ def test_agent_tool_images_reach_provider_and_survive_checkpoint(tmp_path, trans
     llm.artifact_store = store
     try:
         session = Session.create("report", tmp_path)
-        agent = Agent(llm, [
+        agent = create_agent(llm, [
             Tool(
                 "report", "image report", {"type": "object"}, report,
                 access_descriptor=lambda args: ToolAccess.internal_read(

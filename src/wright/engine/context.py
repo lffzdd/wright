@@ -8,7 +8,7 @@ cannot rewrite history, checkpoint data, UI transcript, or verification input.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
@@ -56,11 +56,14 @@ class ContextCompactor:
 
     def __init__(
         self,
-        renderer: Renderer,
+        renderer: Renderer | None = None,
         context_watermark: float = 0.75,
         keep_recent_tool_results: int = 3,
+        *,
+        on_compact: Callable[..., None] | None = None,
     ) -> None:
         self.renderer = renderer
+        self.on_compact = on_compact
         self.context_watermark = context_watermark
         self.keep_recent_tool_results = keep_recent_tool_results
 
@@ -120,9 +123,15 @@ class ContextCompactor:
             if entry.record_id is not None:
                 folded.append(entry.record_id)
 
-        self.renderer.on_context_compact(
-            len(folded), estimated_tokens, context_limit, self.context_watermark
-        )
+        folded_count = len(folded)
+        if self.on_compact is not None:
+            self.on_compact(
+                folded_count, estimated_tokens, context_limit, self.context_watermark
+            )
+        elif self.renderer is not None:
+            self.renderer.on_context_compact(
+                folded_count, estimated_tokens, context_limit, self.context_watermark
+            )
         return tuple(copied), tuple(folded)
 
     @staticmethod

@@ -5,7 +5,7 @@ from rich.console import Console
 
 from wright.domain.checkpoint import SessionCheckpointStore
 from wright.domain.session import Session, UsageRecord
-from wright.engine.agent import Agent
+from wright.engine.agent import create_agent
 from wright.engine.verifier import Verifier
 from wright.events import UsageEvent
 from wright.memory.llm_util import metered_events
@@ -41,7 +41,7 @@ def test_usage_after_tool_results_and_verifier(tmp_path):
     session = Session.create('test', tmp_path)
     renderer = Capture()
     tool = Tool('read', 'read', {'type': 'object', 'properties': {}}, lambda args, runtime: ToolResult.success('x' * 400))
-    agent = Agent(LLM(), [tool], session, renderer, verifier=Verifier())
+    agent = create_agent(LLM(), [tool], session, renderer, verifier=Verifier())
     assert agent.run('test') == 'done'
     assert len(renderer.requests) == 2  # Intermediate snapshots do not print twice.
     assert renderer.summaries == [(200, 40, 240)]
@@ -221,7 +221,7 @@ def test_runtime_event_summary_waits_for_memory_finalization(tmp_path):
     session = Session.create('task', tmp_path)
     session.begin_user_turn('task')
     renderer = Capture()
-    agent = Agent(LLM(), [], session, renderer, memory=Memory())
+    agent = create_agent(LLM(), [], session, renderer, memory=Memory())
     assert agent.run_runtime_event({
         'type': 'agent_completed',
         'task': {'root_turn_id': session.agent_root_turn_id},

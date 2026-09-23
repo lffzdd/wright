@@ -5,12 +5,13 @@ from wright.tests.responses import event, response
 from ...domain.checkpoint import SessionCheckpointStore
 from ...domain.coordination import AgentControlConfig, AgentControlPlane
 from ...domain.session import Session
-from ...engine.agent import Agent
+from ...engine.agent import create_agent
 from ...engine.executor import ToolExecutor
 from ...engine.subagent import build_agent_tools, make_spawn_agent_tool
 from ...events import UsageEvent
 from ...permission import PermissionPolicy, PermissionResolver, PermissionSettings
 from ...renderer import SilentRenderer
+from ...tool_capabilities import assemble_tool_capabilities
 from ...tools.base import ToolCall, tool_runtime_for_session
 from ...tools.command_tools import execute_command
 
@@ -50,7 +51,7 @@ def test_nested_agents_form_one_shared_task_tree(tmp_path):
         permission_resolver=permission_resolver,
     )
 
-    result = Agent(
+    result = create_agent(
         llm, tools, session, SilentRenderer(),
         permission_resolver=permission_resolver,
     ).run("root task")
@@ -121,6 +122,7 @@ def test_executor_deadline_propagates_to_child_control_state(tmp_path):
     )
     executor = ToolExecutor(
         {"spawn_agent": spawn},
+        assemble_tool_capabilities(session, None, None),
         tool_timeout=0.01,
         session=session,
         permission_policy=PermissionPolicy(PermissionSettings(mode="bypass")),
@@ -142,7 +144,7 @@ def test_control_plane_changes_are_checkpointed_and_live_tasks_recover_unknown(t
     session = Session.create("root", workspace)
     session.begin_user_turn("root")
     store = SessionCheckpointStore(tmp_path / "checkpoints")
-    Agent(
+    create_agent(
         ScriptLLM([_final("unused")]),
         [],
         session,

@@ -16,10 +16,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from ..app.services import RuntimeServices
 from ..capabilities import CapabilitySnapshot
 from ..domain.session import ToolExecutionTerminal
-from ..execution import AuthorizedExecution, ExecutionPath
+from ..execution import AuthorizedExecution, ExecutionBackend, ExecutionPath
 from ..logger import get_logger
 from ..permission import (
     AccessScope,
@@ -30,8 +29,7 @@ from ..permission import (
     PermissionResolution,
     PermissionResolver,
 )
-from ..processes import RuntimeResources
-from ..tool_capabilities import assemble_tool_capabilities
+from ..tool_capabilities import CapabilityAssembly
 from ..tools.base import (
     Tool,
     ToolCall,
@@ -79,6 +77,7 @@ class ToolExecutor:
     def __init__(
         self,
         tool_registry: dict[str, Tool],
+        assembly: CapabilityAssembly,
         tool_timeout: float = 30,
         on_command_output: Callable[[str], None] | None = None,
         on_tool_output: Callable[[str, str], None] | None = None,
@@ -87,66 +86,34 @@ class ToolExecutor:
         permission_policy: PermissionPolicy | None = None,
         permission_approval_handler: PermissionApprovalHandler | None = None,
         permission_resolver: PermissionResolver | None = None,
-        workspace_dir: Path | None = None,
-        cwd_provider: Callable[[], Path] | None = None,
         session=None,
         cancellation_check: Callable[[], bool] | None = None,
         allow_background_tasks: bool = True,
         lifecycle=None,
-        services: RuntimeServices | None = None,
-        runtime_resources: RuntimeResources | None = None,
         capability_snapshot: CapabilitySnapshot | None = None,
         execution_journal=None,
-        execution_journal_factory=None,
-        execution_backend=None,
         authorization_commit: Callable[[AuthorizationChange], None] | None = None,
-        authorization_commit_factory=None,
     ):
         if tool_timeout <= 0:
             raise ValueError("tool_timeout 必须 > 0")
         self.tool_registry = tool_registry
         self.capability_snapshot = capability_snapshot
         self.execution_journal = execution_journal
-        self._execution_journal_factory = execution_journal_factory
         self._active_step_id = ""
         self.tool_timeout = tool_timeout
-        self._services = services
-        self._execution_backend = execution_backend
-        self._authorization_commit_factory = authorization_commit_factory
         self._authorization_commit = authorization_commit
-        if self._authorization_commit is None and (
-            self._authorization_commit_factory is not None and session is not None
-        ):
-            self._authorization_commit = self._authorization_commit_factory(session)
         self.session = session
         self.permission_resolver = permission_resolver or PermissionResolver(
             permission_policy or PermissionPolicy(),
             permission_approval_handler,
         )
-        assembly = assemble_tool_capabilities(
-            session, services, runtime_resources,
-            workspace_dir=workspace_dir, cwd_provider=cwd_provider,
-            execution_backend=execution_backend,
-            execution_journal_factory=execution_journal_factory,
-            authorization_commit_factory=authorization_commit_factory,
-        )
-        self.capabilities = assembly.capabilities
-        runtime_resources = assembly.runtime_resources
-        self._execution_backend = assembly.backend
-        self.workspace_dir = (
-            workspace_dir
-            or getattr(session, "workspace_dir", None)
-            or Path.cwd()
-        ).resolve()
-        self.cwd_provider = cwd_provider or (
-            session.get_cwd if session is not None else lambda: self.workspace_dir
-        )
+        self._apply_assembly(assembly)
         self.cancellation_check = cancellation_check
         self.on_tool_output = on_tool_output
         self.lifecycle = lifecycle
         self.runtime = ToolRuntime(
             capabilities=self.capabilities,
-            runtime_resources=runtime_resources,
+            runtime_resources=assembly.runtime_resources,
             emit_output=on_command_output,
             emit_progress=on_progress,
             notify_background_done=on_shell_task_done,
@@ -154,32 +121,32 @@ class ToolExecutor:
             lifecycle=lifecycle,
         )
 
-    def bind_run(self, session) -> None:
-        """Refresh the immutable tool capability view after a Run is selected."""
-        self.session = session
+    def bind_run(
+        self,
+        assembly: CapabilityAssembly,
+        *,
+        authorization_commit: Callable[[AuthorizationChange], None] | None = None,
+    ) -> None:
+        """Install a freshly assembled capability view for the selected Run."""
         self._active_step_id = ""
-        if self._authorization_commit_factory is not None:
-            self._authorization_commit = self._authorization_commit_factory(session)
-        assembly = assemble_tool_capabilities(
-            session,
-            self._services,
-            self.runtime.runtime_resources,
-            workspace_dir=self.workspace_dir,
-            cwd_provider=session.get_cwd,
-            execution_backend=self._execution_backend,
-            execution_journal_factory=self._execution_journal_factory,
-            authorization_commit_factory=self._authorization_commit_factory,
-        )
-        self.capabilities = assembly.capabilities
-        resources = assembly.runtime_resources
-        self._execution_backend = assembly.backend
-        self.workspace_dir = Path(getattr(session, "workspace_dir", self.workspace_dir)).resolve()
-        self.cwd_provider = session.get_cwd
+        if authorization_commit is not None:
+            self._authorization_commit = authorization_commit
+        self._apply_assembly(assembly)
         self.runtime = replace(
             self.runtime,
             capabilities=self.capabilities,
-            runtime_resources=resources,
+            runtime_resources=assembly.runtime_resources,
         )
+
+    def _apply_assembly(self, assembly: CapabilityAssembly) -> None:
+        self.capabilities = assembly.capabilities
+        self._execution_backend = assembly.backend
+        self.workspace_dir = assembly.workspace_dir
+        self.cwd_provider = assembly.cwd_provider
+
+    @property
+    def backend(self) -> ExecutionBackend:
+        return self._execution_backend
 
     def bind_step(self, step_id: str) -> None:
         """Associate the next batch of tool intents with one ModelStep."""
