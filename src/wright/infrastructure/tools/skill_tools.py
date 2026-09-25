@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
-from ...skills.registry import SkillRegistry
-from ...skills.types import SkillNotFoundError, SkillStoreError
+from ...application.skill_registry import SkillRegistry
+from ...domain.model.skills import SkillNotFoundError, SkillStoreError
 from ...domain.tool_protocol import ToolAccess, ToolResult
 from .base import Tool
 from .runtime import ToolRuntime
+
+
+def optional_skill_tools(registry: SkillRegistry) -> list[Tool]:
+    """目录为空或不存在时不把 load_skill 工具写进 system prompt。"""
+    if not registry.has_skills():
+        return []
+    return build_skill_tools(registry)
 
 
 def invoke_skill(

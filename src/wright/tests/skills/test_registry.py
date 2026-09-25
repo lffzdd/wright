@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from ...skills.registry import SkillRegistry
-from ...skills.store import write_skill
+from wright.application.skill_registry import SkillRegistry
+from wright.infrastructure.storage.skills import write_skill
 
 
 def test_registry_scan_and_cache_invalidation(tmp_path: Path):

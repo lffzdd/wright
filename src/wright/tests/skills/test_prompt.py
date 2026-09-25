@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from ...skills.prompt import catalog_reminder
-from ...skills.types import MAX_CATALOG_CHARS, SkillMeta
+from wright.application.skills_prompt import catalog_reminder
+from wright.domain.model.skills import MAX_CATALOG_CHARS, SkillMeta
 
 
 def _meta(skill_id: str, description: str) -> SkillMeta:
@@ -35,7 +35,7 @@ def test_over_budget_keeps_every_id_and_truncates_descriptions():
 
 
 def test_tight_budget_falls_back_to_names_only(monkeypatch):
-    monkeypatch.setattr("wright.skills.prompt.MAX_CATALOG_CHARS", 400)
+    monkeypatch.setattr("wright.application.skills_prompt.MAX_CATALOG_CHARS", 400)
     metas = [_meta(f"skill-{index:02d}", "说明" * 30) for index in range(20)]
     text = catalog_reminder(metas)
     assert "未列出" not in text

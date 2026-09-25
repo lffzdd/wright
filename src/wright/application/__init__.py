@@ -7,9 +7,13 @@ from .task_service import (
     ShellTaskBackend,
     TaskService,
 )
+from .skill_registry import SkillRegistry
+from .skills_prompt import catalog_reminder
 
 __all__ = [
     "AgentTaskBackend",
     "ShellTaskBackend",
+    "SkillRegistry",
     "TaskService",
+    "catalog_reminder",
 ]

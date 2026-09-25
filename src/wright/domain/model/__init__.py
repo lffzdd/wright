@@ -34,6 +34,12 @@ from .planning import (
     PlanStepStatus,
 )
 from .knowledge import KnowledgeHit, KnowledgeUnavailable
+from .skills import (
+    SkillDefinition,
+    SkillMeta,
+    SkillNotFoundError,
+    SkillStoreError,
+)
 
 __all__ = [
     "AgentControlConfig",
@@ -64,6 +70,10 @@ __all__ = [
     "Session",
     "SessionCheckpointStore",
     "SessionLifecycle",
+    "SkillDefinition",
+    "SkillMeta",
+    "SkillNotFoundError",
+    "SkillStoreError",
     "TERMINAL_TASK_STATUSES",
     "TaskKind",
     "TaskNotFoundError",

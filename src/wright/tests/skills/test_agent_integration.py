@@ -6,8 +6,8 @@ from ...domain.checkpoint import SessionCheckpointStore
 from ...domain.session import Session
 from wright.application.agent_runner import create_agent
 from wright.interfaces.renderer import SilentRenderer
-from ...skills.registry import SkillRegistry
-from ...skills.store import write_skill
+from wright.application.skill_registry import SkillRegistry
+from wright.infrastructure.storage.skills import write_skill
 from wright.infrastructure.tools.skill_tools import build_skill_tools
 
 

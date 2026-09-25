@@ -2,14 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from ...skills.store import (
+from wright.infrastructure.storage.skills import (
     load_skill_file,
     normalize_skill_id,
     scan_skills,
     skill_file_path,
     write_skill,
 )
-from ...skills.types import MAX_SKILL_FILE_BYTES, SkillStoreError
+from wright.domain.model.skills import MAX_SKILL_FILE_BYTES, SkillStoreError
 
 
 def _valid_markdown() -> str:

@@ -6,8 +6,8 @@ import threading
 from collections.abc import Sequence
 from pathlib import Path
 
-from .store import load_skill_file, normalize_skill_id, scan_skills, skill_file_path
-from .types import SkillDefinition, SkillMeta, SkillNotFoundError, SkillStoreError
+from ..domain.model.skills import SkillDefinition, SkillMeta, SkillNotFoundError, SkillStoreError
+from ..infrastructure.storage.skills import load_skill_file, normalize_skill_id, scan_skills, skill_file_path
 
 
 class SkillRegistry:
@@ -113,3 +113,6 @@ class SkillRegistry:
                 rows.append((f"{directory}:{child.name}", stat.st_mtime_ns, stat.st_size))
         rows.sort()
         return tuple(rows)
+
+
+__all__ = ["SkillRegistry"]

@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from .types import (
+from ...domain.model.skills import (
     MAX_SKILL_BODY_CHARS,
     MAX_SKILL_DESCRIPTION_CHARS,
     MAX_SKILL_FILE_BYTES,
@@ -287,3 +287,15 @@ def scan_skills(directory: Path) -> tuple[list[SkillDefinition], list[str]]:
         except (SkillStoreError, OSError) as exc:
             errors.append(f"跳过损坏的 skill {skill_id}: {exc}")
     return definitions, errors
+
+
+__all__ = [
+    "dump_skill_markdown",
+    "load_skill_file",
+    "normalize_skill_id",
+    "parse_skill_frontmatter",
+    "parse_skill_markdown",
+    "scan_skills",
+    "skill_file_path",
+    "write_skill",
+]

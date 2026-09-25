@@ -4,8 +4,8 @@ from wright.application.tool_dispatcher import ToolExecutor
 from wright.application.subagent import _child_base_tools
 from wright.infrastructure.knowledge import optional_knowledge_tools
 from wright.domain.model.knowledge import MAX_HIT_CONTENT_CHARS, KnowledgeHit
-from ...skills.registry import SkillRegistry
-from ...skills.store import write_skill
+from wright.application.skill_registry import SkillRegistry
+from wright.infrastructure.storage.skills import write_skill
 from wright.application.tool_capabilities import assemble_tool_capabilities
 from wright.domain.tool_protocol import ToolCall
 from wright.infrastructure.tools.knowledge_tools import build_knowledge_tools

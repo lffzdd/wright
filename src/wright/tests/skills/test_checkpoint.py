@@ -5,7 +5,7 @@ import pytest
 
 from ...domain.checkpoint import CheckpointError, SessionCheckpointStore
 from ...domain.session import Session
-from ...skills.store import write_skill
+from wright.infrastructure.storage.skills import write_skill
 
 
 def test_checkpoint_round_trips_catalog_flag_not_bodies(tmp_path: Path):

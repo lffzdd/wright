@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .types import (
+from ..domain.model.skills import (
     MAX_CATALOG_CHARS,
     MIN_CATALOG_DESC_CHARS,
     SkillMeta,
@@ -51,3 +51,6 @@ def catalog_reminder(metas: list[SkillMeta]) -> str:
             description = description[: max_desc - 1] + "…"
         entries.append(f"- {meta.id}: {description}")
     return _join(entries)
+
+
+__all__ = ["catalog_reminder"]
