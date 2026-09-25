@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from wright.infrastructure.storage.artifacts import ArtifactStore
-from wright.domain.checkpoint import SessionCheckpointStore
+from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
 from wright.domain.session import Session
 from wright.application.agent_runner import create_agent
 from wright.domain.policy import ToolAccess

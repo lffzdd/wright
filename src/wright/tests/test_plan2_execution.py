@@ -4,7 +4,7 @@ from pathlib import Path
 from wright.tests.responses import event, response
 
 from wright.application.tool_runtime import tool_runtime_for_session
-from ..domain.checkpoint import SessionCheckpointStore
+from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
 from ..domain.session import Session
 from wright.application.tool_dispatcher import ToolExecutor
 from wright.application.subagent import make_spawn_agent_tool

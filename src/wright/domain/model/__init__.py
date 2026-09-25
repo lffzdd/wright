@@ -15,7 +15,6 @@ from .message import Message
 from .request import ModelRequest
 from .agent import AgentProfile, CapabilityCatalog, CapabilitySnapshot
 from .events import ContentDelta, ContentDone, LLMEvent, ReasoningDelta, UsageEvent
-from .checkpoint import SessionCheckpointStore
 from .coordination import AgentControlConfig, AgentControlError, AgentControlPlane, AgentTaskRecord
 from .runs import RunRecord, RunStatus
 from .tasks import (
@@ -120,7 +119,6 @@ __all__ = [
     "RunStatus",
     "RuntimeTask",
     "Session",
-    "SessionCheckpointStore",
     "SessionLifecycle",
     "SkillDefinition",
     "SkillMeta",

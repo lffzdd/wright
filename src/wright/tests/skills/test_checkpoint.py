@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from ...domain.checkpoint import CheckpointError, SessionCheckpointStore
+from wright.infrastructure.persistence.file_session_repo import CheckpointError, SessionCheckpointStore
 from ...domain.session import Session
 from wright.infrastructure.storage.skills import write_skill
 

@@ -7,7 +7,7 @@ import pytest
 from wright.application.tool_runtime import tool_runtime_for_session
 from wright.infrastructure.storage.artifacts import ArtifactStore
 from wright.domain.capabilities import AgentProfile, CapabilityCatalog, CapabilityError
-from wright.domain.checkpoint import SessionCheckpointStore
+from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
 from wright.domain.session import Session
 from wright.application.agent_runner import create_agent
 from wright.application.tool_dispatcher import ToolExecutor

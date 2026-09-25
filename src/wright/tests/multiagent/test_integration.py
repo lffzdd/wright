@@ -3,7 +3,7 @@ import time
 from wright.tests.responses import event, response
 
 from wright.application.tool_runtime import tool_runtime_for_session
-from ...domain.checkpoint import SessionCheckpointStore
+from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
 from ...domain.coordination import AgentControlConfig, AgentControlPlane
 from ...domain.session import Session
 from wright.application.agent_runner import create_agent

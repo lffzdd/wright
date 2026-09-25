@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from ..domain.runs import TERMINAL_RUN_STATUSES
-from ..domain.session_models import available_models
+from ..infrastructure.llm.model_adapters import available_models
 from ..core.logger import get_logger
 
 logger = get_logger(__name__)

@@ -2,7 +2,7 @@ from pathlib import Path
 
 from wright.tests.responses import event, response
 
-from ...domain.checkpoint import SessionCheckpointStore
+from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
 from ...domain.session import Session
 from wright.application.agent_runner import create_agent
 from wright.interfaces.renderer import SilentRenderer

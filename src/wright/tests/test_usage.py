@@ -3,7 +3,7 @@ from io import StringIO
 import pytest
 from rich.console import Console
 
-from wright.domain.checkpoint import SessionCheckpointStore
+from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
 from wright.domain.session import Session, UsageRecord
 from wright.application.agent_runner import create_agent
 from wright.domain.policy.verifier import Verifier
@@ -190,7 +190,7 @@ def test_console_live_takes_a_snapshot_not_a_callback(monkeypatch):
 
 
 def test_legacy_checkpoint_derives_task_boundary(tmp_path):
-    from wright.domain.checkpoint import _deserialize_session, _serialize_session
+    from wright.infrastructure.persistence.file_session_repo import _deserialize_session, _serialize_session
 
     session = Session.create('old', tmp_path)
     for goal, usage in [('old', UsageRecord(90, 10, 100)), ('new', UsageRecord(10, 5, 15))]:
