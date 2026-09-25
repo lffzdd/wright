@@ -1,0 +1,14 @@
+{
+  "mode": "default",
+  "permissions": {
+    "allow": [],
+    "deny": [
+      "execute_command(rm *)",
+      "execute_command(sudo *)",
+      "execute_command(* sudo *)",
+      "execute_command(*git push*)",
+      "http_request(http://*)"
+    ],
+    "additionalDirectories": []
+  }
+}

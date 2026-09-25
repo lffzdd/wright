@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from ...permission.types import AuthorizationChange
+from ...domain.policy.types import AuthorizationChange
 from .ports import LoopOperations
 
 if TYPE_CHECKING:

@@ -7,9 +7,9 @@ from dataclasses import dataclass, field
 from threading import RLock
 from typing import Any
 
-from ...execution import AuthorizedExecution
-from ...permission.scope import AccessScope
-from ...processes import RuntimeResources
+from ..runtime import AuthorizedExecution
+from ...domain.policy.scope import AccessScope
+from ...core.processes import RuntimeResources
 from .capabilities import ToolCapabilities
 
 
