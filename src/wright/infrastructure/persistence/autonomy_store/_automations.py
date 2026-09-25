@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ..models import AutomationRecord, TriggerSpec
+from ....domain.model.autonomy import AutomationRecord, TriggerSpec
 from ._base import AutonomyNotFoundError, AutonomyStoreError, _StoreBase
 from ._helpers import _bounded, _dump, _load_object, _safe_run_config
 

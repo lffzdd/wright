@@ -20,9 +20,9 @@ from pathlib import Path
 from uuid import uuid4
 
 from ..infrastructure.storage.artifacts import ArtifactStore
-from ..autonomy import AutonomyScheduler, AutonomyStore
-from ..autonomy.models import DurableRunRecord
-from ..autonomy.runner import launch_durable_run
+from ..domain.model.autonomy import DurableRunRecord
+from ..infrastructure.persistence.autonomy_store import AutonomyStore
+from .autonomy import AutonomyScheduler, launch_durable_run
 from ..domain.coordination import AgentControlPlane
 from .agent_background import AgentBackgroundRuntime
 from ..infrastructure.llm.llm import LLMClient

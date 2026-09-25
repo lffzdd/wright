@@ -372,7 +372,7 @@ def test_project_exposes_configured_models_not_a_hardcoded_default(monkeypatch, 
 
 def test_closed_local_session_can_be_replaced_without_losing_its_schedules(monkeypatch, tmp_path):
     from wright.application import runtime as assembly
-    from ..autonomy import TriggerSpec
+    from ..domain.model.autonomy import TriggerSpec
     from .responses import response
 
     class Model:

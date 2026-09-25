@@ -4,8 +4,10 @@ import time
 from wright.tests.responses import event, response
 
 from wright.application.services import RuntimeServices
-from ...autonomy import AutonomyScheduler, AutonomyStore, TriggerSpec
-from ...autonomy.runner import _DurableToolJournal, launch_durable_run
+from ...domain.model.autonomy import TriggerSpec
+from ...infrastructure.persistence.autonomy_store import AutonomyStore
+from ...application.autonomy.scheduler import AutonomyScheduler
+from ...application.autonomy.runner import _DurableToolJournal, launch_durable_run
 from wright.domain.capabilities import AgentProfile
 from ...domain.session import Session
 from wright.application.agent_runner import create_agent

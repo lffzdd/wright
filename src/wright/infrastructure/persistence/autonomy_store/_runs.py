@@ -8,7 +8,7 @@ import time
 from collections.abc import Iterable
 from typing import Any
 
-from ..models import AutomationRecord, DurableRunRecord
+from ....domain.model.autonomy import AutomationRecord, DurableRunRecord
 from ._base import AutonomyNotFoundError, AutonomyStoreError, _StoreBase
 from ._helpers import _dump, _load_object
 

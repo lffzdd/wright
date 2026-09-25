@@ -231,7 +231,7 @@ class TaskService:
         if durable_store is not None:
             # Lazy import keeps the in-memory task facade usable without the
             # optional durable runtime being attached.
-            from ..autonomy.backend import DurableTaskBackend
+            from .autonomy.backend import DurableTaskBackend
 
             backends.append(DurableTaskBackend(durable_store))
         return cls(backends)

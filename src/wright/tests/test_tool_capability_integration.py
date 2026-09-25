@@ -2,7 +2,8 @@ import queue
 import threading
 
 from wright.application.services import RuntimeServices
-from wright.autonomy import AutonomyScheduler, AutonomyStore
+from wright.application.autonomy.scheduler import AutonomyScheduler
+from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 from wright.domain.session import Session
 from wright.application.tool_dispatcher import ToolExecutor
 from wright.application.looping import SessionLoopRegistry

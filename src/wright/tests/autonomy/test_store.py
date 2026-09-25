@@ -4,13 +4,12 @@ import threading
 import pytest
 
 from wright.application.services import RuntimeServices
-from ...autonomy import (
-    AutonomyScheduler,
+from ...domain.model.autonomy import TriggerSpec
+from ...infrastructure.persistence.autonomy_store import (
     AutonomyStore,
     AutonomyStoreError,
-    TriggerSpec,
 )
-from ...autonomy.triggers import probe_public_web_page
+from ...application.autonomy import AutonomyScheduler, probe_public_web_page
 from ...domain.session import Session
 from wright.application.task_service import TaskService
 

@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from .autonomy_store import (
+    AutonomyNotFoundError,
+    AutonomyStore,
+    AutonomyStoreError,
+)
 from .episode_store import (
     EpisodeNotFoundError,
     EpisodeRecord,
@@ -37,6 +42,9 @@ from .memory_store import (
 )
 
 __all__ = [
+    "AutonomyNotFoundError",
+    "AutonomyStore",
+    "AutonomyStoreError",
     "EpisodeNotFoundError",
     "EpisodeRecord",
     "EpisodeStatus",

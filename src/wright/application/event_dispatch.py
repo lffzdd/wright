@@ -12,8 +12,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ..infrastructure.storage.attachments import AttachmentError
-from ..autonomy import AutonomyStore, AutonomyStoreError
-from ..autonomy.runner import launch_durable_run
+from ..infrastructure.persistence.autonomy_store import AutonomyStore, AutonomyStoreError
+from .autonomy import launch_durable_run
 from .looping import SessionLoopRegistry, parse_loop_command
 from ..core.logger import get_logger
 from ..domain.model.tasks import RuntimeTask, TaskNotFoundError

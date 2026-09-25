@@ -10,9 +10,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..autonomy.scheduler import AutonomyScheduler
-    from ..autonomy.store import AutonomyStore
+    from ..infrastructure.persistence.autonomy_store import AutonomyStore
     from .agent_background import AgentBackgroundRuntime
+    from .autonomy.scheduler import AutonomyScheduler
     from .looping import SessionLoopRegistry
 
 

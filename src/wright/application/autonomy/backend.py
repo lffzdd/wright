@@ -5,15 +5,15 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 
-from ..domain.model.tasks import (
+from ...domain.model.tasks import (
     RuntimeTask,
     TaskKind,
     TaskNotFoundError,
     TaskStatus,
     TaskWaitCancelled,
 )
-from .models import DurableRunRecord
-from .store import AutonomyNotFoundError, AutonomyStore
+from ...domain.model.autonomy import DurableRunRecord
+from ...infrastructure.persistence.autonomy_store import AutonomyNotFoundError, AutonomyStore
 
 
 class DurableTaskBackend:

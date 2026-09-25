@@ -6,7 +6,8 @@ import pytest
 from wright.tests.responses import event, response
 
 from wright.application.application_host import ApplicationHost
-from ...autonomy import AutonomyStore, AutonomyStoreError, TriggerSpec
+from ...domain.model.autonomy import TriggerSpec
+from ...infrastructure.persistence.autonomy_store import AutonomyStore, AutonomyStoreError
 from ...domain.session import Session
 from wright.application.agent_runner import create_agent
 from wright.application.tool_dispatcher import ToolExecutor

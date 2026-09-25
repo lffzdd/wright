@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from wright.application.application_host import ApplicationHost
-from ...autonomy import AutonomyStore
+from ...infrastructure.persistence.autonomy_store import AutonomyStore
 from wright.domain.policy import PermissionSettings
 from ...tests.autonomy.test_host_persistence import ScriptLLM
 
@@ -59,7 +59,8 @@ def test_real_process_command_crash_windows_are_recovered_honestly(
     child = r'''
         import os, queue, sys, threading, time
         from types import SimpleNamespace
-        from wright.autonomy import AutonomyStore, TriggerSpec
+        from wright.infrastructure.persistence.autonomy_store import AutonomyStore
+        from wright.domain.model.autonomy import TriggerSpec
         from wright.interfaces.interaction import InteractionBroker
         from wright.application.session_service import SessionService
         from wright.interfaces.ui_events import EventPublisher
@@ -171,7 +172,8 @@ def test_real_host_process_lock_is_released_for_takeover_after_crash(tmp_path):
         import sys
         from pathlib import Path
         from wright.application.application_host import ApplicationHost
-        from wright.autonomy import AutonomyStore, TriggerSpec
+        from wright.infrastructure.persistence.autonomy_store import AutonomyStore
+        from wright.domain.model.autonomy import TriggerSpec
         from wright.domain.policy import PermissionSettings
         class Fake:
             context_limit = 128000
@@ -228,7 +230,8 @@ def test_real_process_child_agent_side_effect_becomes_unknown_without_replay(tmp
         import sys, time
         from pathlib import Path
         from wright.application.application_host import ApplicationHost
-        from wright.autonomy import AutonomyStore, TriggerSpec
+        from wright.infrastructure.persistence.autonomy_store import AutonomyStore
+        from wright.domain.model.autonomy import TriggerSpec
         from wright.domain.policy import PermissionSettings
         from wright.tests.responses import event, response
         from wright.infrastructure.tools.base import Tool
@@ -303,7 +306,7 @@ def test_real_process_child_agent_side_effect_becomes_unknown_without_replay(tmp
         recovery = r'''
             import json, sys
             from pathlib import Path
-            from wright.autonomy import AutonomyStore
+            from wright.infrastructure.persistence.autonomy_store import AutonomyStore
             workspace, db = map(Path, sys.argv[1:])
             store = AutonomyStore(db, session_id="source", workspace_dir=workspace)
             recovered = store.recover_interrupted(now=10)

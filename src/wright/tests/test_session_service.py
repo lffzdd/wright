@@ -10,7 +10,7 @@ from wright.application.session_service import (
     SessionService,
     SessionServiceError,
 )
-from wright.autonomy import AutonomyStore
+from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 from wright.interfaces.interaction import InteractionBroker
 from wright.interfaces.ui_events import EventPublisher
 

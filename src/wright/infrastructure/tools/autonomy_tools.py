@@ -5,7 +5,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from ...autonomy import AutonomyStoreError, TriggerSpec
+from ...domain.model.autonomy import TriggerSpec
+from ..persistence.autonomy_store import AutonomyStoreError
 from ...domain.tool_protocol import ToolAccess, ToolResult
 from .base import Tool
 from .runtime import ToolRuntime
