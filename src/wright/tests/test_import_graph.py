@@ -120,15 +120,21 @@ def test_tool_protocol_does_not_depend_on_runtime_assembly() -> None:
         name: _runtime_edges(name, path, known) for name, path in modules.items()
     }
 
-    assert not graph["tools.base"] & {
+    base_mod = "infrastructure.tools.base" if "infrastructure.tools.base" in graph else "tools.base"
+    runtime_mod = "infrastructure.tools.runtime" if "infrastructure.tools.runtime" in graph else "tools.runtime"
+    proto_mod = "domain.tool_protocol" if "domain.tool_protocol" in graph else "tool_protocol"
+
+    assert not graph[base_mod] & {
+        "application.tool_capabilities",
         "tool_capabilities",
+        "infrastructure.runtime",
         "execution",
+        "core.processes",
         "processes",
     }
-    assert "tool_capabilities" not in graph["tools.runtime"]
+    assert not any(t.endswith("tool_capabilities") for t in graph[runtime_mod])
     assert not any(
-        target == "tools" or target.startswith("tools.")
-        for target in graph["tool_protocol"]
+        "tools" in target for target in graph[proto_mod]
     )
 
 
@@ -139,9 +145,14 @@ def test_loop_tool_depends_on_a_port_not_the_engine() -> None:
         name: _runtime_edges(name, path, known) for name, path in modules.items()
     }
 
-    assert "tools.ports" in graph["tools.loop_tools"]
-    assert not any(target == "engine" or target.startswith("engine.")
-                   for target in graph["tools.loop_tools"])
+    loop_mod = "infrastructure.tools.loop_tools" if "infrastructure.tools.loop_tools" in graph else "tools.loop_tools"
+    ports_mod = "infrastructure.tools.ports" if "infrastructure.tools.ports" in graph else "tools.ports"
+
+    assert ports_mod in graph[loop_mod]
+    assert not any(
+        target == "engine" or target.startswith("engine.") or target.startswith("application")
+        for target in graph[loop_mod]
+    )
 
 
 def test_permission_resolver_does_not_depend_on_tools() -> None:
@@ -151,12 +162,10 @@ def test_permission_resolver_does_not_depend_on_tools() -> None:
         name: _runtime_edges(name, path, known) for name, path in modules.items()
     }
 
-    assert not any(
-        target == "tools" or target.startswith("tools.")
-        for target in graph["permission.resolver"]
-    )
-    assert not any(
-        target == "tools" or target.startswith("tools.")
-        for target in graph["permission.approval"]
-    )
-    assert "permission.resolver" not in graph["permission.approval"]
+    resolver_mod = "domain.policy.resolver" if "domain.policy.resolver" in graph else "permission.resolver"
+    approval_mod = "domain.policy.approval" if "domain.policy.approval" in graph else "permission.approval"
+
+    assert not any("tools" in target for target in graph[resolver_mod])
+    assert not any("tools" in target for target in graph[approval_mod])
+    assert resolver_mod not in graph[approval_mod]
+
