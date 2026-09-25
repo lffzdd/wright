@@ -13,8 +13,8 @@ from ...domain.model.knowledge import (
     truncate_hits,
 )
 from ...domain.tool_protocol import ToolAccess, ToolResult
-from .base import Tool
-from .runtime import ToolRuntime
+from ..tools.base import Tool
+from ..tools.runtime import ToolRuntime
 
 
 def _describe_network(args: dict[str, Any]) -> ToolAccess:

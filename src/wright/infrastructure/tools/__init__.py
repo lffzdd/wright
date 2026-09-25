@@ -6,7 +6,6 @@ from . import (
     command_permissions,
     command_tools,
     file_tools,
-    knowledge_tools,
     loop_tools,
     mcp_client,
     memory,

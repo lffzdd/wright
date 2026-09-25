@@ -30,9 +30,9 @@ from .agent_prompt import AgentPromptManager
 from .agent_turns import AgentTurnHandler, RetryCounters, _RetryCounters
 from .agent_usage import AgentUsageTracker
 from .cancellation import CancellationToken
-from .context import ContextBudgetExceeded, ContextBuilder, ContextCompactor
-from .executor import ToolExecutor
-from .verifier import Verifier
+from .context_compactor import ContextBudgetExceeded, ContextBuilder, ContextCompactor
+from .tool_dispatcher import ToolExecutor
+from ..domain.policy.verifier import Verifier
 
 if TYPE_CHECKING:
     from ..infrastructure.persistence.file_session_repo import SessionCheckpointStore
