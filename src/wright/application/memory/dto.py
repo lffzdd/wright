@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from ...domain.model.core_memory import CoreMemory
 from ...domain.model.episode import Episode
 from ...domain.model.fact import Fact
 
@@ -13,12 +14,14 @@ from ...domain.model.fact import Fact
 class MemoryContextDTO:
     """Consolidated memory context ready for agent prompt injection."""
 
+    core_memory: CoreMemory | None = None
     facts: tuple[Fact, ...] = ()
     episodes: tuple[Episode | Any, ...] = ()
     prompt_injection: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "core_memory": self.core_memory.to_dict() if self.core_memory is not None else None,
             "facts": [
                 {
                     "id": f.id,

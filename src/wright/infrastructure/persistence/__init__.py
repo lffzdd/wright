@@ -7,6 +7,10 @@ from .autonomy_store import (
     AutonomyStore,
     AutonomyStoreError,
 )
+from .file_core_memory import (
+    CORE_MEMORY_FILE,
+    FileCoreMemoryStore,
+)
 from .file_session_repo import (
     CheckpointError,
     FileSessionRepository,
@@ -51,12 +55,14 @@ __all__ = [
     "AutonomyNotFoundError",
     "AutonomyStore",
     "AutonomyStoreError",
+    "CORE_MEMORY_FILE",
     "CheckpointError",
     "EpisodeNotFoundError",
     "EpisodeRecord",
     "EpisodeStatus",
     "EpisodeStore",
     "EpisodeStoreError",
+    "FileCoreMemoryStore",
     "FileFactRepository",
     "FileSessionRepository",
     "MEMORY_INDEX",

@@ -51,11 +51,13 @@ class MemoryManager:
     @property
     def service(self):
         if self._service is None:
+            from ...infrastructure.persistence.file_core_memory import FileCoreMemoryStore
             from ...infrastructure.persistence.memory_store import FileFactRepository
             from .memory_service import MemoryService
             self._service = MemoryService(
                 fact_repo=FileFactRepository(self.directory),
                 episode_store=self.episode_store,
+                core_memory_store=FileCoreMemoryStore(self.directory),
             )
         return self._service
 
@@ -109,10 +111,12 @@ class MemoryManager:
 
     def tools(self):
         """Build CRUD tools bound to this manager's exact directory."""
+        from ...infrastructure.tools.core_memory_tools import build_core_memory_tools
         from ...infrastructure.tools.episode_tools import build_episode_tools
         from ...infrastructure.tools.memory_tools import build_memory_tools
 
         return [
+            *build_core_memory_tools(self.directory),
             *build_memory_tools(self.directory),
             *build_episode_tools(self.directory),
         ]

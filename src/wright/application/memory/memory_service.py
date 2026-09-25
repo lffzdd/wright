@@ -1,32 +1,39 @@
-"""MemoryService: Unified application facade for factual and episodic memory orchestration."""
+"""MemoryService: Unified application facade for core, factual, and episodic memory orchestration."""
 
 from __future__ import annotations
 
 from typing import Any, Sequence
 
+from ...domain.gateway.core_memory_gateway import ICoreMemoryStore
 from ...domain.gateway.episode_gateway import IEpisodicMemoryStore
 from ...domain.gateway.fact_gateway import IFactRepository
+from ...domain.model.core_memory import CoreMemory
 from ...domain.model.episode import Episode
 from ...domain.model.fact import Fact, FactScope
+from ...domain.policy.core_memory_policy import CoreMemoryPolicy
 from ...domain.policy.episode_policy import EpisodePolicy
 from ...domain.policy.fact_policy import FactPolicy
 from .dto import MemoryContextDTO
 
 
 class MemoryService:
-    """Facade application service orchestrating long-term memory retrieval and consolidation."""
+    """Facade application service orchestrating the complete 4-layer memory pyramid."""
 
     def __init__(
         self,
         fact_repo: IFactRepository,
         episode_store: IEpisodicMemoryStore,
+        core_memory_store: ICoreMemoryStore | None = None,
         fact_policy: FactPolicy | None = None,
         episode_policy: EpisodePolicy | None = None,
+        core_memory_policy: CoreMemoryPolicy | None = None,
     ) -> None:
         self.fact_repo = fact_repo
         self.episode_store = episode_store
+        self.core_memory_store = core_memory_store
         self.fact_policy = fact_policy or FactPolicy()
         self.episode_policy = episode_policy or EpisodePolicy()
+        self.core_memory_policy = core_memory_policy or CoreMemoryPolicy()
 
     def prepare_memory_context(
         self,
@@ -35,27 +42,35 @@ class MemoryService:
         scope: FactScope = "PROJECT",
         max_facts: int = 10,
     ) -> MemoryContextDTO:
-        """Dual-track recall:
-        1. Factual Memory: Load deterministic facts/preferences (cheap, high-precision).
-        2. Episodic Memory: Search similar cases/troubleshooting experiences (budgeted).
+        """Pyramid memory recall:
+        1. Core Memory: Pinned high-priority instructions, persona, and constraints (100% pinned).
+        2. Factual Memory: Load deterministic facts/preferences (cheap, high-precision).
+        3. Episodic Memory: Search similar cases/troubleshooting experiences (budgeted).
         """
-        # 1. Facts track
+        blocks: list[str] = []
+
+        # 1. Core Memory (Always pinned at the very top)
+        core_mem: CoreMemory | None = None
+        if self.core_memory_store is not None:
+            core_mem = self.core_memory_store.load()
+            if core_mem is not None:
+                blocks.append(core_mem.render_block())
+
+        # 2. Facts track
         raw_facts = self.fact_repo.get_facts(scope=scope)
         safe_facts = self.fact_policy.filter_safe(raw_facts)
         deduped_facts = self.fact_policy.deduplicate_facts(safe_facts)[:max_facts]
 
-        # 2. Episode track
-        scored_episodes = self.episode_store.search_episodes(current_task, top_k=5)
-        budgeted_episodes = self.episode_policy.budget_and_filter(scored_episodes)
-
-        # 3. Format prompt injection
-        blocks: list[str] = []
         if deduped_facts:
             facts_lines = [
                 f"- [{f.scope}] {f.key}: {f.content}" if f.key else f"- [{f.scope}] {f.content}"
                 for f in deduped_facts
             ]
             blocks.append("### Project Facts & User Preferences\n" + "\n".join(facts_lines))
+
+        # 3. Episode track
+        scored_episodes = self.episode_store.search_episodes(current_task, top_k=5)
+        budgeted_episodes = self.episode_policy.budget_and_filter(scored_episodes)
 
         if budgeted_episodes:
             episodes_lines = []
@@ -70,10 +85,59 @@ class MemoryService:
         prompt_injection = "\n\n".join(blocks)
 
         return MemoryContextDTO(
+            core_memory=core_mem,
             facts=tuple(deduped_facts),
             episodes=tuple(budgeted_episodes),
             prompt_injection=prompt_injection,
         )
+
+    def update_core_memory(
+        self,
+        section: str,
+        content: str,
+        mode: str = "append",
+    ) -> tuple[bool, str | None]:
+        """Validate and update the agent's pinned core memory."""
+        if self.core_memory_store is None:
+            return False, "Core memory store is not configured"
+
+        is_valid, err = self.core_memory_policy.validate_update(section, content)
+        if not is_valid:
+            return False, err
+
+        core_mem = self.core_memory_store.load()
+        normalized_section = section.strip().lower()
+        new_text = content.strip()
+
+        if normalized_section == "human_profile":
+            final_text = (
+                f"{core_mem.human_profile}\n- {new_text}"
+                if mode == "append" and core_mem.human_profile
+                else new_text
+            )
+            is_len_valid, len_err = self.core_memory_policy.validate_update(
+                normalized_section, final_text
+            )
+            if not is_len_valid:
+                return False, len_err
+            core_mem.update_human_profile(final_text)
+        elif normalized_section == "project_anchor":
+            final_text = (
+                f"{core_mem.project_anchor}\n- {new_text}"
+                if mode == "append" and core_mem.project_anchor
+                else new_text
+            )
+            is_len_valid, len_err = self.core_memory_policy.validate_update(
+                normalized_section, final_text
+            )
+            if not is_len_valid:
+                return False, len_err
+            core_mem.update_project_anchor(final_text)
+        else:
+            return False, f"Unsupported section: {section}"
+
+        self.core_memory_store.save(core_mem)
+        return True, None
 
     def record_fact(
         self,

@@ -16,6 +16,7 @@ from .approval import (
     UserInteractionHandler,
 )
 from .context_policy import ContextPolicy, TokenBudgetPolicy
+from .core_memory_policy import CoreMemoryPolicy
 from .guardrail_policy import GuardrailPolicy, SecurityPolicy
 from .memory_policy import EpisodePolicy, FactPolicy, MemoryPolicy, is_safe_fact
 from .resolver import (
@@ -43,6 +44,7 @@ __all__ = [
     "AccessTarget",
     "AuthorizationChange",
     "ContextPolicy",
+    "CoreMemoryPolicy",
     "EpisodePolicy",
     "FactPolicy",
     "FallbackApprovalHandler",

@@ -7,10 +7,17 @@ from collections.abc import Sequence
 from ..infrastructure.tools.base import Tool, split_tool_catalog
 
 
-def build_system_prompt(tools: Sequence[Tool], memory_section: str = "") -> str:
+def build_system_prompt(
+    tools: Sequence[Tool],
+    memory_section: str = "",
+    core_memory: str = "",
+) -> str:
     baseline, deferred = split_tool_catalog(tools)
     names = set(baseline)
-    paragraphs = ["You are a coding assistant. Use the tools provided this turn."]
+    paragraphs = []
+    if core_memory:
+        paragraphs.append(core_memory.strip())
+    paragraphs.append("You are a coding assistant. Use the tools provided this turn.")
     if baseline:
         paragraphs.append("Always available: " + ", ".join(baseline) + ".")
     if {"edit_file", "write_file"} <= names:

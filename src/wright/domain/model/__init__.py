@@ -17,6 +17,7 @@ from .agent import AgentProfile, CapabilityCatalog, CapabilitySnapshot
 from .events import ContentDelta, ContentDone, LLMEvent, ReasoningDelta, UsageEvent
 from .checkpoint import SessionCheckpointStore
 from .coordination import AgentControlConfig, AgentControlError, AgentControlPlane, AgentTaskRecord
+from .core_memory import CoreMemory
 from .runs import RunRecord, RunStatus
 from .tasks import (
     TERMINAL_TASK_STATUSES,
@@ -83,6 +84,7 @@ __all__ = [
     "CapabilitySnapshot",
     "ContentDelta",
     "ContentDone",
+    "CoreMemory",
     "DurableRunRecord",
     "DurableRunStatus",
     "Episode",

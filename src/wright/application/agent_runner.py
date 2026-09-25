@@ -155,11 +155,21 @@ def ensure_system_prompt(
     """Write the system prompt once, when the session has no messages yet."""
     if session.message_records:
         return
+    core_block = ""
+    if memory is not None and hasattr(memory, "service") and memory.service.core_memory_store is not None:
+        try:
+            core_mem = memory.service.core_memory_store.load()
+            if core_mem is not None:
+                core_block = core_mem.render_block()
+        except Exception:
+            pass
     memory_section = memory.instructions() if memory else ""
     prompt_tools = [tool for tool in prepared.tools if tool.name != "tool_search"]
     session.append_message({
         "role": "system",
-        "content": build_system_prompt(prompt_tools, memory_section=memory_section),
+        "content": build_system_prompt(
+            prompt_tools, memory_section=memory_section, core_memory=core_block
+        ),
     })
 
 
