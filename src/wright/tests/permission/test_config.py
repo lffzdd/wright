@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from wright.application.tool_dispatcher import ToolExecutor
+from wright.application.tool_dispatch_service import ToolDispatchService
 from wright.domain.policy import (
     PermissionPolicy,
     PermissionResolver,
@@ -18,8 +18,8 @@ from wright.infrastructure.tools.command_tools import execute_command_tool
 from wright.infrastructure.tools.file_tools import read_file_tool, write_file_tool
 
 
-def _executor(tool, settings: PermissionSettings, tmp_path: Path) -> ToolExecutor:
-    return ToolExecutor(
+def _executor(tool, settings: PermissionSettings, tmp_path: Path) -> ToolDispatchService:
+    return ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(
             None, None, None, workspace_dir=tmp_path, cwd_provider=lambda: tmp_path,
@@ -28,7 +28,7 @@ def _executor(tool, settings: PermissionSettings, tmp_path: Path) -> ToolExecuto
     )
 
 
-def _run(executor: ToolExecutor, call: ToolCall):
+def _run(executor: ToolDispatchService, call: ToolCall):
     return executor.execute([call])[0].result
 
 
@@ -156,7 +156,7 @@ def test_cwd_outside_workspace_does_not_deny_an_origin_target(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     result = _run(
-        ToolExecutor(
+        ToolDispatchService(
             {write_file_tool.name: write_file_tool},
             assemble_tool_capabilities(
                 None, None, None, workspace_dir=workspace, cwd_provider=lambda: tmp_path,

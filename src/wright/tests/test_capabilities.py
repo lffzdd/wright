@@ -10,7 +10,7 @@ from wright.domain.model.agent import AgentProfile, CapabilityCatalog, Capabilit
 from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
 from wright.domain.model.session import Session
 from wright.application.agent import create_agent
-from wright.application.tool_dispatcher import ToolExecutor
+from wright.application.tool_dispatch_service import ToolDispatchService
 from wright.infrastructure.runtime import LocalExecutionBackend
 from wright.domain.policy import ToolAccess
 from wright.interfaces.renderer import SilentRenderer
@@ -44,7 +44,7 @@ def test_catalog_is_the_single_snapshot_for_schema_and_execution():
     write = _tool("write")
     catalog = CapabilityCatalog([read, write])
     snapshot = catalog.snapshot(AgentProfile("read-only", frozenset({"read"})))
-    executor = ToolExecutor(
+    executor = ToolDispatchService(
         {"read": read, "write": write},
         assemble_tool_capabilities(None, None, None),
         capability_snapshot=snapshot,
@@ -221,7 +221,7 @@ def test_file_tool_uses_injected_execution_backend(tmp_path):
     backend = RecordingBackend()
     session = Session.create("test", tmp_path)
     session.begin_user_turn("test")
-    outcome = ToolExecutor(
+    outcome = ToolDispatchService(
         {"read_file": read_file_tool},
         assemble_tool_capabilities(session, None, None, execution_backend=backend),
         session=session,
@@ -251,7 +251,7 @@ def test_executor_only_injects_the_capabilities_declared_by_each_tool(tmp_path):
     )
     session = Session.create("test", tmp_path)
     session.begin_user_turn("test")
-    outcomes = ToolExecutor(
+    outcomes = ToolDispatchService(
         {"planning": planning, "file_access": file_access},
         assemble_tool_capabilities(session, None, None),
         session=session,

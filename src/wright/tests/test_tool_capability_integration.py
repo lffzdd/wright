@@ -5,7 +5,7 @@ from wright.application.services import RuntimeServices
 from wright.application.autonomy.scheduler import AutonomyScheduler
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 from wright.domain.model.session import Session
-from wright.application.tool_dispatcher import ToolExecutor
+from wright.application.tool_dispatch_service import ToolDispatchService
 from wright.application.looping import SessionLoopRegistry
 from wright.domain.policy import PermissionResolver, PermissionResponse
 from wright.application.tool_capabilities import assemble_tool_capabilities
@@ -24,7 +24,7 @@ def test_registered_management_tools_work_through_capability_restriction(tmp_pat
     services = RuntimeServices(durable_store=store, autonomy_scheduler=scheduler, loop_registry=loops)
     session = Session.create("management", tmp_path, session_id="session")
     session.begin_user_turn("management")
-    executor = ToolExecutor(
+    executor = ToolDispatchService(
         {t.name: t for t in [*autonomy_tools, *task_tools, manage_loop_tool]},
         assemble_tool_capabilities(session, services, None),
         session=session,

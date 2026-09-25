@@ -1,22 +1,21 @@
-"""工具调度执行器:把一轮里的若干 tool_calls 跑出结果。
+"""Tool dispatch application service.
 
-从 Agent 里独立出来,职责单一——查表、钳超时、按原始顺序切并发安全批次、
-把异常/超时吞成 ToolResult 占位。它不认识 ReAct 主循环,也不认识
-整个 Renderer,只在构造时收一个 on_command_output 回调(execute_command 的流式输出
-要从工具内部的 reader 线程往外喷,这是唯一需要的渲染钩子)。
-
-调用 execute 时再从参数注入 on_call / on_result 两个插槽:循环的所有权在执行器
-手里,渲染只是从插槽插话——不接也照跑(便于单测)。
+Coordinates tool invocation preparation, schema validation, lifecycle hooks,
+permission resolution, authorization persistence, concurrency analysis, and
+delegates execution of prepared batches to an IToolExecutor infrastructure engine.
 """
+
+from __future__ import annotations
 
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
 from ..core.logger import get_logger
+from ..domain.gateway.tool_executor import IToolExecutor
 from ..domain.model.agent import CapabilitySnapshot
 from ..domain.policy import (
     AccessScope,
@@ -28,10 +27,10 @@ from ..domain.policy import (
     PermissionResolver,
     PermissionSubject,
 )
-from ..domain.model.session import ToolExecutionTerminal
-from ..domain.model.tool import ToolCall, ToolResult
+from ..domain.model.tool import ToolCall, ToolExecutionOutcome, ToolResult
 from ..infrastructure.runtime import AuthorizedExecution, ExecutionBackend, ExecutionPath
 from ..infrastructure.tools.base import Tool
+from ..infrastructure.tools.executor import ConcurrentToolExecutor
 from ..infrastructure.tools.runtime import ToolCancelledError, ToolRuntime
 from ..infrastructure.tools.validation import validate_tool_arguments
 from .tool_capabilities import CapabilityAssembly
@@ -39,19 +38,12 @@ from .tool_capabilities import CapabilityAssembly
 logger = get_logger(__name__)
 
 
-@dataclass(frozen=True)
-class ToolExecutionOutcome:
-    call: ToolCall
-    result: ToolResult
-    status: ToolExecutionTerminal
-
-
 @dataclass
 class PreparedInvocation:
     """A permission-committed call ready for execution.
 
     Preparation owns schema/hooks, permission resolution, approval and
-    authorization persistence.  Worker threads receive only this immutable-in-
+    authorization persistence. Worker threads receive only this immutable-in-
     practice execution plan; they never ask for approval or reread policy.
     """
 
@@ -70,7 +62,9 @@ class PreparedInvocation:
     execution: AuthorizedExecution | None = None
 
 
-class ToolExecutor:
+class ToolDispatchService:
+    """Application service for gating, preparing, and scheduling tool executions."""
+
     def __init__(
         self,
         tool_registry: dict[str, Tool],
@@ -90,6 +84,7 @@ class ToolExecutor:
         capability_snapshot: CapabilitySnapshot | None = None,
         execution_journal=None,
         authorization_commit: Callable[[AuthorizationChange], None] | None = None,
+        executor: IToolExecutor | None = None,
     ):
         if tool_timeout <= 0:
             raise ValueError("tool_timeout 必须 > 0")
@@ -117,6 +112,7 @@ class ToolExecutor:
             allow_background_tasks=allow_background_tasks,
             lifecycle=lifecycle,
         )
+        self.executor = executor or ConcurrentToolExecutor(journal=execution_journal)
 
     def bind_run(
         self,
@@ -148,6 +144,8 @@ class ToolExecutor:
     def bind_step(self, step_id: str) -> None:
         """Associate the next batch of tool intents with one ModelStep."""
         self._active_step_id = str(step_id or "")[:300]
+        if hasattr(self.executor, "bind_step"):
+            self.executor.bind_step(self._active_step_id)
 
     def _emit_lifecycle(self, event: str, payload: dict):
         if self.lifecycle is None:
@@ -208,8 +206,6 @@ class ToolExecutor:
                         ToolCall(tool_call.name, arguments, tool_call.id),
                         updated_validation_error,
                     )
-                # Re-run permission on rewritten arguments below. The hook
-                # may not turn an approval for path A into execution of B.
         return ToolCall(tool_call.name, arguments, tool_call.id), None
 
     def _access_scope(self) -> AccessScope:
@@ -324,9 +320,6 @@ class ToolExecutor:
         except Exception as exc:
             return ToolResult.fail(f"授权保存失败，本次调用未执行: {exc}")
 
-        # A successful directory approval changes the session snapshot.  The
-        # grant remains fixed to the resolver's target, while shell/child
-        # tools see the new immutable per-invocation scope.
         runtime_scope = self._access_scope()
         authorized: AuthorizedExecution | None = None
         if "execution" in tool.required_capabilities:
@@ -362,85 +355,6 @@ class ToolExecutor:
             runtime=runtime,
             execution=authorized,
         )
-
-    def _run_allowed_tool(
-        self,
-        tool,
-        tool_call,
-        arguments: dict,
-        runtime,
-        permission,
-        effective_timeout: float,
-        on_call_start,
-        timings: dict[str, float] | None,
-    ):
-        # The resolver has already revalidated the final arguments. Keep this
-        # execution copy separate from the model's recorded input.
-        arguments = dict(arguments)
-
-        # 内层超时必须 ≤ 外层线程预算:模型可以给工具传很大的 timeout,
-        # 不钳制的话外层先掐,工具内部的超时机制(如 execute_command 转后台)永远轮不到登场
-        if isinstance(arguments.get("timeout"), (int, float)):
-            arguments["timeout"] = min(arguments["timeout"], effective_timeout)
-
-        journal = self.execution_journal
-        if journal is not None:
-            try:
-                journal.record_intent(
-                    call_id=tool_call.id,
-                    tool_name=tool_call.name,
-                    step_id=self._active_step_id,
-                    arguments=arguments,
-                    permission={
-                        "decision": permission.decision,
-                        "reason": permission.reason,
-                        "source": permission.source,
-                    },
-                    environment={
-                        "workspace_dir": str(self.workspace_dir),
-                        "cwd": permission.grant.cwd.value,
-                    },
-                )
-                journal.mark_started(tool_call.id)
-            except Exception as exc:
-                # Intention is the commit point. Never perform a durable
-                # side-effect after failing to record that it is about to run.
-                return ToolResult.fail(f"durable tool intent persistence failed: {exc}")
-
-        execution_started: float | None = None
-        try:
-            runtime.raise_if_cancelled()
-            if on_call_start is not None:
-                on_call_start()
-            execution_started = time.monotonic()
-            tool_result = tool.call(arguments, runtime)
-        except ToolCancelledError as e:
-            tool_result = ToolResult.fail(str(e))
-        except Exception as e:
-            tool_result = ToolResult.fail(f"{type(e).__name__}: {e}")
-        finally:
-            if timings is not None:
-                timings["execution_ms"] = (
-                    (time.monotonic() - execution_started) * 1_000
-                    if execution_started is not None
-                    else 0.0
-                )
-
-        if journal is not None:
-            try:
-                journal.record_result(
-                    tool_call.id,
-                    tool_result.to_dict(),
-                    status="succeeded" if tool_result.ok else "failed",
-                )
-            except Exception as exc:
-                # The tool has run, so this must be recoverable as unknown;
-                # do not claim a normal result or attempt a second execution.
-                return ToolResult.fail(
-                    f"durable tool result persistence failed: {exc}",
-                    data={"outcome": "unknown"},
-                )
-        return tool_result
 
     def _commit_authorization_change(self, change: AuthorizationChange) -> None:
         if change == AuthorizationChange():
@@ -479,127 +393,13 @@ class ToolExecutor:
         except Exception:
             return False
 
-    def _run_one(
-        self,
-        idx: int,
-        prepared: PreparedInvocation,
-        on_phase: Callable[[ToolCall, str], None] | None = None,
-    ) -> tuple[int, ToolExecutionOutcome]:
-        tool = prepared.tool
-        tool_call = prepared.call
-        local_cancel = prepared.local_cancel
-        timer: threading.Timer | None = None
-        effective_timeout = prepared.effective_timeout
-        started = time.monotonic()
-        timings: dict[str, float] = {
-            "approval_wait_ms": prepared.approval_wait_ms,
-        }
-
-        def start_deadline() -> None:
-            nonlocal timer
-            timer = threading.Timer(effective_timeout, local_cancel.set)
-            timer.daemon = True
-            timer.start()
-
-        def start_execution() -> None:
-            if on_phase is not None:
-                try:
-                    on_phase(tool_call, "running")
-                except Exception:
-                    logger.debug("tool phase observer failed", exc_info=True)
-            if tool.timeout_owner == "executor":
-                start_deadline()
-
-        try:
-            result = self._run_allowed_tool(
-                tool,
-                tool_call,
-                prepared.final_arguments,
-                prepared.runtime,
-                prepared.resolution,
-                effective_timeout,
-                start_execution,
-                timings,
-            )
-        finally:
-            if timer is not None:
-                timer.cancel()
-            if prepared.execution is not None:
-                prepared.execution.close()
-
-        if local_cancel.is_set():
-            result = ToolResult.fail(
-                f"timeout: exceeded {effective_timeout}s; tool observed cancel and exited",
-                data=result.data,
-            )
-            status: ToolExecutionTerminal = "timeout"
-        else:
-            status = "succeeded" if result.ok else "failed"
-
-        self._emit_lifecycle(
-            "post_tool_use" if result.ok else "tool_failure",
-            {
-                "tool_name": tool_call.name,
-                "tool_call_id": tool_call.id,
-                "status": status,
-                "total_duration_ms": round((time.monotonic() - started) * 1_000, 3),
-                "approval_wait_ms": round(timings.get("approval_wait_ms", 0.0), 3),
-                "execution_ms": round(timings.get("execution_ms", 0.0), 3),
-                "result": result.to_dict(),
-            },
-        )
-
-        return idx, ToolExecutionOutcome(
-            call=tool_call,
-            result=result,
-            status=status,
-        )
-
-    def _run_concurrent_batch(
-        self,
-        indexed_calls: list[tuple[int, PreparedInvocation]],
-        on_result: Callable[[ToolCall, ToolResult], None] | None,
-        max_workers: int,
-        on_phase: Callable[[ToolCall, str], None] | None = None,
-    ) -> dict[int, ToolExecutionOutcome]:
-        """并发跑一批 (原始下标, ToolCall),返回 {下标: outcome}。
-
-        线程池而非进程池:工具都是 I/O 密集,等待时释放 GIL,线程足够;
-        进程池还要求参数能 pickle,得不偿失。
-
-        保序靠下标:每个 future 记住自己的原始下标,调用方按下标回填,
-        无论谁先跑完都不乱——结果要按 tool_call.id 喂回 LLM,顺序错就对不上号。
-
-        on_result 在主线程按完成顺序触发。工具执行已把异常吞成
-        ToolResult.fail,单个工具失败被隔离;超时的调用以 fail 占位留在结果里,
-        绝不"蒸发"(模型靠 id 对账,少一条都不行)。
-        """
-        out: dict[int, ToolExecutionOutcome] = {}
-        if not indexed_calls:
-            return out
-
-        # context manager 会等待已经启动的调用真正退出。Python 线程不能安全强杀，
-        # 所以 deadline 通过 ToolRuntime 的取消信号协作完成，绝不遗弃后台线程。
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = [
-                pool.submit(self._run_one, idx, invocation, on_phase)
-                for idx, invocation in indexed_calls
-            ]
-            for fut in as_completed(futures):
-                idx, outcome = fut.result()
-                if on_result:
-                    on_result(outcome.call, outcome.result)
-                out[idx] = outcome
-
-        return out
-
     def _partition_original_calls(
         self,
         indexed_calls: list[tuple[int, ToolCall, ToolCall, ToolResult | None]],
     ) -> list[list[tuple[int, ToolCall, ToolCall, ToolResult | None]]]:
         """Partition only on pre-permission arguments.
 
-        A preparation failure remains a barrier.  This prevents a later call
+        A preparation failure remains a barrier. This prevents a later call
         from being merged into an earlier original batch merely because the
         failed call was removed from the runnable list.
         """
@@ -644,8 +444,6 @@ class ToolExecutor:
         连续 concurrency-safe 调用并发；每个不安全调用独占一个批次。
         因此 `[read, read, write, read]` 是 `[read+read] → [write] → [read]`，
         不会把后面的 read 提前到 write 前面。
-
-        on_call 先按输入顺序全报一遍("这一轮要调这些工具"),再开跑。
         """
         slots: list[ToolExecutionOutcome | None] = [None] * len(tool_calls)
 
@@ -676,6 +474,20 @@ class ToolExecutor:
             )
             if on_result:
                 on_result(call, result)
+
+        def handle_outcome(outcome: ToolExecutionOutcome, metrics: dict[str, float]) -> None:
+            self._emit_lifecycle(
+                "post_tool_use" if outcome.result.ok else "tool_failure",
+                {
+                    "tool_name": outcome.call.name,
+                    "tool_call_id": outcome.call.id,
+                    "status": outcome.status,
+                    "total_duration_ms": metrics.get("total_duration_ms", 0.0),
+                    "approval_wait_ms": metrics.get("approval_wait_ms", 0.0),
+                    "execution_ms": metrics.get("execution_ms", 0.0),
+                    "result": outcome.result.to_dict(),
+                },
+            )
 
         for batch in self._partition_original_calls(prepared):
             prepared_batch: list[
@@ -711,11 +523,12 @@ class ToolExecutor:
             def run_final_segment() -> None:
                 nonlocal final_invocations
                 for final_batch in self._partition_prepared_calls(final_invocations):
-                    for prepared_idx, outcome in self._run_concurrent_batch(
+                    for prepared_idx, outcome in self.executor.execute_batch(
                         final_batch,
-                        on_result,
-                        min(max_workers, len(final_batch)),
-                        on_phase,
+                        max_workers=min(max_workers, len(final_batch)),
+                        on_result=on_result,
+                        on_phase=on_phase,
+                        on_outcome=handle_outcome,
                     ).items():
                         slots[prepared_idx] = outcome
                 final_invocations = []
@@ -730,3 +543,6 @@ class ToolExecutor:
             run_final_segment()
 
         return [slot for slot in slots if slot is not None]
+
+
+__all__ = ["PreparedInvocation", "ToolDispatchService", "ToolExecutionOutcome"]

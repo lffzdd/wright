@@ -13,7 +13,7 @@ from wright.application.lifecycle import HookDecision
 from wright.application.tool_runtime import tool_runtime_for_session
 from wright.domain.model.agent import AgentProfile, CapabilitySnapshot
 from ..domain.model.session import Session
-from wright.application.tool_dispatcher import ToolExecutor
+from wright.application.tool_dispatch_service import ToolDispatchService
 from wright.infrastructure.runtime import ExecutionPath, LocalExecutionBackend
 from wright.infrastructure.runtime import local as local_execution
 from wright.domain.policy import PermissionResolver, PermissionResponse, ToolAccess
@@ -78,7 +78,7 @@ def test_pre_execution_failure_is_published_once(tmp_path, failure_kind):
         lifecycle.decision = HookDecision("allow", updated_input={})
 
     callbacks = []
-    outcome = ToolExecutor(
+    outcome = ToolDispatchService(
         registry,
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         **kwargs,
@@ -116,7 +116,7 @@ def test_approval_failure_is_published_once_and_does_not_execute(
             raise OSError("checkpoint unavailable")
 
     callbacks = []
-    outcome = ToolExecutor(
+    outcome = ToolDispatchService(
         {write_file_tool.name: write_file_tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=workspace),
         permission_resolver=resolver,
@@ -154,7 +154,7 @@ def test_success_publishes_result_once_without_failure(tmp_path):
         ),
     )
 
-    outcome = ToolExecutor(
+    outcome = ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         lifecycle=lifecycle,
@@ -184,7 +184,7 @@ def test_actual_execution_failure_publishes_once(tmp_path):
         ),
     )
 
-    outcome = ToolExecutor(
+    outcome = ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         lifecycle=lifecycle,
@@ -228,7 +228,7 @@ def test_pre_execution_failure_remains_a_concurrency_barrier(tmp_path):
         is_concurrency_safe=lambda _args: True,
     )
     invalid = _required_tool()
-    outcomes = ToolExecutor(
+    outcomes = ToolDispatchService(
         {safe.name: safe, invalid.name: invalid},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
     ).execute(
@@ -625,7 +625,7 @@ def test_protected_and_external_symlink_candidates_never_reach_search_backend(
             return super().search_files(paths, pattern, **kwargs)
 
     backend = RecordingBackend()
-    result = ToolExecutor(
+    result = ToolDispatchService(
         {grep_tool.name: grep_tool},
         assemble_tool_capabilities(
             None, None, None,

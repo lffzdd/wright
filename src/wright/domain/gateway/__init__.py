@@ -11,7 +11,7 @@ from .memory import (
 )
 from .session_repository import ISessionRepository, IStorageGateway, SessionRepository
 from .task_backend import TaskBackend
-from .tool_executor import IToolExecutor, IToolGateway, ToolExecutorPort
+from .tool_executor import IToolExecutor
 
 __all__ = [
     "ICoreMemoryStore",
@@ -22,10 +22,8 @@ __all__ = [
     "ISessionRepository",
     "IStorageGateway",
     "IToolExecutor",
-    "IToolGateway",
     "KnowledgeProvider",
     "LLMProvider",
     "SessionRepository",
     "TaskBackend",
-    "ToolExecutorPort",
 ]

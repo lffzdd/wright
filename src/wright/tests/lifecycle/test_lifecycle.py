@@ -10,7 +10,7 @@ from wright.application.lifecycle import (
     TraceRecorder,
     load_lifecycle_manager,
 )
-from wright.application.tool_dispatcher import ToolExecutor
+from wright.application.tool_dispatch_service import ToolDispatchService
 from wright.domain.policy import ToolAccess
 from wright.application.tool_capabilities import assemble_tool_capabilities
 from wright.domain.model.tool import ToolCall, ToolResult
@@ -73,7 +73,7 @@ def test_explicit_pre_tool_deny_blocks_execution(tmp_path):
         name="block-sample",
         callback=lambda event: HookDecision("deny", "blocked in test"),
     ))
-    executor = ToolExecutor(
+    executor = ToolDispatchService(
         {"sample": _tool(lambda arguments, runtime: called.append(arguments))},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         lifecycle=manager,
@@ -94,7 +94,7 @@ def test_tool_trace_splits_permission_and_execution_time(tmp_path):
         time.sleep(0.01)
         return ToolResult.success(arguments)
 
-    executor = ToolExecutor(
+    executor = ToolDispatchService(
         {"sample": _tool(run)},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         lifecycle=manager,
@@ -125,7 +125,7 @@ def test_hook_rewrite_is_revalidated_and_does_not_mutate_recorded_call(tmp_path)
     )
     original = ToolCall("sample", {"value": 1}, "call_1")
 
-    outcome = ToolExecutor(
+    outcome = ToolDispatchService(
         {"sample": tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         lifecycle=manager,
@@ -142,7 +142,7 @@ def test_hook_rewrite_is_revalidated_and_does_not_mutate_recorded_call(tmp_path)
         matcher="sample",
         callback=lambda event: {"updated_input": {"value": "wrong"}},
     ))
-    failed = ToolExecutor(
+    failed = ToolDispatchService(
         {"sample": tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         lifecycle=invalid,
@@ -193,7 +193,7 @@ def test_hook_rewrite_is_applied_before_concurrency_partition(tmp_path):
         ),
     ))
 
-    outcomes = ToolExecutor(
+    outcomes = ToolDispatchService(
         {"mode_tool": tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         lifecycle=manager,

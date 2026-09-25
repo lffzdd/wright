@@ -7,7 +7,7 @@ from pathlib import Path
 
 from wright.application.tool_runtime import tool_runtime_for_session
 from ..domain.model.session import Session
-from wright.application.tool_dispatcher import ToolExecutor
+from wright.application.tool_dispatch_service import ToolDispatchService
 from wright.infrastructure.runtime import AuthorizedExecution, LocalExecutionBackend
 from wright.domain.policy import (
     AccessScope,
@@ -352,7 +352,7 @@ def test_production_executor_exposes_only_authorized_execution(tmp_path):
         access_descriptor=describe,
         required_capabilities=frozenset({"execution"}),
     )
-    result = ToolExecutor(
+    result = ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(
             None, None, None, workspace_dir=tmp_path, cwd_provider=lambda: tmp_path,
@@ -384,7 +384,7 @@ def test_internal_tool_without_execution_capability_gets_no_wrapper(tmp_path):
         access_descriptor=lambda _args: ToolAccess.internal_read(),
     )
 
-    result = ToolExecutor(
+    result = ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(
             None, None, None, workspace_dir=tmp_path, cwd_provider=lambda: tmp_path,
@@ -423,7 +423,7 @@ def test_backend_resolves_paths_but_authorized_wrapper_enforces_scope(tmp_path):
     resolved = backend.resolve_path(str(outside))
     assert resolved.value == str(outside.resolve())
 
-    executor = ToolExecutor(
+    executor = ToolDispatchService(
         {read_file_tool.name: read_file_tool},
         assemble_tool_capabilities(
             None, None, None, workspace_dir=origin, cwd_provider=lambda: origin,
@@ -444,7 +444,7 @@ def test_forbidden_permission_settings_path_is_rejected(tmp_path, monkeypatch):
     settings.write_text("{}", encoding="utf-8")
     origin = tmp_path / "workspace"
     origin.mkdir()
-    executor = ToolExecutor(
+    executor = ToolDispatchService(
         {read_file_tool.name: read_file_tool},
         assemble_tool_capabilities(
             None, None, None, workspace_dir=origin, cwd_provider=lambda: origin,
@@ -470,7 +470,7 @@ def test_recursive_search_defaults_to_directory_and_skips_protected_files(
         "needle protected", encoding="utf-8"
     )
 
-    result = ToolExecutor(
+    result = ToolDispatchService(
         {grep_tool.name: grep_tool},
         assemble_tool_capabilities(
             None, None, None, workspace_dir=workspace, cwd_provider=lambda: workspace,

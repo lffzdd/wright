@@ -6,7 +6,7 @@ from wright.tests.responses import event, response
 from wright.application.tool_runtime import tool_runtime_for_session
 from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
 from ..domain.model.session import Session
-from wright.application.tool_dispatcher import ToolExecutor
+from wright.application.tool_dispatch_service import ToolDispatchService
 from wright.application.agent import make_spawn_agent_tool
 from wright.infrastructure.runtime import LocalExecutionBackend
 from wright.domain.policy import (
@@ -84,7 +84,7 @@ def test_approval_rewrites_are_prepared_before_any_execution(tmp_path):
 
     tool = _mode_tool(call)
     resolver = PermissionResolver(approval_handler=approve)
-    outcomes = ToolExecutor(
+    outcomes = ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         permission_resolver=resolver,
@@ -124,7 +124,7 @@ def test_final_safe_calls_overlap_after_sequential_preparation(tmp_path):
         )
 
     tool = _mode_tool(call)
-    outcomes = ToolExecutor(
+    outcomes = ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         permission_resolver=PermissionResolver(approval_handler=approve),
@@ -151,7 +151,7 @@ def test_denied_rewrite_does_not_commit_or_execute(tmp_path):
             "deny", {"mode": "write", "token": "outside"}
         )
     )
-    outcome = ToolExecutor(
+    outcome = ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(session, None, None, workspace_dir=tmp_path),
         session=session,
@@ -302,7 +302,7 @@ def test_one_executor_refreshes_scope_for_shell_and_child(tmp_path):
         permission_resolver=resolver,
         authorization_commit_factory=authorization_commit_factory,
     )
-    executor = ToolExecutor(
+    executor = ToolDispatchService(
         {
             write_file_tool.name: write_file_tool,
             execute_command_tool.name: execute_command_tool,
@@ -399,7 +399,7 @@ def test_agent_child_persistent_directory_uses_child_checkpoint(tmp_path, monkey
         permission_resolver=resolver,
         authorization_commit_factory=authorization_commit_factory,
     )
-    outcome = ToolExecutor(
+    outcome = ToolDispatchService(
         {spawn.name: spawn},
         assemble_tool_capabilities(
             parent, None, None,
@@ -433,7 +433,7 @@ def test_persistent_approval_without_commit_callback_fails_closed(tmp_path):
             "allow_persistent_directory"
         )
     )
-    outcome = ToolExecutor(
+    outcome = ToolDispatchService(
         {write_file_tool.name: write_file_tool},
         assemble_tool_capabilities(session, None, None, workspace_dir=tmp_path),
         session=session,
@@ -464,7 +464,7 @@ def test_authorization_commit_failure_prevents_tool_execution(tmp_path):
             "allow_session_directory"
         )
     )
-    outcome = ToolExecutor(
+    outcome = ToolDispatchService(
         {write_file_tool.name: write_file_tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         permission_resolver=resolver,
@@ -494,7 +494,7 @@ def test_rg_search_literals_globs_and_explicit_hidden_file(tmp_path):
     (nested / "notes.md").write_text("needle\n", encoding="utf-8")
     hidden.write_text("needle\n", encoding="utf-8")
 
-    executor = ToolExecutor(
+    executor = ToolDispatchService(
         {grep_tool.name: grep_tool},
         assemble_tool_capabilities(
             None, None, None, workspace_dir=tmp_path, cwd_provider=lambda: tmp_path,
@@ -548,7 +548,7 @@ def test_rg_candidates_are_authorized_before_content_search(tmp_path, monkeypatc
             return super().search_files(collected, pattern, **kwargs)
 
     backend = RecordingBackend()
-    result = ToolExecutor(
+    result = ToolDispatchService(
         {grep_tool.name: grep_tool},
         assemble_tool_capabilities(
             None, None, None,

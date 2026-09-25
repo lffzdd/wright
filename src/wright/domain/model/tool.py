@@ -138,6 +138,16 @@ class ToolDefinition(ValueObject):
         }
 
 
+ToolExecutionStatus = Literal["succeeded", "failed", "timeout"]
+
+
+@dataclass(frozen=True)
+class ToolExecutionOutcome:
+    call: ToolCall
+    result: ToolResult
+    status: ToolExecutionStatus
+
+
 __all__ = [
     "AccessTarget",
     "ArtifactRef",
@@ -145,5 +155,7 @@ __all__ = [
     "ToolAccess",
     "ToolCall",
     "ToolDefinition",
+    "ToolExecutionOutcome",
+    "ToolExecutionStatus",
     "ToolResult",
 ]

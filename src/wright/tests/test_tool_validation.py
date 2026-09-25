@@ -1,4 +1,4 @@
-from wright.application.tool_dispatcher import ToolExecutor
+from wright.application.tool_dispatch_service import ToolDispatchService
 from wright.domain.policy import PermissionResolver, PermissionResponse, ToolAccess
 from wright.application.tool_capabilities import assemble_tool_capabilities
 from wright.domain.model.tool import ToolCall, ToolResult
@@ -44,7 +44,7 @@ def test_invalid_arguments_fail_before_permission_and_tool(tmp_path):
         return PermissionResponse("allow_once")
 
     tool = _schema_tool(tool_calls, permission_calls)
-    executor = ToolExecutor(
+    executor = ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         permission_resolver=PermissionResolver(approval_handler=approval_handler),
@@ -68,7 +68,7 @@ def test_invalid_arguments_fail_before_permission_and_tool(tmp_path):
 
 def test_missing_required_argument_returns_repairable_result(tmp_path):
     tool = _schema_tool([])
-    outcome = ToolExecutor(
+    outcome = ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
     ).execute([ToolCall("structured", {"name": "ok"}, "c1")])[0]
@@ -85,7 +85,7 @@ def test_permission_rewritten_arguments_are_revalidated(tmp_path):
     tool.access_descriptor = lambda args: ToolAccess(
         frozenset({"network_write"}), subject="structured"
     )
-    outcome = ToolExecutor(
+    outcome = ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         permission_resolver=PermissionResolver(
@@ -106,7 +106,7 @@ def test_permission_rewritten_arguments_are_revalidated(tmp_path):
 def test_valid_arguments_reach_permission_then_tool(tmp_path):
     calls = []
     tool = _schema_tool(calls)
-    outcome = ToolExecutor(
+    outcome = ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
     ).execute([
@@ -128,7 +128,7 @@ def test_invalid_tool_schema_is_a_configuration_error(tmp_path):
         {"type": "definitely-not-a-json-schema-type"},
         lambda args, runtime: ToolResult.success(),
     )
-    outcome = ToolExecutor(
+    outcome = ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
     ).execute([ToolCall("broken", {}, "c1")])[0]

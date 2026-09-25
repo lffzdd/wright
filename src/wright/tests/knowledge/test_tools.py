@@ -1,6 +1,6 @@
 from jsonschema import validators
 
-from wright.application.tool_dispatcher import ToolExecutor
+from wright.application.tool_dispatch_service import ToolDispatchService
 from wright.application.agent.subagent import _child_base_tools
 from wright.domain.model.knowledge import MAX_HIT_CONTENT_CHARS, KnowledgeHit
 from wright.domain.model.tool import ToolCall
@@ -26,7 +26,7 @@ class FakeProvider:
 
 def test_top_k_out_of_range_rejected_by_schema(tmp_path):
     tool = build_knowledge_tools(FakeProvider())[0]
-    outcome = ToolExecutor(
+    outcome = ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
     ).execute([

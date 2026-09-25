@@ -10,7 +10,7 @@ from ...domain.model.autonomy import TriggerSpec
 from ...infrastructure.persistence.autonomy_store import AutonomyStore, AutonomyStoreError
 from ...domain.model.session import Session
 from wright.application.agent import create_agent
-from wright.application.tool_dispatcher import ToolExecutor
+from wright.application.tool_dispatch_service import ToolDispatchService
 from wright.domain.policy import PermissionPolicy, PermissionResolver, PermissionSettings
 from wright.interfaces.renderer import SilentRenderer
 from wright.application.tool_capabilities import assemble_tool_capabilities
@@ -244,7 +244,7 @@ def test_effect_is_not_called_when_intent_cannot_be_persisted(tmp_path):
             raise AssertionError("must not start after failed intent")
 
     tool = Tool("effect", "effect", {"type": "object"}, lambda args, _rt: called.append(args))
-    executor = ToolExecutor(
+    executor = ToolDispatchService(
         {"effect": tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         execution_journal=FailingJournal(),

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from wright.application.tool_dispatcher import ToolExecutor
+from wright.application.tool_dispatch_service import ToolDispatchService
 from wright.domain.policy import (
     AccessTarget,
     PermissionPolicy,
@@ -20,8 +20,8 @@ from wright.infrastructure.tools.file_tools import (
 from wright.infrastructure.tools.web_tools import http_request_tool
 
 
-def _executor(tool: Tool, tmp_path: Path, **kwargs) -> ToolExecutor:
-    return ToolExecutor(
+def _executor(tool: Tool, tmp_path: Path, **kwargs) -> ToolDispatchService:
+    return ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(
             None, None, None, workspace_dir=tmp_path, cwd_provider=lambda: tmp_path,
@@ -207,7 +207,7 @@ def test_cwd_outside_workspace_is_not_a_global_deny(tmp_path):
         "needs_approval",
         ToolAccess(frozenset({"network_write"}), risk_flags=("network_write",)),
     )
-    result = ToolExecutor(
+    result = ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(
             None, None, None, workspace_dir=workspace, cwd_provider=lambda: tmp_path,
@@ -218,7 +218,7 @@ def test_cwd_outside_workspace_is_not_a_global_deny(tmp_path):
 
 
 def test_missing_tool_remains_an_unknown_tool_error(tmp_path):
-    result = ToolExecutor(
+    result = ToolDispatchService(
         {}, assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
     ).execute([
         ToolCall("missing_tool", {}, "c1")

@@ -35,7 +35,7 @@ from .turns import AgentTurnHandler, RetryCounters
 from .usage import AgentUsageTracker
 from .cancellation import CancellationToken
 from .context import ContextBudgetExceeded, ContextBuilder, ContextCompactor
-from ..tool_dispatcher import ToolExecutor
+from ..tool_dispatch_service import ToolDispatchService
 from ...domain.policy.verifier import Verifier
 
 if TYPE_CHECKING:
@@ -61,7 +61,11 @@ class AgentComponents:
 
     cancellation: CancellationToken
     context_builder: ContextBuilder
-    executor: ToolExecutor
+    tool_dispatcher: ToolDispatchService
+
+    @property
+    def executor(self) -> ToolDispatchService:
+        return self.tool_dispatcher
 
 
 def assemble_agent_components(
@@ -89,7 +93,7 @@ def assemble_agent_components(
         keep_recent_tool_results=keep_recent_tool_results,
     )
     context_builder = ContextBuilder(compactor)
-    executor = ToolExecutor(
+    tool_dispatcher = ToolDispatchService(
         {tool.name: tool for tool in prepared.tools},
         assembly,
         tool_timeout=tool_timeout,
@@ -108,7 +112,7 @@ def assemble_agent_components(
         execution_journal=execution_journal,
         authorization_commit=authorization_commit,
     )
-    return AgentComponents(cancellation, context_builder, executor)
+    return AgentComponents(cancellation, context_builder, tool_dispatcher)
 
 
 def prepare_model_tools(
@@ -365,7 +369,8 @@ class Agent:
         self.cancellation = components.cancellation
         self.context_builder = components.context_builder
         self.compactor = self.context_builder.compactor
-        self.executor = components.executor
+        self.tool_dispatcher = components.tool_dispatcher
+        self.executor = self.tool_dispatcher
 
         self._usage_tracker = AgentUsageTracker(
             session_state,

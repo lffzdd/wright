@@ -4,7 +4,7 @@ from pathlib import Path
 
 from wright.application.tool_runtime import tool_runtime_for_session
 from ..domain.model.session import Session
-from wright.application.tool_dispatcher import ToolExecutor
+from wright.application.tool_dispatch_service import ToolDispatchService
 from wright.domain.policy import ToolAccess
 from wright.domain.model.tasks import TaskNotFoundError
 from wright.application.task_service import TaskService
@@ -45,7 +45,7 @@ def test_tool_owned_timeout_is_not_reclassified_by_executor(tmp_path):
         ),
         timeout_owner="tool",
     )
-    executor = ToolExecutor(
+    executor = ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         tool_timeout=0.02,
@@ -72,7 +72,7 @@ def test_parent_cancellation_produces_a_complete_failed_result(tmp_path):
             reason="cancellation test operation"
         ),
     )
-    executor = ToolExecutor(
+    executor = ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         cancellation_check=cancelled.is_set,
@@ -262,7 +262,7 @@ def test_on_result_includes_the_tool_call(tmp_path):
             reason="result callback test operation"
         ),
     )
-    executor = ToolExecutor(
+    executor = ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
     )

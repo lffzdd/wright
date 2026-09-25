@@ -3,21 +3,25 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
+from ..model.tool import ToolCall, ToolExecutionOutcome, ToolResult
 
-class ToolExecutorPort(ABC):
-    """Port for executing tool calls produced by the agent."""
+
+class IToolExecutor(ABC):
+    """Port for executing tool calls and prepared invocations."""
 
     @abstractmethod
-    def execute(self, calls: Sequence[Any]) -> Sequence[Any]:
-        """Execute a batch of tool calls and return outcomes."""
+    def execute_batch(
+        self,
+        indexed_invocations: Sequence[tuple[int, Any]],
+        max_workers: int = 8,
+        on_result: Callable[[ToolCall, ToolResult], None] | None = None,
+        on_phase: Callable[[ToolCall, str], None] | None = None,
+    ) -> dict[int, ToolExecutionOutcome]:
+        """Execute a batch of prepared invocations concurrently and return outcomes by index."""
         ...
 
 
-# Interface compatibility aliases
-IToolExecutor = ToolExecutorPort
-IToolGateway = ToolExecutorPort
-
-__all__ = ["IToolExecutor", "IToolGateway", "ToolExecutorPort"]
+__all__ = ["IToolExecutor"]

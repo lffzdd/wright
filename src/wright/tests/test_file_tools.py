@@ -5,7 +5,7 @@ from dataclasses import replace
 
 from wright.application.tool_runtime import tool_runtime_for_session
 from ..domain.model.session import Session
-from wright.application.tool_dispatcher import ToolExecutor
+from wright.application.tool_dispatch_service import ToolDispatchService
 from wright.domain.policy import (
     PermissionResolver,
     PermissionResponse,
@@ -204,7 +204,7 @@ def test_always_allow_outside_write_then_edit_in_same_extra_root(tmp_path):
 
 def _file_executor(session, tools, handler=None):
     resolver = PermissionResolver(approval_handler=handler)
-    return ToolExecutor(
+    return ToolDispatchService(
         {tool.name: tool for tool in tools},
         assemble_tool_capabilities(
             session, None, None,

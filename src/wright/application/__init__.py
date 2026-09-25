@@ -11,6 +11,7 @@ from .skills import SkillRegistry, catalog_reminder
 from .memory import MemoryManager
 
 from .dto import RunAgentRequest, StreamEventDTO
+from .tool_dispatch_service import ToolDispatchService
 from .autonomy import (
     AutonomyScheduler,
     DurableTaskBackend,
@@ -27,6 +28,7 @@ __all__ = [
     "SkillRegistry",
     "StreamEventDTO",
     "TaskService",
+    "ToolDispatchService",
     "catalog_reminder",
     "launch_durable_run",
 ]

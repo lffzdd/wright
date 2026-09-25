@@ -1,6 +1,6 @@
 from wright.application.interactive_approval import InteractiveApprovalHandler
 from ...domain.model.session import Session
-from wright.application.tool_dispatcher import ToolExecutor
+from wright.application.tool_dispatch_service import ToolDispatchService
 from wright.domain.policy import PermissionResolver
 from wright.interfaces.renderer import SilentRenderer
 from wright.application.tool_capabilities import assemble_tool_capabilities
@@ -31,9 +31,9 @@ def _approval(renderer: _MockRenderer) -> InteractiveApprovalHandler:
     )
 
 
-def _executor(session: Session, renderer: _MockRenderer) -> ToolExecutor:
+def _executor(session: Session, renderer: _MockRenderer) -> ToolDispatchService:
     resolver = PermissionResolver(approval_handler=_approval(renderer))
-    return ToolExecutor(
+    return ToolDispatchService(
         {
             write_file_tool.name: write_file_tool,
             read_file_tool.name: read_file_tool,
@@ -49,7 +49,7 @@ def _executor(session: Session, renderer: _MockRenderer) -> ToolExecutor:
     )
 
 
-def _run(executor: ToolExecutor, call: ToolCall):
+def _run(executor: ToolDispatchService, call: ToolCall):
     return executor.execute([call])[0].result
 
 
@@ -152,7 +152,7 @@ def test_persistent_rule_choice_is_returned_to_the_commit_adapter(tmp_path):
     renderer = _MockRenderer("allow_persistent_rule")
     changes = []
     resolver = PermissionResolver(approval_handler=_approval(renderer))
-    executor = ToolExecutor(
+    executor = ToolDispatchService(
         {
             write_file_tool.name: write_file_tool,
             read_file_tool.name: read_file_tool,

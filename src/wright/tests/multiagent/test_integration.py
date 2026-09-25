@@ -7,7 +7,7 @@ from wright.infrastructure.persistence.file_session_repo import FileSessionRepos
 from ...domain.model.coordination import AgentControlConfig, AgentControlPlane
 from ...domain.model.session import Session
 from wright.application.agent import build_agent_tools, create_agent, make_spawn_agent_tool
-from wright.application.tool_dispatcher import ToolExecutor
+from wright.application.tool_dispatch_service import ToolDispatchService
 from wright.domain.model.events import UsageEvent
 from wright.domain.policy import PermissionPolicy, PermissionResolver, PermissionSettings
 from wright.interfaces.renderer import SilentRenderer
@@ -120,7 +120,7 @@ def test_executor_deadline_propagates_to_child_control_state(tmp_path):
         SlowFinalLLM(), [], max_depth=1, child_timeout=0.01,
         render_subagents=False
     )
-    executor = ToolExecutor(
+    executor = ToolDispatchService(
         {"spawn_agent": spawn},
         assemble_tool_capabilities(session, None, None),
         tool_timeout=0.01,
