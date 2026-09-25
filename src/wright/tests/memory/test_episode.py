@@ -5,7 +5,7 @@ import pytest
 from wright.tests.responses import event
 
 from ...domain.session import Session, UsageRecord
-from wright.infrastructure.persistence.episode_store import (
+from wright.infrastructure.persistence.memory import (
     EpisodeNotFoundError,
     EpisodeStore,
     EpisodeStoreError,
@@ -13,7 +13,7 @@ from wright.infrastructure.persistence.episode_store import (
 )
 from wright.application.memory.recall import build_recall_block
 from wright.domain.tool_protocol import ToolCall, ToolResult
-from wright.infrastructure.tools.episode_tools import build_episode_tools
+from wright.infrastructure.tools.memory import build_episode_tools
 
 
 def _completed_session(tmp_path):

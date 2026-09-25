@@ -8,7 +8,7 @@ from wright.domain.model.memory import (
     MemoryAlreadyExistsError,
     MemoryNotFoundError,
 )
-from wright.infrastructure.persistence.memory_store import (
+from wright.infrastructure.persistence.memory.fact import (
     MAX_INDEX_LINES,
     create_memory,
     delete_memory,

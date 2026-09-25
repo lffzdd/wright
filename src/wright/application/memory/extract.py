@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from ...core.logger import get_logger
 from ...domain.model.memory import MEMORY_TYPES, TYPES_SECTION, WHAT_NOT_TO_SAVE, MemoryStoreError
-from ...infrastructure.persistence.memory_store import (
+from ...infrastructure.persistence.memory import (
     create_memory,
     format_manifest,
     scan_memory_files,

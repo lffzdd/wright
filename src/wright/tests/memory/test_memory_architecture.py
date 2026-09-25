@@ -10,12 +10,9 @@ from __future__ import annotations
 import time
 import pytest
 
-from wright.domain.model.fact import Fact
-from wright.domain.model.episode import Episode
-from wright.domain.policy.fact_policy import FactPolicy, is_safe_fact
-from wright.domain.policy.episode_policy import EpisodePolicy
-from wright.domain.gateway.fact_gateway import IFactRepository
-from wright.domain.gateway.episode_gateway import IEpisodicMemoryStore
+from wright.domain.model.memory import Episode, Fact
+from wright.domain.policy.memory import EpisodePolicy, FactPolicy, is_safe_fact
+from wright.domain.gateway.memory import IEpisodicMemoryStore, IFactRepository
 from wright.application.memory.memory_service import MemoryService
 from wright.application.memory.dto import MemoryContextDTO
 

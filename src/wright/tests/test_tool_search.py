@@ -204,7 +204,7 @@ def test_builtin_capabilities_use_hybrid_loading():
 
 def test_web_memory_and_spawn_are_baseline():
     from wright.application.subagent import build_agent_tools
-    from wright.infrastructure.tools.memory_tools import build_memory_tools
+    from wright.infrastructure.tools.memory import build_memory_tools
 
     class UnusedLLM:
         context_limit = 128_000

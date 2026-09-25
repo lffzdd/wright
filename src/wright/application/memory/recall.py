@@ -7,14 +7,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ...domain.model.memory import EpisodeRecord
-from ...infrastructure.persistence.episode_store import (
+from ...infrastructure.persistence.memory import (
     EpisodeStore,
     format_episode_manifest,
-    read_episodes_for_surfacing,
-)
-from ...infrastructure.persistence.memory_store import (
     format_manifest,
     read_entrypoint,
+    read_episodes_for_surfacing,
     read_memories_for_surfacing,
     scan_memory_files,
 )

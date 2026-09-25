@@ -6,8 +6,8 @@ from pathlib import Path
 from wright.tests.responses import event
 
 from wright.application.memory.recall import build_recall_block, find_relevant_memories
-from wright.infrastructure.persistence.memory_store import write_memory_file
-from wright.infrastructure.tools.memory_tools import (
+from wright.infrastructure.persistence.memory import write_memory_file
+from wright.infrastructure.tools.memory import (
     build_memory_tools,
     create_memory,
     delete_memory,
@@ -53,7 +53,7 @@ def test_find_relevant_no_files(tmp_path: Path):
 
 def test_build_recall_block_wraps_in_reminder(tmp_path: Path):
     write_memory_file("alpha", "about bun", "feedback", "正文B", directory=tmp_path)
-    from wright.infrastructure.persistence.memory_store import rebuild_index
+    from wright.infrastructure.persistence.memory import rebuild_index
 
     rebuild_index(tmp_path)
     llm = FakeLLM({"selected_memories": ["alpha.md"]})

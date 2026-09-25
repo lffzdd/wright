@@ -22,7 +22,7 @@ from wright.infrastructure.tools.ask_user_tool import ask_user_tool
 from wright.infrastructure.tools.autonomy_tools import autonomy_tools
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.knowledge_tools import build_knowledge_tools
-from wright.infrastructure.tools.memory_tools import build_memory_tools
+from wright.infrastructure.tools.memory import build_memory_tools
 from wright.infrastructure.tools.skill_tools import build_skill_tools
 
 

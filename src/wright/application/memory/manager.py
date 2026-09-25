@@ -11,8 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from ...core.logger import get_logger
 from ...domain.model.memory import EpisodeRecord
-from ...infrastructure.persistence.episode_store import EpisodeStore, episode_from_session
-from ...infrastructure.persistence.memory import memory_dir
+from ...infrastructure.persistence.memory import EpisodeStore, episode_from_session, memory_dir
 from .extract import extract_and_save
 from .llm_util import metered_events
 from .prompt import build_memory_instructions

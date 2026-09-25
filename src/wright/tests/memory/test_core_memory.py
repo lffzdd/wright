@@ -13,16 +13,15 @@ import tempfile
 from pathlib import Path
 import pytest
 
-from wright.domain.model.core_memory import CoreMemory, DEFAULT_PERSONA
-from wright.domain.policy.core_memory_policy import CoreMemoryPolicy
-from wright.infrastructure.persistence.file_core_memory import FileCoreMemoryStore
-from wright.infrastructure.tools.core_memory_tools import (
+from wright.domain.model.memory import CoreMemory, DEFAULT_PERSONA
+from wright.domain.policy.memory import CoreMemoryPolicy
+from wright.infrastructure.persistence.memory import FileCoreMemoryStore
+from wright.infrastructure.tools.memory import (
     build_core_memory_tools,
     get_core_memory,
     update_core_memory,
 )
-from wright.domain.gateway.fact_gateway import IFactRepository
-from wright.domain.gateway.episode_gateway import IEpisodicMemoryStore
+from wright.domain.gateway.memory import IEpisodicMemoryStore, IFactRepository
 from wright.application.memory.memory_service import MemoryService
 
 
