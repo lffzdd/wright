@@ -1,5 +1,4 @@
-"""Backward-compatibility shim. Use wright.utils instead."""
-from .utils import (
+from .util import (
     CHARS_PER_TOKEN,
     build_tool_results_messages,
     estimate_message_tokens,
