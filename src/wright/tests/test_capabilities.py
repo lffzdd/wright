@@ -188,8 +188,8 @@ def test_managed_artifact_survives_source_cleanup_and_rejects_escape(tmp_path):
 def test_production_tools_cannot_reach_session_or_service_containers():
     root = Path(__file__).parents[1]
     sources = [
-        *sorted((root / "tools").glob("*.py")),
-        root / "engine" / "subagent.py",
+        *sorted((root / "infrastructure" / "tools").glob("*.py")),
+        root / "application" / "subagent.py",
     ]
     forbidden = ("runtime.session_state", "runtime.services")
     offenders = {
