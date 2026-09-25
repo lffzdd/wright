@@ -4,23 +4,23 @@ from types import SimpleNamespace
 
 import pytest
 
-from wright.app.tool_runtime import tool_runtime_for_session
-from wright.artifacts import ArtifactStore
-from wright.capabilities import AgentProfile, CapabilityCatalog, CapabilityError
+from wright.application.tool_runtime import tool_runtime_for_session
+from wright.infrastructure.storage.artifacts import ArtifactStore
+from wright.domain.capabilities import AgentProfile, CapabilityCatalog, CapabilityError
 from wright.domain.checkpoint import SessionCheckpointStore
 from wright.domain.session import Session
-from wright.engine.agent import create_agent
-from wright.engine.executor import ToolExecutor
-from wright.execution import LocalExecutionBackend
-from wright.permission import ToolAccess
-from wright.renderer import SilentRenderer
+from wright.application.agent_runner import create_agent
+from wright.application.tool_dispatcher import ToolExecutor
+from wright.infrastructure.runtime import LocalExecutionBackend
+from wright.domain.policy import ToolAccess
+from wright.interfaces.renderer import SilentRenderer
 from wright.tests.responses import response
-from wright.tool_capabilities import assemble_tool_capabilities
-from wright.tool_protocol import ToolCall, ToolResult
-from wright.tools.base import Tool
-from wright.tools.command_tools import execute_command
-from wright.tools.file_tools import read_file_tool
-from wright.tools.mcp_client import _to_tool_result
+from wright.application.tool_capabilities import assemble_tool_capabilities
+from wright.domain.tool_protocol import ToolCall, ToolResult
+from wright.infrastructure.tools.base import Tool
+from wright.infrastructure.tools.command_tools import execute_command
+from wright.infrastructure.tools.file_tools import read_file_tool
+from wright.infrastructure.tools.mcp_client import _to_tool_result
 
 from .test_attachments import _png_bytes
 
@@ -349,7 +349,7 @@ def test_profile_filters_the_system_catalog_as_well_as_execution(tmp_path):
 
 def _tool_llm(answer):
     def call(_messages, **_kwargs):
-        from wright.events import ContentDone
+        from wright.domain.events import ContentDone
 
         yield ContentDone(content=answer, finish_reason="stop")
 

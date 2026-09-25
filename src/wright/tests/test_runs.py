@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from wright.domain.session import Session, UsageRecord
-from wright.tool_protocol import ToolCall, ToolResult
+from wright.domain.tool_protocol import ToolCall, ToolResult
 
 
 def test_runs_keep_goals_steps_tools_and_usage_separate(tmp_path: Path):

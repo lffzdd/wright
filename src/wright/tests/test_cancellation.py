@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from wright.engine.cancellation import CancellationToken
+from wright.application.cancellation import CancellationToken
 
 
 def test_cancellation_token_combines_host_and_run_checks_and_restores_binding():

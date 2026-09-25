@@ -4,20 +4,20 @@ from types import SimpleNamespace
 
 import pytest
 
-from wright.app.event_dispatch import (
+from wright.application.event_dispatch import (
     dispatch_slash,
     process_session_event,
     slash_command_matches,
 )
-from wright.app.runtime import _trusted_mcp_config_paths, parse_cli_args
-from wright.interaction import InteractionHub
-from wright.permission import PermissionChoice, PermissionPrompt
-from wright.renderer import SilentRenderer, collect_history_pairs
-from wright.tool_protocol import ToolCall, ToolResult
-from wright.tui import app as tui_app_module
-from wright.tui.app import WrightTUI, _context_ring, require_interactive_tty
-from wright.tui.renderer import TUIRenderer
-from wright.tui.session_control import SessionControlRequest
+from wright.application.runtime import _trusted_mcp_config_paths, parse_cli_args
+from wright.interfaces.interaction import InteractionHub
+from wright.domain.policy import PermissionChoice, PermissionPrompt
+from wright.interfaces.renderer import SilentRenderer, collect_history_pairs
+from wright.domain.tool_protocol import ToolCall, ToolResult
+from wright.interfaces.tui import app as tui_app_module
+from wright.interfaces.tui.app import WrightTUI, _context_ring, require_interactive_tty
+from wright.interfaces.tui.renderer import TUIRenderer
+from wright.interfaces.tui.session_control import SessionControlRequest
 
 
 def test_cli_ui_flag_defaults_to_tui(monkeypatch):
@@ -133,7 +133,7 @@ def test_tui_requires_tty(monkeypatch):
 
 
 def test_terminal_selects_iterm_compatibility_driver():
-    from wright.terminal import configure_terminal
+    from wright.interfaces.tui.terminal import configure_terminal
 
     environment = {"TERM_PROGRAM": "iTerm.app"}
     configure_terminal(environment, "darwin")
@@ -142,7 +142,7 @@ def test_terminal_selects_iterm_compatibility_driver():
 
 
 def test_terminal_uses_default_driver_outside_iterm_and_keeps_user_override():
-    from wright.terminal import configure_terminal
+    from wright.interfaces.tui.terminal import configure_terminal
 
     default_environment: dict[str, str] = {}
     configure_terminal(default_environment, "darwin")
@@ -162,7 +162,7 @@ def test_iterm_driver_uses_xterm_shift_enter_protocol(monkeypatch):
     import textual.constants
     from textual._xterm_parser import XTermParser
 
-    from wright.tui import driver
+    from wright.interfaces.tui import driver
 
     assert driver._ENABLE_MODIFY_OTHER_KEYS == "\x1b[>4;1m"
     monkeypatch.setattr(textual.constants, "DISABLE_KITTY_KEY", True)
@@ -295,7 +295,7 @@ def test_history_slash_on_non_console_renderer():
 
 
 def test_slash_command_matches_and_completion_selection():
-    from wright.tui.slash import SlashCompletion, tui_help_text
+    from wright.interfaces.tui.slash import SlashCompletion, tui_help_text
 
     assert [command.name for command in slash_command_matches("/hi")] == ["/history"]
     completion = SlashCompletion()
@@ -312,7 +312,7 @@ def test_slash_command_matches_and_completion_selection():
 def test_session_control_preserves_cli_settings_and_model_choices():
     from argparse import Namespace
 
-    from wright.tui.session_control import (
+    from wright.interfaces.tui.session_control import (
         SessionControlRequest,
         available_models,
         runtime_args_for_transition,
@@ -329,7 +329,7 @@ def test_session_control_preserves_cli_settings_and_model_choices():
 
 
 def test_process_model_name_uses_cli_then_openai_model(monkeypatch):
-    from wright.tui.session_control import process_model_name
+    from wright.interfaces.tui.session_control import process_model_name
 
     monkeypatch.delenv("OPENAI_MODEL", raising=False)
     assert process_model_name(None) == ""
@@ -342,7 +342,7 @@ def test_process_model_name_uses_cli_then_openai_model(monkeypatch):
 def test_tui_model_switch_updates_the_active_llm_client():
     import threading
 
-    from wright.tui.app import WrightTUI
+    from wright.interfaces.tui.app import WrightTUI
 
     class ModelTestApp(WrightTUI):
         def _refresh_status(self) -> None:
@@ -368,7 +368,7 @@ def test_tui_model_switch_updates_the_active_llm_client():
 
 @pytest.mark.anyio
 async def test_tui_slash_menu_navigates_and_completes():
-    from wright.tui.app import MultilineComposer, WrightTUI
+    from wright.interfaces.tui.app import MultilineComposer, WrightTUI
 
     class SlashTestApp(WrightTUI):
         def _seed_history(self) -> None:
@@ -429,8 +429,8 @@ def test_collect_history_pairs_empty():
 
 
 def test_tool_title_formats_icons_and_arguments():
-    from wright.tui.app import _tool_title
-    from wright.tui.renderer import ToolView
+    from wright.interfaces.tui.app import _tool_title
+    from wright.interfaces.tui.renderer import ToolView
 
     running = ToolView(key="1", name="execute_command", arguments={"command": "pytest -v"}, status="running")
     assert _tool_title(running) == "⏳ execute_command · $ pytest -v"
@@ -445,8 +445,8 @@ def test_tool_title_formats_icons_and_arguments():
 def test_tool_body_renders_edit_file_replacement():
     from rich.console import Group
 
-    from wright.tui.app import _tool_body
-    from wright.tui.renderer import ToolView
+    from wright.interfaces.tui.app import _tool_body
+    from wright.interfaces.tui.renderer import ToolView
 
     tool = ToolView(
         key="1",
@@ -465,7 +465,7 @@ def test_tool_body_renders_edit_file_replacement():
 def test_assistant_block_markdown_and_draft():
     from rich.markdown import Markdown as RichMarkdown
 
-    from wright.tui.app import _format_assistant_text
+    from wright.interfaces.tui.app import _format_assistant_text
 
     assert _format_assistant_text("streaming text", draft=True) == "streaming text"
     rendered = _format_assistant_text("# Title\n```python\nprint(1)\n```", draft=False)
@@ -476,7 +476,7 @@ def test_assistant_block_markdown_and_draft():
 async def test_assistant_block_mount_and_render():
     from textual.app import App, ComposeResult
 
-    from wright.tui.app import AssistantBlock
+    from wright.interfaces.tui.app import AssistantBlock
 
     class DummyApp(App):
         def compose(self) -> ComposeResult:
@@ -492,7 +492,7 @@ async def test_assistant_block_mount_and_render():
 async def test_multiline_composer_submits_on_enter_and_accepts_newline_shortcuts():
     from textual.app import App, ComposeResult
 
-    from wright.tui.app import MultilineComposer
+    from wright.interfaces.tui.app import MultilineComposer
 
     class DummyApp(App):
         def __init__(self) -> None:

@@ -4,10 +4,10 @@ import time
 
 import pytest
 
-from wright.interaction import InteractionHub
-from wright.permission import PermissionChoice, PermissionPrompt
-from wright.renderer import ConsoleRenderer, SilentRenderer
-from wright.repl import _start_input_reader
+from wright.interfaces.interaction import InteractionHub
+from wright.domain.policy import PermissionChoice, PermissionPrompt
+from wright.interfaces.renderer import ConsoleRenderer, SilentRenderer
+from wright.interfaces.repl import _start_input_reader
 
 
 def test_hub_delivers_reply_from_collector():

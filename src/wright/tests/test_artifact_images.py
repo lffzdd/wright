@@ -6,15 +6,15 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from wright.artifacts import ArtifactStore
+from wright.infrastructure.storage.artifacts import ArtifactStore
 from wright.domain.checkpoint import SessionCheckpointStore
 from wright.domain.session import Session
-from wright.engine.agent import create_agent
-from wright.permission import ToolAccess
-from wright.renderer import SilentRenderer
-from wright.tool_protocol import ToolResult
-from wright.tools.base import Tool
-from wright.tools.mcp_client import _to_tool_result
+from wright.application.agent_runner import create_agent
+from wright.domain.policy import ToolAccess
+from wright.interfaces.renderer import SilentRenderer
+from wright.domain.tool_protocol import ToolResult
+from wright.infrastructure.tools.base import Tool
+from wright.infrastructure.tools.mcp_client import _to_tool_result
 
 from .test_attachments import _png_bytes
 from .test_llm import _client, _reply, _responses_client
@@ -44,7 +44,7 @@ def test_artifact_rejects_oversized_base64_before_decoding(tmp_path, monkeypatch
 
 
 def test_foreign_tool_image_reference_is_not_read(tmp_path):
-    from wright.model_adapters import ChatAdapter
+    from wright.infrastructure.llm.model_adapters import ChatAdapter
 
     adapter = ChatAdapter(
         lambda _: pytest.fail("not an attachment"),

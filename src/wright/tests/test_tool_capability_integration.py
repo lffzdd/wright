@@ -1,17 +1,17 @@
 import queue
 import threading
 
-from wright.app.services import RuntimeServices
+from wright.application.services import RuntimeServices
 from wright.autonomy import AutonomyScheduler, AutonomyStore
 from wright.domain.session import Session
-from wright.engine.executor import ToolExecutor
-from wright.engine.looping import SessionLoopRegistry
-from wright.permission import PermissionResolver, PermissionResponse
-from wright.tool_capabilities import assemble_tool_capabilities
-from wright.tool_protocol import ToolCall
-from wright.tools.autonomy_tools import autonomy_tools
-from wright.tools.loop_tools import manage_loop_tool
-from wright.tools.task_tools import task_tools
+from wright.application.tool_dispatcher import ToolExecutor
+from wright.application.looping import SessionLoopRegistry
+from wright.domain.policy import PermissionResolver, PermissionResponse
+from wright.application.tool_capabilities import assemble_tool_capabilities
+from wright.domain.tool_protocol import ToolCall
+from wright.infrastructure.tools.autonomy_tools import autonomy_tools
+from wright.infrastructure.tools.loop_tools import manage_loop_tool
+from wright.infrastructure.tools.task_tools import task_tools
 
 
 def test_registered_management_tools_work_through_capability_restriction(tmp_path):

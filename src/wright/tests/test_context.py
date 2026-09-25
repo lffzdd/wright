@@ -5,10 +5,10 @@ from copy import deepcopy
 from pathlib import Path
 
 from wright.domain.session import Session
-from wright.engine.agent import create_agent
-from wright.engine.context import ContextBuilder, ContextCompactor
-from wright.renderer import SilentRenderer
-from wright.tool_protocol import ToolCall, ToolResult
+from wright.application.agent_runner import create_agent
+from wright.application.context_compactor import ContextBuilder, ContextCompactor
+from wright.interfaces.renderer import SilentRenderer
+from wright.domain.tool_protocol import ToolCall, ToolResult
 
 
 def _tool_result(call_id: str, data: str) -> dict:

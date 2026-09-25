@@ -5,15 +5,15 @@ from rich.console import Console
 
 from wright.domain.checkpoint import SessionCheckpointStore
 from wright.domain.session import Session, UsageRecord
-from wright.engine.agent import create_agent
-from wright.engine.verifier import Verifier
-from wright.events import UsageEvent
+from wright.application.agent_runner import create_agent
+from wright.domain.policy.verifier import Verifier
+from wright.domain.events import UsageEvent
 from wright.memory.llm_util import metered_events
-from wright.renderer import ConsoleRenderer, SilentRenderer
+from wright.interfaces.renderer import ConsoleRenderer, SilentRenderer
 from wright.tests.responses import response
-from wright.tool_protocol import ToolCall, ToolResult
-from wright.tools.base import Tool
-from wright.util import estimate_message_tokens
+from wright.domain.tool_protocol import ToolCall, ToolResult
+from wright.infrastructure.tools.base import Tool
+from wright.utils.util import estimate_message_tokens
 
 
 class Capture(SilentRenderer):

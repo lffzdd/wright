@@ -3,7 +3,7 @@
 import json
 from uuid import uuid4
 
-from wright.events import ContentDone
+from wright.domain.events import ContentDone
 
 
 def response(*, content=None, calls=(), reasoning=""):
