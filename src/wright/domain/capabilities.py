@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from ..infrastructure.tools.base import Tool
+if TYPE_CHECKING:
+    from ..infrastructure.tools.base import Tool
 
 
 class CapabilityError(ValueError):

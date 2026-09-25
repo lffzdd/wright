@@ -49,7 +49,10 @@ class CheckpointError(ValueError):
     """Checkpoint data is missing, corrupt, unsupported, or inconsistent."""
 
 
-class SessionCheckpointStore:
+from .gateway.session_repository import ISessionRepository
+
+
+class SessionCheckpointStore(ISessionRepository):
     """Store one latest, atomic JSON snapshot per session id."""
 
     def __init__(self, directory: Path) -> None:

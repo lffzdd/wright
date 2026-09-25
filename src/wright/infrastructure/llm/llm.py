@@ -25,12 +25,13 @@ from openai import APIConnectionError, APIStatusError, OpenAI, omit
 from ..storage.artifacts import ArtifactStore
 from ..storage.attachments import AttachmentError, AttachmentStore
 from ...domain.events import ContentDelta, ContentDone, LLMEvent, ReasoningDelta, UsageEvent
+from ...domain.gateway.llm_gateway import ILLMProvider
 from ...domain.model import ModelRequest
 from .model_adapters import ChatAdapter, ResponsesAdapter
 from ...domain.tool_protocol import ArtifactRef
 
 
-class LLMClient:
+class LLMClient(ILLMProvider):
     def __init__(
         self,
         base_url: str | None,

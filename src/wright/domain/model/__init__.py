@@ -1,37 +1,23 @@
-"""Wright domain layer root package."""
+"""Domain models: entities and value objects."""
 
 from __future__ import annotations
 
-from . import gateway, model, policy
-from .model import (
-    AgentControlConfig,
-    AgentControlError,
-    AgentControlPlane,
-    AgentProfile,
-    AgentTaskRecord,
-    ArtifactRef,
-    CapabilityCatalog,
-    CapabilitySnapshot,
-    ContentDelta,
-    ContentDone,
-    LLMEvent,
-    Message,
+from .session import (
     MessageRecord,
-    ModelRequest,
-    ReasoningDelta,
-    RunRecord,
-    RunStatus,
     Session,
-    SessionCheckpointStore,
     SessionLifecycle,
-    ToolAccess,
-    ToolCall,
     ToolExecutionRecord,
-    ToolResult,
     TurnRecord,
-    UsageEvent,
     UsageRecord,
 )
+from .tool_definition import ArtifactRef, ToolAccess, ToolCall, ToolResult
+from .message import Message
+from .request import ModelRequest
+from .agent import AgentProfile, CapabilityCatalog, CapabilitySnapshot
+from .events import ContentDelta, ContentDone, LLMEvent, ReasoningDelta, UsageEvent
+from .checkpoint import SessionCheckpointStore
+from .coordination import AgentControlConfig, AgentControlError, AgentControlPlane, AgentTaskRecord
+from .runs import RunRecord, RunStatus
 
 __all__ = [
     "AgentControlConfig",
@@ -61,7 +47,4 @@ __all__ = [
     "TurnRecord",
     "UsageEvent",
     "UsageRecord",
-    "gateway",
-    "model",
-    "policy",
 ]

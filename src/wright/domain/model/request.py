@@ -35,3 +35,6 @@ class ModelRequest(Sequence[dict[str, Any]]):
 
     def copied_messages(self) -> list[dict[str, Any]]:
         return deepcopy(list(self.messages))
+
+
+__all__ = ["ModelRequest"]
