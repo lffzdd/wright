@@ -18,8 +18,8 @@ from ..core.processes import RuntimeResources
 from ..domain.prompt import build_system_prompt
 from ..domain.protocol import TurnAbort, encode_tools, parse_turn
 from ..interfaces.renderer import Renderer
-from .skills_prompt import catalog_reminder
-from .skill_registry import SkillRegistry
+from .skills import catalog_reminder
+from .skills import SkillRegistry
 from .tool_capabilities import CapabilityAssembly, assemble_tool_capabilities
 from ..domain.tool_protocol import ToolResult
 from ..infrastructure.tools.base import Tool

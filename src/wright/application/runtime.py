@@ -61,7 +61,7 @@ from ..domain.policy import (
 from ..core.processes import RuntimeResources
 from ..infrastructure.workspace.project import ProjectContext
 from ..interfaces.renderer import ConsoleRenderer, Renderer
-from .skill_registry import SkillRegistry
+from .skills import SkillRegistry
 from ..infrastructure.tools.skill_tools import optional_skill_tools
 from .tool_capabilities import assemble_tool_capabilities
 from ..infrastructure.tools import tools as base_tools

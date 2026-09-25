@@ -5,11 +5,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from .skills_prompt import catalog_reminder
+from .skills import catalog_reminder
 
 if TYPE_CHECKING:
     from ..domain.session import Session
-    from .skill_registry import SkillRegistry
+    from .skills import SkillRegistry
     from ..infrastructure.tools.base import Tool
 
 

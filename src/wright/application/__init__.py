@@ -7,8 +7,7 @@ from .task_service import (
     ShellTaskBackend,
     TaskService,
 )
-from .skill_registry import SkillRegistry
-from .skills_prompt import catalog_reminder
+from .skills import SkillRegistry, catalog_reminder
 from .memory import MemoryManager
 
 from .dto import RunAgentRequest, StreamEventDTO

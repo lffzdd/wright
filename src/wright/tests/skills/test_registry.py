@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from wright.application.skill_registry import SkillRegistry
+from wright.application.skills import SkillRegistry
 from wright.infrastructure.storage.skills import write_skill
 
 

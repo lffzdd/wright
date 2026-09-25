@@ -15,7 +15,7 @@ from wright.application.agent_background import AgentBackgroundRuntime
 from wright.application.subagent import build_agent_tools
 from wright.domain.policy import PermissionPolicy, PermissionResolver, PermissionSettings
 from wright.interfaces.renderer import SilentRenderer
-from wright.application.skill_registry import SkillRegistry
+from wright.application.skills import SkillRegistry
 from wright.infrastructure.storage.skills import write_skill
 from wright.domain.tool_protocol import ToolResult
 from wright.infrastructure.tools.ask_user_tool import ask_user_tool

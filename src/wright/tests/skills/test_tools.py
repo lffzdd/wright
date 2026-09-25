@@ -4,7 +4,7 @@ from jsonschema import validators
 
 from wright.application.tool_runtime import tool_runtime_for_session
 from ...domain.session import Session
-from wright.application.skill_registry import SkillRegistry
+from wright.application.skills import SkillRegistry
 from wright.infrastructure.storage.skills import write_skill
 from wright.infrastructure.tools.skill_tools import build_skill_tools
 from wright.infrastructure.tools.validation import validate_tool_arguments

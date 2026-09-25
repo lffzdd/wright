@@ -6,8 +6,8 @@ import threading
 from collections.abc import Sequence
 from pathlib import Path
 
-from ..domain.model.skills import SkillDefinition, SkillMeta, SkillNotFoundError, SkillStoreError
-from ..infrastructure.storage.skills import load_skill_file, normalize_skill_id, scan_skills, skill_file_path
+from ...domain.model.skills import SkillDefinition, SkillMeta, SkillNotFoundError, SkillStoreError
+from ...infrastructure.storage.skills import load_skill_file, normalize_skill_id, scan_skills, skill_file_path
 
 
 class SkillRegistry:

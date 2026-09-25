@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..domain.model.skills import (
+from ...domain.model.skills import (
     MAX_CATALOG_CHARS,
     MIN_CATALOG_DESC_CHARS,
     SkillMeta,
