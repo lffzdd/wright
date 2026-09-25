@@ -8,7 +8,7 @@ from wright.domain.session import Session
 from wright.engine.agent import create_agent
 from wright.engine.context import ContextBuilder, ContextCompactor
 from wright.renderer import SilentRenderer
-from wright.tools.base import ToolCall, ToolResult
+from wright.tool_protocol import ToolCall, ToolResult
 
 
 def _tool_result(call_id: str, data: str) -> dict:

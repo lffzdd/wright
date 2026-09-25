@@ -2,10 +2,10 @@ from pathlib import Path
 
 from jsonschema import validators
 
+from ...app.tool_runtime import tool_runtime_for_session
 from ...domain.session import Session
 from ...skills.registry import SkillRegistry
 from ...skills.store import write_skill
-from ...tools.base import tool_runtime_for_session
 from ...tools.skill_tools import build_skill_tools
 from ...tools.validation import validate_tool_arguments
 

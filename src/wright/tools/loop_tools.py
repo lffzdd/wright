@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..engine.looping import LoopError, SessionLoopRegistry
-from ..permission import ToolAccess
-from .base import Tool, ToolResult, ToolRuntime
+from ..tool_protocol import ToolAccess, ToolResult
+from .base import Tool
+from .ports import LoopOperations
+from .runtime import ToolRuntime
 
 
 def _describe_loop(arguments: dict[str, Any]) -> ToolAccess:
@@ -20,7 +21,7 @@ def _describe_loop(arguments: dict[str, Any]) -> ToolAccess:
     )
 
 
-def _registry(runtime: ToolRuntime) -> SessionLoopRegistry:
+def _registry(runtime: ToolRuntime) -> LoopOperations:
     registry = runtime.capabilities.loop_registry if runtime.capabilities else None
     if registry is None:
         raise RuntimeError("in-session loop runtime is not configured")
@@ -33,7 +34,7 @@ def loop_tool_call(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResul
         action = str(arguments.get("action") or "create")
         if action == "create":
             if "interval_seconds" not in arguments or "prompt" not in arguments:
-                raise LoopError("create requires interval_seconds and prompt")
+                raise ValueError("create requires interval_seconds and prompt")
             record = registry.create(
                 prompt=str(arguments["prompt"]),
                 interval_seconds=float(arguments["interval_seconds"]),
@@ -49,9 +50,9 @@ def loop_tool_call(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResul
         if action == "stop":
             loop_id = str(arguments.get("loop_id") or "").strip()
             if not loop_id:
-                raise LoopError("stop requires loop_id")
+                raise ValueError("stop requires loop_id")
             return ToolResult.success(registry.stop(loop_id).to_dict())
-        raise LoopError("action must be create, list, or stop")
+        raise ValueError("action must be create, list, or stop")
     except (RuntimeError, TypeError, ValueError) as exc:
         return ToolResult.fail(str(exc))
 

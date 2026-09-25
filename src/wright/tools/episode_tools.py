@@ -6,8 +6,9 @@ from pathlib import Path
 from typing import Any
 
 from ..memory.episode import EpisodeStore, EpisodeStoreError
-from ..permission import ToolAccess
-from .base import Tool, ToolResult, ToolRuntime
+from ..tool_protocol import ToolAccess, ToolResult
+from .base import Tool
+from .runtime import ToolRuntime
 
 
 def search_episodes(

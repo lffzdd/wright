@@ -25,7 +25,7 @@ from ..interaction import InteractionBroker
 from ..paths import project_id, session_dir, task_db_path
 from ..project import ProjectContext
 from ..renderer import SilentRenderer
-from ..tools.base import ArtifactRef
+from ..tool_protocol import ArtifactRef
 from ..ui_events import EventPublisher
 from ..worktrees import ArchiveResult, WorktreeManager
 

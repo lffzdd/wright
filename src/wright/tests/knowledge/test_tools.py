@@ -7,7 +7,7 @@ from ...knowledge.provider import MAX_HIT_CONTENT_CHARS, KnowledgeHit
 from ...skills.registry import SkillRegistry
 from ...skills.store import write_skill
 from ...tool_capabilities import assemble_tool_capabilities
-from ...tools.base import ToolCall
+from ...tool_protocol import ToolCall
 from ...tools.knowledge_tools import build_knowledge_tools
 from ...tools.skill_tools import build_skill_tools
 

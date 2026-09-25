@@ -10,7 +10,7 @@ from ..domain.session import Session
 from ..interaction import InteractionBroker
 from ..processes import RuntimeResources
 from ..project import ProjectContext
-from ..tools.base import ArtifactRef, ToolCall, ToolResult
+from ..tool_protocol import ArtifactRef, ToolCall, ToolResult
 from ..ui_events import EventPublisher
 from ..web import runtime_manager as runtime_module
 from ..web.runtime_manager import RuntimeManager, RuntimeManagerError, SessionHandle

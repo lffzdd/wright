@@ -6,8 +6,9 @@ from pathlib import Path
 from typing import Any, Literal
 
 from ..execution import AuthorizedExecution, ExecutionPath
-from ..permission import AccessTarget, ToolAccess
-from .base import Tool, ToolResult, ToolRuntime
+from ..tool_protocol import AccessTarget, ToolAccess, ToolResult
+from .base import Tool
+from .runtime import ToolRuntime
 
 MAX_READ_CHARS = 1_000_000  # 单次最多读 100 万字符,够用又不撑爆内存
 FILE_UNCHANGED = "File unchanged since last read."

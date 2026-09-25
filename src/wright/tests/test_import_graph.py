@@ -111,3 +111,52 @@ def test_runtime_import_graph_is_acyclic() -> None:
         + " -> ".join(cycle or [])
         + "\n如果这条边只是为了类型标注，请把它移到 `if TYPE_CHECKING:` 块里。"
     )
+
+
+def test_tool_protocol_does_not_depend_on_runtime_assembly() -> None:
+    modules = _collect_modules()
+    known = set(modules)
+    graph = {
+        name: _runtime_edges(name, path, known) for name, path in modules.items()
+    }
+
+    assert not graph["tools.base"] & {
+        "tool_capabilities",
+        "execution",
+        "processes",
+    }
+    assert "tool_capabilities" not in graph["tools.runtime"]
+    assert not any(
+        target == "tools" or target.startswith("tools.")
+        for target in graph["tool_protocol"]
+    )
+
+
+def test_loop_tool_depends_on_a_port_not_the_engine() -> None:
+    modules = _collect_modules()
+    known = set(modules)
+    graph = {
+        name: _runtime_edges(name, path, known) for name, path in modules.items()
+    }
+
+    assert "tools.ports" in graph["tools.loop_tools"]
+    assert not any(target == "engine" or target.startswith("engine.")
+                   for target in graph["tools.loop_tools"])
+
+
+def test_permission_resolver_does_not_depend_on_tools() -> None:
+    modules = _collect_modules()
+    known = set(modules)
+    graph = {
+        name: _runtime_edges(name, path, known) for name, path in modules.items()
+    }
+
+    assert not any(
+        target == "tools" or target.startswith("tools.")
+        for target in graph["permission.resolver"]
+    )
+    assert not any(
+        target == "tools" or target.startswith("tools.")
+        for target in graph["permission.approval"]
+    )
+    assert "permission.resolver" not in graph["permission.approval"]

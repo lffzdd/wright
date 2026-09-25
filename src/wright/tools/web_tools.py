@@ -3,8 +3,8 @@ from typing import Any
 
 import httpx
 
-from ..permission import AccessTarget, ToolAccess
-from .base import Tool, ToolResult
+from ..tool_protocol import AccessTarget, ToolAccess, ToolResult
+from .base import Tool
 
 
 def web_search(query: str, max_results: int, timeout: int = 20):

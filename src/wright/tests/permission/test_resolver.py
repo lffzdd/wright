@@ -8,7 +8,8 @@ from ...permission import (
     ToolAccess,
 )
 from ...tool_capabilities import assemble_tool_capabilities
-from ...tools.base import Tool, ToolCall, ToolResult
+from ...tool_protocol import ToolCall, ToolResult
+from ...tools.base import Tool
 from ...tools.command_tools import execute_command_tool
 from ...tools.file_tools import (
     edit_file_tool,

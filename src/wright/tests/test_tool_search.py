@@ -6,8 +6,10 @@ from ..domain.session import Session
 from ..engine.agent import create_agent
 from ..protocol import encode_tools
 from ..renderer import SilentRenderer
+from ..tool_protocol import ToolResult
 from ..tools import tools as built_in_tools
-from ..tools.base import Tool, ToolResult, ToolRuntime
+from ..tools.base import Tool
+from ..tools.runtime import ToolRuntime
 from ..tools.tool_search import make_tool_search_tool
 
 

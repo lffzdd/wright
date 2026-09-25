@@ -11,7 +11,8 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from .events import ContentDone
-from .tools.base import Tool, ToolCall
+from .tool_protocol import ToolCall
+from .tools.base import Tool
 
 
 def encode_tools(

@@ -13,7 +13,7 @@ from wright.app.runtime import _trusted_mcp_config_paths, parse_cli_args
 from wright.interaction import InteractionHub
 from wright.permission import PermissionChoice, PermissionPrompt
 from wright.renderer import SilentRenderer, collect_history_pairs
-from wright.tools.base import ToolCall, ToolResult
+from wright.tool_protocol import ToolCall, ToolResult
 from wright.tui import app as tui_app_module
 from wright.tui.app import WrightTUI, _context_ring, require_interactive_tty
 from wright.tui.renderer import TUIRenderer

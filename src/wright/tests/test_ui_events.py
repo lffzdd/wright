@@ -4,7 +4,7 @@ import time
 import pytest
 
 from ..interaction import InteractionBroker
-from ..tools.base import ToolCall, ToolResult
+from ..tool_protocol import ToolCall, ToolResult
 from ..ui_events import (
     EventPublisher,
     EventScope,

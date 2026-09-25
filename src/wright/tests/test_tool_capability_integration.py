@@ -8,8 +8,8 @@ from wright.engine.executor import ToolExecutor
 from wright.engine.looping import SessionLoopRegistry
 from wright.permission import PermissionResolver, PermissionResponse
 from wright.tool_capabilities import assemble_tool_capabilities
+from wright.tool_protocol import ToolCall
 from wright.tools.autonomy_tools import autonomy_tools
-from wright.tools.base import ToolCall
 from wright.tools.loop_tools import manage_loop_tool
 from wright.tools.task_tools import task_tools
 

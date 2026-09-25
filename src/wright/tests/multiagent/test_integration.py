@@ -2,6 +2,7 @@ import time
 
 from wright.tests.responses import event, response
 
+from ...app.tool_runtime import tool_runtime_for_session
 from ...domain.checkpoint import SessionCheckpointStore
 from ...domain.coordination import AgentControlConfig, AgentControlPlane
 from ...domain.session import Session
@@ -12,7 +13,7 @@ from ...events import UsageEvent
 from ...permission import PermissionPolicy, PermissionResolver, PermissionSettings
 from ...renderer import SilentRenderer
 from ...tool_capabilities import assemble_tool_capabilities
-from ...tools.base import ToolCall, tool_runtime_for_session
+from ...tool_protocol import ToolCall
 from ...tools.command_tools import execute_command
 
 

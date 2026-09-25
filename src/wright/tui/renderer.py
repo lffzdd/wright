@@ -16,7 +16,7 @@ from textual.message import Message
 from ..interaction import InteractionHub, InteractionKind, InteractionRequest
 from ..permission.types import PermissionPrompt, PermissionResponse
 from ..renderer import Renderer
-from ..tools.base import ToolCall, ToolResult
+from ..tool_protocol import ToolCall, ToolResult
 
 
 def _tool_call_name(tool_call: Any) -> str:

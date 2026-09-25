@@ -49,7 +49,6 @@ from ..paths import (
 )
 from ..permission import (
     AuthorizationChange,
-    InteractiveApprovalHandler,
     PermissionRequest,
     PermissionResolver,
     PermissionResponse,
@@ -70,6 +69,7 @@ from ..tools.loop_tools import manage_loop_tool
 from ..tools.mcp_client import McpManager, load_mcp_configs
 from ..ui_events import EventPublisher, RendererEventSubscriber, SessionEvents
 from .application_host import ApplicationHost
+from .interactive_approval import InteractiveApprovalHandler
 from .lifecycle import LifecycleConfigError, load_lifecycle_manager
 from .services import RuntimeServices
 
@@ -533,7 +533,11 @@ def assemble_runtime(
         env_interactive == "1" if env_interactive is not None else sys.stdin.isatty()
     )
     approval_handler = (
-        InteractiveApprovalHandler(renderer=event_renderer)
+        InteractiveApprovalHandler(
+            interaction_target,
+            notify_phase=event_renderer.on_tool_phase,
+            prompt_fallback=renderer.prompt_permission,
+        )
         if interactive else None
     )
 

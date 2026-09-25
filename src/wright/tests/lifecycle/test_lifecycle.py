@@ -13,7 +13,8 @@ from ...app.lifecycle import (
 from ...engine.executor import ToolExecutor
 from ...permission import ToolAccess
 from ...tool_capabilities import assemble_tool_capabilities
-from ...tools.base import Tool, ToolCall, ToolResult
+from ...tool_protocol import ToolCall, ToolResult
+from ...tools.base import Tool
 
 
 def _tool(call):

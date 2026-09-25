@@ -4,14 +4,22 @@ from __future__ import annotations
 
 import json
 import threading
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from glob import escape
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from ..execution.protocols import ExecutionBackend
 from ..execution.types import ExecutionPath
+from ..tool_protocol import ToolAccess, ToolCall
+from .approval import (
+    PermissionApprovalHandler,
+    PermissionRequest,
+    ResolvedTarget,
+    UserInteractionHandler,
+    normalize_response,
+)
 from .scope import AccessScope, PathClass, forbidden_paths
 from .types import (
     AccessTarget,
@@ -23,63 +31,11 @@ from .types import (
     PermissionDecision,
     PermissionPrompt,
     PermissionResolution,
-    PermissionResponse,
-    ToolAccess,
+    PermissionSubject,
 )
 
 if TYPE_CHECKING:
-    from ..tools.base import Tool, ToolCall, ToolRuntime
     from .config import PermissionSettings
-
-
-class PermissionApprovalHandler(Protocol):
-    def __call__(self, request: PermissionRequest) -> PermissionResponse | str: ...
-
-
-UserInteractionHandler = PermissionApprovalHandler
-
-
-@dataclass(frozen=True)
-class ResolvedTarget:
-    declaration: AccessTarget
-    path: ExecutionPath | None
-    classification: PathClass | None
-
-
-class PermissionRequest:
-    """All context an approval adapter may inspect; it cannot grant directly."""
-
-    def __init__(
-        self,
-        tool_call: ToolCall,
-        tool: Tool,
-        arguments: dict,
-        runtime: ToolRuntime,
-        access: ToolAccess,
-        targets: tuple[ResolvedTarget, ...],
-        cwd: ExecutionPath,
-        scope: AccessScope,
-        identity: InvocationIdentity,
-        prompt: PermissionPrompt,
-    ) -> None:
-        self.tool_call = tool_call
-        self.tool = tool
-        self.arguments = arguments
-        self.runtime = runtime
-        self.access = access
-        self.targets = targets
-        self.cwd = cwd
-        self.scope = scope
-        self.identity = identity
-        self.prompt = prompt
-
-    @property
-    def subject(self) -> str:
-        return self.access.subject
-
-    @property
-    def risk_flags(self) -> tuple[str, ...]:
-        return self.access.risk_flags
 
 
 class PermissionPolicy:
@@ -194,20 +150,6 @@ class PermissionPolicy:
         )
 
 
-class FallbackApprovalHandler:
-    """Ask each adapter until one returns a concrete choice."""
-
-    def __init__(self, *handlers: PermissionApprovalHandler):
-        self.handlers = handlers
-
-    def __call__(self, request: PermissionRequest) -> PermissionResponse:
-        for handler in self.handlers:
-            response = _normalize_response(handler(request))
-            if response.choice not in {"ask", "abstain"}:
-                return response
-        return PermissionResponse("deny")
-
-
 class PermissionResolver:
     """Resolve a ToolAccess description into a one-call InvocationGrant."""
 
@@ -234,8 +176,7 @@ class PermissionResolver:
     def resolve(
         self,
         tool_call: ToolCall,
-        tool: Tool,
-        runtime: ToolRuntime,
+        subject: PermissionSubject,
         *,
         backend: ExecutionBackend | None,
         scope: AccessScope,
@@ -252,13 +193,13 @@ class PermissionResolver:
             return self._deny(arguments, "没有可用的固定执行环境", source="resolver")
 
         try:
-            access = tool.describe_access(arguments)
+            access = subject.describe_access(arguments)
             if not isinstance(access, ToolAccess) or not access.operations:
                 raise TypeError("describe_access must return ToolAccess with operations")
         except Exception as exc:
             return self._deny(
                 arguments,
-                f"{tool.name}: access description failed: {type(exc).__name__}: {exc}",
+                f"{subject.name}: access description failed: {type(exc).__name__}: {exc}",
                 source="access_description_error",
             )
 
@@ -286,38 +227,36 @@ class PermissionResolver:
             effective_access = replace(
                 access, risk_flags=(*access.risk_flags, "path_outside_scope")
             )
-        subject = access.subject or _subject_from_arguments(arguments)
-        if effective_access.subject != subject:
-            effective_access = replace(effective_access, subject=subject)
+        access_subject = access.subject or _subject_from_arguments(arguments)
+        if effective_access.subject != access_subject:
+            effective_access = replace(effective_access, subject=access_subject)
         decision, reason, source = self.policy.apply(
             effective_access,
-            tool_name=tool.name,
-            subject=subject,
+            tool_name=subject.name,
+            subject=access_subject,
             in_scope=in_scope,
         )
 
-        remember_rule = _rememberable_rule(tool.name, arguments, effective_access)
+        remember_rule = _rememberable_rule(subject.name, arguments, effective_access)
 
-        if tool.requires_user_interaction and decision != "deny":
+        if subject.requires_user_interaction and decision != "deny":
             decision = "ask"
             reason = reason or "需要用户交互"
             source = "user_interaction"
 
         prompt = self._prompt(
             tool_call,
-            tool.name,
+            subject.name,
             effective_access,
             resolved,
             identity,
             reason,
             remember_rule=remember_rule,
-            subject=subject,
+            subject=access_subject,
         )
         request = PermissionRequest(
             tool_call,
-            tool,
             arguments,
-            runtime,
             effective_access,
             resolved,
             fixed_cwd,
@@ -343,7 +282,11 @@ class PermissionResolver:
                 remember_rule=remember_rule,
             )
 
-        handler = self.interaction_handler if tool.requires_user_interaction else self.approval_handler
+        handler = (
+            self.interaction_handler
+            if subject.requires_user_interaction
+            else self.approval_handler
+        )
         if handler is None:
             return PermissionResolution(
                 arguments,
@@ -354,7 +297,7 @@ class PermissionResolver:
                 prompt=prompt,
             )
         try:
-            response = _normalize_response(handler(request))
+            response = normalize_response(handler(request))
         except Exception as exc:
             return PermissionResolution(
                 arguments,
@@ -386,16 +329,14 @@ class PermissionResolver:
         final_arguments = dict(response.updated_arguments or arguments)
         if response.updated_arguments is not None:
             try:
-                updated_access = tool.describe_access(final_arguments)
+                updated_access = subject.describe_access(final_arguments)
             except Exception as exc:
                 return self._deny(
                     final_arguments,
                     f"审批改写后的访问描述失败: {exc}",
                     source="updated_access_description_error",
                 )
-            from ..tools.validation import validate_tool_arguments
-
-            validation_error = validate_tool_arguments(tool, final_arguments)
+            validation_error = subject.validate(final_arguments)
             if validation_error is not None:
                 return self._deny(
                     final_arguments,
@@ -415,8 +356,7 @@ class PermissionResolver:
                     )
                 return self._resolve_updated(
                     updated_call,
-                    tool,
-                    runtime,
+                    subject,
                     backend=backend,
                     scope=scope,
                     identity=identity,
@@ -604,16 +544,6 @@ class PermissionResolver:
         source: str,
     ) -> PermissionResolution:
         return PermissionResolution(arguments, "deny", reason, risk_flags, source)
-
-
-def _normalize_response(value: PermissionResponse | str) -> PermissionResponse:
-    if isinstance(value, PermissionResponse):
-        return value
-    if isinstance(value, str):
-        # Renderer adapters may still be convenient to write as a choice
-        # function, but only fixed IDs are meaningful at this boundary.
-        return PermissionResponse(value)
-    raise TypeError("approval adapter must return PermissionResponse or choice ID")
 
 
 def _matches(rules, tool_name: str, subject: str) -> bool:

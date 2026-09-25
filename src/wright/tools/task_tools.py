@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..permission import ToolAccess
 from ..tasks import TaskNotFoundError, TaskService, TaskWaitCancelled
-from .base import Tool, ToolResult, ToolRuntime
+from ..tool_protocol import ToolAccess, ToolResult
+from .base import Tool
+from .runtime import ToolRuntime
 
 
 def _describe_task_read(arguments: dict[str, Any]) -> ToolAccess:

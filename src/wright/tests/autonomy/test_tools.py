@@ -1,4 +1,5 @@
 from ...app.services import RuntimeServices
+from ...app.tool_runtime import tool_runtime_for_session
 from ...autonomy import AutonomyStore
 from ...domain.session import Session
 from ...tools.autonomy_tools import (
@@ -10,7 +11,6 @@ from ...tools.autonomy_tools import (
     resume_schedule_tool,
     schedule_task_tool,
 )
-from ...tools.base import tool_runtime_for_session
 
 
 def _runtime(tmp_path):

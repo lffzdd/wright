@@ -1,7 +1,8 @@
 from ..engine.executor import ToolExecutor
 from ..permission import PermissionResolver, PermissionResponse, ToolAccess
 from ..tool_capabilities import assemble_tool_capabilities
-from ..tools.base import Tool, ToolCall, ToolResult
+from ..tool_protocol import ToolCall, ToolResult
+from ..tools.base import Tool
 
 
 def _schema_tool(calls, permission_calls=None):

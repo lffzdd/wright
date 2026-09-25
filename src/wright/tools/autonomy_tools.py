@@ -6,8 +6,9 @@ import time
 from typing import Any
 
 from ..autonomy import AutonomyStoreError, TriggerSpec
-from ..permission import ToolAccess
-from .base import Tool, ToolResult, ToolRuntime
+from ..tool_protocol import ToolAccess, ToolResult
+from .base import Tool
+from .runtime import ToolRuntime
 
 
 def _store(runtime: ToolRuntime):

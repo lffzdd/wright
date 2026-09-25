@@ -5,11 +5,13 @@ import pytest
 from wright.tests.responses import event, response
 
 from ...app.lifecycle import HookRegistration, LifecycleManager, TraceRecorder
+from ...app.tool_runtime import tool_runtime_for_session
 from ...domain.session import Session
 from ...engine.agent import create_agent
 from ...engine.subagent import make_spawn_agent_tool
 from ...renderer import SilentRenderer
-from ...tools.base import Tool, ToolResult, tool_runtime_for_session
+from ...tool_protocol import ToolResult
+from ...tools.base import Tool
 
 
 def _final(answer):

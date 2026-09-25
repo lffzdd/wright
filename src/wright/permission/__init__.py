@@ -9,14 +9,15 @@ from .config import (
     default_settings_path,
     load_permission_settings,
 )
-from .interactive import InteractiveApprovalHandler
-from .resolver import (
+from .approval import (
     FallbackApprovalHandler,
     PermissionApprovalHandler,
-    PermissionPolicy,
     PermissionRequest,
-    PermissionResolver,
     UserInteractionHandler,
+)
+from .resolver import (
+    PermissionPolicy,
+    PermissionResolver,
 )
 from .scope import AccessScope, PathClass, forbidden_paths, is_under, resolve_root
 from .types import (
@@ -30,6 +31,7 @@ from .types import (
     PermissionPrompt,
     PermissionResolution,
     PermissionResponse,
+    PermissionSubject,
     ToolAccess,
 )
 
@@ -39,7 +41,6 @@ __all__ = [
     "AuthorizationChange",
     "FallbackApprovalHandler",
     "GrantTarget",
-    "InteractiveApprovalHandler",
     "InvocationGrant",
     "InvocationIdentity",
     "PathClass",
@@ -55,6 +56,7 @@ __all__ = [
     "PermissionResponse",
     "PermissionRule",
     "PermissionSettings",
+    "PermissionSubject",
     "ToolAccess",
     "UserInteractionHandler",
     "append_additional_directory",

@@ -17,9 +17,9 @@ from ...engine.looping import (
     parse_loop_command,
 )
 from ...renderer import SilentRenderer
-from ...tool_capabilities import RunScope, ToolCapabilities
-from ...tools.base import ToolRuntime
+from ...tools.capabilities import RunScope, ToolCapabilities
 from ...tools.loop_tools import manage_loop_tool
+from ...tools.runtime import ToolRuntime
 
 
 def _final(answer):

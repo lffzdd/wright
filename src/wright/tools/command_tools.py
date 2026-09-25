@@ -7,11 +7,13 @@ from typing import Any
 from ..execution import ExecutionPath, ProcessHandle
 from ..logger import get_logger
 from ..processes import ProcessResources
-from .base import Tool, ToolCancelledError, ToolResult, ToolRuntime
+from ..tool_protocol import ToolResult
+from .base import Tool
 from .command_permissions import (
     describe_execute_command_access,
     is_execute_command_concurrency_safe,
 )
+from .runtime import ToolCancelledError, ToolRuntime
 
 logger = get_logger(__name__)
 

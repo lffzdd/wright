@@ -13,7 +13,8 @@ from ...engine.executor import ToolExecutor
 from ...permission import PermissionPolicy, PermissionResolver, PermissionSettings
 from ...renderer import SilentRenderer
 from ...tool_capabilities import assemble_tool_capabilities
-from ...tools.base import Tool, ToolCall, ToolResult
+from ...tool_protocol import ToolCall, ToolResult
+from ...tools.base import Tool
 
 
 class ScriptLLM:
@@ -294,7 +295,7 @@ def test_result_persistence_failure_stops_agent_without_retrying_effect(tmp_path
 
 
 def test_host_does_not_retry_unknown_effect_even_with_retry_policy(tmp_path, monkeypatch):
-    from ...tools.base import ToolResult
+    from ...tool_protocol import ToolResult
 
     workspace, store = _store(tmp_path)
     automation = store.create_automation(
@@ -375,7 +376,7 @@ def test_run_with_uncommitted_effect_cannot_finish_or_retry(tmp_path, requested_
 
 
 def test_sessions_sharing_host_share_dispatch_capacity(tmp_path):
-    from ...tools.base import ToolResult
+    from ...tool_protocol import ToolResult
 
     workspace, first = _store(tmp_path)
     second = AutonomyStore(first.path, session_id="second", workspace_dir=workspace)

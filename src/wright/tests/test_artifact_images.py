@@ -12,7 +12,8 @@ from wright.domain.session import Session
 from wright.engine.agent import create_agent
 from wright.permission import ToolAccess
 from wright.renderer import SilentRenderer
-from wright.tools.base import Tool, ToolResult
+from wright.tool_protocol import ToolResult
+from wright.tools.base import Tool
 from wright.tools.mcp_client import _to_tool_result
 
 from .test_attachments import _png_bytes

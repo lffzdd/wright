@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-from ..tools.base import ArtifactRef
+from ..tool_protocol import ArtifactRef
 from ..ui_events import EventPublisher
 from ..web.auth import BootstrapAuth
 from ..web.runtime_manager import RuntimeManagerError

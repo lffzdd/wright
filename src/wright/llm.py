@@ -27,7 +27,7 @@ from .attachments import AttachmentError, AttachmentStore
 from .events import ContentDelta, ContentDone, LLMEvent, ReasoningDelta, UsageEvent
 from .model import ModelRequest
 from .model_adapters import ChatAdapter, ResponsesAdapter
-from .tools.base import ArtifactRef
+from .tool_protocol import ArtifactRef
 
 
 class LLMClient:

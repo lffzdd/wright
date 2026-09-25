@@ -5,6 +5,7 @@ import shlex
 import threading
 from pathlib import Path
 
+from ..app.tool_runtime import tool_runtime_for_session
 from ..domain.session import Session
 from ..engine.executor import ToolExecutor
 from ..execution import AuthorizedExecution, LocalExecutionBackend
@@ -19,7 +20,8 @@ from ..permission import (
     forbidden_paths,
 )
 from ..tool_capabilities import assemble_tool_capabilities
-from ..tools.base import Tool, ToolCall, ToolResult, tool_runtime_for_session
+from ..tool_protocol import ToolCall, ToolResult
+from ..tools.base import Tool
 from ..tools.command_tools import execute_command
 from ..tools.file_tools import (
     edit_file,

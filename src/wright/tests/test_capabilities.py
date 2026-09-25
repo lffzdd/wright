@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from wright.app.tool_runtime import tool_runtime_for_session
 from wright.artifacts import ArtifactStore
 from wright.capabilities import AgentProfile, CapabilityCatalog, CapabilityError
 from wright.domain.checkpoint import SessionCheckpointStore
@@ -15,7 +16,8 @@ from wright.permission import ToolAccess
 from wright.renderer import SilentRenderer
 from wright.tests.responses import response
 from wright.tool_capabilities import assemble_tool_capabilities
-from wright.tools.base import Tool, ToolCall, ToolResult, tool_runtime_for_session
+from wright.tool_protocol import ToolCall, ToolResult
+from wright.tools.base import Tool
 from wright.tools.command_tools import execute_command
 from wright.tools.file_tools import read_file_tool
 from wright.tools.mcp_client import _to_tool_result

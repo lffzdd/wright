@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 
+from ..app.tool_runtime import tool_runtime_for_session
 from ..domain.session import Session
 from ..engine.executor import ToolExecutor
 from ..permission import (
@@ -10,7 +11,7 @@ from ..permission import (
     PermissionResponse,
 )
 from ..tool_capabilities import assemble_tool_capabilities
-from ..tools.base import ToolCall, tool_runtime_for_session
+from ..tool_protocol import ToolCall
 from ..tools.file_tools import (
     FILE_UNCHANGED,
     FileView,

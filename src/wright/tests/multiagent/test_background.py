@@ -4,11 +4,11 @@ import time
 from wright.tests.responses import event, response
 
 from ...app.services import RuntimeServices
+from ...app.tool_runtime import tool_runtime_for_session
 from ...domain.session import Session
 from ...engine.agent_background import AgentBackgroundRuntime
 from ...engine.subagent import make_spawn_agent_tool
 from ...events import ContentDone
-from ...tools.base import tool_runtime_for_session
 from ...tools.task_tools import cancel_task_tool, get_task_tool
 
 

@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from ..app.lifecycle import HookDecision
+from ..app.tool_runtime import tool_runtime_for_session
 from ..capabilities import AgentProfile, CapabilitySnapshot
 from ..domain.session import Session
 from ..engine.executor import ToolExecutor
@@ -17,7 +18,8 @@ from ..execution import ExecutionPath, LocalExecutionBackend
 from ..execution import local as local_execution
 from ..permission import PermissionResolver, PermissionResponse, ToolAccess
 from ..tool_capabilities import assemble_tool_capabilities
-from ..tools.base import Tool, ToolCall, ToolResult, tool_runtime_for_session
+from ..tool_protocol import ToolCall, ToolResult
+from ..tools.base import Tool
 from ..tools.file_tools import grep_files, grep_tool, write_file_tool
 
 

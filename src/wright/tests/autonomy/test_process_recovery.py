@@ -231,7 +231,8 @@ def test_real_process_child_agent_side_effect_becomes_unknown_without_replay(tmp
         from wright.autonomy import AutonomyStore, TriggerSpec
         from wright.permission import PermissionSettings
         from wright.tests.responses import event, response
-        from wright.tools.base import Tool, ToolResult
+        from wright.tools.base import Tool
+        from wright.tool_protocol import ToolResult
 
         workspace, db, marker, started = map(Path, sys.argv[1:])
 

@@ -11,7 +11,8 @@ from wright.events import UsageEvent
 from wright.memory.llm_util import metered_events
 from wright.renderer import ConsoleRenderer, SilentRenderer
 from wright.tests.responses import response
-from wright.tools.base import Tool, ToolCall, ToolResult
+from wright.tool_protocol import ToolCall, ToolResult
+from wright.tools.base import Tool
 from wright.util import estimate_message_tokens
 
 

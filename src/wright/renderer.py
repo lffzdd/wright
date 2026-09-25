@@ -40,7 +40,7 @@ from .interaction import (
     InteractionRequest,
 )
 from .permission.types import PermissionPrompt, PermissionResponse
-from .tools.base import ToolCall, ToolResult
+from .tool_protocol import ToolCall, ToolResult
 
 _COMMAND_OUTPUT_LINES = 24
 

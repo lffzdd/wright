@@ -5,7 +5,7 @@ from ..domain.session import Session
 from ..engine.agent import create_agent
 from ..engine.verifier import Verifier
 from ..renderer import SilentRenderer
-from ..tools.base import ToolCall, ToolResult
+from ..tool_protocol import ToolCall, ToolResult
 from ..tools.plan_tools import update_plan_tool
 
 

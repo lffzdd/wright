@@ -28,15 +28,12 @@ from ..permission import (
     PermissionPolicy,
     PermissionResolution,
     PermissionResolver,
+    PermissionSubject,
 )
 from ..tool_capabilities import CapabilityAssembly
-from ..tools.base import (
-    Tool,
-    ToolCall,
-    ToolCancelledError,
-    ToolResult,
-    ToolRuntime,
-)
+from ..tool_protocol import ToolCall, ToolResult
+from ..tools.base import Tool
+from ..tools.runtime import ToolCancelledError, ToolRuntime
 from ..tools.validation import validate_tool_arguments
 
 logger = get_logger(__name__)
@@ -285,8 +282,12 @@ class ToolExecutor:
         )
         permission = self.permission_resolver.resolve(
             effective_call,
-            tool,
-            runtime=runtime,
+            PermissionSubject(
+                name=tool.name,
+                requires_user_interaction=tool.requires_user_interaction,
+                describe_access=tool.describe_access,
+                validate=lambda arguments: validate_tool_arguments(tool, arguments),
+            ),
             backend=backend,
             scope=scope,
             identity=identity,

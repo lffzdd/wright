@@ -12,7 +12,7 @@ from ...memory.episode import (
     episode_from_session,
 )
 from ...memory.recall import build_recall_block
-from ...tools.base import ToolCall, ToolResult
+from ...tool_protocol import ToolCall, ToolResult
 from ...tools.episode_tools import build_episode_tools
 
 

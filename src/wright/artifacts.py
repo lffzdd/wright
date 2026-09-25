@@ -10,7 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .attachments import MAX_ATTACHMENT_BYTES, inspect_image
-from .tools.base import ArtifactRef
+from .tool_protocol import ArtifactRef
 
 
 class ArtifactStore:

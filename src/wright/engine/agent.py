@@ -21,7 +21,8 @@ from ..renderer import Renderer
 from ..skills.prompt import catalog_reminder
 from ..skills.registry import SkillRegistry
 from ..tool_capabilities import CapabilityAssembly, assemble_tool_capabilities
-from ..tools.base import Tool, ToolResult
+from ..tool_protocol import ToolResult
+from ..tools.base import Tool
 from ..tools.tool_search import MAX_ACTIVE_DEFERRED_TOOLS, make_tool_search_tool
 from ..ui_events import EventPublisher, RendererEventSubscriber, SessionEvents
 from ..util import build_tool_results_messages, estimate_message_tokens

@@ -4,7 +4,8 @@ from ..domain.session import Session
 from ..engine.agent import create_agent
 from ..prompt import build_system_prompt
 from ..renderer import SilentRenderer
-from ..tools.base import Tool, ToolResult, split_tool_catalog
+from ..tool_protocol import ToolResult
+from ..tools.base import Tool, split_tool_catalog
 from ..tools.tool_search import make_tool_search_tool
 
 

@@ -15,7 +15,7 @@ from uuid import uuid4
 from .permission.types import PermissionPrompt, PermissionResponse
 from .processes import RuntimeResources
 from .renderer import Renderer
-from .tools.base import ToolCall, ToolResult
+from .tool_protocol import ToolCall, ToolResult
 
 UI_EVENT_VERSION = 2
 UI_EVENT_TYPES = frozenset({

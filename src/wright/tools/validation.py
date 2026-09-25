@@ -12,7 +12,8 @@ from typing import Any
 
 from jsonschema import SchemaError, ValidationError, validators
 
-from .base import Tool, ToolResult
+from ..tool_protocol import ToolResult
+from .base import Tool
 
 
 def validate_tool_arguments(tool: Tool, arguments: dict[str, Any]) -> ToolResult | None:

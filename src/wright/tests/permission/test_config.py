@@ -13,7 +13,7 @@ from ...permission import (
     load_permission_settings,
 )
 from ...tool_capabilities import assemble_tool_capabilities
-from ...tools.base import ToolCall
+from ...tool_protocol import ToolCall
 from ...tools.command_tools import execute_command_tool
 from ...tools.file_tools import read_file_tool, write_file_tool
 

@@ -3,6 +3,7 @@ from pathlib import Path
 
 from wright.tests.responses import event, response
 
+from ..app.tool_runtime import tool_runtime_for_session
 from ..domain.checkpoint import SessionCheckpointStore
 from ..domain.session import Session
 from ..engine.executor import ToolExecutor
@@ -20,7 +21,8 @@ from ..permission import (
     load_permission_settings,
 )
 from ..tool_capabilities import assemble_tool_capabilities
-from ..tools.base import Tool, ToolCall, ToolResult, tool_runtime_for_session
+from ..tool_protocol import ToolCall, ToolResult
+from ..tools.base import Tool
 from ..tools.command_tools import execute_command_tool
 from ..tools.file_tools import grep_tool, write_file_tool
 
@@ -290,7 +292,7 @@ def test_one_executor_refreshes_scope_for_shell_and_child(tmp_path):
         return commit
 
     def approve(request):
-        if request.tool.name == "write_file":
+        if request.tool_call.name == "write_file":
             return PermissionResponse("allow_session_directory")
         return PermissionResponse("allow_once")
 
@@ -385,7 +387,7 @@ def test_agent_child_persistent_directory_uses_child_checkpoint(tmp_path, monkey
             yield event(self.script.pop(0))
 
     def approve(request):
-        if request.tool.name == "write_file":
+        if request.tool_call.name == "write_file":
             return PermissionResponse("allow_persistent_directory")
         return PermissionResponse("allow_once")
 

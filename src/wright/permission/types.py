@@ -2,61 +2,30 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
 
 from ..execution.types import ExecutionPath
+from ..tool_protocol import (  # noqa: F401
+    AccessTarget,
+    PermissionOperation,
+    ToolAccess,
+    ToolResult,
+)
 
 PermissionDecision = Literal["allow", "deny", "ask"]
-PermissionOperation = Literal[
-    "file_read",
-    "file_write",
-    "shell",
-    "network_read",
-    "network_write",
-    "external_unknown",
-    "internal_read",
-    "plan_update",
-    "execution_control",
-    "persistent_write",
-    "user_interaction",
-    "unknown",
-]
 
 
 @dataclass(frozen=True)
-class AccessTarget:
-    """A resource named by a tool before environment resolution."""
+class PermissionSubject:
+    """The narrow tool contract required by permission resolution."""
 
-    parameter: str
-    value: str
-    operation: PermissionOperation
-    recursive: bool = False
-    kind: Literal["file", "directory", "url", "command", "other"] = "other"
-
-
-@dataclass(frozen=True)
-class ToolAccess:
-    """Pure description of one tool call's possible effects."""
-
-    operations: frozenset[PermissionOperation]
-    targets: tuple[AccessTarget, ...] = ()
-    subject: str = ""
-    risk_flags: tuple[str, ...] = ()
-    reason: str = ""
-
-    @classmethod
-    def unknown(cls, reason: str = "tool did not declare access") -> ToolAccess:
-        return cls(frozenset({"unknown"}), reason=reason)
-
-    @classmethod
-    def internal_read(cls, *, reason: str = "internal state query") -> ToolAccess:
-        return cls(frozenset({"internal_read"}), reason=reason)
-
-    def has(self, operation: PermissionOperation) -> bool:
-        return operation in self.operations
+    name: str
+    requires_user_interaction: bool
+    describe_access: Callable[[dict], ToolAccess]
+    validate: Callable[[dict], ToolResult | None]
 
 
 @dataclass(frozen=True)

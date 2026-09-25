@@ -12,10 +12,12 @@ from ..capabilities import AgentProfile
 from ..domain.coordination import AgentControlError, AgentTaskRecord
 from ..domain.session import Session, UsageRecord
 from ..llm import LLMClient
-from ..permission import PermissionResolver, ToolAccess
+from ..permission import PermissionResolver
 from ..tool_capabilities import assemble_tool_capabilities
+from ..tool_protocol import ToolAccess, ToolResult
 from ..tools.autonomy_tools import autonomy_tools
-from ..tools.base import Tool, ToolResult, ToolRuntime
+from ..tools.base import Tool
+from ..tools.runtime import ToolRuntime
 from ..tools.task_tools import task_tools
 from ..ui_events import EventPublisher, EventScope, SessionEvents
 from .agent import (

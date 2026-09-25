@@ -7,8 +7,9 @@ import unicodedata
 from collections.abc import Sequence
 from typing import Any
 
-from ..permission import ToolAccess
-from .base import Tool, ToolResult, ToolRuntime, split_tool_catalog
+from ..tool_protocol import ToolAccess, ToolResult
+from .base import Tool, split_tool_catalog
+from .runtime import ToolRuntime
 
 MAX_ACTIVE_DEFERRED_TOOLS = 12
 _STOP_WORDS = frozenset({

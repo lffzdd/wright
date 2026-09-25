@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from ..planning import PlanManager
 from ..project import ExecutionEnvironment
-from ..tools.base import ToolCall, ToolResult
+from ..tool_protocol import ToolCall, ToolResult
 from ..util import estimate_message_tokens
 from .conversation import ConversationMessage, ImagePart, TextPart, UserTurnInput
 from .coordination import AgentControlPlane

@@ -1,12 +1,10 @@
+from ...app.interactive_approval import InteractiveApprovalHandler
 from ...domain.session import Session
 from ...engine.executor import ToolExecutor
-from ...permission import (
-    InteractiveApprovalHandler,
-    PermissionResolver,
-)
+from ...permission import PermissionResolver
 from ...renderer import SilentRenderer
 from ...tool_capabilities import assemble_tool_capabilities
-from ...tools.base import ToolCall
+from ...tool_protocol import ToolCall
 from ...tools.file_tools import edit_file_tool, read_file_tool, write_file_tool
 
 
@@ -25,10 +23,16 @@ class _MockRenderer(SilentRenderer):
         return self.choices.pop(0) if self.choices else "deny"
 
 
-def _executor(session: Session, renderer: _MockRenderer) -> ToolExecutor:
-    resolver = PermissionResolver(
-        approval_handler=InteractiveApprovalHandler(renderer)
+def _approval(renderer: _MockRenderer) -> InteractiveApprovalHandler:
+    return InteractiveApprovalHandler(
+        None,
+        notify_phase=renderer.on_tool_phase,
+        prompt_fallback=renderer.prompt_permission,
     )
+
+
+def _executor(session: Session, renderer: _MockRenderer) -> ToolExecutor:
+    resolver = PermissionResolver(approval_handler=_approval(renderer))
     return ToolExecutor(
         {
             write_file_tool.name: write_file_tool,
@@ -147,9 +151,7 @@ def test_persistent_rule_choice_is_returned_to_the_commit_adapter(tmp_path):
     session = Session.create("permission", tmp_path)
     renderer = _MockRenderer("allow_persistent_rule")
     changes = []
-    resolver = PermissionResolver(
-        approval_handler=InteractiveApprovalHandler(renderer)
-    )
+    resolver = PermissionResolver(approval_handler=_approval(renderer))
     executor = ToolExecutor(
         {
             write_file_tool.name: write_file_tool,

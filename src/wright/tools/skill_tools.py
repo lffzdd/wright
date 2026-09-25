@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from ..permission import ToolAccess
 from ..skills.registry import SkillRegistry
 from ..skills.types import SkillNotFoundError, SkillStoreError
-from .base import Tool, ToolResult, ToolRuntime
+from ..tool_protocol import ToolAccess, ToolResult
+from .base import Tool
+from .runtime import ToolRuntime
 
 
 def invoke_skill(

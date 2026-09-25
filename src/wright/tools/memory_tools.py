@@ -26,8 +26,9 @@ from ..memory.store import (
     update_memory as store_update_memory,
 )
 from ..memory.types import MEMORY_TYPES
-from ..permission import ToolAccess
-from .base import Tool, ToolResult, ToolRuntime
+from ..tool_protocol import ToolAccess, ToolResult
+from .base import Tool
+from .runtime import ToolRuntime
 
 
 def create_memory(

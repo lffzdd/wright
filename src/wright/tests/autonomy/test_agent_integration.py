@@ -15,9 +15,10 @@ from ...permission import PermissionPolicy, PermissionResolver, PermissionSettin
 from ...renderer import SilentRenderer
 from ...skills.registry import SkillRegistry
 from ...skills.store import write_skill
+from ...tool_protocol import ToolResult
 from ...tools.ask_user_tool import ask_user_tool
 from ...tools.autonomy_tools import autonomy_tools
-from ...tools.base import Tool, ToolResult
+from ...tools.base import Tool
 from ...tools.knowledge_tools import build_knowledge_tools
 from ...tools.memory_tools import build_memory_tools
 from ...tools.skill_tools import build_skill_tools

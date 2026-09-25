@@ -8,7 +8,7 @@ from ..domain.checkpoint import CheckpointError, SessionCheckpointStore
 from ..domain.session import Session, UsageRecord
 from ..engine.agent import create_agent
 from ..renderer import SilentRenderer
-from ..tools.base import ArtifactRef, ToolCall, ToolResult
+from ..tool_protocol import ArtifactRef, ToolCall, ToolResult
 from ..util import build_tool_results_messages
 
 

@@ -15,7 +15,8 @@ from ..model import ModelRequest
 from ..permission import ToolAccess
 from ..protocol import TurnAbort, parse_turn
 from ..renderer import SilentRenderer
-from ..tools.base import Tool, ToolResult
+from ..tool_protocol import ToolResult
+from ..tools.base import Tool
 
 
 def _client(handler, *, stream):

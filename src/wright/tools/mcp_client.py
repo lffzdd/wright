@@ -46,8 +46,9 @@ from mcp.client.streamable_http import streamablehttp_client
 
 from ..artifacts import ArtifactStore
 from ..logger import get_logger
-from ..permission import ToolAccess
-from .base import ArtifactRef, Tool, ToolResult, ToolRuntime
+from ..tool_protocol import ArtifactRef, ToolAccess, ToolResult
+from .base import Tool
+from .runtime import ToolRuntime
 
 logger = get_logger(__name__)
 

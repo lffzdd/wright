@@ -14,7 +14,7 @@ from typing import Any, TypeVar, cast
 from ..attachments import AttachmentError, AttachmentRecord
 from ..logger import get_logger
 from ..planning import PlanManager
-from ..tools.base import ArtifactRef, ToolCall, ToolResult
+from ..tool_protocol import ArtifactRef, ToolCall, ToolResult
 from ..util import build_tool_results_messages
 from .coordination import AgentControlError, AgentControlPlane
 from .runs import RunRecord
