@@ -1,7 +1,7 @@
 from jsonschema import validators
 
 from wright.application.tool_dispatcher import ToolExecutor
-from wright.application.subagent import _child_base_tools
+from wright.application.agent.subagent import _child_base_tools
 from wright.domain.model.knowledge import MAX_HIT_CONTENT_CHARS, KnowledgeHit
 from wright.domain.model.tool import ToolCall
 from wright.application.skills import SkillRegistry

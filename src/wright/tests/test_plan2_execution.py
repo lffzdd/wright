@@ -7,7 +7,7 @@ from wright.application.tool_runtime import tool_runtime_for_session
 from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
 from ..domain.model.session import Session
 from wright.application.tool_dispatcher import ToolExecutor
-from wright.application.subagent import make_spawn_agent_tool
+from wright.application.agent import make_spawn_agent_tool
 from wright.infrastructure.runtime import LocalExecutionBackend
 from wright.domain.policy import (
     AccessTarget,

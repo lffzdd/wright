@@ -17,18 +17,16 @@ from ..services import RuntimeServices
 from ...domain.model.agent import AgentProfile
 from ...domain.model.coordination import AgentControlError, AgentControlPlane
 from ...domain.model.session import Session, UsageRecord
-from ..agent_runner import (
+from ..agent import (
     Agent,
+    AgentBackgroundRuntime,
     assemble_agent_components,
+    build_agent_tools,
     ensure_system_prompt,
     events_from_renderer,
     prepare_model_tools,
 )
-from ..agent_background import AgentBackgroundRuntime
-from ..subagent import (
-    _child_base_tools,
-    build_agent_tools,
-)
+from ..agent.subagent import _child_base_tools
 from ...infrastructure.llm.llm import LLMClient, resolve_transport
 from ...core.logger import get_logger
 from ...domain.policy import (

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from wright.application.agent_runner import create_agent
+from wright.application.agent import create_agent
 from wright.application.runtime import (
     RuntimeConfig,
     assemble_runtime,

@@ -6,8 +6,8 @@ from pathlib import Path
 def test_core_records_context_and_execution_do_not_import_chat_sdk_types():
     root = Path(__file__).parents[1]
     for relative in (
-        "domain/model/session.py", "domain/model/runs.py", "application/context_compactor.py",
-        "application/agent_runner.py", "application/tool_dispatcher.py",
+        "domain/model/session.py", "domain/model/runs.py", "application/agent/context.py",
+        "application/agent/runner.py", "application/tool_dispatcher.py",
         "domain/model/conversation.py", "utils/util.py", "domain/policy/verifier.py",
     ):
         text = (root / relative).read_text(encoding="utf-8")

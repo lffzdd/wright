@@ -5,12 +5,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from .skills import catalog_reminder
+from ..skills import catalog_reminder
 
 if TYPE_CHECKING:
-    from ..domain.model.session import Session
-    from .skills import SkillRegistry
-    from ..infrastructure.tools.base import Tool
+    from ...domain.model.session import Session
+    from ..skills import SkillRegistry
+    from ...infrastructure.tools.base import Tool
 
 
 class AgentPromptManager:

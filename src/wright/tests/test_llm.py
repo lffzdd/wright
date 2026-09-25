@@ -7,7 +7,7 @@ from openai import OpenAI
 
 from wright.infrastructure.storage.attachments import AttachmentStore
 from ..domain.model.session import Session
-from wright.application.agent_runner import create_agent
+from wright.application.agent import create_agent
 from wright.domain.model.events import ContentDone, UsageEvent
 from wright.infrastructure.llm.llm import LLMClient
 from wright.application.memory.llm_util import side_query

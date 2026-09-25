@@ -7,8 +7,7 @@ from wright.tests.responses import event, response
 from wright.application.lifecycle import HookRegistration, LifecycleManager, TraceRecorder
 from wright.application.tool_runtime import tool_runtime_for_session
 from ...domain.model.session import Session
-from wright.application.agent_runner import create_agent
-from wright.application.subagent import make_spawn_agent_tool
+from wright.application.agent import create_agent, make_spawn_agent_tool
 from wright.interfaces.renderer import SilentRenderer
 from wright.domain.model.tool import ToolResult
 from wright.infrastructure.tools.base import Tool

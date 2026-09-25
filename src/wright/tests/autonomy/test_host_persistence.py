@@ -9,7 +9,7 @@ from wright.application.application_host import ApplicationHost
 from ...domain.model.autonomy import TriggerSpec
 from ...infrastructure.persistence.autonomy_store import AutonomyStore, AutonomyStoreError
 from ...domain.model.session import Session
-from wright.application.agent_runner import create_agent
+from wright.application.agent import create_agent
 from wright.application.tool_dispatcher import ToolExecutor
 from wright.domain.policy import PermissionPolicy, PermissionResolver, PermissionSettings
 from wright.interfaces.renderer import SilentRenderer

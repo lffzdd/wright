@@ -6,14 +6,14 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from ..domain.model.session import UsageRecord
-from ..domain.model.events import ContentDone
-from ..domain.protocol import TurnAbort
-from ..domain.model.tool import ToolResult
-from ..utils.util import build_tool_results_messages
+from ...domain.model.session import UsageRecord
+from ...domain.model.events import ContentDone
+from ...domain.protocol import TurnAbort
+from ...domain.model.tool import ToolResult
+from ...utils.util import build_tool_results_messages
 
 if TYPE_CHECKING:
-    from .agent import Agent
+    from .runner import Agent
 
 
 @dataclass

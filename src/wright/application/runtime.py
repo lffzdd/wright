@@ -20,16 +20,16 @@ from ..infrastructure.persistence.autonomy_store import AutonomyStore
 from ..infrastructure.persistence.file_session_repo import CheckpointError, SessionCheckpointStore
 from ..domain.prompt import get_role_instruction
 from ..domain.model.session import Session
-from .agent_runner import (
+from .agent import (
     Agent,
+    AgentBackgroundRuntime,
     assemble_agent_components,
     bind_root_checkpoint,
+    build_agent_tools,
     ensure_system_prompt,
     prepare_model_tools,
 )
-from .agent_background import AgentBackgroundRuntime
 from .looping import SessionLoopRegistry
-from .subagent import build_agent_tools
 from ..domain.policy.verifier import Verifier
 from ..interfaces.interaction import InteractionHub
 from ..infrastructure.knowledge import optional_knowledge_tools

@@ -9,7 +9,7 @@ import pytest
 from wright.infrastructure.storage.artifacts import ArtifactStore
 from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
 from wright.domain.model.session import Session
-from wright.application.agent_runner import create_agent
+from wright.application.agent import create_agent
 from wright.domain.policy import ToolAccess
 from wright.interfaces.renderer import SilentRenderer
 from wright.domain.model.tool import ToolResult

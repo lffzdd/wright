@@ -4,7 +4,7 @@ from wright.tests.responses import event, response
 
 from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
 from ...domain.model.session import Session
-from wright.application.agent_runner import create_agent
+from wright.application.agent import create_agent
 from wright.interfaces.renderer import SilentRenderer
 from wright.application.skills import SkillRegistry
 from wright.infrastructure.storage.skills import write_skill

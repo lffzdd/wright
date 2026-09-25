@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from ..persistence.autonomy_store import AutonomyStore
     from ...domain.model.coordination import AgentControlPlane
     from ...domain.model.session import BackgroundTask, Session
-    from ...application.agent_background import AgentBackgroundRuntime
+    from ...application.agent import AgentBackgroundRuntime
     from ..runtime import ExecutionPath
     from ...domain.model.planning import PlanManager
     from ...application.task_service import TaskService

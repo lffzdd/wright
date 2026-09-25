@@ -24,7 +24,7 @@ from ..domain.model.autonomy import DurableRunRecord
 from ..infrastructure.persistence.autonomy_store import AutonomyStore
 from .autonomy import AutonomyScheduler, launch_durable_run
 from ..domain.model.coordination import AgentControlPlane
-from .agent_background import AgentBackgroundRuntime
+from .agent import AgentBackgroundRuntime
 from ..infrastructure.llm.llm import LLMClient
 from ..domain.policy import PermissionSettings
 from ..infrastructure.tools.base import Tool

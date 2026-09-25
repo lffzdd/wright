@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..domain.model.session import Session
-from wright.application.agent_runner import create_agent
+from wright.application.agent import create_agent
 from wright.domain.prompt import build_system_prompt
 from wright.interfaces.renderer import SilentRenderer
 from wright.domain.model.tool import ToolResult

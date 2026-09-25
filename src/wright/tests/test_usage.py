@@ -5,7 +5,7 @@ from rich.console import Console
 
 from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
 from wright.domain.model.session import Session, UsageRecord
-from wright.application.agent_runner import create_agent
+from wright.application.agent import create_agent
 from wright.domain.policy.verifier import Verifier
 from wright.domain.model.events import UsageEvent
 from wright.application.memory.llm_util import metered_events

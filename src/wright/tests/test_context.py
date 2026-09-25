@@ -5,8 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from wright.domain.model.session import Session
-from wright.application.agent_runner import create_agent
-from wright.application.context_compactor import ContextBuilder, ContextCompactor
+from wright.application.agent import ContextBuilder, ContextCompactor, create_agent
 from wright.interfaces.renderer import SilentRenderer
 from wright.domain.model.tool import ToolCall, ToolResult
 

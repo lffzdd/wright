@@ -8,19 +8,19 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from ..domain.model.agent import AgentProfile
-from ..domain.model.coordination import AgentControlError, AgentTaskRecord
-from ..domain.model.session import Session, UsageRecord
-from ..infrastructure.llm.llm import LLMClient
-from ..domain.policy import PermissionResolver
-from .tool_capabilities import assemble_tool_capabilities
-from ..domain.model.tool import ToolAccess, ToolResult
-from ..infrastructure.tools.autonomy_tools import autonomy_tools
-from ..infrastructure.tools.base import Tool
-from ..infrastructure.tools.runtime import ToolRuntime
-from ..infrastructure.tools.task_tools import task_tools
-from ..interfaces.ui_events import EventPublisher, EventScope, SessionEvents
-from .agent_runner import (
+from ...domain.model.agent import AgentProfile
+from ...domain.model.coordination import AgentControlError, AgentTaskRecord
+from ...domain.model.session import Session, UsageRecord
+from ...infrastructure.llm.llm import LLMClient
+from ...domain.policy import PermissionResolver
+from ..tool_capabilities import assemble_tool_capabilities
+from ...domain.model.tool import ToolAccess, ToolResult
+from ...infrastructure.tools.autonomy_tools import autonomy_tools
+from ...infrastructure.tools.base import Tool
+from ...infrastructure.tools.runtime import ToolRuntime
+from ...infrastructure.tools.task_tools import task_tools
+from ...interfaces.ui_events import EventPublisher, EventScope, SessionEvents
+from .runner import (
     Agent,
     assemble_agent_components,
     ensure_system_prompt,

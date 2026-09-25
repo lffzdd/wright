@@ -6,9 +6,8 @@ from wright.application.tool_runtime import tool_runtime_for_session
 from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
 from ...domain.model.coordination import AgentControlConfig, AgentControlPlane
 from ...domain.model.session import Session
-from wright.application.agent_runner import create_agent
+from wright.application.agent import build_agent_tools, create_agent, make_spawn_agent_tool
 from wright.application.tool_dispatcher import ToolExecutor
-from wright.application.subagent import build_agent_tools, make_spawn_agent_tool
 from wright.domain.model.events import UsageEvent
 from wright.domain.policy import PermissionPolicy, PermissionResolver, PermissionSettings
 from wright.interfaces.renderer import SilentRenderer

@@ -3,7 +3,7 @@ from __future__ import annotations
 from wright.tests.responses import event, response
 
 from ..domain.model.session import Session
-from wright.application.agent_runner import create_agent
+from wright.application.agent import create_agent
 from wright.domain.protocol import encode_tools
 from wright.interfaces.renderer import SilentRenderer
 from wright.domain.model.tool import ToolResult
@@ -203,7 +203,7 @@ def test_builtin_capabilities_use_hybrid_loading():
 
 
 def test_web_memory_and_spawn_are_baseline():
-    from wright.application.subagent import build_agent_tools
+    from wright.application.agent import build_agent_tools
     from wright.infrastructure.tools.memory import build_memory_tools
 
     class UnusedLLM:

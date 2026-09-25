@@ -6,7 +6,7 @@ from wright.tests.responses import event, response
 
 from wright.infrastructure.persistence.file_session_repo import CheckpointError, SessionCheckpointStore
 from ..domain.model.session import Session, UsageRecord
-from wright.application.agent_runner import create_agent
+from wright.application.agent import create_agent
 from wright.interfaces.renderer import SilentRenderer
 from wright.domain.model.tool import ArtifactRef, ToolCall, ToolResult
 from wright.utils.util import build_tool_results_messages

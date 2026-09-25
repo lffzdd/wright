@@ -9,7 +9,7 @@ from wright.infrastructure.storage.artifacts import ArtifactStore
 from wright.domain.model.agent import AgentProfile, CapabilityCatalog, CapabilityError
 from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
 from wright.domain.model.session import Session
-from wright.application.agent_runner import create_agent
+from wright.application.agent import create_agent
 from wright.application.tool_dispatcher import ToolExecutor
 from wright.infrastructure.runtime import LocalExecutionBackend
 from wright.domain.policy import ToolAccess
@@ -189,7 +189,7 @@ def test_production_tools_cannot_reach_session_or_service_containers():
     root = Path(__file__).parents[1]
     sources = [
         *sorted((root / "infrastructure" / "tools").glob("*.py")),
-        root / "application" / "subagent.py",
+        root / "application" / "agent" / "subagent.py",
     ]
     forbidden = ("runtime.session_state", "runtime.services")
     offenders = {

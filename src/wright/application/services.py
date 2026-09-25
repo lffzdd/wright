@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..infrastructure.persistence.autonomy_store import AutonomyStore
-    from .agent_background import AgentBackgroundRuntime
+    from .agent import AgentBackgroundRuntime
     from .autonomy.scheduler import AutonomyScheduler
     from .looping import SessionLoopRegistry
 

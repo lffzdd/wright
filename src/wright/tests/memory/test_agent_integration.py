@@ -9,7 +9,7 @@ from pathlib import Path
 from wright.tests.responses import event, response
 
 from ...domain.model.session import Session
-from wright.application.agent_runner import create_agent
+from wright.application.agent import create_agent
 from wright.domain.model.events import UsageEvent
 from wright.application.memory import MemoryManager
 from wright.infrastructure.persistence.memory import write_memory_file
