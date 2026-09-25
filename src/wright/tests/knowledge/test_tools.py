@@ -2,8 +2,8 @@ from jsonschema import validators
 
 from wright.application.tool_dispatcher import ToolExecutor
 from wright.application.subagent import _child_base_tools
-from ...knowledge import optional_knowledge_tools
-from ...knowledge.provider import MAX_HIT_CONTENT_CHARS, KnowledgeHit
+from wright.infrastructure.knowledge import optional_knowledge_tools
+from wright.domain.model.knowledge import MAX_HIT_CONTENT_CHARS, KnowledgeHit
 from ...skills.registry import SkillRegistry
 from ...skills.store import write_skill
 from wright.application.tool_capabilities import assemble_tool_capabilities

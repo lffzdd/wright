@@ -60,6 +60,7 @@ class IMemoryStore(ABC):
 
 
 from .task_backend import TaskBackend
+from .knowledge_provider import KnowledgeProvider
 
 __all__ = [
     "ILLMProvider",
@@ -67,4 +68,5 @@ __all__ = [
     "ISessionRepository",
     "IMemoryStore",
     "TaskBackend",
+    "KnowledgeProvider",
 ]

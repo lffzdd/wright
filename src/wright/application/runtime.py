@@ -31,7 +31,7 @@ from .looping import SessionLoopRegistry
 from .subagent import build_agent_tools
 from .verifier import Verifier
 from ..interfaces.interaction import InteractionHub
-from ..knowledge import optional_knowledge_tools
+from ..infrastructure.knowledge import optional_knowledge_tools
 from ..infrastructure.llm.llm import LLMClient
 from ..core.logger import get_logger
 from ..memory import MemoryManager

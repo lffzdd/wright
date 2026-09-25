@@ -33,6 +33,7 @@ from .planning import (
     PlanStep,
     PlanStepStatus,
 )
+from .knowledge import KnowledgeHit, KnowledgeUnavailable
 
 __all__ = [
     "AgentControlConfig",
@@ -45,6 +46,8 @@ __all__ = [
     "CapabilitySnapshot",
     "ContentDelta",
     "ContentDone",
+    "KnowledgeHit",
+    "KnowledgeUnavailable",
     "LLMEvent",
     "Message",
     "MessageRecord",

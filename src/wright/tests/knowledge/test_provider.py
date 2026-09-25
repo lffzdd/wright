@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from ...knowledge.provider import (
+from wright.domain.model.knowledge import (
     KnowledgeHit,
     knowledge_hit_from_search_result,
     truncate_hits,

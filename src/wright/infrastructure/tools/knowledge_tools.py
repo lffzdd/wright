@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...knowledge.provider import (
+from ...domain.gateway.knowledge_provider import KnowledgeProvider
+from ...domain.model.knowledge import (
     MAX_HIT_CONTENT_CHARS,
     MAX_SEARCH_OUTPUT_CHARS,
     MAX_TOP_K,
-    KnowledgeProvider,
     KnowledgeUnavailable,
     truncate_hits,
 )

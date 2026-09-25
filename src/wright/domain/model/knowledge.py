@@ -1,9 +1,8 @@
-"""知识检索的项目内类型，刻意不依赖隔壁 RAG 的 SearchResult。"""
+"""Knowledge retrieval domain models and types."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
 
 MAX_HIT_CONTENT_CHARS = 2_000
 MAX_SEARCH_OUTPUT_CHARS = 8_000
@@ -38,11 +37,6 @@ class KnowledgeHit:
             "chunk_total": self.chunk_total,
             "page": self.page,
         }
-
-
-class KnowledgeProvider(Protocol):
-    def search(self, query: str, top_k: int) -> list[KnowledgeHit]:
-        """返回项目内的命中列表；不可用时抛 KnowledgeUnavailable。"""
 
 
 def _optional_int(value: object) -> int | None:
@@ -134,3 +128,14 @@ def truncate_hits(
         ))
         used += len(content)
     return bounded, truncated
+
+
+__all__ = [
+    "MAX_HIT_CONTENT_CHARS",
+    "MAX_SEARCH_OUTPUT_CHARS",
+    "MAX_TOP_K",
+    "KnowledgeHit",
+    "KnowledgeUnavailable",
+    "knowledge_hit_from_search_result",
+    "truncate_hits",
+]

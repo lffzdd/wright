@@ -14,7 +14,8 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
-from .provider import (
+from ...domain.gateway.knowledge_provider import KnowledgeProvider
+from ...domain.model.knowledge import (
     KnowledgeHit,
     KnowledgeUnavailable,
     knowledge_hit_from_search_result,
@@ -234,3 +235,13 @@ class RagKnowledgeProvider:
         if not isinstance(results, list):
             return []
         return results
+
+
+__all__ = [
+    "RagKnowledgeProvider",
+    "knowledge_enabled",
+    "knowledge_index_path",
+    "knowledge_rag_dir",
+    "knowledge_retriever_type",
+    "knowledge_use_reranker",
+]

@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from ...knowledge.provider import KnowledgeUnavailable
-from ...knowledge.rag_provider import (
+from wright.domain.model.knowledge import KnowledgeUnavailable
+from wright.infrastructure.knowledge.rag_provider import (
     RagKnowledgeProvider,
     knowledge_enabled,
 )
