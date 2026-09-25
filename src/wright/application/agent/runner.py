@@ -26,7 +26,7 @@ from ...infrastructure.tools.tool_search import MAX_ACTIVE_DEFERRED_TOOLS, make_
 from ...interfaces.ui_events import EventPublisher, RendererEventSubscriber, SessionEvents
 from ...utils.util import build_tool_results_messages, estimate_message_tokens
 from .prompt import AgentPromptManager
-from .turns import AgentTurnHandler, RetryCounters, _RetryCounters
+from .turns import AgentTurnHandler, RetryCounters
 from .usage import AgentUsageTracker
 from .cancellation import CancellationToken
 from .context import ContextBudgetExceeded, ContextBuilder, ContextCompactor
@@ -938,7 +938,7 @@ class Agent:
         content: str,
         usage_record: UsageRecord | None,
         transient_plan_tokens: int,
-        counters: _RetryCounters,
+        counters: RetryCounters,
         *,
         record_memory: bool,
     ) -> tuple[str | None, str]:
@@ -974,7 +974,7 @@ class Agent:
         error: TurnAbort,
         usage_record: UsageRecord | None,
         transient_plan_tokens: int,
-        counters: _RetryCounters,
+        counters: RetryCounters,
         *,
         record_memory: bool,
     ) -> str:
@@ -1005,7 +1005,7 @@ class Agent:
         record_memory: bool = True,
     ) -> str | None:
         """运行当前 user turn 直到 final_answer 或耗尽步数。"""
-        counters = _RetryCounters()
+        counters = RetryCounters()
         for _ in range(max_steps):
             if self._stop_if_cancelled(record_memory=record_memory):
                 return None

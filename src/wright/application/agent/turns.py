@@ -23,10 +23,6 @@ class RetryCounters:
     hook: int = 0
 
 
-# Backwards compatibility alias
-_RetryCounters = RetryCounters
-
-
 class AgentTurnHandler:
     """Dispatches and processes outcomes for each model turn (final, tool calls, or invalid)."""
 

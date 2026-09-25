@@ -11,7 +11,6 @@ from .session import (
     UsageRecord,
 )
 from .tool import ArtifactRef, ToolAccess, ToolCall, ToolDefinition, ToolResult
-from .message import Message
 from .request import ModelRequest
 from .agent import (
     AgentProfile,
@@ -111,7 +110,6 @@ __all__ = [
     "MemoryRecord",
     "MemoryStoreError",
     "MemoryType",
-    "Message",
     "MessageRecord",
     "ModelRequest",
     "PlanError",

@@ -1,4 +1,3 @@
-from .diff_generator import generate_diff
 from .json_repair import loads_repaired_json, repair_json
 from .string_diff import compute_unified_diff, render_colored_diff
 from .text_splitter import split_text
@@ -18,7 +17,6 @@ __all__ = [
     "estimate_message_tokens",
     "estimate_tokens",
     "estimate_tools_tokens",
-    "generate_diff",
     "loads_repaired_json",
     "render_colored_diff",
     "repair_json",

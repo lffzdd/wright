@@ -30,7 +30,7 @@ from .subagent import (
     build_agent_tools,
     make_spawn_agent_tool,
 )
-from .turns import AgentTurnHandler, RetryCounters, _RetryCounters
+from .turns import AgentTurnHandler, RetryCounters
 from .usage import AgentUsageTracker
 
 __all__ = [
@@ -53,7 +53,6 @@ __all__ = [
     "RetryCounters",
     "SPAWN_AGENT_DESCRIPTION",
     "SPAWN_AGENT_PARAMETERS",
-    "_RetryCounters",
     "assemble_agent_components",
     "bind_root_checkpoint",
     "build_agent_tools",
