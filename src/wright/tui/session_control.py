@@ -1,37 +1,6 @@
-"""Session-control requests and model choices for the fullscreen TUI."""
+"""Backward compatibility shim for wright.tui.session_control."""
 
-from __future__ import annotations
+import sys
+from ..interfaces.tui import session_control
 
-from argparse import Namespace
-from dataclasses import dataclass
-
-from ..domain.session_models import available_models, process_model_name
-
-__all__ = ["SessionControlRequest", "available_models", "process_model_name", "runtime_args_for_transition"]
-
-
-@dataclass(frozen=True)
-class SessionControlRequest:
-    """A safe runtime transition requested by the TUI."""
-
-    kind: str
-    session_id: str | None = None
-
-    @classmethod
-    def new(cls) -> SessionControlRequest:
-        return cls("new")
-
-    @classmethod
-    def resume(cls, session_id: str) -> SessionControlRequest:
-        return cls("resume", session_id)
-
-
-def runtime_args_for_transition(
-    args: Namespace,
-    request: SessionControlRequest,
-) -> Namespace:
-    """Copy CLI options and replace only their session-selection fields."""
-    values = vars(args).copy()
-    values["continue_latest"] = False
-    values["resume"] = request.session_id if request.kind == "resume" else None
-    return Namespace(**values)
+sys.modules[__name__] = session_control
