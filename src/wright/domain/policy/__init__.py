@@ -15,6 +15,8 @@ from .approval import (
     PermissionRequest,
     UserInteractionHandler,
 )
+from .context_policy import ContextPolicy, TokenBudgetPolicy
+from .guardrail_policy import GuardrailPolicy, SecurityPolicy
 from .resolver import (
     PermissionPolicy,
     PermissionResolver,
@@ -39,8 +41,10 @@ __all__ = [
     "AccessScope",
     "AccessTarget",
     "AuthorizationChange",
+    "ContextPolicy",
     "FallbackApprovalHandler",
     "GrantTarget",
+    "GuardrailPolicy",
     "InvocationGrant",
     "InvocationIdentity",
     "PathClass",
@@ -57,6 +61,8 @@ __all__ = [
     "PermissionRule",
     "PermissionSettings",
     "PermissionSubject",
+    "SecurityPolicy",
+    "TokenBudgetPolicy",
     "ToolAccess",
     "UserInteractionHandler",
     "append_additional_directory",

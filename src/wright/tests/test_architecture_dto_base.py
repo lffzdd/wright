@@ -91,3 +91,49 @@ def test_diff_and_token_counter():
     assert "\033[" in colored
 
     assert estimate_tokens("12345678") == 2
+
+
+def test_json_repair_and_text_splitter():
+    from wright.utils.json_repair import loads_repaired_json, repair_json
+    from wright.utils.text_splitter import split_text
+
+    # 1. Unclosed JSON object
+    truncated = '{"name": "Alice", "skills": ["python", "ddd"'
+    repaired = repair_json(truncated)
+    parsed = loads_repaired_json(truncated)
+    assert parsed["name"] == "Alice"
+    assert parsed["skills"] == ["python", "ddd"]
+
+    # 2. Markdown fence and trailing comma
+    fence_json = '```json\n{"flag": true, "count": 10,}\n```'
+    assert loads_repaired_json(fence_json) == {"flag": True, "count": 10}
+
+    # 3. Text splitter
+    text = "Paragraph 1\n\nParagraph 2\n\nParagraph 3"
+    chunks = split_text(text, chunk_size=15, chunk_overlap=0)
+    assert len(chunks) == 3
+    assert chunks[0] == "Paragraph 1"
+
+
+def test_domain_policies():
+    from wright.domain.policy import ContextPolicy, GuardrailPolicy
+
+    # Context policy
+    cp = ContextPolicy(trigger_ratio=0.8, target_ratio=0.5)
+    assert not cp.should_compact(700, 1000)
+    assert cp.should_compact(850, 1000)
+    assert cp.target_tokens(1000) == 500
+
+    # Guardrail policy
+    gp = GuardrailPolicy(read_only=True)
+    allowed, reason = gp.is_command_allowed("rm -rf /")
+    assert not allowed
+    assert "dangerous pattern" in reason
+
+    allowed, _ = gp.is_command_allowed("git status")
+    assert allowed
+
+    allowed, reason = gp.check_operation("file_write")
+    assert not allowed
+    assert "read-only mode" in reason
+

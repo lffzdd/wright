@@ -19,7 +19,7 @@ from ...application.runtime import (
 from ...application.session_service import SessionService, SessionServiceError
 from ...infrastructure.storage.attachments import AttachmentError, AttachmentRecord
 from ...infrastructure.persistence.autonomy_store import AutonomyNotFoundError, AutonomyStore
-from ...domain.checkpoint import CheckpointError, SessionCheckpointStore
+from ...infrastructure.persistence.file_session_repo import CheckpointError, SessionCheckpointStore
 from ...infrastructure.llm.model_adapters import available_models, process_model_name
 from ..interaction import InteractionBroker
 from ...core.paths import project_id, session_dir, task_db_path

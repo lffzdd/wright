@@ -17,7 +17,7 @@ from prompt_toolkit import prompt
 from ..infrastructure.storage.artifacts import ArtifactStore
 from ..infrastructure.storage.attachments import AttachmentStore, DraftAttachments
 from ..infrastructure.persistence.autonomy_store import AutonomyStore
-from ..domain.checkpoint import CheckpointError, SessionCheckpointStore
+from ..infrastructure.persistence.file_session_repo import CheckpointError, SessionCheckpointStore
 from ..domain.session import Session
 from .agent_runner import (
     Agent,

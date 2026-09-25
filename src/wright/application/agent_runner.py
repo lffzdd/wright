@@ -35,7 +35,7 @@ from .executor import ToolExecutor
 from .verifier import Verifier
 
 if TYPE_CHECKING:
-    from ..domain.checkpoint import SessionCheckpointStore
+    from ..infrastructure.persistence.file_session_repo import SessionCheckpointStore
 
 logger = get_logger(__name__)
 
