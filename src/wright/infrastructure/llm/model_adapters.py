@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from os import environ
 from typing import Any
 
 from ...events import ContentDelta, ContentDone, LLMEvent, ReasoningDelta
@@ -314,3 +315,22 @@ class ResponsesAdapter:
             reason = done.finish_reason if done is not None else event_type
             return [], done, str(reason)
         return [], None, None
+
+
+def process_model_name(cli_model: str | None = None) -> str:
+    """Choose a new-session model without changing the established precedence."""
+    for candidate in (cli_model, environ.get("OPENAI_MODEL")):
+        cleaned = (candidate or "").strip()
+        if cleaned:
+            return cleaned
+    return ""
+
+
+def available_models(current: str, configured: str | None = None) -> tuple[str, ...]:
+    """Return configured candidates, retaining the selected model first."""
+    configured = environ.get("WRIGHT_MODELS", "") if configured is None else configured
+    models = [model.strip() for model in configured.split(",") if model.strip()]
+    if current and current not in models:
+        models.insert(0, current)
+    return tuple(dict.fromkeys(models))
+
