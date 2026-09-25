@@ -1,0 +1,70 @@
+"""Model-facing description of a callable tool."""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal
+
+from ...tool_protocol import ToolAccess
+
+if TYPE_CHECKING:
+    from ...tool_protocol import ToolResult
+    from .runtime import ToolRuntime
+
+
+TimeoutOwner = Literal["executor", "tool"]
+
+
+def _not_concurrency_safe(args: dict[str, Any]) -> bool:
+    """新工具默认排他执行；必须显式声明才允许进入并发批。"""
+    del args
+    return False
+
+
+@dataclass
+class Tool:
+    name: str
+    description: str
+    parameters: dict
+    call: Callable[[dict[str, Any], ToolRuntime], ToolResult]
+    access_descriptor: Callable[[dict[str, Any]], ToolAccess] = (
+        lambda args: ToolAccess.unknown()
+    )
+    is_concurrency_safe: Callable[[dict[str, Any]], bool] = _not_concurrency_safe
+    requires_user_interaction: bool = False
+    timeout_owner: TimeoutOwner = "executor"
+    execution_timeout: float | None = None
+    expose_to_model: bool = True
+    defer_to_model: bool = False
+    source: str = "builtin"
+    required_capabilities: frozenset[str] = frozenset()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters,
+        }
+
+    def describe_access(self, arguments: dict[str, Any]) -> ToolAccess:
+        """Describe this invocation without performing a side effect."""
+
+        return self.access_descriptor(dict(arguments))
+
+
+def split_tool_catalog(tools: Sequence[Tool]) -> tuple[list[str], list[str]]:
+    """Baseline vs deferred names, in assembly order."""
+
+    baseline: list[str] = []
+    deferred: list[str] = []
+    seen: set[str] = set()
+    for tool in tools:
+        if not tool.expose_to_model or tool.name in seen:
+            continue
+        seen.add(tool.name)
+        if tool.defer_to_model:
+            deferred.append(tool.name)
+        else:
+            baseline.append(tool.name)
+    return baseline, deferred
