@@ -1,23 +1,15 @@
-"""Backward compatibility shim for execution package."""
+"""Runtime execution backends and contracts."""
 
-import importlib
-import sys
-
-from ..infrastructure.runtime import (
-    AuthorizedExecution,
+from .authorized import AuthorizedExecution
+from .local import LocalExecutionBackend, LocalProcessHandle
+from .protocols import ExecutionBackend, ProcessHandle
+from .types import (
     CompletedProcess,
     DirectoryEntry,
-    ExecutionBackend,
     ExecutionPath,
     FileMetadata,
-    LocalExecutionBackend,
-    LocalProcessHandle,
-    ProcessHandle,
     SearchMatch,
 )
-
-_mod = importlib.import_module("wright.infrastructure.runtime")
-sys.modules[__name__] = _mod
 
 __all__ = [
     "AuthorizedExecution",
