@@ -19,12 +19,14 @@ from types import SimpleNamespace
 _TMP = tempfile.TemporaryDirectory(prefix="wright-test-", ignore_cleanup_errors=True)
 _WORKSPACE = Path(_TMP.name)
 
-from wright.engine.agent import Agent, create_agent
-from wright.events import ContentDelta, ContentDone, UsageEvent
-from wright.llm import LLMClient
-from wright.renderer import SilentRenderer
+from wright.application.agent_runner import Agent, create_agent
+from wright.domain.events import ContentDelta, ContentDone, UsageEvent
+from wright.infrastructure.llm.llm import LLMClient
+from wright.interfaces.renderer import SilentRenderer
 from wright.domain.session import Session, UsageRecord
-from wright.tools.base import Tool, ToolCall, ToolResult, ToolRuntime
+from wright.domain.tool_protocol import ToolCall, ToolResult
+from wright.infrastructure.tools.base import Tool
+from wright.infrastructure.tools.runtime import ToolRuntime
 
 
 class RecordingRenderer(SilentRenderer):
