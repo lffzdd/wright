@@ -16,7 +16,12 @@ from ...domain.model import ModelRequest
 from ...domain.policy import AuthorizationChange, PermissionResolver
 from ...core.processes import RuntimeResources
 from ...domain.prompt import build_system_prompt
-from ...domain.protocol import TurnAbort, encode_tools, parse_turn
+from ...domain.protocol import (
+    TurnAbort,
+    build_tool_results_messages,
+    encode_tools,
+    parse_turn,
+)
 from ...interfaces.renderer import Renderer
 from ..skills import SkillRegistry, catalog_reminder
 from ..tool_capabilities import CapabilityAssembly, assemble_tool_capabilities
@@ -24,7 +29,7 @@ from ...domain.model.tool import ToolResult
 from ...infrastructure.tools.base import Tool
 from ...infrastructure.tools.tool_search import MAX_ACTIVE_DEFERRED_TOOLS, make_tool_search_tool
 from ...interfaces.ui_events import EventPublisher, RendererEventSubscriber, SessionEvents
-from ...utils.util import build_tool_results_messages, estimate_message_tokens
+from ...utils.token_counter import estimate_message_tokens
 from .prompt import AgentPromptManager
 from .turns import AgentTurnHandler, RetryCounters
 from .usage import AgentUsageTracker

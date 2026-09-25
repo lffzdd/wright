@@ -13,7 +13,7 @@ from wright.interfaces.renderer import ConsoleRenderer, SilentRenderer
 from wright.tests.responses import response
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.infrastructure.tools.base import Tool
-from wright.utils.util import estimate_message_tokens
+from wright.utils.token_counter import estimate_message_tokens
 
 
 class Capture(SilentRenderer):

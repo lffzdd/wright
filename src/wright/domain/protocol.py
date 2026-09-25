@@ -11,8 +11,22 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from .model.events import ContentDone
-from .model.tool import ToolCall
+from .model.tool import ToolCall, ToolResult
 from ..infrastructure.tools.base import Tool
+
+
+def build_tool_results_messages(
+    tool_tuple: list[tuple[ToolCall, ToolResult]],
+) -> list[dict]:
+    """One native result per call, preserving the provider's call ID."""
+    return [
+        {
+            "role": "tool",
+            "tool_call_id": call.id,
+            "content": json.dumps(result.to_dict(), ensure_ascii=False),
+        }
+        for call, result in tool_tuple
+    ]
 
 
 def encode_tools(

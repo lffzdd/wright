@@ -8,7 +8,7 @@ def test_core_records_context_and_execution_do_not_import_chat_sdk_types():
     for relative in (
         "domain/model/session.py", "domain/model/runs.py", "application/agent/context.py",
         "application/agent/runner.py", "application/tool_dispatcher.py",
-        "domain/model/conversation.py", "utils/util.py", "domain/policy/verifier.py",
+        "domain/model/conversation.py", "domain/protocol.py", "domain/policy/verifier.py",
     ):
         text = (root / relative).read_text(encoding="utf-8")
         assert "openai.types.chat" not in text, relative

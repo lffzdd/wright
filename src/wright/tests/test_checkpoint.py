@@ -9,7 +9,7 @@ from ..domain.model.session import Session, UsageRecord
 from wright.application.agent import create_agent
 from wright.interfaces.renderer import SilentRenderer
 from wright.domain.model.tool import ArtifactRef, ToolCall, ToolResult
-from wright.utils.util import build_tool_results_messages
+from wright.domain.protocol import build_tool_results_messages
 
 
 def _populated_session(tmp_path):

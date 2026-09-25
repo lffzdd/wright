@@ -15,7 +15,7 @@ from ..storage.attachments import AttachmentError, AttachmentRecord
 from ...core.logger import get_logger
 from ...domain.model.planning import PlanManager
 from ...domain.model.tool import ArtifactRef, ToolCall, ToolResult
-from ...utils.util import build_tool_results_messages
+from ...domain.protocol import build_tool_results_messages
 from ...domain.model.coordination import AgentControlError, AgentControlPlane
 from ...domain.model.runs import RunRecord
 from ...domain.model.session import (

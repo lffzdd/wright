@@ -13,7 +13,7 @@ from uuid import uuid4
 from .planning import PlanManager
 from ...infrastructure.workspace.project import ExecutionEnvironment
 from .tool import ToolCall, ToolResult
-from ...utils.util import estimate_message_tokens
+from ...utils.token_counter import estimate_message_tokens
 from .conversation import ConversationMessage, ImagePart, TextPart, UserTurnInput
 from .coordination import AgentControlPlane
 from .runs import TERMINAL_RUN_STATUSES, RunRecord, RunStatus, new_run_id

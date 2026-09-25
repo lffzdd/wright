@@ -7,7 +7,7 @@ from os import environ
 from typing import Any
 
 from ...domain.model.events import ContentDelta, ContentDone, LLMEvent, ReasoningDelta
-from ...utils.util import tool_image_references
+from ...utils.token_counter import tool_image_references
 
 
 def _with_tool_images(messages, artifact_data_url):
