@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from . import ILLMProvider
+from . import ILLMGateway, ILLMProvider
 
-__all__ = ["ILLMProvider"]
+__all__ = ["ILLMGateway", "ILLMProvider"]

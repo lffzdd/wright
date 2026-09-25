@@ -59,14 +59,22 @@ class IMemoryStore(ABC):
         ...
 
 
+ILLMGateway = ILLMProvider
+IToolGateway = IToolExecutor
+IStorageGateway = ISessionRepository
+
 from .task_backend import TaskBackend
 from .knowledge_provider import KnowledgeProvider
 
 __all__ = [
+    "ILLMGateway",
     "ILLMProvider",
-    "IToolExecutor",
-    "ISessionRepository",
     "IMemoryStore",
-    "TaskBackend",
+    "ISessionRepository",
+    "IStorageGateway",
+    "IToolExecutor",
+    "IToolGateway",
     "KnowledgeProvider",
+    "TaskBackend",
 ]
+

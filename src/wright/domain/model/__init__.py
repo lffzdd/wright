@@ -10,7 +10,7 @@ from .session import (
     TurnRecord,
     UsageRecord,
 )
-from .tool_definition import ArtifactRef, ToolAccess, ToolCall, ToolResult
+from .tool import ArtifactRef, ToolAccess, ToolCall, ToolDefinition, ToolResult
 from .message import Message
 from .request import ModelRequest
 from .agent import AgentProfile, CapabilityCatalog, CapabilitySnapshot
@@ -122,6 +122,7 @@ __all__ = [
     "TaskWaitCancelled",
     "ToolAccess",
     "ToolCall",
+    "ToolDefinition",
     "ToolExecutionRecord",
     "ToolResult",
     "TriggerSpec",
