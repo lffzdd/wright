@@ -13,7 +13,7 @@ from typing import Any, TypeVar, cast
 
 from ..infrastructure.storage.attachments import AttachmentError, AttachmentRecord
 from ..core.logger import get_logger
-from ..planning import PlanManager
+from .model.planning import PlanManager
 from .tool_protocol import ArtifactRef, ToolCall, ToolResult
 from ..utils.util import build_tool_results_messages
 from .coordination import AgentControlError, AgentControlPlane

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 from uuid import uuid4
 
-from ..planning import PlanManager
+from .model.planning import PlanManager
 from ..infrastructure.workspace.project import ExecutionEnvironment
 from .tool_protocol import ToolCall, ToolResult
 from ..utils.util import estimate_message_tokens

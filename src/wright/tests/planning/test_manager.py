@@ -1,6 +1,6 @@
 import pytest
 
-from ...planning import PlanError, PlanManager
+from wright.domain.model.planning import PlanError, PlanManager
 
 
 def test_create_plan_builds_stable_ordered_steps():

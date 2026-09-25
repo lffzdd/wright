@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from ...domain.session import BackgroundTask, Session
     from ...application.agent_background import AgentBackgroundRuntime
     from ..runtime import ExecutionPath
-    from ...planning import PlanManager
+    from ...domain.model.planning import PlanManager
     from ...application.task_service import TaskService
 
 

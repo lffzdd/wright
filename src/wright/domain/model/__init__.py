@@ -26,6 +26,13 @@ from .tasks import (
     TaskStatus,
     TaskWaitCancelled,
 )
+from .planning import (
+    PlanError,
+    PlanManager,
+    PlanStatus,
+    PlanStep,
+    PlanStepStatus,
+)
 
 __all__ = [
     "AgentControlConfig",
@@ -42,6 +49,11 @@ __all__ = [
     "Message",
     "MessageRecord",
     "ModelRequest",
+    "PlanError",
+    "PlanManager",
+    "PlanStatus",
+    "PlanStep",
+    "PlanStepStatus",
     "ReasoningDelta",
     "RunRecord",
     "RunStatus",
