@@ -7,14 +7,14 @@ Wright 主入口：终端里的 coding agent。
 import os
 import sys
 
-from .app.runtime import (
+from .application.runtime import (
     assemble_runtime,
     load_env,
     parse_cli_args,
     runtime_config_from_args,
 )
 from .interfaces.repl import Repl
-from .tui.terminal import configure_terminal
+from .interfaces.tui.terminal import configure_terminal
 
 
 def main() -> None:
@@ -22,7 +22,7 @@ def main() -> None:
     load_env()
     if args.ui == "web":
         try:
-            from .web.server import run_web
+            from .interfaces.web.server import run_web
         except ImportError as exc:
             raise SystemExit(
                 "Web UI 依赖未安装；请运行 `uv sync --extra web` "
@@ -45,7 +45,7 @@ def main() -> None:
     # default pleasant for people while preserving text behavior for scripts.
     if args.ui == "tui" and sys.stdin.isatty() and sys.stdout.isatty():
         configure_terminal(os.environ, sys.platform)
-        from .tui import run_tui
+        from .interfaces.tui import run_tui
 
         run_tui(args)
         return
