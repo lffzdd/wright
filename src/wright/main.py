@@ -13,8 +13,8 @@ from .app.runtime import (
     parse_cli_args,
     runtime_config_from_args,
 )
-from .repl import Repl
-from .terminal import configure_terminal
+from .interfaces.repl import Repl
+from .tui.terminal import configure_terminal
 
 
 def main() -> None:
@@ -31,7 +31,7 @@ def main() -> None:
         run_web(args)
         return
     if args.ui == "headless":
-        from .headless import run_headless_host
+        from .interfaces.headless import run_headless_host
 
         try:
             run_headless_host(
