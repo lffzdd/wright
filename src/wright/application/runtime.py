@@ -18,6 +18,7 @@ from ..infrastructure.storage.artifacts import ArtifactStore
 from ..infrastructure.storage.attachments import AttachmentStore, DraftAttachments
 from ..infrastructure.persistence.autonomy_store import AutonomyStore
 from ..infrastructure.persistence.file_session_repo import CheckpointError, SessionCheckpointStore
+from ..domain.prompt import get_role_instruction
 from ..domain.session import Session
 from .agent_runner import (
     Agent,
@@ -122,6 +123,8 @@ class RuntimeConfig:
     model: str | None = None
     transport: str | None = None
     trust_project_mcp: bool = False
+    with_rag: bool = False
+    mode: str = "coding"
 
 
 def runtime_config_from_args(args: argparse.Namespace) -> RuntimeConfig:
@@ -136,6 +139,8 @@ def runtime_config_from_args(args: argparse.Namespace) -> RuntimeConfig:
         model=getattr(args, "model", None),
         transport=getattr(args, "transport", None),
         trust_project_mcp=bool(getattr(args, "trust_project_mcp", False)),
+        with_rag=bool(getattr(args, "with_rag", False)),
+        mode=str(getattr(args, "mode", "coding") or "coding"),
     )
 
 
@@ -218,6 +223,17 @@ def parse_cli_args() -> argparse.Namespace:
         "--trust-project-mcp",
         action="store_true",
         help="允许启动项目 .wright/mcp.json 中声明的进程或远程连接",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("coding", "general"),
+        default="coding",
+        help="运行模式：coding（默认，包含写文件与执行命令）或 general（通用助理，安全只读与分析）",
+    )
+    parser.add_argument(
+        "--with-rag",
+        action="store_true",
+        help="显式挂载 RAG 外部知识库检索工具（knowledge_search）",
     )
     return parser.parse_args()
 
@@ -571,9 +587,20 @@ def assemble_runtime(
     # 默认只委派叶子子 Agent（max_depth=1）。嵌套 spawn 仍由控制面支持，
     # 无人值守 durable run 会显式打开第二层。
     # knowledge_search 是只读检索：启用后放进 base，让子 Agent 也能查知识库。
-    knowledge_tools = optional_knowledge_tools()
+    if config.with_rag:
+        try:
+            knowledge_tools = optional_knowledge_tools(enabled=True)
+        except TypeError:
+            knowledge_tools = optional_knowledge_tools()
+    else:
+        knowledge_tools = optional_knowledge_tools()
+    active_base_tools = base_tools
+    if config.mode == "general":
+        coding_only = {"edit_file", "write_file", "execute_command"}
+        active_base_tools = [t for t in base_tools if t.name not in coding_only]
+
     assembled_base = [
-        *base_tools,
+        *active_base_tools,
         *(replace(tool, defer_to_model=True) for tool in mcp_tools),
         *knowledge_tools,
     ]
@@ -618,7 +645,7 @@ def assemble_runtime(
             llm=llm_client,
             # Host builds its own MCP wrappers and never retains tools bound
             # to the Session-owned manager above.
-            base_tools=[*base_tools, *knowledge_tools],
+            base_tools=[*active_base_tools, *knowledge_tools],
             permission_settings=settings,
             mcp_configs=mcp_configs,
             artifact_store=artifact_store,
@@ -633,7 +660,8 @@ def assemble_runtime(
     )
 
     prepared = prepare_model_tools(session_state, tools)
-    ensure_system_prompt(session_state, prepared, memory_manager)
+    role_instruction = get_role_instruction(config.mode)
+    ensure_system_prompt(session_state, prepared, memory_manager, role_instruction=role_instruction)
     components = assemble_agent_components(
         session_state=session_state,
         events=event_renderer,

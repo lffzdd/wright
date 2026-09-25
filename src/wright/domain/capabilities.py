@@ -24,6 +24,7 @@ class AgentProfile:
     allow_interaction: bool = False
     allow_background_tasks: bool = False
     allow_delegation: bool = False
+    role_instruction: str = ""
 
 
 @dataclass(frozen=True)

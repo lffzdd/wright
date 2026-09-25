@@ -9,9 +9,10 @@ from .rag_provider import (
 )
 
 
-def optional_knowledge_tools():
+def optional_knowledge_tools(*, enabled: bool | None = None):
     """未显式启用时返回空列表，避免不可用工具占住每个新会话。"""
-    if not knowledge_enabled():
+    is_active = enabled if enabled is not None else knowledge_enabled()
+    if not is_active:
         return []
     from ..tools.knowledge_tools import build_knowledge_tools
 

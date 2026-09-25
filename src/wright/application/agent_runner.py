@@ -151,6 +151,7 @@ def ensure_system_prompt(
     session: Session,
     prepared: PreparedTools,
     memory: MemoryManager | None,
+    role_instruction: str = "",
 ) -> None:
     """Write the system prompt once, when the session has no messages yet."""
     if session.message_records:
@@ -165,10 +166,14 @@ def ensure_system_prompt(
             pass
     memory_section = memory.instructions() if memory else ""
     prompt_tools = [tool for tool in prepared.tools if tool.name != "tool_search"]
+    effective_role = role_instruction or getattr(prepared.profile, "role_instruction", "")
     session.append_message({
         "role": "system",
         "content": build_system_prompt(
-            prompt_tools, memory_section=memory_section, core_memory=core_block
+            prompt_tools,
+            memory_section=memory_section,
+            core_memory=core_block,
+            role_instruction=effective_role,
         ),
     })
 
@@ -218,6 +223,7 @@ def create_agent(
     authorization_commit_factory=None,
     assembly: CapabilityAssembly | None = None,
     events: SessionEvents | None = None,
+    role_instruction: str = "",
 ) -> "Agent":
     """Prepare tools, the system prompt, and events, then build an Agent.
 
@@ -238,7 +244,12 @@ def create_agent(
     if authorization_commit is None and authorization_commit_factory is not None:
         authorization_commit = authorization_commit_factory(session_state)
     prepared = prepare_model_tools(session_state, tools, profile)
-    ensure_system_prompt(session_state, prepared, memory)
+    ensure_system_prompt(
+        session_state,
+        prepared,
+        memory,
+        role_instruction=role_instruction or (profile.role_instruction if profile else ""),
+    )
     components = assemble_agent_components(
         session_state=session_state,
         events=events,

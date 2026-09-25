@@ -6,18 +6,35 @@ from collections.abc import Sequence
 
 from ..infrastructure.tools.base import Tool, split_tool_catalog
 
+DEFAULT_CODING_ROLE = "You are a coding assistant. Use the tools provided this turn."
+DEFAULT_GENERAL_ROLE = (
+    "You are a versatile, analytical, and helpful general research assistant. "
+    "Use the tools provided this turn to gather facts, synthesize insights, and assist the user."
+)
+
+
+def get_role_instruction(mode: str = "coding") -> str:
+    """Return default role instruction for given agent mode."""
+    if mode == "general":
+        return DEFAULT_GENERAL_ROLE
+    return DEFAULT_CODING_ROLE
+
 
 def build_system_prompt(
     tools: Sequence[Tool],
     memory_section: str = "",
     core_memory: str = "",
+    role_instruction: str = "",
 ) -> str:
     baseline, deferred = split_tool_catalog(tools)
     names = set(baseline)
     paragraphs = []
     if core_memory:
         paragraphs.append(core_memory.strip())
-    paragraphs.append("You are a coding assistant. Use the tools provided this turn.")
+
+    role = role_instruction.strip() if role_instruction else DEFAULT_CODING_ROLE
+    paragraphs.append(role)
+
     if baseline:
         paragraphs.append("Always available: " + ", ".join(baseline) + ".")
     if {"edit_file", "write_file"} <= names:
@@ -54,3 +71,11 @@ def build_system_prompt(
     if memory_section:
         return f"{prompt}\n{memory_section}\n"
     return prompt
+
+
+__all__ = [
+    "DEFAULT_CODING_ROLE",
+    "DEFAULT_GENERAL_ROLE",
+    "build_system_prompt",
+    "get_role_instruction",
+]
