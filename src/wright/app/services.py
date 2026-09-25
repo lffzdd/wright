@@ -1,24 +1,3 @@
-"""Process-local runtime services shared by an Agent tree.
+"""Backward compatibility shim for wright.app.services."""
 
-These are live handles (threads, queues, DB connections), not session state.
-They travel with ToolRuntime and are intentionally absent from checkpoints.
-"""
-
-from __future__ import annotations
-
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from ..autonomy.scheduler import AutonomyScheduler
-    from ..autonomy.store import AutonomyStore
-    from ..engine.agent_background import AgentBackgroundRuntime
-    from ..engine.looping import SessionLoopRegistry
-
-
-@dataclass
-class RuntimeServices:
-    agent_background: AgentBackgroundRuntime | None = None
-    durable_store: AutonomyStore | None = None
-    autonomy_scheduler: AutonomyScheduler | None = None
-    loop_registry: SessionLoopRegistry | None = None
+from ..application.services import *
