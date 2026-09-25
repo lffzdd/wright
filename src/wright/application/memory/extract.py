@@ -8,20 +8,21 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from ..infrastructure.llm.llm import LLMClient
-from ..core.logger import get_logger
-from .llm_util import side_query
-from .store import (
-    MemoryStoreError,
+from ...core.logger import get_logger
+from ...domain.model.memory import MEMORY_TYPES, TYPES_SECTION, WHAT_NOT_TO_SAVE, MemoryStoreError
+from ...infrastructure.persistence.memory_store import (
     create_memory,
     format_manifest,
     scan_memory_files,
     slugify,
     update_memory,
 )
-from .types import MEMORY_TYPES, TYPES_SECTION, WHAT_NOT_TO_SAVE
+from .llm_util import side_query
+
+if TYPE_CHECKING:
+    from ...infrastructure.llm.llm import LLMClient
 
 logger = get_logger(__name__)
 

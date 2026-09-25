@@ -8,7 +8,7 @@ from wright.domain.session import Session, UsageRecord
 from wright.application.agent_runner import create_agent
 from wright.domain.policy.verifier import Verifier
 from wright.domain.events import UsageEvent
-from wright.memory.llm_util import metered_events
+from wright.application.memory.llm_util import metered_events
 from wright.interfaces.renderer import ConsoleRenderer, SilentRenderer
 from wright.tests.responses import response
 from wright.domain.tool_protocol import ToolCall, ToolResult

@@ -7,12 +7,19 @@ import re
 import tempfile
 import threading
 import unicodedata
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .paths import MEMORY_INDEX, entrypoint_path, memory_dir
-from .types import MemoryType, parse_memory_type
+from ...domain.model.memory import (
+    MemoryAlreadyExistsError,
+    MemoryHeader,
+    MemoryNotFoundError,
+    MemoryRecord,
+    MemoryStoreError,
+    MemoryType,
+    parse_memory_type,
+)
+from .memory_paths import MEMORY_INDEX, entrypoint_path, memory_dir
 
 MAX_INDEX_LINES = 200
 MAX_INDEX_BYTES = 25_000
@@ -22,56 +29,6 @@ MAX_MEMORY_FILES = 200
 MAX_MEMORY_NAME_CHARS = 120
 MAX_MEMORY_DESCRIPTION_CHARS = 500
 MAX_MEMORY_CONTENT_CHARS = 12_000
-
-
-class MemoryStoreError(ValueError):
-    """Semantic memory input or state is invalid."""
-
-
-class MemoryAlreadyExistsError(MemoryStoreError):
-    pass
-
-
-class MemoryNotFoundError(MemoryStoreError):
-    pass
-
-
-@dataclass(frozen=True)
-class MemoryHeader:
-    id: str
-    filename: str
-    path: Path
-    mtime: float
-    name: str
-    description: str | None
-    type: MemoryType | None
-    created_at: str | None = None
-    updated_at: str | None = None
-
-
-@dataclass(frozen=True)
-class MemoryRecord:
-    id: str
-    name: str
-    description: str
-    type: MemoryType
-    content: str
-    created_at: str
-    updated_at: str
-    path: Path
-
-    def to_dict(self) -> dict:
-        return {
-            "id": self.id,
-            "name": self.name,
-            "description": self.description,
-            "type": self.type,
-            "content": self.content,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-            "file": self.path.name,
-        }
-
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
 _SAFE_ID_RE = re.compile(r"[\w-]{1,160}", re.UNICODE)
@@ -228,8 +185,6 @@ def scan_memory_files(directory: Path | None = None) -> list[MemoryHeader]:
         return []
 
     headers: list[MemoryHeader] = []
-    # Semantic memories are deliberately flat.  This keeps ids unambiguous and
-    # prevents the episodes/ area from accidentally entering semantic recall.
     for path in directory.iterdir():
         if (
             path.name == MEMORY_INDEX
@@ -333,7 +288,6 @@ def update_memory(
     with _lock_for(directory):
         current = get_memory(normalized, directory)
         updated_name = current.name if name is None else name
-        # IDs are stable across rename: references and manifests do not break.
         text = dump_frontmatter(
             updated_name,
             current.description if description is None else description,
@@ -342,7 +296,8 @@ def update_memory(
             created_at=current.created_at,
             updated_at=_utc_now(),
         )
-        _atomic_write(current.path, text)
+        current_path = _memory_path(normalized, directory)
+        _atomic_write(current_path, text)
         _rebuild_index_unlocked(directory)
     return get_memory(normalized, directory)
 
@@ -352,8 +307,9 @@ def delete_memory(memory_id: str, directory: Path | None = None) -> MemoryRecord
     normalized = normalize_memory_id(memory_id)
     with _lock_for(directory):
         current = get_memory(normalized, directory)
+        current_path = _memory_path(normalized, directory)
         try:
-            current.path.unlink()
+            current_path.unlink()
         except OSError as exc:
             raise MemoryStoreError(f"删除记忆失败: {exc}") from exc
         _rebuild_index_unlocked(directory)
@@ -481,3 +437,22 @@ def read_memories_for_surfacing(paths: list[Path]) -> str:
             text = text[:MAX_MEMORY_CHARS] + "\n…(已截断)"
         blocks.append(f"### {path.name}\n{text}")
     return "\n\n".join(blocks)
+
+
+__all__ = [
+    "create_memory",
+    "delete_memory",
+    "dump_frontmatter",
+    "format_manifest",
+    "get_memory",
+    "normalize_memory_id",
+    "parse_frontmatter",
+    "read_entrypoint",
+    "read_memories_for_surfacing",
+    "rebuild_index",
+    "scan_memory_files",
+    "search_memories",
+    "slugify",
+    "update_memory",
+    "write_memory_file",
+]

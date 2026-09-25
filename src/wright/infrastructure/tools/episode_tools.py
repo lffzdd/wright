@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ...memory.episode import EpisodeStore, EpisodeStoreError
+from ..persistence.episode_store import EpisodeStore
+from ...domain.model.memory import EpisodeStoreError
 from ...domain.tool_protocol import ToolAccess, ToolResult
 from .base import Tool
 from .runtime import ToolRuntime

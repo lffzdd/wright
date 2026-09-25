@@ -9,9 +9,11 @@ from .task_service import (
 )
 from .skill_registry import SkillRegistry
 from .skills_prompt import catalog_reminder
+from .memory import MemoryManager
 
 __all__ = [
     "AgentTaskBackend",
+    "MemoryManager",
     "ShellTaskBackend",
     "SkillRegistry",
     "TaskService",

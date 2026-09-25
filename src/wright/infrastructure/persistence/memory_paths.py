@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from ..core.paths import wright_home
+from ...core.paths import wright_home
 
 # MEMORY.md:始终注入上下文的索引文件名(对标 Claude Code memdir 的 ENTRYPOINT)。
 MEMORY_INDEX = "MEMORY.md"
@@ -44,3 +44,11 @@ def ensure_memory_dir() -> Path:
     d = memory_dir()
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+__all__ = [
+    "MEMORY_INDEX",
+    "ensure_memory_dir",
+    "entrypoint_path",
+    "memory_dir",
+]

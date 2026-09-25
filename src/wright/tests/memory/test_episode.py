@@ -5,13 +5,13 @@ import pytest
 from wright.tests.responses import event
 
 from ...domain.session import Session, UsageRecord
-from ...memory.episode import (
+from wright.infrastructure.persistence.episode_store import (
     EpisodeNotFoundError,
     EpisodeStore,
     EpisodeStoreError,
     episode_from_session,
 )
-from ...memory.recall import build_recall_block
+from wright.application.memory.recall import build_recall_block
 from wright.domain.tool_protocol import ToolCall, ToolResult
 from wright.infrastructure.tools.episode_tools import build_episode_tools
 

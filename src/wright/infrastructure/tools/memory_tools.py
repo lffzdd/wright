@@ -9,23 +9,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ...memory.store import (
+from ..persistence.memory_store import (
     MemoryStoreError,
     search_memories,
-)
-from ...memory.store import (
     create_memory as store_create_memory,
-)
-from ...memory.store import (
     delete_memory as store_delete_memory,
-)
-from ...memory.store import (
     get_memory as store_get_memory,
-)
-from ...memory.store import (
     update_memory as store_update_memory,
 )
-from ...memory.types import MEMORY_TYPES
+from ...domain.model.memory import MEMORY_TYPES
 from ...domain.tool_protocol import ToolAccess, ToolResult
 from .base import Tool
 from .runtime import ToolRuntime

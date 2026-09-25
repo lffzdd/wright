@@ -11,7 +11,7 @@ from ..domain.session import Session, UsageRecord
 from ..domain.events import ContentDelta, ContentDone, ReasoningDelta, UsageEvent
 from ..infrastructure.llm.llm import LLMClient
 from ..core.logger import get_logger
-from ..memory import MemoryManager
+from .memory import MemoryManager
 from ..domain.model import ModelRequest
 from ..domain.policy import AuthorizationChange, PermissionResolver
 from ..core.processes import RuntimeResources

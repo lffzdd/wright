@@ -4,21 +4,24 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from ..infrastructure.llm.llm import LLMClient
-from .episode import (
-    EpisodeRecord,
+from ...domain.model.memory import EpisodeRecord
+from ...infrastructure.persistence.episode_store import (
     EpisodeStore,
     format_episode_manifest,
     read_episodes_for_surfacing,
 )
-from .llm_util import side_query
-from .store import (
+from ...infrastructure.persistence.memory_store import (
     format_manifest,
     read_entrypoint,
     read_memories_for_surfacing,
     scan_memory_files,
 )
+from .llm_util import side_query
+
+if TYPE_CHECKING:
+    from ...infrastructure.llm.llm import LLMClient
 
 MAX_SELECTED_MEMORIES = 5
 MAX_SELECTED_EPISODES = 3
@@ -161,3 +164,14 @@ def build_recall_block(
     )
     parts.append("</system-reminder>")
     return "\n".join(parts)
+
+
+__all__ = [
+    "MAX_EPISODE_CANDIDATES",
+    "MAX_SELECTED_EPISODES",
+    "MAX_SELECTED_MEMORIES",
+    "build_recall_block",
+    "find_relevant_episodes",
+    "find_relevant_memories",
+    "select_relevant_context",
+]

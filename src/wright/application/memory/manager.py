@@ -7,16 +7,19 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from ..infrastructure.llm.llm import LLMClient
-from ..core.logger import get_logger
-from .episode import EpisodeRecord, EpisodeStore, episode_from_session
+from ...core.logger import get_logger
+from ...domain.model.memory import EpisodeRecord
+from ...infrastructure.persistence.episode_store import EpisodeStore, episode_from_session
+from ...infrastructure.persistence.memory_paths import memory_dir
 from .extract import extract_and_save
 from .llm_util import metered_events
-from .paths import memory_dir
 from .prompt import build_memory_instructions
 from .recall import build_recall_block
+
+if TYPE_CHECKING:
+    from ...infrastructure.llm.llm import LLMClient
 
 logger = get_logger(__name__)
 
@@ -93,10 +96,13 @@ class MemoryManager:
 
     def tools(self):
         """Build CRUD tools bound to this manager's exact directory."""
-        from ..infrastructure.tools.episode_tools import build_episode_tools
-        from ..infrastructure.tools.memory_tools import build_memory_tools
+        from ...infrastructure.tools.episode_tools import build_episode_tools
+        from ...infrastructure.tools.memory_tools import build_memory_tools
 
         return [
             *build_memory_tools(self.directory),
             *build_episode_tools(self.directory),
         ]
+
+
+__all__ = ["MemoryManager"]

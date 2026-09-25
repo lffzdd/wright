@@ -8,14 +8,18 @@ import os
 import re
 import tempfile
 import threading
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
-from .paths import memory_dir
+from ...domain.model.memory import (
+    EpisodeNotFoundError,
+    EpisodeRecord,
+    EpisodeStatus,
+    EpisodeStoreError,
+)
+from .memory_paths import memory_dir
 
-EpisodeStatus = Literal["completed", "failed", "max_steps"]
 EPISODES_DIRECTORY = "episodes"
 MAX_EPISODES = 500
 MAX_EPISODE_GOAL_CHARS = 2_000
@@ -27,118 +31,6 @@ MAX_EPISODE_FILE_BYTES = 256_000
 _EPISODE_ID_RE = re.compile(r"ep-[A-Za-z0-9_-]{1,180}")
 _locks_guard = threading.Lock()
 _store_locks: dict[Path, threading.RLock] = {}
-
-
-class EpisodeStoreError(ValueError):
-    pass
-
-
-class EpisodeNotFoundError(EpisodeStoreError):
-    pass
-
-
-@dataclass(frozen=True)
-class EpisodeRecord:
-    id: str
-    session_id: str
-    goal: str
-    status: EpisodeStatus
-    outcome: str
-    started_step: int
-    ended_step: int
-    created_at: str
-    plan: dict[str, Any]
-    tools: tuple[dict[str, Any], ...]
-    agents: tuple[dict[str, Any], ...]
-    verification: tuple[dict[str, Any], ...]
-    usage: dict[str, int]
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "session_id": self.session_id,
-            "goal": self.goal,
-            "status": self.status,
-            "outcome": self.outcome,
-            "started_step": self.started_step,
-            "ended_step": self.ended_step,
-            "created_at": self.created_at,
-            "plan": self.plan,
-            "tools": list(self.tools),
-            "agents": list(self.agents),
-            "verification": list(self.verification),
-            "usage": self.usage,
-        }
-
-    @classmethod
-    def from_dict(cls, value: Any) -> EpisodeRecord:
-        if not isinstance(value, dict):
-            raise EpisodeStoreError("episode 必须是对象")
-        episode_id = value.get("id")
-        if not isinstance(episode_id, str) or _EPISODE_ID_RE.fullmatch(episode_id) is None:
-            raise EpisodeStoreError("episode id 非法")
-        status = value.get("status")
-        if status not in {"completed", "failed", "max_steps"}:
-            raise EpisodeStoreError("episode status 非法")
-        tools = value.get("tools", [])
-        agents = value.get("agents", [])
-        verification = value.get("verification", [])
-        plan = value.get("plan", {})
-        usage = value.get("usage", {})
-        if not isinstance(tools, list) or not all(isinstance(item, dict) for item in tools):
-            raise EpisodeStoreError("episode tools 非法")
-        if len(tools) > MAX_EPISODE_TOOLS:
-            raise EpisodeStoreError("episode tools 超出上限")
-        if not isinstance(agents, list) or not all(
-            isinstance(item, dict) for item in agents
-        ):
-            raise EpisodeStoreError("episode agents 非法")
-        if len(agents) > MAX_EPISODE_AGENTS:
-            raise EpisodeStoreError("episode agents 超出上限")
-        if not isinstance(verification, list) or not all(
-            isinstance(item, dict) for item in verification
-        ):
-            raise EpisodeStoreError("episode verification 非法")
-        if len(verification) > MAX_EPISODE_VERIFICATIONS:
-            raise EpisodeStoreError("episode verification 超出上限")
-        if not isinstance(plan, dict) or not isinstance(usage, dict):
-            raise EpisodeStoreError("episode plan/usage 非法")
-        started_step = _nonnegative_int(value.get("started_step"), "started_step")
-        ended_step = _nonnegative_int(value.get("ended_step"), "ended_step")
-        if ended_step < started_step:
-            raise EpisodeStoreError("ended_step 不能小于 started_step")
-        return cls(
-            id=episode_id,
-            session_id=_bounded_string(value.get("session_id"), "session_id", 128),
-            goal=_bounded_string(
-                value.get("goal"), "goal", MAX_EPISODE_GOAL_CHARS, allow_empty=True
-            ),
-            status=status,
-            outcome=_bounded_string(
-                value.get("outcome"),
-                "outcome",
-                MAX_EPISODE_OUTCOME_CHARS,
-                allow_empty=True,
-            ),
-            started_step=started_step,
-            ended_step=ended_step,
-            created_at=_bounded_string(value.get("created_at"), "created_at", 100),
-            plan=plan,
-            tools=tuple(tools),
-            agents=tuple(agents),
-            verification=tuple(verification),
-            usage={
-                "prompt_tokens": _nonnegative_int(
-                    usage.get("prompt_tokens", 0), "usage.prompt_tokens"
-                ),
-                "completion_tokens": _nonnegative_int(
-                    usage.get("completion_tokens", 0), "usage.completion_tokens"
-                ),
-                "total_tokens": _nonnegative_int(
-                    usage.get("total_tokens", 0), "usage.total_tokens"
-                ),
-            },
-        )
 
 
 class EpisodeStore:
@@ -270,9 +162,6 @@ def episode_from_session(session_state: Any, final_answer: str | None) -> Episod
     message_start = int(
         getattr(session_state, "active_turn_start_message_index", 0)
     )
-    # One stable id per user turn. If a process crashes after the episode write
-    # but before its checkpoint, replaying finalization remains idempotent.  The
-    # message boundary also distinguishes turns cancelled before any new step.
     episode_id = (
         f"ep-{session_state.session_id}-{start}-{message_start}-{digest}"
     )
@@ -440,3 +329,17 @@ def _nonnegative_int(value: Any, field: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise EpisodeStoreError(f"{field} 必须是非负整数")
     return value
+
+
+__all__ = [
+    "EPISODES_DIRECTORY",
+    "EpisodeNotFoundError",
+    "EpisodeRecord",
+    "EpisodeStatus",
+    "EpisodeStore",
+    "EpisodeStoreError",
+    "MAX_EPISODES",
+    "episode_from_session",
+    "format_episode_manifest",
+    "read_episodes_for_surfacing",
+]

@@ -34,7 +34,7 @@ from ..interfaces.interaction import InteractionHub
 from ..infrastructure.knowledge import optional_knowledge_tools
 from ..infrastructure.llm.llm import LLMClient
 from ..core.logger import get_logger
-from ..memory import MemoryManager
+from .memory import MemoryManager
 from ..core.paths import (
     artifact_dir,
     attachment_dir,

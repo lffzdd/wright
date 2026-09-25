@@ -11,8 +11,8 @@ from wright.tests.responses import event, response
 from ...domain.session import Session
 from wright.application.agent_runner import create_agent
 from wright.domain.events import UsageEvent
-from ...memory import MemoryManager
-from ...memory.store import write_memory_file
+from wright.application.memory import MemoryManager
+from wright.infrastructure.persistence.memory_store import write_memory_file
 from wright.interfaces.renderer import SilentRenderer
 
 

@@ -4,10 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from ...memory.store import (
-    MAX_INDEX_LINES,
+from wright.domain.model.memory import (
     MemoryAlreadyExistsError,
     MemoryNotFoundError,
+)
+from wright.infrastructure.persistence.memory_store import (
+    MAX_INDEX_LINES,
     create_memory,
     delete_memory,
     dump_frontmatter,

@@ -1,4 +1,4 @@
-from ..memory.paths import memory_dir
+from wright.infrastructure.persistence.memory_paths import memory_dir
 from wright.core.paths import (
     ensure_project_state,
     mcp_config_paths,

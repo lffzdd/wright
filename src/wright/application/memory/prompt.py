@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .paths import memory_dir
-from .types import (
+from ...domain.model.memory import (
     FRONTMATTER_EXAMPLE,
     TRUSTING_RECALL,
     TYPES_SECTION,
     WHAT_NOT_TO_SAVE,
     WHEN_TO_ACCESS,
 )
+from ...infrastructure.persistence.memory_paths import memory_dir
 
 
 def build_memory_instructions(directory: Path | None = None) -> str:

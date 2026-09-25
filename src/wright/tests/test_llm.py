@@ -10,7 +10,7 @@ from ..domain.session import Session
 from wright.application.agent_runner import create_agent
 from wright.domain.events import ContentDone, UsageEvent
 from wright.infrastructure.llm.llm import LLMClient
-from ..memory.llm_util import side_query
+from wright.application.memory.llm_util import side_query
 from wright.domain.model import ModelRequest
 from wright.domain.policy import ToolAccess
 from wright.domain.protocol import TurnAbort, parse_turn
