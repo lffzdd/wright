@@ -1,18 +1,16 @@
-"""Route native API responses into executable calls or a final answer.
-
-ParsedTurn is an internal execution/trace record, never an output schema imposed
-on the model. Tool arguments are decoded strictly; truncated output is not repaired.
-"""
+from __future__ import annotations
 
 import hashlib
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from .model.events import ContentDone
 from .model.tool import ToolCall, ToolResult
-from ..infrastructure.tools.base import Tool
+
+if TYPE_CHECKING:
+    from ..infrastructure.tools.base import Tool
 
 
 def build_tool_results_messages(

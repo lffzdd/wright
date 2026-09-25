@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 from .session import (
+    ConversationMessage,
+    ConversationPart,
+    ImagePart,
     MessageRecord,
     Session,
     SessionLifecycle,
+    TextPart,
     ToolExecutionRecord,
     TurnRecord,
     UsageRecord,
+    UserTurnInput,
 )
 from .tool import ArtifactRef, ToolAccess, ToolCall, ToolDefinition, ToolResult
 from .request import ModelRequest

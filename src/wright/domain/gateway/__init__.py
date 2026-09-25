@@ -8,7 +8,6 @@ from .memory import (
     ICoreMemoryStore,
     IEpisodicMemoryStore,
     IFactRepository,
-    IMemoryStore,
 )
 from .session_repository import ISessionRepository, IStorageGateway, SessionRepository
 from .task_backend import TaskBackend
@@ -20,7 +19,6 @@ __all__ = [
     "IFactRepository",
     "ILLMGateway",
     "ILLMProvider",
-    "IMemoryStore",
     "ISessionRepository",
     "IStorageGateway",
     "IToolExecutor",

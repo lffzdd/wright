@@ -1,9 +1,11 @@
-"""Provider-neutral conversation values kept in durable session state."""
+"""Conversation parts, user input, and message records for Session."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
+
+MessageId: TypeAlias = str
 
 
 @dataclass(frozen=True)
@@ -61,7 +63,25 @@ class ConversationMessage:
         if self.tool_call_id:
             value["tool_call_id"] = self.tool_call_id
         if self.reasoning:
-            value["reasoning_content"] = self.reasoning
+            value["reasoning"] = self.reasoning
         if self.provider_state:
             value["provider_state"] = self.provider_state
         return value
+
+
+@dataclass
+class MessageRecord:
+    id: MessageId
+    message: dict[str, Any]
+    source: str = "system_feedback"
+
+
+__all__ = [
+    "ConversationMessage",
+    "ConversationPart",
+    "ImagePart",
+    "MessageId",
+    "MessageRecord",
+    "TextPart",
+    "UserTurnInput",
+]
