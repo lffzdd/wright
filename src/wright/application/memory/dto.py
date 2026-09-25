@@ -5,9 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from ...domain.model.core_memory import CoreMemory
-from ...domain.model.episode import Episode
-from ...domain.model.fact import Fact
+from ...domain.model.memory import CoreMemory, Episode, Fact
 
 
 @dataclass(frozen=True)

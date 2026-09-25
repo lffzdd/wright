@@ -1,11 +1,12 @@
-"""Memory policy facade combining fact and episodic memory policies."""
+"""Domain policies for agent memory (Core, Fact, Episodic)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .episode_policy import EpisodePolicy
-from .fact_policy import FactPolicy, is_safe_fact
+from .core import CoreMemoryPolicy
+from .episode import EpisodePolicy
+from .fact import FactPolicy, is_safe_fact
 
 
 @dataclass(frozen=True)
@@ -14,9 +15,11 @@ class MemoryPolicy:
 
     fact: FactPolicy = field(default_factory=FactPolicy)
     episode: EpisodePolicy = field(default_factory=EpisodePolicy)
+    core: CoreMemoryPolicy = field(default_factory=CoreMemoryPolicy)
 
 
 __all__ = [
+    "CoreMemoryPolicy",
     "EpisodePolicy",
     "FactPolicy",
     "MemoryPolicy",

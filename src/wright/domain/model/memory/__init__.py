@@ -1,7 +1,13 @@
-"""Domain models, types, and constants for semantic and episodic memory (Facade)."""
+"""Domain models for agent memory (Core, Fact/Semantic, Episodic)."""
 
 from __future__ import annotations
 
+from .core import (
+    DEFAULT_HUMAN_PROFILE,
+    DEFAULT_PERSONA,
+    DEFAULT_PROJECT_ANCHOR,
+    CoreMemory,
+)
 from .episode import (
     MAX_EPISODE_AGENTS,
     MAX_EPISODE_GOAL_CHARS,
@@ -35,12 +41,10 @@ from .fact import (
 )
 
 __all__ = [
-    "FRONTMATTER_EXAMPLE",
-    "MAX_EPISODE_AGENTS",
-    "MAX_EPISODE_GOAL_CHARS",
-    "MAX_EPISODE_OUTCOME_CHARS",
-    "MAX_EPISODE_TOOLS",
-    "MAX_EPISODE_VERIFICATIONS",
+    "DEFAULT_HUMAN_PROFILE",
+    "DEFAULT_PERSONA",
+    "DEFAULT_PROJECT_ANCHOR",
+    "CoreMemory",
     "Episode",
     "EpisodeNotFoundError",
     "EpisodeOutcome",
@@ -50,6 +54,12 @@ __all__ = [
     "Fact",
     "FactCategory",
     "FactScope",
+    "FRONTMATTER_EXAMPLE",
+    "MAX_EPISODE_AGENTS",
+    "MAX_EPISODE_GOAL_CHARS",
+    "MAX_EPISODE_OUTCOME_CHARS",
+    "MAX_EPISODE_TOOLS",
+    "MAX_EPISODE_VERIFICATIONS",
     "MEMORY_TYPES",
     "MemoryAlreadyExistsError",
     "MemoryHeader",

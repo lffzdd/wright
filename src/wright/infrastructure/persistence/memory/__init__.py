@@ -1,41 +1,32 @@
-"""Persistence adapters for episodic and semantic memory and durable storage."""
+"""Persistence implementations for agent memory subsystems (Core, Fact, Episodic)."""
 
 from __future__ import annotations
 
-from .autonomy_store import (
-    AutonomyNotFoundError,
-    AutonomyStore,
-    AutonomyStoreError,
-)
-from .file_session_repo import (
-    CheckpointError,
-    FileSessionRepository,
-    SessionCheckpointStore,
-)
-from .memory import (
+from .core import (
     CORE_MEMORY_FILE,
+    FileCoreMemoryStore,
+)
+from .episode import (
     EpisodeNotFoundError,
     EpisodeRecord,
     EpisodeStatus,
     EpisodeStore,
     EpisodeStoreError,
-    FileCoreMemoryStore,
+    episode_from_session,
+    format_episode_manifest,
+    read_episodes_for_surfacing,
+)
+from .fact import (
     FileFactRepository,
-    MEMORY_INDEX,
+    MemoryStoreError,
     create_memory,
     delete_memory,
     dump_frontmatter,
-    ensure_memory_dir,
-    entrypoint_path,
-    episode_from_session,
-    format_episode_manifest,
     format_manifest,
     get_memory,
-    memory_dir,
     normalize_memory_id,
     parse_frontmatter,
     read_entrypoint,
-    read_episodes_for_surfacing,
     read_memories_for_surfacing,
     rebuild_index,
     scan_memory_files,
@@ -44,13 +35,15 @@ from .memory import (
     update_memory,
     write_memory_file,
 )
+from .paths import (
+    MEMORY_INDEX,
+    ensure_memory_dir,
+    entrypoint_path,
+    memory_dir,
+)
 
 __all__ = [
-    "AutonomyNotFoundError",
-    "AutonomyStore",
-    "AutonomyStoreError",
     "CORE_MEMORY_FILE",
-    "CheckpointError",
     "EpisodeNotFoundError",
     "EpisodeRecord",
     "EpisodeStatus",
@@ -58,9 +51,8 @@ __all__ = [
     "EpisodeStoreError",
     "FileCoreMemoryStore",
     "FileFactRepository",
-    "FileSessionRepository",
     "MEMORY_INDEX",
-    "SessionCheckpointStore",
+    "MemoryStoreError",
     "create_memory",
     "delete_memory",
     "dump_frontmatter",

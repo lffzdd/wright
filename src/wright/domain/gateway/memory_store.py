@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from . import IEpisodicMemoryStore, IFactRepository, IMemoryStore
+from . import IMemoryStore
+from .memory import ICoreMemoryStore, IEpisodicMemoryStore, IFactRepository
 
 __all__ = [
+    "ICoreMemoryStore",
     "IEpisodicMemoryStore",
     "IFactRepository",
     "IMemoryStore",

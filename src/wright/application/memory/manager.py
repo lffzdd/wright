@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from ...core.logger import get_logger
 from ...domain.model.memory import EpisodeRecord
 from ...infrastructure.persistence.episode_store import EpisodeStore, episode_from_session
-from ...infrastructure.persistence.memory_paths import memory_dir
+from ...infrastructure.persistence.memory import memory_dir
 from .extract import extract_and_save
 from .llm_util import metered_events
 from .prompt import build_memory_instructions
@@ -51,8 +51,10 @@ class MemoryManager:
     @property
     def service(self):
         if self._service is None:
-            from ...infrastructure.persistence.file_core_memory import FileCoreMemoryStore
-            from ...infrastructure.persistence.memory_store import FileFactRepository
+            from ...infrastructure.persistence.memory import (
+                FileCoreMemoryStore,
+                FileFactRepository,
+            )
             from .memory_service import MemoryService
             self._service = MemoryService(
                 fact_repo=FileFactRepository(self.directory),
@@ -111,9 +113,11 @@ class MemoryManager:
 
     def tools(self):
         """Build CRUD tools bound to this manager's exact directory."""
-        from ...infrastructure.tools.core_memory_tools import build_core_memory_tools
-        from ...infrastructure.tools.episode_tools import build_episode_tools
-        from ...infrastructure.tools.memory_tools import build_memory_tools
+        from ...infrastructure.tools.memory import (
+            build_core_memory_tools,
+            build_episode_tools,
+            build_memory_tools,
+        )
 
         return [
             *build_core_memory_tools(self.directory),

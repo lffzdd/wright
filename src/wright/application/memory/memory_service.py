@@ -4,15 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
-from ...domain.gateway.core_memory_gateway import ICoreMemoryStore
-from ...domain.gateway.episode_gateway import IEpisodicMemoryStore
-from ...domain.gateway.fact_gateway import IFactRepository
-from ...domain.model.core_memory import CoreMemory
-from ...domain.model.episode import Episode
-from ...domain.model.fact import Fact, FactScope
-from ...domain.policy.core_memory_policy import CoreMemoryPolicy
-from ...domain.policy.episode_policy import EpisodePolicy
-from ...domain.policy.fact_policy import FactPolicy
+from ...domain.gateway.memory import ICoreMemoryStore, IEpisodicMemoryStore, IFactRepository
+from ...domain.model.memory import CoreMemory, Episode, Fact, FactScope
+from ...domain.policy.memory import CoreMemoryPolicy, EpisodePolicy, FactPolicy
 from .dto import MemoryContextDTO
 
 
