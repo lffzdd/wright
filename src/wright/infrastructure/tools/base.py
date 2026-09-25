@@ -6,10 +6,10 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
-from ...domain.tool_protocol import ToolAccess
+from ...domain.model.tool import ToolAccess
 
 if TYPE_CHECKING:
-    from ...domain.tool_protocol import ToolResult
+    from ...domain.model.tool import ToolResult
     from .runtime import ToolRuntime
 
 

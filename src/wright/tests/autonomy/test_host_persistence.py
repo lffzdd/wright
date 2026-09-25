@@ -8,13 +8,13 @@ from wright.tests.responses import event, response
 from wright.application.application_host import ApplicationHost
 from ...domain.model.autonomy import TriggerSpec
 from ...infrastructure.persistence.autonomy_store import AutonomyStore, AutonomyStoreError
-from ...domain.session import Session
+from ...domain.model.session import Session
 from wright.application.agent_runner import create_agent
 from wright.application.tool_dispatcher import ToolExecutor
 from wright.domain.policy import PermissionPolicy, PermissionResolver, PermissionSettings
 from wright.interfaces.renderer import SilentRenderer
 from wright.application.tool_capabilities import assemble_tool_capabilities
-from wright.domain.tool_protocol import ToolCall, ToolResult
+from wright.domain.model.tool import ToolCall, ToolResult
 from wright.infrastructure.tools.base import Tool
 
 
@@ -296,7 +296,7 @@ def test_result_persistence_failure_stops_agent_without_retrying_effect(tmp_path
 
 
 def test_host_does_not_retry_unknown_effect_even_with_retry_policy(tmp_path, monkeypatch):
-    from wright.domain.tool_protocol import ToolResult
+    from wright.domain.model.tool import ToolResult
 
     workspace, store = _store(tmp_path)
     automation = store.create_automation(
@@ -377,7 +377,7 @@ def test_run_with_uncommitted_effect_cannot_finish_or_retry(tmp_path, requested_
 
 
 def test_sessions_sharing_host_share_dispatch_capacity(tmp_path):
-    from wright.domain.tool_protocol import ToolResult
+    from wright.domain.model.tool import ToolResult
 
     workspace, first = _store(tmp_path)
     second = AutonomyStore(first.path, session_id="second", workspace_dir=workspace)

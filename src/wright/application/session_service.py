@@ -16,7 +16,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from ..domain.runs import TERMINAL_RUN_STATUSES
+from ..domain.model.runs import TERMINAL_RUN_STATUSES
 from ..infrastructure.llm.model_adapters import available_models
 from ..core.logger import get_logger
 

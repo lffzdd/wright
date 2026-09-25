@@ -8,13 +8,13 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from ..domain.capabilities import AgentProfile
-from ..domain.coordination import AgentControlError, AgentTaskRecord
-from ..domain.session import Session, UsageRecord
+from ..domain.model.agent import AgentProfile
+from ..domain.model.coordination import AgentControlError, AgentTaskRecord
+from ..domain.model.session import Session, UsageRecord
 from ..infrastructure.llm.llm import LLMClient
 from ..domain.policy import PermissionResolver
 from .tool_capabilities import assemble_tool_capabilities
-from ..domain.tool_protocol import ToolAccess, ToolResult
+from ..domain.model.tool import ToolAccess, ToolResult
 from ..infrastructure.tools.autonomy_tools import autonomy_tools
 from ..infrastructure.tools.base import Tool
 from ..infrastructure.tools.runtime import ToolRuntime

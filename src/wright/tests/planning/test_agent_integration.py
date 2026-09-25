@@ -1,7 +1,7 @@
 
 from wright.tests.responses import event, response
 
-from ...domain.session import Session
+from ...domain.model.session import Session
 from wright.application.agent_runner import create_agent
 from wright.interfaces.renderer import SilentRenderer
 from wright.infrastructure.tools.plan_tools import create_plan_tool

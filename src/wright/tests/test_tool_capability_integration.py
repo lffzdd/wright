@@ -4,12 +4,12 @@ import threading
 from wright.application.services import RuntimeServices
 from wright.application.autonomy.scheduler import AutonomyScheduler
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
-from wright.domain.session import Session
+from wright.domain.model.session import Session
 from wright.application.tool_dispatcher import ToolExecutor
 from wright.application.looping import SessionLoopRegistry
 from wright.domain.policy import PermissionResolver, PermissionResponse
 from wright.application.tool_capabilities import assemble_tool_capabilities
-from wright.domain.tool_protocol import ToolCall
+from wright.domain.model.tool import ToolCall
 from wright.infrastructure.tools.autonomy_tools import autonomy_tools
 from wright.infrastructure.tools.loop_tools import manage_loop_tool
 from wright.infrastructure.tools.task_tools import task_tools

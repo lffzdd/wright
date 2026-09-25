@@ -7,7 +7,7 @@ import unicodedata
 from collections.abc import Sequence
 from typing import Any
 
-from ...domain.tool_protocol import ToolAccess, ToolResult
+from ...domain.model.tool import ToolAccess, ToolResult
 from .base import Tool, split_tool_catalog
 from .runtime import ToolRuntime
 

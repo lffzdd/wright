@@ -6,7 +6,7 @@ from typing import Any
 
 from ...domain.model.tasks import TaskNotFoundError, TaskWaitCancelled
 from ...application.task_service import TaskService
-from ...domain.tool_protocol import ToolAccess, ToolResult
+from ...domain.model.tool import ToolAccess, ToolResult
 from .base import Tool
 from .runtime import ToolRuntime
 

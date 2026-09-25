@@ -10,7 +10,7 @@ from ...infrastructure.persistence.autonomy_store import (
     AutonomyStoreError,
 )
 from ...application.autonomy import AutonomyScheduler, probe_public_web_page
-from ...domain.session import Session
+from ...domain.model.session import Session
 from wright.application.task_service import TaskService
 
 

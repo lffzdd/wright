@@ -5,10 +5,10 @@ from wright.tests.responses import event, response
 
 from wright.application.services import RuntimeServices
 from wright.application.tool_runtime import tool_runtime_for_session
-from ...domain.session import Session
+from ...domain.model.session import Session
 from wright.application.agent_background import AgentBackgroundRuntime
 from wright.application.subagent import make_spawn_agent_tool
-from wright.domain.events import ContentDone
+from wright.domain.model.events import ContentDone
 from wright.infrastructure.tools.task_tools import cancel_task_tool, get_task_tool
 
 

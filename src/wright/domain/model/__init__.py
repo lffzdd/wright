@@ -13,7 +13,13 @@ from .session import (
 from .tool import ArtifactRef, ToolAccess, ToolCall, ToolDefinition, ToolResult
 from .message import Message
 from .request import ModelRequest
-from .agent import AgentProfile, CapabilityCatalog, CapabilitySnapshot
+from .agent import (
+    AgentProfile,
+    AgentState,
+    CapabilityCatalog,
+    CapabilityError,
+    CapabilitySnapshot,
+)
 from .events import ContentDelta, ContentDone, LLMEvent, ReasoningDelta, UsageEvent
 from .coordination import AgentControlConfig, AgentControlError, AgentControlPlane, AgentTaskRecord
 from .runs import RunRecord, RunStatus

@@ -4,7 +4,7 @@ import time
 import pytest
 
 from wright.interfaces.interaction import InteractionBroker
-from wright.domain.tool_protocol import ToolCall, ToolResult
+from wright.domain.model.tool import ToolCall, ToolResult
 from wright.interfaces.ui_events import (
     EventPublisher,
     EventScope,

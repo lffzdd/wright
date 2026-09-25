@@ -17,7 +17,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..core.logger import get_logger
-from ..domain.capabilities import CapabilitySnapshot
+from ..domain.model.agent import CapabilitySnapshot
 from ..domain.policy import (
     AccessScope,
     AuthorizationChange,
@@ -28,8 +28,8 @@ from ..domain.policy import (
     PermissionResolver,
     PermissionSubject,
 )
-from ..domain.session import ToolExecutionTerminal
-from ..domain.tool_protocol import ToolCall, ToolResult
+from ..domain.model.session import ToolExecutionTerminal
+from ..domain.model.tool import ToolCall, ToolResult
 from ..infrastructure.runtime import AuthorizedExecution, ExecutionBackend, ExecutionPath
 from ..infrastructure.tools.base import Tool
 from ..infrastructure.tools.runtime import ToolCancelledError, ToolRuntime

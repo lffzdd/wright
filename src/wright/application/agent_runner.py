@@ -6,9 +6,9 @@ from typing import TYPE_CHECKING, ClassVar
 
 from .services import RuntimeServices
 from ..infrastructure.storage.attachments import MAX_ATTACHMENTS_PER_TURN, MAX_TOTAL_ATTACHMENT_BYTES
-from ..domain.capabilities import AgentProfile, CapabilityCatalog, CapabilitySnapshot
-from ..domain.session import Session, UsageRecord
-from ..domain.events import ContentDelta, ContentDone, ReasoningDelta, UsageEvent
+from ..domain.model.agent import AgentProfile, CapabilityCatalog, CapabilitySnapshot
+from ..domain.model.session import Session, UsageRecord
+from ..domain.model.events import ContentDelta, ContentDone, ReasoningDelta, UsageEvent
 from ..infrastructure.llm.llm import LLMClient
 from ..core.logger import get_logger
 from .memory import MemoryManager
@@ -21,7 +21,7 @@ from ..interfaces.renderer import Renderer
 from .skills import catalog_reminder
 from .skills import SkillRegistry
 from .tool_capabilities import CapabilityAssembly, assemble_tool_capabilities
-from ..domain.tool_protocol import ToolResult
+from ..domain.model.tool import ToolResult
 from ..infrastructure.tools.base import Tool
 from ..infrastructure.tools.tool_search import MAX_ACTIVE_DEFERRED_TOOLS, make_tool_search_tool
 from ..interfaces.ui_events import EventPublisher, RendererEventSubscriber, SessionEvents

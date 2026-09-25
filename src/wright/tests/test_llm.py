@@ -6,16 +6,16 @@ import pytest
 from openai import OpenAI
 
 from wright.infrastructure.storage.attachments import AttachmentStore
-from ..domain.session import Session
+from ..domain.model.session import Session
 from wright.application.agent_runner import create_agent
-from wright.domain.events import ContentDone, UsageEvent
+from wright.domain.model.events import ContentDone, UsageEvent
 from wright.infrastructure.llm.llm import LLMClient
 from wright.application.memory.llm_util import side_query
 from wright.domain.model import ModelRequest
 from wright.domain.policy import ToolAccess
 from wright.domain.protocol import TurnAbort, parse_turn
 from wright.interfaces.renderer import SilentRenderer
-from wright.domain.tool_protocol import ToolResult
+from wright.domain.model.tool import ToolResult
 from wright.infrastructure.tools.base import Tool
 
 

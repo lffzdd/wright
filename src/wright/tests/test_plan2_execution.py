@@ -5,7 +5,7 @@ from wright.tests.responses import event, response
 
 from wright.application.tool_runtime import tool_runtime_for_session
 from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
-from ..domain.session import Session
+from ..domain.model.session import Session
 from wright.application.tool_dispatcher import ToolExecutor
 from wright.application.subagent import make_spawn_agent_tool
 from wright.infrastructure.runtime import LocalExecutionBackend
@@ -21,7 +21,7 @@ from wright.domain.policy import (
     load_permission_settings,
 )
 from wright.application.tool_capabilities import assemble_tool_capabilities
-from wright.domain.tool_protocol import ToolCall, ToolResult
+from wright.domain.model.tool import ToolCall, ToolResult
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.command_tools import execute_command_tool
 from wright.infrastructure.tools.file_tools import grep_tool, write_file_tool

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from ..domain.session import Session
+from ..domain.model.session import Session
 from wright.application.agent_runner import create_agent
 from wright.domain.prompt import build_system_prompt
 from wright.interfaces.renderer import SilentRenderer
-from wright.domain.tool_protocol import ToolResult
+from wright.domain.model.tool import ToolResult
 from wright.infrastructure.tools.base import Tool, split_tool_catalog
 from wright.infrastructure.tools.tool_search import make_tool_search_tool
 

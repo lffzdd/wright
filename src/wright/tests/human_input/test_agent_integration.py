@@ -2,7 +2,7 @@
 
 from wright.tests.responses import event, response
 
-from ...domain.session import Session
+from ...domain.model.session import Session
 from wright.application.agent_runner import create_agent
 from wright.domain.policy import PermissionResolver, PermissionResponse
 from wright.interfaces.renderer import SilentRenderer

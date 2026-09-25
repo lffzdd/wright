@@ -25,7 +25,7 @@ from ..infrastructure.tools.capabilities import (
 
 if TYPE_CHECKING:
     from .services import RuntimeServices
-    from ..domain.session import Session
+    from ..domain.model.session import Session
 
 
 @dataclass(frozen=True)

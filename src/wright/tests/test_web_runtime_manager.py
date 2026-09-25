@@ -6,11 +6,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from ..domain.session import Session
+from ..domain.model.session import Session
 from wright.interfaces.interaction import InteractionBroker
 from wright.core.processes import RuntimeResources
 from wright.infrastructure.workspace.project import ProjectContext
-from wright.domain.tool_protocol import ArtifactRef, ToolCall, ToolResult
+from wright.domain.model.tool import ArtifactRef, ToolCall, ToolResult
 from wright.interfaces.ui_events import EventPublisher
 from wright.interfaces.web import runtime_manager as runtime_module
 from wright.interfaces.web.runtime_manager import RuntimeManager, RuntimeManagerError, SessionHandle

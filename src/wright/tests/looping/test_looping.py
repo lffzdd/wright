@@ -8,7 +8,7 @@ import pytest
 from wright.tests.responses import event, response
 
 from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
-from ...domain.session import Session
+from ...domain.model.session import Session
 from wright.application.agent_runner import create_agent
 from wright.application.looping import (
     LoopError,

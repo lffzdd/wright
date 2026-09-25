@@ -8,7 +8,7 @@ from wright.domain.policy import (
     ToolAccess,
 )
 from wright.application.tool_capabilities import assemble_tool_capabilities
-from wright.domain.tool_protocol import ToolCall, ToolResult
+from wright.domain.model.tool import ToolCall, ToolResult
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.command_tools import execute_command_tool
 from wright.infrastructure.tools.file_tools import (

@@ -15,7 +15,7 @@ import json
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from ..session import Session
+from ..model.session import Session
 
 
 @dataclass(frozen=True)

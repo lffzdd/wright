@@ -12,8 +12,8 @@ from .ports import LoopOperations
 if TYPE_CHECKING:
     from ...application.autonomy.scheduler import AutonomyScheduler
     from ..persistence.autonomy_store import AutonomyStore
-    from ...domain.coordination import AgentControlPlane
-    from ...domain.session import BackgroundTask, Session
+    from ...domain.model.coordination import AgentControlPlane
+    from ...domain.model.session import BackgroundTask, Session
     from ...application.agent_background import AgentBackgroundRuntime
     from ..runtime import ExecutionPath
     from ...domain.model.planning import PlanManager

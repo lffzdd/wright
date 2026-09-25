@@ -1,7 +1,7 @@
 from wright.application.tool_dispatcher import ToolExecutor
 from wright.domain.policy import PermissionResolver, PermissionResponse, ToolAccess
 from wright.application.tool_capabilities import assemble_tool_capabilities
-from wright.domain.tool_protocol import ToolCall, ToolResult
+from wright.domain.model.tool import ToolCall, ToolResult
 from wright.infrastructure.tools.base import Tool
 
 

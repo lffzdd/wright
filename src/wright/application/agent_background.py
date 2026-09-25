@@ -13,7 +13,7 @@ from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from typing import Any
 
-from ..domain.coordination import AgentControlPlane
+from ..domain.model.coordination import AgentControlPlane
 
 
 class AgentBackgroundRuntime:

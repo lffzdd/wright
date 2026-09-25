@@ -15,7 +15,7 @@ from uuid import uuid4
 from ..domain.policy.types import PermissionPrompt, PermissionResponse
 from ..core.processes import RuntimeResources
 from .renderer import Renderer
-from ..domain.tool_protocol import ToolCall, ToolResult
+from ..domain.model.tool import ToolCall, ToolResult
 
 UI_EVENT_VERSION = 2
 UI_EVENT_TYPES = frozenset({

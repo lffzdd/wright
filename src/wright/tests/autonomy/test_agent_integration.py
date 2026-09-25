@@ -8,8 +8,8 @@ from ...domain.model.autonomy import TriggerSpec
 from ...infrastructure.persistence.autonomy_store import AutonomyStore
 from ...application.autonomy.scheduler import AutonomyScheduler
 from ...application.autonomy.runner import _DurableToolJournal, launch_durable_run
-from wright.domain.capabilities import AgentProfile
-from ...domain.session import Session
+from wright.domain.model.agent import AgentProfile
+from ...domain.model.session import Session
 from wright.application.agent_runner import create_agent
 from wright.application.agent_background import AgentBackgroundRuntime
 from wright.application.subagent import build_agent_tools
@@ -17,7 +17,7 @@ from wright.domain.policy import PermissionPolicy, PermissionResolver, Permissio
 from wright.interfaces.renderer import SilentRenderer
 from wright.application.skills import SkillRegistry
 from wright.infrastructure.storage.skills import write_skill
-from wright.domain.tool_protocol import ToolResult
+from wright.domain.model.tool import ToolResult
 from wright.infrastructure.tools.ask_user_tool import ask_user_tool
 from wright.infrastructure.tools.autonomy_tools import autonomy_tools
 from wright.infrastructure.tools.base import Tool

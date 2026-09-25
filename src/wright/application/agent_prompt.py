@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from .skills import catalog_reminder
 
 if TYPE_CHECKING:
-    from ..domain.session import Session
+    from ..domain.model.session import Session
     from .skills import SkillRegistry
     from ..infrastructure.tools.base import Tool
 

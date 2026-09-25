@@ -18,7 +18,7 @@ from ...persistence.memory import (
     update_memory as store_update_memory,
 )
 from ....domain.model.memory import MEMORY_TYPES
-from ....domain.tool_protocol import ToolAccess, ToolResult
+from ....domain.model.tool import ToolAccess, ToolResult
 from ..base import Tool
 from ..runtime import ToolRuntime
 

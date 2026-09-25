@@ -23,7 +23,7 @@ from ..infrastructure.storage.artifacts import ArtifactStore
 from ..domain.model.autonomy import DurableRunRecord
 from ..infrastructure.persistence.autonomy_store import AutonomyStore
 from .autonomy import AutonomyScheduler, launch_durable_run
-from ..domain.coordination import AgentControlPlane
+from ..domain.model.coordination import AgentControlPlane
 from .agent_background import AgentBackgroundRuntime
 from ..infrastructure.llm.llm import LLMClient
 from ..domain.policy import PermissionSettings

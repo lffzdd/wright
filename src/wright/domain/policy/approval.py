@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from ...infrastructure.runtime.types import ExecutionPath
-from ..tool_protocol import ToolAccess, ToolCall
+from ..model.tool import ToolAccess, ToolCall
 from .scope import AccessScope, PathClass
 from .types import (
     AccessTarget,

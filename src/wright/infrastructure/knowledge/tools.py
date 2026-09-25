@@ -12,7 +12,7 @@ from ...domain.model.knowledge import (
     KnowledgeUnavailable,
     truncate_hits,
 )
-from ...domain.tool_protocol import ToolAccess, ToolResult
+from ...domain.model.tool import ToolAccess, ToolResult
 from ..tools.base import Tool
 from ..tools.runtime import ToolRuntime
 

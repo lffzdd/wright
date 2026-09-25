@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ...domain.session import UsageRecord
-from ...domain.events import ContentDone, UsageEvent
+from ...domain.model.session import UsageRecord
+from ...domain.model.events import ContentDone, UsageEvent
 
 if TYPE_CHECKING:
     from ...infrastructure.llm.llm import LLMClient

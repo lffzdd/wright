@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...domain.tool_protocol import ToolAccess, ToolResult
+from ...domain.model.tool import ToolAccess, ToolResult
 from .base import Tool
 from .ports import LoopOperations
 from .runtime import ToolRuntime

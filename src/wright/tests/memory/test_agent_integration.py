@@ -8,9 +8,9 @@ from pathlib import Path
 
 from wright.tests.responses import event, response
 
-from ...domain.session import Session
+from ...domain.model.session import Session
 from wright.application.agent_runner import create_agent
-from wright.domain.events import UsageEvent
+from wright.domain.model.events import UsageEvent
 from wright.application.memory import MemoryManager
 from wright.infrastructure.persistence.memory import write_memory_file
 from wright.interfaces.renderer import SilentRenderer

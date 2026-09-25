@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from ...application.skills import SkillRegistry
 from ...domain.model.skills import SkillNotFoundError, SkillStoreError
-from ...domain.tool_protocol import ToolAccess, ToolResult
+from ...domain.model.tool import ToolAccess, ToolResult
 from .base import Tool
 from .runtime import ToolRuntime
 

@@ -3,7 +3,7 @@ from typing import Any
 
 import httpx
 
-from ...domain.tool_protocol import AccessTarget, ToolAccess, ToolResult
+from ...domain.model.tool import AccessTarget, ToolAccess, ToolResult
 from .base import Tool
 
 

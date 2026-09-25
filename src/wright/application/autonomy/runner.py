@@ -14,9 +14,9 @@ from pathlib import Path
 from typing import Any
 
 from ..services import RuntimeServices
-from ...domain.capabilities import AgentProfile
-from ...domain.coordination import AgentControlError, AgentControlPlane
-from ...domain.session import Session, UsageRecord
+from ...domain.model.agent import AgentProfile
+from ...domain.model.coordination import AgentControlError, AgentControlPlane
+from ...domain.model.session import Session, UsageRecord
 from ..agent_runner import (
     Agent,
     assemble_agent_components,

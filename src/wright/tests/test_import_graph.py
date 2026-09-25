@@ -122,7 +122,7 @@ def test_tool_protocol_does_not_depend_on_runtime_assembly() -> None:
 
     base_mod = "infrastructure.tools.base" if "infrastructure.tools.base" in graph else "tools.base"
     runtime_mod = "infrastructure.tools.runtime" if "infrastructure.tools.runtime" in graph else "tools.runtime"
-    proto_mod = "domain.tool_protocol" if "domain.tool_protocol" in graph else "tool_protocol"
+    proto_mod = "domain.model.tool" if "domain.model.tool" in graph else "domain.tool_protocol"
 
     assert not graph[base_mod] & {
         "application.tool_capabilities",

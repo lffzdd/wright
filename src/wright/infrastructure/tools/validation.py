@@ -12,7 +12,7 @@ from typing import Any
 
 from jsonschema import SchemaError, ValidationError, validators
 
-from ...domain.tool_protocol import ToolResult
+from ...domain.model.tool import ToolResult
 from .base import Tool
 
 

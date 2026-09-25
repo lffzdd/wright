@@ -6,10 +6,10 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from ..domain.session import UsageRecord
-from ..domain.events import ContentDone
+from ..domain.model.session import UsageRecord
+from ..domain.model.events import ContentDone
 from ..domain.protocol import TurnAbort
-from ..domain.tool_protocol import ToolResult
+from ..domain.model.tool import ToolResult
 from ..utils.util import build_tool_results_messages
 
 if TYPE_CHECKING:

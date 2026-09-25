@@ -10,8 +10,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Literal
 
-from .events import ContentDone
-from .tool_protocol import ToolCall
+from .model.events import ContentDone
+from .model.tool import ToolCall
 from ..infrastructure.tools.base import Tool
 
 

@@ -11,14 +11,14 @@ import pytest
 
 from wright.application.lifecycle import HookDecision
 from wright.application.tool_runtime import tool_runtime_for_session
-from wright.domain.capabilities import AgentProfile, CapabilitySnapshot
-from ..domain.session import Session
+from wright.domain.model.agent import AgentProfile, CapabilitySnapshot
+from ..domain.model.session import Session
 from wright.application.tool_dispatcher import ToolExecutor
 from wright.infrastructure.runtime import ExecutionPath, LocalExecutionBackend
 from wright.infrastructure.runtime import local as local_execution
 from wright.domain.policy import PermissionResolver, PermissionResponse, ToolAccess
 from wright.application.tool_capabilities import assemble_tool_capabilities
-from wright.domain.tool_protocol import ToolCall, ToolResult
+from wright.domain.model.tool import ToolCall, ToolResult
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.file_tools import grep_files, grep_tool, write_file_tool
 

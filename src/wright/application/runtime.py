@@ -19,7 +19,7 @@ from ..infrastructure.storage.attachments import AttachmentStore, DraftAttachmen
 from ..infrastructure.persistence.autonomy_store import AutonomyStore
 from ..infrastructure.persistence.file_session_repo import CheckpointError, SessionCheckpointStore
 from ..domain.prompt import get_role_instruction
-from ..domain.session import Session
+from ..domain.model.session import Session
 from .agent_runner import (
     Agent,
     assemble_agent_components,

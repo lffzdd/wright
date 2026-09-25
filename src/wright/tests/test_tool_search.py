@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from wright.tests.responses import event, response
 
-from ..domain.session import Session
+from ..domain.model.session import Session
 from wright.application.agent_runner import create_agent
 from wright.domain.protocol import encode_tools
 from wright.interfaces.renderer import SilentRenderer
-from wright.domain.tool_protocol import ToolResult
+from wright.domain.model.tool import ToolResult
 from wright.infrastructure.tools import tools as built_in_tools
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.runtime import ToolRuntime

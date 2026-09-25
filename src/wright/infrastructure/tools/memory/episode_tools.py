@@ -7,7 +7,7 @@ from typing import Any
 
 from ...persistence.memory import EpisodeStore
 from ....domain.model.memory import EpisodeStoreError
-from ....domain.tool_protocol import ToolAccess, ToolResult
+from ....domain.model.tool import ToolAccess, ToolResult
 from ..base import Tool
 from ..runtime import ToolRuntime
 

@@ -40,7 +40,7 @@ from .interaction import (
     InteractionRequest,
 )
 from ..domain.policy.types import PermissionPrompt, PermissionResponse
-from ..domain.tool_protocol import ToolCall, ToolResult
+from ..domain.model.tool import ToolCall, ToolResult
 
 _COMMAND_OUTPUT_LINES = 24
 

@@ -4,14 +4,14 @@ import os
 from dataclasses import replace
 
 from wright.application.tool_runtime import tool_runtime_for_session
-from ..domain.session import Session
+from ..domain.model.session import Session
 from wright.application.tool_dispatcher import ToolExecutor
 from wright.domain.policy import (
     PermissionResolver,
     PermissionResponse,
 )
 from wright.application.tool_capabilities import assemble_tool_capabilities
-from wright.domain.tool_protocol import ToolCall
+from wright.domain.model.tool import ToolCall
 from wright.infrastructure.tools.file_tools import (
     FILE_UNCHANGED,
     FileView,

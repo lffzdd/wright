@@ -8,7 +8,7 @@ from types import MappingProxyType
 from typing import Literal
 
 from ...infrastructure.runtime.types import ExecutionPath
-from ..tool_protocol import (  # noqa: F401
+from ..model.tool import (  # noqa: F401
     AccessTarget,
     PermissionOperation,
     ToolAccess,

@@ -17,9 +17,9 @@ from wright.tests.responses import event, response
 from pathlib import Path
 
 from wright.application.agent_runner import create_agent
-from wright.domain.events import ContentDone
+from wright.domain.model.events import ContentDone
 from wright.interfaces.renderer import SilentRenderer
-from wright.domain.session import Session
+from wright.domain.model.session import Session
 from wright.application.subagent import build_agent_tools, make_spawn_agent_tool
 from wright.domain.tool_protocol import ToolResult
 from wright.infrastructure.tools.base import Tool

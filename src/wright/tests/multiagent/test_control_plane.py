@@ -1,6 +1,6 @@
 import pytest
 
-from ...domain.coordination import (
+from ...domain.model.coordination import (
     AgentControlConfig,
     AgentControlError,
     AgentControlPlane,

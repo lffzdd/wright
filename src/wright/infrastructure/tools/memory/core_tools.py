@@ -7,7 +7,7 @@ from typing import Any
 
 from ...persistence.memory import FileCoreMemoryStore
 from ....domain.policy.memory import CoreMemoryPolicy
-from ....domain.tool_protocol import AccessTarget, ToolAccess, ToolResult
+from ....domain.model.tool import AccessTarget, ToolAccess, ToolResult
 from ..base import Tool
 from ..runtime import ToolRuntime
 

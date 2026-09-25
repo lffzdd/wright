@@ -1,6 +1,6 @@
 import json
 
-from ..domain.tool_protocol import ToolCall, ToolResult
+from ..domain.model.tool import ToolCall, ToolResult
 
 # 入站解析(模型输出 → 结构化回合)已搬到 protocol.py。
 # 本模块只留出站编码:把工具执行结果拼回喂给模型的 wire 消息。

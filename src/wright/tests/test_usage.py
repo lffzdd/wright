@@ -4,14 +4,14 @@ import pytest
 from rich.console import Console
 
 from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
-from wright.domain.session import Session, UsageRecord
+from wright.domain.model.session import Session, UsageRecord
 from wright.application.agent_runner import create_agent
 from wright.domain.policy.verifier import Verifier
-from wright.domain.events import UsageEvent
+from wright.domain.model.events import UsageEvent
 from wright.application.memory.llm_util import metered_events
 from wright.interfaces.renderer import ConsoleRenderer, SilentRenderer
 from wright.tests.responses import response
-from wright.domain.tool_protocol import ToolCall, ToolResult
+from wright.domain.model.tool import ToolCall, ToolResult
 from wright.infrastructure.tools.base import Tool
 from wright.utils.util import estimate_message_tokens
 

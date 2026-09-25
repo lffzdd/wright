@@ -4,11 +4,11 @@ import json
 from copy import deepcopy
 from pathlib import Path
 
-from wright.domain.session import Session
+from wright.domain.model.session import Session
 from wright.application.agent_runner import create_agent
 from wright.application.context_compactor import ContextBuilder, ContextCompactor
 from wright.interfaces.renderer import SilentRenderer
-from wright.domain.tool_protocol import ToolCall, ToolResult
+from wright.domain.model.tool import ToolCall, ToolResult
 
 
 def _tool_result(call_id: str, data: str) -> dict:

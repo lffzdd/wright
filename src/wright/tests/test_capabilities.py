@@ -6,9 +6,9 @@ import pytest
 
 from wright.application.tool_runtime import tool_runtime_for_session
 from wright.infrastructure.storage.artifacts import ArtifactStore
-from wright.domain.capabilities import AgentProfile, CapabilityCatalog, CapabilityError
+from wright.domain.model.agent import AgentProfile, CapabilityCatalog, CapabilityError
 from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
-from wright.domain.session import Session
+from wright.domain.model.session import Session
 from wright.application.agent_runner import create_agent
 from wright.application.tool_dispatcher import ToolExecutor
 from wright.infrastructure.runtime import LocalExecutionBackend
@@ -16,7 +16,7 @@ from wright.domain.policy import ToolAccess
 from wright.interfaces.renderer import SilentRenderer
 from wright.tests.responses import response
 from wright.application.tool_capabilities import assemble_tool_capabilities
-from wright.domain.tool_protocol import ToolCall, ToolResult
+from wright.domain.model.tool import ToolCall, ToolResult
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.command_tools import execute_command
 from wright.infrastructure.tools.file_tools import read_file_tool
@@ -349,7 +349,7 @@ def test_profile_filters_the_system_catalog_as_well_as_execution(tmp_path):
 
 def _tool_llm(answer):
     def call(_messages, **_kwargs):
-        from wright.domain.events import ContentDone
+        from wright.domain.model.events import ContentDone
 
         yield ContentDone(content=answer, finish_reason="stop")
 

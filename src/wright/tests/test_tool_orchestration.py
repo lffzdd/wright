@@ -3,13 +3,13 @@ import time
 from pathlib import Path
 
 from wright.application.tool_runtime import tool_runtime_for_session
-from ..domain.session import Session
+from ..domain.model.session import Session
 from wright.application.tool_dispatcher import ToolExecutor
 from wright.domain.policy import ToolAccess
 from wright.domain.model.tasks import TaskNotFoundError
 from wright.application.task_service import TaskService
 from wright.application.tool_capabilities import assemble_tool_capabilities
-from wright.domain.tool_protocol import ToolCall, ToolResult
+from wright.domain.model.tool import ToolCall, ToolResult
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.command_permissions import is_execute_command_concurrency_safe
 from wright.infrastructure.tools.command_tools import execute_command

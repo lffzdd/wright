@@ -7,7 +7,7 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
 from ..core.processes import ProcessRegistry, RuntimeResources, terminate_process_tree
-from ..domain.coordination import AgentControlError, AgentTaskRecord
+from ..domain.model.coordination import AgentControlError, AgentTaskRecord
 from ..domain.gateway.task_backend import TaskBackend
 from ..domain.model.tasks import (
     RuntimeTask,

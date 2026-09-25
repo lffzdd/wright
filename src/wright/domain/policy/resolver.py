@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 from ...infrastructure.runtime.protocols import ExecutionBackend
 from ...infrastructure.runtime.types import ExecutionPath
-from ..tool_protocol import ToolAccess, ToolCall
+from ..model.tool import ToolAccess, ToolCall
 from .approval import (
     PermissionApprovalHandler,
     PermissionRequest,

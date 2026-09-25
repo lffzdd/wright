@@ -7,7 +7,7 @@ from typing import Any
 from ..runtime import ExecutionPath, ProcessHandle
 from ...core.logger import get_logger
 from ...core.processes import ProcessResources
-from ...domain.tool_protocol import ToolResult
+from ...domain.model.tool import ToolResult
 from .base import Tool
 from .command_permissions import (
     describe_execute_command_access,
@@ -40,7 +40,7 @@ def _make_background_task(
     on_done: Callable[[], None] | None = None,
 ):
     # 延迟导入避免 session -> tools.base -> tools.__init__ -> command_tools 的环。
-    from ...domain.session import BackgroundTask
+    from ...domain.model.session import BackgroundTask
 
     task = BackgroundTask(
         task_id=task_id,
