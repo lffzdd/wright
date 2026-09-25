@@ -6,11 +6,11 @@ import threading
 
 from prompt_toolkit import PromptSession
 
-from ..app.runtime import WrightRuntime
-from ..app.session_service import SessionService
-from ..interaction import PROMPT_INTERRUPTED
+from ..application.runtime import WrightRuntime
+from ..application.session_service import SessionService
+from .interaction import PROMPT_INTERRUPTED
 from ..core.logger import get_logger
-from ..renderer import ConsoleRenderer
+from .renderer import ConsoleRenderer
 
 logger = get_logger(__name__)
 

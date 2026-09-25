@@ -6,8 +6,8 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from ..domain.session import Session, UsageRecord
-from ..logger import get_logger
-from ..ui_events import SessionEvents
+from ..core.logger import get_logger
+from ..interfaces.ui_events import SessionEvents
 
 if TYPE_CHECKING:
     from ..domain.session import TurnRecord

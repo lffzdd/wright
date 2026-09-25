@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from ..tools.base import Tool, split_tool_catalog
+from ..infrastructure.tools.base import Tool, split_tool_catalog
 
 
 def build_system_prompt(tools: Sequence[Tool], memory_section: str = "") -> str:

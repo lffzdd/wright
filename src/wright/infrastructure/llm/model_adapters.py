@@ -6,8 +6,8 @@ from collections.abc import Callable, Sequence
 from os import environ
 from typing import Any
 
-from ...events import ContentDelta, ContentDone, LLMEvent, ReasoningDelta
-from ...util import tool_image_references
+from ...domain.events import ContentDelta, ContentDone, LLMEvent, ReasoningDelta
+from ...utils.util import tool_image_references
 
 
 def _with_tool_images(messages, artifact_data_url):

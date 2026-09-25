@@ -18,7 +18,7 @@ from uuid import uuid4
 
 from ..domain.runs import TERMINAL_RUN_STATUSES
 from ..domain.session_models import available_models
-from ..logger import get_logger
+from ..core.logger import get_logger
 
 logger = get_logger(__name__)
 

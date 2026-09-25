@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from ..permission.approval import PermissionRequest
-from ..permission.types import PermissionPrompt, PermissionResponse
+from ..domain.policy.approval import PermissionRequest
+from ..domain.policy.types import PermissionPrompt, PermissionResponse
 
 PhaseNotifier = Callable[[Any, str], None]
 PromptFallback = Callable[[PermissionPrompt], str | PermissionResponse]

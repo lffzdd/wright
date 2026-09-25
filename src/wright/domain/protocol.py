@@ -12,7 +12,7 @@ from typing import Literal
 
 from .events import ContentDone
 from .tool_protocol import ToolCall
-from ..tools.base import Tool
+from ..infrastructure.tools.base import Tool
 
 
 def encode_tools(

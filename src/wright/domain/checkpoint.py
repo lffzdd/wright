@@ -11,11 +11,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
-from ..attachments import AttachmentError, AttachmentRecord
-from ..logger import get_logger
+from ..infrastructure.storage.attachments import AttachmentError, AttachmentRecord
+from ..core.logger import get_logger
 from ..planning import PlanManager
-from ..tool_protocol import ArtifactRef, ToolCall, ToolResult
-from ..util import build_tool_results_messages
+from .tool_protocol import ArtifactRef, ToolCall, ToolResult
+from ..utils.util import build_tool_results_messages
 from .coordination import AgentControlError, AgentControlPlane
 from .runs import RunRecord
 from .session import (
@@ -841,7 +841,7 @@ def _deserialize_additional_directories(
 def _cwd_in_granted_roots(
     cwd: Path, workspace_dir: Path, additional: list[Path]
 ) -> bool:
-    from ..permission.scope import is_under
+    from .policy.scope import is_under
 
     resolved = cwd.resolve()
     return any(is_under(resolved, root) for root in (workspace_dir, *additional))

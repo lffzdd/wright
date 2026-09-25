@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from ...execution import AuthorizedExecution, ExecutionPath
-from ...tool_protocol import AccessTarget, ToolAccess, ToolResult
+from ..runtime import AuthorizedExecution, ExecutionPath
+from ...domain.tool_protocol import AccessTarget, ToolAccess, ToolResult
 from .base import Tool
 from .runtime import ToolRuntime
 

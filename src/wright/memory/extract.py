@@ -10,8 +10,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ..llm import LLMClient
-from ..logger import get_logger
+from ..infrastructure.llm.llm import LLMClient
+from ..core.logger import get_logger
 from .llm_util import side_query
 from .store import (
     MemoryStoreError,

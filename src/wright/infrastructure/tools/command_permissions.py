@@ -2,7 +2,7 @@ import re
 import shlex
 from pathlib import Path
 
-from ...tool_protocol import AccessTarget, ToolAccess
+from ...domain.tool_protocol import AccessTarget, ToolAccess
 
 _READ_ONLY_COMMANDS = {
     "cat",

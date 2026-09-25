@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from ..tools.base import Tool
+from ..infrastructure.tools.base import Tool
 
 
 class CapabilityError(ValueError):

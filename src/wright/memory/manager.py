@@ -9,8 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..llm import LLMClient
-from ..logger import get_logger
+from ..infrastructure.llm.llm import LLMClient
+from ..core.logger import get_logger
 from .episode import EpisodeRecord, EpisodeStore, episode_from_session
 from .extract import extract_and_save
 from .llm_util import metered_events
@@ -93,8 +93,8 @@ class MemoryManager:
 
     def tools(self):
         """Build CRUD tools bound to this manager's exact directory."""
-        from ..tools.episode_tools import build_episode_tools
-        from ..tools.memory_tools import build_memory_tools
+        from ..infrastructure.tools.episode_tools import build_episode_tools
+        from ..infrastructure.tools.memory_tools import build_memory_tools
 
         return [
             *build_memory_tools(self.directory),

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ...tool_protocol import ToolAccess, ToolResult
+from ...domain.tool_protocol import ToolAccess, ToolResult
 from .base import Tool
 from .runtime import ToolRuntime
 

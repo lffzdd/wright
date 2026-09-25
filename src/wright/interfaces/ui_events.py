@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from ..permission.types import PermissionPrompt, PermissionResponse
+from ..domain.policy.types import PermissionPrompt, PermissionResponse
 from ..core.processes import RuntimeResources
 from .renderer import Renderer
 from ..domain.tool_protocol import ToolCall, ToolResult

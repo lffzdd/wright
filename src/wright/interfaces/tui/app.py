@@ -20,8 +20,8 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
-from ...app.runtime import WrightRuntime, assemble_runtime, runtime_config_from_args
-from ...app.session_service import SessionService, SessionServiceError, set_session_model
+from ...application.runtime import WrightRuntime, assemble_runtime, runtime_config_from_args
+from ...application.session_service import SessionService, SessionServiceError, set_session_model
 from ..interaction import InteractionRequest
 from ...core.logger import get_logger
 from .renderer import (

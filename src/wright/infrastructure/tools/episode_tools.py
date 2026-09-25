@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from ...memory.episode import EpisodeStore, EpisodeStoreError
-from ...tool_protocol import ToolAccess, ToolResult
+from ...domain.tool_protocol import ToolAccess, ToolResult
 from .base import Tool
 from .runtime import ToolRuntime
 

@@ -5,27 +5,27 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
 from .services import RuntimeServices
-from ..attachments import MAX_ATTACHMENTS_PER_TURN, MAX_TOTAL_ATTACHMENT_BYTES
-from ..capabilities import AgentProfile, CapabilityCatalog, CapabilitySnapshot
+from ..infrastructure.storage.attachments import MAX_ATTACHMENTS_PER_TURN, MAX_TOTAL_ATTACHMENT_BYTES
+from ..domain.capabilities import AgentProfile, CapabilityCatalog, CapabilitySnapshot
 from ..domain.session import Session, UsageRecord
-from ..events import ContentDelta, ContentDone, ReasoningDelta, UsageEvent
-from ..llm import LLMClient
-from ..logger import get_logger
+from ..domain.events import ContentDelta, ContentDone, ReasoningDelta, UsageEvent
+from ..infrastructure.llm.llm import LLMClient
+from ..core.logger import get_logger
 from ..memory import MemoryManager
-from ..model import ModelRequest
-from ..permission import AuthorizationChange, PermissionResolver
-from ..processes import RuntimeResources
-from ..prompt import build_system_prompt
-from ..protocol import TurnAbort, encode_tools, parse_turn
-from ..renderer import Renderer
+from ..domain.model import ModelRequest
+from ..domain.policy import AuthorizationChange, PermissionResolver
+from ..core.processes import RuntimeResources
+from ..domain.prompt import build_system_prompt
+from ..domain.protocol import TurnAbort, encode_tools, parse_turn
+from ..interfaces.renderer import Renderer
 from ..skills.prompt import catalog_reminder
 from ..skills.registry import SkillRegistry
 from .tool_capabilities import CapabilityAssembly, assemble_tool_capabilities
-from ..tool_protocol import ToolResult
-from ..tools.base import Tool
-from ..tools.tool_search import MAX_ACTIVE_DEFERRED_TOOLS, make_tool_search_tool
-from ..ui_events import EventPublisher, RendererEventSubscriber, SessionEvents
-from ..util import build_tool_results_messages, estimate_message_tokens
+from ..domain.tool_protocol import ToolResult
+from ..infrastructure.tools.base import Tool
+from ..infrastructure.tools.tool_search import MAX_ACTIVE_DEFERRED_TOOLS, make_tool_search_tool
+from ..interfaces.ui_events import EventPublisher, RendererEventSubscriber, SessionEvents
+from ..utils.util import build_tool_results_messages, estimate_message_tokens
 from .agent_prompt import AgentPromptManager
 from .agent_turns import AgentTurnHandler, RetryCounters, _RetryCounters
 from .agent_usage import AgentUsageTracker

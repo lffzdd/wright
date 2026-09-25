@@ -22,12 +22,12 @@ from urllib.parse import urlparse
 
 from openai import APIConnectionError, APIStatusError, OpenAI, omit
 
-from ...artifacts import ArtifactStore
-from ...attachments import AttachmentError, AttachmentStore
-from ...events import ContentDelta, ContentDone, LLMEvent, ReasoningDelta, UsageEvent
-from ...model import ModelRequest
+from ..storage.artifacts import ArtifactStore
+from ..storage.attachments import AttachmentError, AttachmentStore
+from ...domain.events import ContentDelta, ContentDone, LLMEvent, ReasoningDelta, UsageEvent
+from ...domain.model import ModelRequest
 from .model_adapters import ChatAdapter, ResponsesAdapter
-from ...tool_protocol import ArtifactRef
+from ...domain.tool_protocol import ArtifactRef
 
 
 class LLMClient:

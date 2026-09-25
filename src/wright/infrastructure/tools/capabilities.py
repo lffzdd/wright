@@ -14,8 +14,8 @@ if TYPE_CHECKING:
     from ...autonomy.store import AutonomyStore
     from ...domain.coordination import AgentControlPlane
     from ...domain.session import BackgroundTask, Session
-    from ...engine.agent_background import AgentBackgroundRuntime
-    from ...execution import ExecutionPath
+    from ...application.agent_background import AgentBackgroundRuntime
+    from ..runtime import ExecutionPath
     from ...planning import PlanManager
     from ...tasks import TaskService
 

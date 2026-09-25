@@ -13,33 +13,33 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..app.services import RuntimeServices
-from ..capabilities import AgentProfile
+from ..application.services import RuntimeServices
+from ..domain.capabilities import AgentProfile
 from ..domain.coordination import AgentControlError, AgentControlPlane
 from ..domain.session import Session, UsageRecord
-from ..engine.agent import (
+from ..application.agent_runner import (
     Agent,
     assemble_agent_components,
     ensure_system_prompt,
     events_from_renderer,
     prepare_model_tools,
 )
-from ..engine.agent_background import AgentBackgroundRuntime
-from ..engine.subagent import (
+from ..application.agent_background import AgentBackgroundRuntime
+from ..application.subagent import (
     _child_base_tools,
     build_agent_tools,
 )
-from ..llm import LLMClient, resolve_transport
-from ..logger import get_logger
-from ..permission import (
+from ..infrastructure.llm.llm import LLMClient, resolve_transport
+from ..core.logger import get_logger
+from ..domain.policy import (
     PermissionResolver,
     PermissionSettings,
     append_additional_directory,
     append_allow_rule,
 )
-from ..renderer import SilentRenderer
-from ..tool_capabilities import assemble_tool_capabilities
-from ..tools.base import Tool
+from ..interfaces.renderer import SilentRenderer
+from ..application.tool_capabilities import assemble_tool_capabilities
+from ..infrastructure.tools.base import Tool
 from .models import DurableRunRecord
 from .scheduler import AutonomyScheduler
 

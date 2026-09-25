@@ -19,16 +19,16 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from uuid import uuid4
 
-from ..artifacts import ArtifactStore
+from ..infrastructure.storage.artifacts import ArtifactStore
 from ..autonomy import AutonomyScheduler, AutonomyStore
 from ..autonomy.models import DurableRunRecord
 from ..autonomy.runner import launch_durable_run
 from ..domain.coordination import AgentControlPlane
 from .agent_background import AgentBackgroundRuntime
-from ..llm import LLMClient
-from ..permission import PermissionSettings
-from ..tools.base import Tool
-from ..tools.mcp_client import McpManager, McpServerConfig
+from ..infrastructure.llm.llm import LLMClient
+from ..domain.policy import PermissionSettings
+from ..infrastructure.tools.base import Tool
+from ..infrastructure.tools.mcp_client import McpManager, McpServerConfig
 from .services import RuntimeServices
 
 

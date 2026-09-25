@@ -11,15 +11,15 @@ from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 from uuid import uuid4
 
 from ..planning import PlanManager
-from ..project import ExecutionEnvironment
-from ..tool_protocol import ToolCall, ToolResult
-from ..util import estimate_message_tokens
+from ..infrastructure.workspace.project import ExecutionEnvironment
+from .tool_protocol import ToolCall, ToolResult
+from ..utils.util import estimate_message_tokens
 from .conversation import ConversationMessage, ImagePart, TextPart, UserTurnInput
 from .coordination import AgentControlPlane
 from .runs import TERMINAL_RUN_STATUSES, RunRecord, RunStatus, new_run_id
 
 if TYPE_CHECKING:
-    from ..attachments import AttachmentRecord
+    from ..infrastructure.storage.attachments import AttachmentRecord
 
 CallId: TypeAlias = str
 MessageId: TypeAlias = str
@@ -154,7 +154,7 @@ class Session:
 
     def add_working_directory(self, directory: Path) -> Path:
         """Grant an extra working-directory root for this session."""
-        from ..permission.scope import is_under, resolve_root
+        from .policy.scope import is_under, resolve_root
 
         resolved = resolve_root(directory)
         origin = resolve_root(self.workspace_dir)
@@ -176,7 +176,7 @@ class Session:
 
     def access_scope(self):
         """Build an immutable permission snapshot at a composition boundary."""
-        from ..permission.scope import AccessScope
+        from .policy.scope import AccessScope
 
         return AccessScope(self.workspace_dir, self.working_directories_snapshot())
 

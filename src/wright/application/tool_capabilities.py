@@ -12,11 +12,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..execution import ExecutionBackend, LocalExecutionBackend
-from ..permission.types import AuthorizationChange
-from ..processes import RuntimeResources
+from ..infrastructure.runtime import ExecutionBackend, LocalExecutionBackend
+from ..domain.policy.types import AuthorizationChange
+from ..core.processes import RuntimeResources
 from ..tasks import TaskService
-from ..tools.capabilities import (
+from ..infrastructure.tools.capabilities import (
     BackgroundTaskOperations,
     DelegationOperations,
     RunScope,

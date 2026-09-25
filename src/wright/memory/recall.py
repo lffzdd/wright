@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..llm import LLMClient
+from ..infrastructure.llm.llm import LLMClient
 from .episode import (
     EpisodeRecord,
     EpisodeStore,

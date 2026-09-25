@@ -10,7 +10,7 @@ from ..skills.prompt import catalog_reminder
 if TYPE_CHECKING:
     from ..domain.session import Session
     from ..skills.registry import SkillRegistry
-    from ..tools.base import Tool
+    from ..infrastructure.tools.base import Tool
 
 
 class AgentPromptManager:

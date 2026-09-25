@@ -8,15 +8,15 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from ...app.application_host import ApplicationHost
-from ...app.event_dispatch import process_session_event
-from ...app.runtime import (
+from ...application.application_host import ApplicationHost
+from ...application.event_dispatch import process_session_event
+from ...application.runtime import (
     WrightRuntime,
     assemble_runtime,
     runtime_config_from_args,
     shutdown_runtime,
 )
-from ...app.session_service import SessionService, SessionServiceError
+from ...application.session_service import SessionService, SessionServiceError
 from ...infrastructure.storage.attachments import AttachmentError, AttachmentRecord
 from ...autonomy import AutonomyNotFoundError, AutonomyStore
 from ...domain.checkpoint import CheckpointError, SessionCheckpointStore

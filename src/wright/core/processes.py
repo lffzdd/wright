@@ -8,7 +8,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
-from ..execution import ProcessHandle
+from ..infrastructure.runtime import ProcessHandle
 
 
 def terminate_process_tree(

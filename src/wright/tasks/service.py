@@ -7,7 +7,7 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from ..domain.coordination import AgentControlError, AgentTaskRecord
-from ..processes import ProcessRegistry, RuntimeResources, terminate_process_tree
+from ..core.processes import ProcessRegistry, RuntimeResources, terminate_process_tree
 from .types import (
     RuntimeTask,
     TaskKind,
@@ -17,7 +17,7 @@ from .types import (
 )
 
 if TYPE_CHECKING:
-    from ..app.services import RuntimeServices
+    from ..application.services import RuntimeServices
 
 
 @runtime_checkable

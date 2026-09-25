@@ -4,10 +4,10 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
-from ...execution import ExecutionPath, ProcessHandle
-from ...logger import get_logger
-from ...processes import ProcessResources
-from ...tool_protocol import ToolResult
+from ..runtime import ExecutionPath, ProcessHandle
+from ...core.logger import get_logger
+from ...core.processes import ProcessResources
+from ...domain.tool_protocol import ToolResult
 from .base import Tool
 from .command_permissions import (
     describe_execute_command_access,

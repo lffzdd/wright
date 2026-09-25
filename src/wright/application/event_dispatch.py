@@ -11,11 +11,11 @@ import shlex
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from ..attachments import AttachmentError
+from ..infrastructure.storage.attachments import AttachmentError
 from ..autonomy import AutonomyStore, AutonomyStoreError
 from ..autonomy.runner import launch_durable_run
 from .looping import SessionLoopRegistry, parse_loop_command
-from ..logger import get_logger
+from ..core.logger import get_logger
 from ..tasks import RuntimeTask, TaskNotFoundError, TaskService
 from .runtime import WrightRuntime
 

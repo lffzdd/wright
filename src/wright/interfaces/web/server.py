@@ -407,7 +407,7 @@ def _available_port(requested: int) -> int:
 def run_web(args: Any) -> None:
     import uvicorn
 
-    from ...app.runtime import load_env
+    from ...application.runtime import load_env
 
     load_env()
     project_root = (args.workspace or Path.cwd()).expanduser().resolve()

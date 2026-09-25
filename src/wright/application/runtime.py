@@ -14,8 +14,8 @@ from typing import Any
 from dotenv import load_dotenv
 from prompt_toolkit import prompt
 
-from ..artifacts import ArtifactStore
-from ..attachments import AttachmentStore, DraftAttachments
+from ..infrastructure.storage.artifacts import ArtifactStore
+from ..infrastructure.storage.attachments import AttachmentStore, DraftAttachments
 from ..autonomy import AutonomyStore
 from ..domain.checkpoint import CheckpointError, SessionCheckpointStore
 from ..domain.session import Session
@@ -30,12 +30,12 @@ from .agent_background import AgentBackgroundRuntime
 from .looping import SessionLoopRegistry
 from .subagent import build_agent_tools
 from .verifier import Verifier
-from ..interaction import InteractionHub
+from ..interfaces.interaction import InteractionHub
 from ..knowledge import optional_knowledge_tools
-from ..llm import LLMClient
-from ..logger import get_logger
+from ..infrastructure.llm.llm import LLMClient
+from ..core.logger import get_logger
 from ..memory import MemoryManager
-from ..paths import (
+from ..core.paths import (
     artifact_dir,
     attachment_dir,
     ensure_project_state,
@@ -47,7 +47,7 @@ from ..paths import (
     trace_dir,
     user_mcp_config_path,
 )
-from ..permission import (
+from ..domain.policy import (
     AuthorizationChange,
     PermissionRequest,
     PermissionResolver,
@@ -57,17 +57,17 @@ from ..permission import (
     append_allow_rule,
     load_permission_settings,
 )
-from ..processes import RuntimeResources
-from ..project import ProjectContext
-from ..renderer import ConsoleRenderer, Renderer
+from ..core.processes import RuntimeResources
+from ..infrastructure.workspace.project import ProjectContext
+from ..interfaces.renderer import ConsoleRenderer, Renderer
 from ..skills import SkillRegistry, optional_skill_tools
 from .tool_capabilities import assemble_tool_capabilities
-from ..tools import tools as base_tools
-from ..tools.ask_user_tool import ask_user_tool
-from ..tools.base import Tool
-from ..tools.loop_tools import manage_loop_tool
-from ..tools.mcp_client import McpManager, load_mcp_configs
-from ..ui_events import EventPublisher, RendererEventSubscriber, SessionEvents
+from ..infrastructure.tools import tools as base_tools
+from ..infrastructure.tools.ask_user_tool import ask_user_tool
+from ..infrastructure.tools.base import Tool
+from ..infrastructure.tools.loop_tools import manage_loop_tool
+from ..infrastructure.tools.mcp_client import McpManager, load_mcp_configs
+from ..interfaces.ui_events import EventPublisher, RendererEventSubscriber, SessionEvents
 from .application_host import ApplicationHost
 from .interactive_approval import InteractiveApprovalHandler
 from .lifecycle import LifecycleConfigError, load_lifecycle_manager
