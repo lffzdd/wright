@@ -3,16 +3,16 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 
-from ..app.tool_runtime import tool_runtime_for_session
+from wright.application.tool_runtime import tool_runtime_for_session
 from ..domain.session import Session
-from ..engine.executor import ToolExecutor
-from ..permission import (
+from wright.application.tool_dispatcher import ToolExecutor
+from wright.domain.policy import (
     PermissionResolver,
     PermissionResponse,
 )
-from ..tool_capabilities import assemble_tool_capabilities
-from ..tool_protocol import ToolCall
-from ..tools.file_tools import (
+from wright.application.tool_capabilities import assemble_tool_capabilities
+from wright.domain.tool_protocol import ToolCall
+from wright.infrastructure.tools.file_tools import (
     FILE_UNCHANGED,
     FileView,
     _remembered_file_view,

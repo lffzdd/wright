@@ -12,8 +12,8 @@ from ...memory.episode import (
     episode_from_session,
 )
 from ...memory.recall import build_recall_block
-from ...tool_protocol import ToolCall, ToolResult
-from ...tools.episode_tools import build_episode_tools
+from wright.domain.tool_protocol import ToolCall, ToolResult
+from wright.infrastructure.tools.episode_tools import build_episode_tools
 
 
 def _completed_session(tmp_path):

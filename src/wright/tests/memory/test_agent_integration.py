@@ -9,11 +9,11 @@ from pathlib import Path
 from wright.tests.responses import event, response
 
 from ...domain.session import Session
-from ...engine.agent import create_agent
-from ...events import UsageEvent
+from wright.application.agent_runner import create_agent
+from wright.domain.events import UsageEvent
 from ...memory import MemoryManager
 from ...memory.store import write_memory_file
-from ...renderer import SilentRenderer
+from wright.interfaces.renderer import SilentRenderer
 
 
 class _Usage:

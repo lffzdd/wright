@@ -3,14 +3,14 @@ from __future__ import annotations
 from wright.tests.responses import event, response
 
 from ..domain.session import Session
-from ..engine.agent import create_agent
-from ..protocol import encode_tools
-from ..renderer import SilentRenderer
-from ..tool_protocol import ToolResult
-from ..tools import tools as built_in_tools
-from ..tools.base import Tool
-from ..tools.runtime import ToolRuntime
-from ..tools.tool_search import make_tool_search_tool
+from wright.application.agent_runner import create_agent
+from wright.domain.protocol import encode_tools
+from wright.interfaces.renderer import SilentRenderer
+from wright.domain.tool_protocol import ToolResult
+from wright.infrastructure.tools import tools as built_in_tools
+from wright.infrastructure.tools.base import Tool
+from wright.infrastructure.tools.runtime import ToolRuntime
+from wright.infrastructure.tools.tool_search import make_tool_search_tool
 
 
 def _tool(name: str, description: str, *, deferred: bool = False) -> Tool:
@@ -203,8 +203,8 @@ def test_builtin_capabilities_use_hybrid_loading():
 
 
 def test_web_memory_and_spawn_are_baseline():
-    from ..engine.subagent import build_agent_tools
-    from ..tools.memory_tools import build_memory_tools
+    from wright.application.subagent import build_agent_tools
+    from wright.infrastructure.tools.memory_tools import build_memory_tools
 
     class UnusedLLM:
         context_limit = 128_000

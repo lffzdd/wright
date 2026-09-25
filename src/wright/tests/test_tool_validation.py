@@ -1,8 +1,8 @@
-from ..engine.executor import ToolExecutor
-from ..permission import PermissionResolver, PermissionResponse, ToolAccess
-from ..tool_capabilities import assemble_tool_capabilities
-from ..tool_protocol import ToolCall, ToolResult
-from ..tools.base import Tool
+from wright.application.tool_dispatcher import ToolExecutor
+from wright.domain.policy import PermissionResolver, PermissionResponse, ToolAccess
+from wright.application.tool_capabilities import assemble_tool_capabilities
+from wright.domain.tool_protocol import ToolCall, ToolResult
+from wright.infrastructure.tools.base import Tool
 
 
 def _schema_tool(calls, permission_calls=None):

@@ -5,11 +5,11 @@ import shlex
 import threading
 from pathlib import Path
 
-from ..app.tool_runtime import tool_runtime_for_session
+from wright.application.tool_runtime import tool_runtime_for_session
 from ..domain.session import Session
-from ..engine.executor import ToolExecutor
-from ..execution import AuthorizedExecution, LocalExecutionBackend
-from ..permission import (
+from wright.application.tool_dispatcher import ToolExecutor
+from wright.infrastructure.runtime import AuthorizedExecution, LocalExecutionBackend
+from wright.domain.policy import (
     AccessScope,
     AccessTarget,
     GrantTarget,
@@ -19,11 +19,11 @@ from ..permission import (
     ToolAccess,
     forbidden_paths,
 )
-from ..tool_capabilities import assemble_tool_capabilities
-from ..tool_protocol import ToolCall, ToolResult
-from ..tools.base import Tool
-from ..tools.command_tools import execute_command
-from ..tools.file_tools import (
+from wright.application.tool_capabilities import assemble_tool_capabilities
+from wright.domain.tool_protocol import ToolCall, ToolResult
+from wright.infrastructure.tools.base import Tool
+from wright.infrastructure.tools.command_tools import execute_command
+from wright.infrastructure.tools.file_tools import (
     edit_file,
     grep_files,
     grep_tool,
@@ -90,12 +90,12 @@ class _MemoryExecutionBackend:
         return posixpath.normpath(raw)
 
     def cwd(self):
-        from ..execution import ExecutionPath
+        from wright.infrastructure.runtime import ExecutionPath
 
         return ExecutionPath(self.environment_id, self.root)
 
     def resolve_path(self, requested: str, *, cwd=None):
-        from ..execution import ExecutionPath
+        from wright.infrastructure.runtime import ExecutionPath
 
         return ExecutionPath(
             self.environment_id,
@@ -103,7 +103,7 @@ class _MemoryExecutionBackend:
         )
 
     def revalidate_path(self, path):
-        from ..execution import ExecutionPath
+        from wright.infrastructure.runtime import ExecutionPath
 
         if path.environment_id != self.environment_id:
             raise ValueError("wrong memory environment")
@@ -117,7 +117,7 @@ class _MemoryExecutionBackend:
         return value.removeprefix(prefix) if value.startswith(prefix) else value
 
     def metadata(self, path):
-        from ..execution import FileMetadata
+        from wright.infrastructure.runtime import FileMetadata
 
         value = self.revalidate_path(path).value
         if value in self.files:
@@ -163,16 +163,16 @@ class _MemoryExecutionBackend:
         return sorted(children)
 
     def iter_directory(self, path):
-        from ..execution import DirectoryEntry
+        from wright.infrastructure.runtime import DirectoryEntry
 
         for value in self._children(path):
-            from ..execution import ExecutionPath
+            from wright.infrastructure.runtime import ExecutionPath
 
             child = ExecutionPath(self.environment_id, value)
             yield DirectoryEntry(child, self.metadata(child))
 
     def glob(self, path, pattern):
-        from ..execution import DirectoryEntry, ExecutionPath
+        from wright.infrastructure.runtime import DirectoryEntry, ExecutionPath
 
         root = self.revalidate_path(path).value.rstrip("/")
         prefix = root + "/"
@@ -182,7 +182,7 @@ class _MemoryExecutionBackend:
                 yield DirectoryEntry(child, self.metadata(child))
 
     def iter_search_candidates(self, path, *, glob=None, deadline=None, cancellation_check=None):
-        from ..execution import ExecutionPath
+        from wright.infrastructure.runtime import ExecutionPath
 
         root = self.revalidate_path(path).value.rstrip("/")
         prefix = root + "/"
@@ -198,7 +198,7 @@ class _MemoryExecutionBackend:
 
     def search_files(self, paths, pattern, *, case_sensitive=False, fixed_string=False,
                      deadline=None, cancellation_check=None):
-        from ..execution import ExecutionPath, SearchMatch
+        from wright.infrastructure.runtime import ExecutionPath, SearchMatch
 
         expression = re.compile(pattern, 0 if case_sensitive else re.IGNORECASE)
         for path in paths:

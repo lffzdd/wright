@@ -2,18 +2,18 @@ import threading
 import time
 from pathlib import Path
 
-from ..app.tool_runtime import tool_runtime_for_session
+from wright.application.tool_runtime import tool_runtime_for_session
 from ..domain.session import Session
-from ..engine.executor import ToolExecutor
-from ..permission import ToolAccess
+from wright.application.tool_dispatcher import ToolExecutor
+from wright.domain.policy import ToolAccess
 from ..tasks import TaskNotFoundError, TaskService
-from ..tool_capabilities import assemble_tool_capabilities
-from ..tool_protocol import ToolCall, ToolResult
-from ..tools.base import Tool
-from ..tools.command_permissions import is_execute_command_concurrency_safe
-from ..tools.command_tools import execute_command
-from ..tools.file_tools import read_file, write_file
-from ..tools.web_tools import http_request_tool
+from wright.application.tool_capabilities import assemble_tool_capabilities
+from wright.domain.tool_protocol import ToolCall, ToolResult
+from wright.infrastructure.tools.base import Tool
+from wright.infrastructure.tools.command_permissions import is_execute_command_concurrency_safe
+from wright.infrastructure.tools.command_tools import execute_command
+from wright.infrastructure.tools.file_tools import read_file, write_file
+from wright.infrastructure.tools.web_tools import http_request_tool
 
 
 def test_dynamic_concurrency_classification():

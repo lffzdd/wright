@@ -4,14 +4,14 @@ import pytest
 
 from wright.tests.responses import event, response
 
-from ...app.lifecycle import HookRegistration, LifecycleManager, TraceRecorder
-from ...app.tool_runtime import tool_runtime_for_session
+from wright.application.lifecycle import HookRegistration, LifecycleManager, TraceRecorder
+from wright.application.tool_runtime import tool_runtime_for_session
 from ...domain.session import Session
-from ...engine.agent import create_agent
-from ...engine.subagent import make_spawn_agent_tool
-from ...renderer import SilentRenderer
-from ...tool_protocol import ToolResult
-from ...tools.base import Tool
+from wright.application.agent_runner import create_agent
+from wright.application.subagent import make_spawn_agent_tool
+from wright.interfaces.renderer import SilentRenderer
+from wright.domain.tool_protocol import ToolResult
+from wright.infrastructure.tools.base import Tool
 
 
 def _final(answer):

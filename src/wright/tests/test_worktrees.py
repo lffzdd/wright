@@ -1,8 +1,8 @@
 import os
 import subprocess
 
-from ..project import ProjectContext
-from ..worktrees import WorktreeManager
+from wright.infrastructure.workspace.project import ProjectContext
+from wright.infrastructure.workspace.worktrees import WorktreeManager
 
 
 def _git(root, *args):

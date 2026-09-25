@@ -3,13 +3,13 @@ import time
 
 from wright.tests.responses import event, response
 
-from ...app.services import RuntimeServices
-from ...app.tool_runtime import tool_runtime_for_session
+from wright.application.services import RuntimeServices
+from wright.application.tool_runtime import tool_runtime_for_session
 from ...domain.session import Session
-from ...engine.agent_background import AgentBackgroundRuntime
-from ...engine.subagent import make_spawn_agent_tool
-from ...events import ContentDone
-from ...tools.task_tools import cancel_task_tool, get_task_tool
+from wright.application.agent_background import AgentBackgroundRuntime
+from wright.application.subagent import make_spawn_agent_tool
+from wright.domain.events import ContentDone
+from wright.infrastructure.tools.task_tools import cancel_task_tool, get_task_tool
 
 
 def _final(answer: str) -> ContentDone:

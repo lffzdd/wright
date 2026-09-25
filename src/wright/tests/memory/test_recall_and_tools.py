@@ -7,7 +7,7 @@ from wright.tests.responses import event
 
 from ...memory.recall import build_recall_block, find_relevant_memories
 from ...memory.store import write_memory_file
-from ...tools.memory_tools import (
+from wright.infrastructure.tools.memory_tools import (
     build_memory_tools,
     create_memory,
     delete_memory,

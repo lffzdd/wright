@@ -2,8 +2,8 @@ import subprocess
 
 import pytest
 
-from ..project import ProjectContext
-from ..web.diff import DiffError, change_patch, list_changes
+from wright.infrastructure.workspace.project import ProjectContext
+from wright.interfaces.web.diff import DiffError, change_patch, list_changes
 
 
 def _git(root, *args):

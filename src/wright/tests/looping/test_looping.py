@@ -9,17 +9,17 @@ from wright.tests.responses import event, response
 
 from ...domain.checkpoint import SessionCheckpointStore
 from ...domain.session import Session
-from ...engine.agent import create_agent
-from ...engine.looping import (
+from wright.application.agent_runner import create_agent
+from wright.application.looping import (
     LoopError,
     SessionLoopRegistry,
     parse_interval,
     parse_loop_command,
 )
-from ...renderer import SilentRenderer
-from ...tools.capabilities import RunScope, ToolCapabilities
-from ...tools.loop_tools import manage_loop_tool
-from ...tools.runtime import ToolRuntime
+from wright.interfaces.renderer import SilentRenderer
+from wright.infrastructure.tools.capabilities import RunScope, ToolCapabilities
+from wright.infrastructure.tools.loop_tools import manage_loop_tool
+from wright.infrastructure.tools.runtime import ToolRuntime
 
 
 def _final(answer):

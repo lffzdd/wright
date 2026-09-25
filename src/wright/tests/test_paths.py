@@ -1,5 +1,5 @@
 from ..memory.paths import memory_dir
-from ..paths import (
+from wright.core.paths import (
     ensure_project_state,
     mcp_config_paths,
     project_id,

@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from ..tools.mcp_client import load_mcp_config, load_mcp_configs
+from wright.infrastructure.tools.mcp_client import load_mcp_config, load_mcp_configs
 
 
 def test_missing_mcp_file_is_empty(tmp_path: Path):

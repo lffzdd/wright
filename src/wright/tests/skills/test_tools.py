@@ -2,12 +2,12 @@ from pathlib import Path
 
 from jsonschema import validators
 
-from ...app.tool_runtime import tool_runtime_for_session
+from wright.application.tool_runtime import tool_runtime_for_session
 from ...domain.session import Session
 from ...skills.registry import SkillRegistry
 from ...skills.store import write_skill
-from ...tools.skill_tools import build_skill_tools
-from ...tools.validation import validate_tool_arguments
+from wright.infrastructure.tools.skill_tools import build_skill_tools
+from wright.infrastructure.tools.validation import validate_tool_arguments
 
 
 def _runtime(tmp_path: Path, registry: SkillRegistry | None = None):

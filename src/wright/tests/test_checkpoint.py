@@ -6,10 +6,10 @@ from wright.tests.responses import event, response
 
 from ..domain.checkpoint import CheckpointError, SessionCheckpointStore
 from ..domain.session import Session, UsageRecord
-from ..engine.agent import create_agent
-from ..renderer import SilentRenderer
-from ..tool_protocol import ArtifactRef, ToolCall, ToolResult
-from ..util import build_tool_results_messages
+from wright.application.agent_runner import create_agent
+from wright.interfaces.renderer import SilentRenderer
+from wright.domain.tool_protocol import ArtifactRef, ToolCall, ToolResult
+from wright.utils.util import build_tool_results_messages
 
 
 def _populated_session(tmp_path):

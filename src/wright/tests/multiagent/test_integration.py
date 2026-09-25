@@ -2,19 +2,19 @@ import time
 
 from wright.tests.responses import event, response
 
-from ...app.tool_runtime import tool_runtime_for_session
+from wright.application.tool_runtime import tool_runtime_for_session
 from ...domain.checkpoint import SessionCheckpointStore
 from ...domain.coordination import AgentControlConfig, AgentControlPlane
 from ...domain.session import Session
-from ...engine.agent import create_agent
-from ...engine.executor import ToolExecutor
-from ...engine.subagent import build_agent_tools, make_spawn_agent_tool
-from ...events import UsageEvent
-from ...permission import PermissionPolicy, PermissionResolver, PermissionSettings
-from ...renderer import SilentRenderer
-from ...tool_capabilities import assemble_tool_capabilities
-from ...tool_protocol import ToolCall
-from ...tools.command_tools import execute_command
+from wright.application.agent_runner import create_agent
+from wright.application.tool_dispatcher import ToolExecutor
+from wright.application.subagent import build_agent_tools, make_spawn_agent_tool
+from wright.domain.events import UsageEvent
+from wright.domain.policy import PermissionPolicy, PermissionResolver, PermissionSettings
+from wright.interfaces.renderer import SilentRenderer
+from wright.application.tool_capabilities import assemble_tool_capabilities
+from wright.domain.tool_protocol import ToolCall
+from wright.infrastructure.tools.command_tools import execute_command
 
 
 def _tool(name, **arguments):

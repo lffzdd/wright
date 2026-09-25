@@ -3,25 +3,25 @@ import time
 
 from wright.tests.responses import event, response
 
-from ...app.services import RuntimeServices
+from wright.application.services import RuntimeServices
 from ...autonomy import AutonomyScheduler, AutonomyStore, TriggerSpec
 from ...autonomy.runner import _DurableToolJournal, launch_durable_run
-from ...capabilities import AgentProfile
+from wright.domain.capabilities import AgentProfile
 from ...domain.session import Session
-from ...engine.agent import create_agent
-from ...engine.agent_background import AgentBackgroundRuntime
-from ...engine.subagent import build_agent_tools
-from ...permission import PermissionPolicy, PermissionResolver, PermissionSettings
-from ...renderer import SilentRenderer
+from wright.application.agent_runner import create_agent
+from wright.application.agent_background import AgentBackgroundRuntime
+from wright.application.subagent import build_agent_tools
+from wright.domain.policy import PermissionPolicy, PermissionResolver, PermissionSettings
+from wright.interfaces.renderer import SilentRenderer
 from ...skills.registry import SkillRegistry
 from ...skills.store import write_skill
-from ...tool_protocol import ToolResult
-from ...tools.ask_user_tool import ask_user_tool
-from ...tools.autonomy_tools import autonomy_tools
-from ...tools.base import Tool
-from ...tools.knowledge_tools import build_knowledge_tools
-from ...tools.memory_tools import build_memory_tools
-from ...tools.skill_tools import build_skill_tools
+from wright.domain.tool_protocol import ToolResult
+from wright.infrastructure.tools.ask_user_tool import ask_user_tool
+from wright.infrastructure.tools.autonomy_tools import autonomy_tools
+from wright.infrastructure.tools.base import Tool
+from wright.infrastructure.tools.knowledge_tools import build_knowledge_tools
+from wright.infrastructure.tools.memory_tools import build_memory_tools
+from wright.infrastructure.tools.skill_tools import build_skill_tools
 
 
 def _final(answer):

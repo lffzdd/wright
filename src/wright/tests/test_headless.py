@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from .. import headless
-from ..app.runtime import RuntimeConfig
+from wright.application.runtime import RuntimeConfig
 
 
 def test_headless_entry_starts_and_stops_the_application_host(monkeypatch, tmp_path, capsys):

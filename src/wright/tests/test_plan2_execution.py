@@ -3,13 +3,13 @@ from pathlib import Path
 
 from wright.tests.responses import event, response
 
-from ..app.tool_runtime import tool_runtime_for_session
+from wright.application.tool_runtime import tool_runtime_for_session
 from ..domain.checkpoint import SessionCheckpointStore
 from ..domain.session import Session
-from ..engine.executor import ToolExecutor
-from ..engine.subagent import make_spawn_agent_tool
-from ..execution import LocalExecutionBackend
-from ..permission import (
+from wright.application.tool_dispatcher import ToolExecutor
+from wright.application.subagent import make_spawn_agent_tool
+from wright.infrastructure.runtime import LocalExecutionBackend
+from wright.domain.policy import (
     AccessTarget,
     PermissionPolicy,
     PermissionResolver,
@@ -20,11 +20,11 @@ from ..permission import (
     append_allow_rule,
     load_permission_settings,
 )
-from ..tool_capabilities import assemble_tool_capabilities
-from ..tool_protocol import ToolCall, ToolResult
-from ..tools.base import Tool
-from ..tools.command_tools import execute_command_tool
-from ..tools.file_tools import grep_tool, write_file_tool
+from wright.application.tool_capabilities import assemble_tool_capabilities
+from wright.domain.tool_protocol import ToolCall, ToolResult
+from wright.infrastructure.tools.base import Tool
+from wright.infrastructure.tools.command_tools import execute_command_tool
+from wright.infrastructure.tools.file_tools import grep_tool, write_file_tool
 
 
 def _mode_tool(call, *, safe_mode: str = "read") -> Tool:

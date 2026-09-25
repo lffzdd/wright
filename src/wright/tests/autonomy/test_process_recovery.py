@@ -14,9 +14,9 @@ from pathlib import Path
 
 import pytest
 
-from ...app.application_host import ApplicationHost
+from wright.application.application_host import ApplicationHost
 from ...autonomy import AutonomyStore
-from ...permission import PermissionSettings
+from wright.domain.policy import PermissionSettings
 from ...tests.autonomy.test_host_persistence import ScriptLLM
 
 
@@ -127,7 +127,7 @@ def test_real_process_command_crash_windows_are_recovered_honestly(
         seen.set()
         return False
 
-    from ...app.session_service import SessionService
+    from wright.application.session_service import SessionService
 
     service = SessionService(runtime, event_processor=consume, shutdown=lambda _rt: None)
     service.start()
@@ -146,8 +146,8 @@ def _minimal_runtime(store, workspace):
     import threading
     from types import SimpleNamespace
 
-    from ...interaction import InteractionBroker
-    from ...ui_events import EventPublisher
+    from wright.interfaces.interaction import InteractionBroker
+    from wright.interfaces.ui_events import EventPublisher
 
     publisher = EventPublisher(project_id="project", session_id="session")
     return SimpleNamespace(

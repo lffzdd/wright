@@ -9,18 +9,18 @@ from pathlib import Path
 
 import pytest
 
-from ..app.lifecycle import HookDecision
-from ..app.tool_runtime import tool_runtime_for_session
-from ..capabilities import AgentProfile, CapabilitySnapshot
+from wright.application.lifecycle import HookDecision
+from wright.application.tool_runtime import tool_runtime_for_session
+from wright.domain.capabilities import AgentProfile, CapabilitySnapshot
 from ..domain.session import Session
-from ..engine.executor import ToolExecutor
-from ..execution import ExecutionPath, LocalExecutionBackend
-from ..execution import local as local_execution
-from ..permission import PermissionResolver, PermissionResponse, ToolAccess
-from ..tool_capabilities import assemble_tool_capabilities
-from ..tool_protocol import ToolCall, ToolResult
-from ..tools.base import Tool
-from ..tools.file_tools import grep_files, grep_tool, write_file_tool
+from wright.application.tool_dispatcher import ToolExecutor
+from wright.infrastructure.runtime import ExecutionPath, LocalExecutionBackend
+from wright.infrastructure.runtime import local as local_execution
+from wright.domain.policy import PermissionResolver, PermissionResponse, ToolAccess
+from wright.application.tool_capabilities import assemble_tool_capabilities
+from wright.domain.tool_protocol import ToolCall, ToolResult
+from wright.infrastructure.tools.base import Tool
+from wright.infrastructure.tools.file_tools import grep_files, grep_tool, write_file_tool
 
 
 class _RecordingLifecycle:

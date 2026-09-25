@@ -3,11 +3,11 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-from ..tool_protocol import ArtifactRef
-from ..ui_events import EventPublisher
-from ..web.auth import BootstrapAuth
-from ..web.runtime_manager import RuntimeManagerError
-from ..web.server import COOKIE_NAME, create_app
+from wright.domain.tool_protocol import ArtifactRef
+from wright.interfaces.ui_events import EventPublisher
+from wright.interfaces.web.auth import BootstrapAuth
+from wright.interfaces.web.runtime_manager import RuntimeManagerError
+from wright.interfaces.web.server import COOKIE_NAME, create_app
 
 
 class FakeManager:

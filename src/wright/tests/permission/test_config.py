@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 
-from ...engine.executor import ToolExecutor
-from ...permission import (
+from wright.application.tool_dispatcher import ToolExecutor
+from wright.domain.policy import (
     PermissionPolicy,
     PermissionResolver,
     PermissionRule,
@@ -12,10 +12,10 @@ from ...permission import (
     append_allow_rule,
     load_permission_settings,
 )
-from ...tool_capabilities import assemble_tool_capabilities
-from ...tool_protocol import ToolCall
-from ...tools.command_tools import execute_command_tool
-from ...tools.file_tools import read_file_tool, write_file_tool
+from wright.application.tool_capabilities import assemble_tool_capabilities
+from wright.domain.tool_protocol import ToolCall
+from wright.infrastructure.tools.command_tools import execute_command_tool
+from wright.infrastructure.tools.file_tools import read_file_tool, write_file_tool
 
 
 def _executor(tool, settings: PermissionSettings, tmp_path: Path) -> ToolExecutor:

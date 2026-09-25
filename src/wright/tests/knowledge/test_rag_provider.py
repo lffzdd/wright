@@ -10,7 +10,7 @@ from ...knowledge.rag_provider import (
     RagKnowledgeProvider,
     knowledge_enabled,
 )
-from ...tools.knowledge_tools import build_knowledge_tools
+from wright.infrastructure.tools.knowledge_tools import build_knowledge_tools
 
 
 def test_constructing_provider_does_not_import_rag(monkeypatch, tmp_path):

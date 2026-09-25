@@ -1,7 +1,7 @@
 import pytest
 
-from ..events import ContentDone
-from ..protocol import TurnAbort, parse_turn
+from wright.domain.events import ContentDone
+from wright.domain.protocol import TurnAbort, parse_turn
 from .responses import response
 
 

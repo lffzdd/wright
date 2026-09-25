@@ -3,10 +3,10 @@
 from wright.tests.responses import event, response
 
 from ...domain.session import Session
-from ...engine.agent import create_agent
-from ...permission import PermissionResolver, PermissionResponse
-from ...renderer import SilentRenderer
-from ...tools.ask_user_tool import ask_user_tool
+from wright.application.agent_runner import create_agent
+from wright.domain.policy import PermissionResolver, PermissionResponse
+from wright.interfaces.renderer import SilentRenderer
+from wright.infrastructure.tools.ask_user_tool import ask_user_tool
 
 
 def _tool_turn(name, **arguments):

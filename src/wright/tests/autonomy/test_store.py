@@ -3,7 +3,7 @@ import threading
 
 import pytest
 
-from ...app.services import RuntimeServices
+from wright.application.services import RuntimeServices
 from ...autonomy import (
     AutonomyScheduler,
     AutonomyStore,
