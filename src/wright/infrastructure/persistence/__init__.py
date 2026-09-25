@@ -29,6 +29,7 @@ from .memory_paths import (
     memory_dir,
 )
 from .memory_store import (
+    FileFactRepository,
     create_memory,
     delete_memory,
     dump_frontmatter,
@@ -56,6 +57,7 @@ __all__ = [
     "EpisodeStatus",
     "EpisodeStore",
     "EpisodeStoreError",
+    "FileFactRepository",
     "FileSessionRepository",
     "MEMORY_INDEX",
     "SessionCheckpointStore",

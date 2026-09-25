@@ -63,10 +63,14 @@ ILLMGateway = ILLMProvider
 IToolGateway = IToolExecutor
 IStorageGateway = ISessionRepository
 
-from .task_backend import TaskBackend
+from .episode_gateway import IEpisodicMemoryStore
+from .fact_gateway import IFactRepository
 from .knowledge_provider import KnowledgeProvider
+from .task_backend import TaskBackend
 
 __all__ = [
+    "IEpisodicMemoryStore",
+    "IFactRepository",
     "ILLMGateway",
     "ILLMProvider",
     "IMemoryStore",
@@ -77,4 +81,5 @@ __all__ = [
     "KnowledgeProvider",
     "TaskBackend",
 ]
+
 

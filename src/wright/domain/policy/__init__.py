@@ -17,6 +17,7 @@ from .approval import (
 )
 from .context_policy import ContextPolicy, TokenBudgetPolicy
 from .guardrail_policy import GuardrailPolicy, SecurityPolicy
+from .memory_policy import EpisodePolicy, FactPolicy, MemoryPolicy, is_safe_fact
 from .resolver import (
     PermissionPolicy,
     PermissionResolver,
@@ -42,11 +43,14 @@ __all__ = [
     "AccessTarget",
     "AuthorizationChange",
     "ContextPolicy",
+    "EpisodePolicy",
+    "FactPolicy",
     "FallbackApprovalHandler",
     "GrantTarget",
     "GuardrailPolicy",
     "InvocationGrant",
     "InvocationIdentity",
+    "MemoryPolicy",
     "PathClass",
     "PermissionApprovalHandler",
     "PermissionChoice",
@@ -69,6 +73,7 @@ __all__ = [
     "append_allow_rule",
     "default_settings_path",
     "forbidden_paths",
+    "is_safe_fact",
     "is_under",
     "load_permission_settings",
     "resolve_root",

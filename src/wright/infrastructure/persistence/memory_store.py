@@ -439,7 +439,47 @@ def read_memories_for_surfacing(paths: list[Path]) -> str:
     return "\n\n".join(blocks)
 
 
+from ...domain.gateway.fact_gateway import IFactRepository
+from ...domain.model.fact import Fact
+
+
+class FileFactRepository(IFactRepository):
+    """File-backed implementation of IFactRepository using Markdown/frontmatter storage."""
+
+    def __init__(self, directory: Path | None = None) -> None:
+        self.directory = _directory(directory)
+
+    def get_facts(self, scope: str | None = None) -> list[Fact]:
+        records = scan_memory_files(self.directory)
+        facts = [r.to_fact(scope="PROJECT" if scope is None else scope) for r in records]
+        if scope:
+            facts = [f for f in facts if f.scope == scope]
+        return facts
+
+    def save_fact(self, fact: Fact) -> None:
+        name = fact.key or fact.id
+        try:
+            get_memory(name, self.directory)
+            update_memory(
+                name,
+                content=fact.content,
+                directory=self.directory,
+            )
+        except MemoryNotFoundError:
+            create_memory(
+                name=name,
+                description=fact.content[:60],
+                memory_type="project" if fact.scope == "PROJECT" else "user",
+                content=fact.content,
+                directory=self.directory,
+            )
+
+    def delete_fact(self, fact_id: str) -> bool:
+        return delete_memory(fact_id, directory=self.directory)
+
+
 __all__ = [
+    "FileFactRepository",
     "create_memory",
     "delete_memory",
     "dump_frontmatter",
@@ -456,3 +496,4 @@ __all__ = [
     "update_memory",
     "write_memory_file",
 ]
+

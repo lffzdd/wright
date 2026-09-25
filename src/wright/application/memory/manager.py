@@ -46,6 +46,19 @@ class MemoryManager:
         # 必须创建实例实际绑定的目录，而不是 paths.memory_dir() 的默认目录。
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.episode_store = EpisodeStore(self.directory)
+        self._service = None
+
+    @property
+    def service(self):
+        if self._service is None:
+            from ...infrastructure.persistence.memory_store import FileFactRepository
+            from .memory_service import MemoryService
+            self._service = MemoryService(
+                fact_repo=FileFactRepository(self.directory),
+                episode_store=self.episode_store,
+            )
+        return self._service
+
 
     def _query(self, messages, **kwargs):
         yield from metered_events(

@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ...domain.gateway.episode_gateway import IEpisodicMemoryStore
+from ...domain.model.episode import Episode
 from ...domain.model.memory import (
     EpisodeNotFoundError,
     EpisodeRecord,
@@ -33,10 +35,47 @@ _locks_guard = threading.Lock()
 _store_locks: dict[Path, threading.RLock] = {}
 
 
-class EpisodeStore:
+class EpisodeStore(IEpisodicMemoryStore):
     def __init__(self, memory_directory: Path | None = None) -> None:
         self.root = (memory_directory or memory_dir()).expanduser().resolve()
         self.directory = self.root / EPISODES_DIRECTORY
+
+    def search_episodes(
+        self, query: str, top_k: int = 3
+    ) -> list[tuple[EpisodeRecord, float]]:
+        """Search episodes by query terms, returning (record, score) tuples."""
+        results = self.search(query, limit=top_k)
+        return [(rec, 1.0) for rec in results]
+
+    def record_episode(self, episode: Episode | EpisodeRecord) -> None:
+        """Persist an episodic case study."""
+        if isinstance(episode, EpisodeRecord):
+            self.save(episode)
+            return
+        if hasattr(episode, "to_record"):
+            self.save(episode.to_record())
+            return
+        rec = EpisodeRecord(
+            id=getattr(episode, "id", f"ep-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"),
+            session_id="default",
+            goal=getattr(episode, "task_description", "") or getattr(episode, "goal", ""),
+            status="completed" if getattr(episode, "outcome", "") == "SUCCESS" else "failed",
+            outcome=getattr(episode, "resolution", "") or getattr(episode, "outcome", ""),
+            started_step=0,
+            ended_step=1,
+            created_at=getattr(episode, "created_at", "") or datetime.now(timezone.utc).isoformat(),
+            plan={},
+            tools=(),
+            agents=(),
+            verification=(),
+            usage={
+                "total_tokens": getattr(episode, "token_count", 0),
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+            },
+        )
+        self.save(rec)
+
 
     def save(self, episode: EpisodeRecord) -> EpisodeRecord:
         path = self.path_for(episode.id)
