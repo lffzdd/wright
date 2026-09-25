@@ -10,7 +10,6 @@ from .autonomy_store import (
 from .file_session_repo import (
     CheckpointError,
     FileSessionRepository,
-    SessionCheckpointStore,
 )
 from .memory import (
     CORE_MEMORY_FILE,
@@ -60,7 +59,6 @@ __all__ = [
     "FileFactRepository",
     "FileSessionRepository",
     "MEMORY_INDEX",
-    "SessionCheckpointStore",
     "create_memory",
     "delete_memory",
     "dump_frontmatter",

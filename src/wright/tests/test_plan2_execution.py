@@ -4,7 +4,7 @@ from pathlib import Path
 from wright.tests.responses import event, response
 
 from wright.application.tool_runtime import tool_runtime_for_session
-from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
+from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
 from ..domain.model.session import Session
 from wright.application.tool_dispatcher import ToolExecutor
 from wright.application.agent import make_spawn_agent_tool
@@ -347,7 +347,7 @@ def test_agent_child_persistent_directory_uses_child_checkpoint(tmp_path, monkey
     extra.mkdir()
     config = tmp_path / "permission-settings.json"
     monkeypatch.setenv("WRIGHT_PERMISSION_CONFIG", str(config))
-    checkpoints = SessionCheckpointStore(tmp_path / "checkpoints")
+    checkpoints = FileSessionRepository(tmp_path / "checkpoints")
     parent = Session.create("parent", workspace)
     parent.begin_user_turn("parent")
     sessions = {}

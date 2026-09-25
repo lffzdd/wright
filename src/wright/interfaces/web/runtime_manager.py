@@ -19,7 +19,7 @@ from ...application.runtime import (
 from ...application.session_service import SessionService, SessionServiceError
 from ...infrastructure.storage.attachments import AttachmentError, AttachmentRecord
 from ...infrastructure.persistence.autonomy_store import AutonomyNotFoundError, AutonomyStore
-from ...infrastructure.persistence.file_session_repo import CheckpointError, SessionCheckpointStore
+from ...infrastructure.persistence.file_session_repo import CheckpointError, FileSessionRepository
 from ...infrastructure.llm.model_adapters import available_models, process_model_name
 from ..interaction import InteractionBroker
 from ...core.paths import project_id, session_dir, task_db_path
@@ -317,7 +317,7 @@ class RuntimeManager:
         self.capacity = capacity
         self.base_args = base_args
         self.worktrees = WorktreeManager(self.project_root)
-        self.checkpoints = SessionCheckpointStore(session_dir(self.project_root))
+        self.checkpoints = FileSessionRepository(session_dir(self.project_root))
         self._handles: dict[str, SessionHandle] = {}
         # Hosts outlive their creating browser session.  They are closed only
         # when the Web application itself stops (or an explicit host API is

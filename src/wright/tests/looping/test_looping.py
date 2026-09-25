@@ -7,7 +7,7 @@ import pytest
 
 from wright.tests.responses import event, response
 
-from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
+from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
 from ...domain.model.session import Session
 from wright.application.agent import create_agent
 from wright.application.looping import (
@@ -150,7 +150,7 @@ def test_loop_state_is_absent_from_checkpoint(tmp_path):
         prompt="UNIQUE_LOOP_PROMPT_xyz",
         interval_seconds=0.05,
     )
-    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    store = FileSessionRepository(tmp_path / "checkpoints")
     path = store.save(session)
     text = path.read_text(encoding="utf-8")
     assert created.id not in text

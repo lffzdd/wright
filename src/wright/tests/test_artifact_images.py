@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from wright.infrastructure.storage.artifacts import ArtifactStore
-from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
+from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
 from wright.domain.model.session import Session
 from wright.application.agent import create_agent
 from wright.domain.policy import ToolAccess
@@ -134,7 +134,7 @@ def test_agent_tool_images_reach_provider_and_survive_checkpoint(tmp_path, trans
             assert image_url == f"data:image/png;base64,{encoded}"
 
         assert_image_request(requests[1])
-        checkpoint = SessionCheckpointStore(tmp_path / "checkpoints")
+        checkpoint = FileSessionRepository(tmp_path / "checkpoints")
         checkpoint.save(session)
         assert encoded not in checkpoint.path_for(session.session_id).read_text()
         restored = checkpoint.load(session.session_id)

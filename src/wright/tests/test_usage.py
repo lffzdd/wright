@@ -3,7 +3,7 @@ from io import StringIO
 import pytest
 from rich.console import Console
 
-from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
+from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
 from wright.domain.model.session import Session, UsageRecord
 from wright.application.agent import create_agent
 from wright.domain.policy.verifier import Verifier
@@ -66,7 +66,7 @@ def test_task_totals_include_descendants_once_and_survive_resume(tmp_path):
         plane.add_usage(task.id, 20, 3, 23)
         parent = task.id
     assert session.task_usage() == UsageRecord(50, 11, 61)
-    store = SessionCheckpointStore(tmp_path / 'checkpoints')
+    store = FileSessionRepository(tmp_path / 'checkpoints')
     store.save(session)
     restored = store.load(session.session_id)
     assert restored.task_usage() == UsageRecord(50, 11, 61)

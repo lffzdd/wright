@@ -39,7 +39,7 @@ from ..tool_dispatcher import ToolExecutor
 from ...domain.policy.verifier import Verifier
 
 if TYPE_CHECKING:
-    from ...infrastructure.persistence.file_session_repo import SessionCheckpointStore
+    from ...infrastructure.persistence.file_session_repo import FileSessionRepository
 
 logger = get_logger(__name__)
 
@@ -211,7 +211,7 @@ def create_agent(
     memory: MemoryManager | None = None,
     verifier: Verifier | None = None,
     max_verification_retries: int = 3,
-    checkpoint_store: "SessionCheckpointStore | None" = None,
+    checkpoint_store: "FileSessionRepository | None" = None,
     usage_observer: Callable[[UsageRecord], None] | None = None,
     allow_background_tasks: bool = True,
     on_shell_task_done: Callable[[str], None] | None = None,
@@ -315,7 +315,7 @@ class Agent:
         memory: MemoryManager | None = None,
         verifier: Verifier | None = None,
         max_verification_retries: int = 3,
-        checkpoint_store: "SessionCheckpointStore | None" = None,
+        checkpoint_store: "FileSessionRepository | None" = None,
         usage_observer: Callable[[UsageRecord], None] | None = None,
         lifecycle=None,
         skills: SkillRegistry | None = None,

@@ -174,9 +174,6 @@ class FileSessionRepository(ISessionRepository):
         return results
 
 
-SessionCheckpointStore = FileSessionRepository
-
-
 def _serialize_session(session: Session) -> dict[str, Any]:
     return {
         "version": CHECKPOINT_VERSION,

@@ -2,7 +2,7 @@ from pathlib import Path
 
 from wright.tests.responses import event, response
 
-from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
+from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
 from ...domain.model.session import Session
 from wright.application.agent import create_agent
 from wright.interfaces.renderer import SilentRenderer
@@ -135,7 +135,7 @@ def test_continue_run_keeps_catalog_and_does_not_resend(tmp_path: Path):
     registry = _write_skill(tmp_path)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    store = FileSessionRepository(tmp_path / "checkpoints")
     session = Session.create("task", workspace)
     session.begin_user_turn("准备发布")
     session.append_message({"role": "user", "content": "准备发布"})

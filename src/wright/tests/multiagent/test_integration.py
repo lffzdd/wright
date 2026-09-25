@@ -3,7 +3,7 @@ import time
 from wright.tests.responses import event, response
 
 from wright.application.tool_runtime import tool_runtime_for_session
-from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
+from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
 from ...domain.model.coordination import AgentControlConfig, AgentControlPlane
 from ...domain.model.session import Session
 from wright.application.agent import build_agent_tools, create_agent, make_spawn_agent_tool
@@ -143,7 +143,7 @@ def test_control_plane_changes_are_checkpointed_and_live_tasks_recover_unknown(t
     workspace.mkdir()
     session = Session.create("root", workspace)
     session.begin_user_turn("root")
-    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    store = FileSessionRepository(tmp_path / "checkpoints")
     create_agent(
         ScriptLLM([_final("unused")]),
         [],

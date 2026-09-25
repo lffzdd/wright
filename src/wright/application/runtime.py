@@ -17,7 +17,7 @@ from prompt_toolkit import prompt
 from ..infrastructure.storage.artifacts import ArtifactStore
 from ..infrastructure.storage.attachments import AttachmentStore, DraftAttachments
 from ..infrastructure.persistence.autonomy_store import AutonomyStore
-from ..infrastructure.persistence.file_session_repo import CheckpointError, SessionCheckpointStore
+from ..infrastructure.persistence.file_session_repo import CheckpointError, FileSessionRepository
 from ..domain.prompt import get_role_instruction
 from ..domain.model.session import Session
 from .agent import (
@@ -91,7 +91,7 @@ class WrightRuntime:
     agent_idle: threading.Event
     lifecycle: Any
     mcp_manager: McpManager
-    checkpoint_store: SessionCheckpointStore
+    checkpoint_store: FileSessionRepository
     autonomy_store: AutonomyStore
     permission_settings: PermissionSettings
     assembled_base_tools: list[Tool]
@@ -324,7 +324,7 @@ def assemble_runtime(
 
     # 多轮对话:session 整段存活,每轮把用户输入 append 进同一条历史；Agent.run 会把
     # user_goal 更新为当前任务，供 Verifier 和 checkpoint 使用。
-    checkpoint_store = SessionCheckpointStore(session_dir(project_root))
+    checkpoint_store = FileSessionRepository(session_dir(project_root))
     resume_arg = config.resume
     continue_latest = config.continue_latest
     resumed = bool(resume_arg is not None or continue_latest)

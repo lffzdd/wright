@@ -7,7 +7,7 @@ import pytest
 from wright.application.tool_runtime import tool_runtime_for_session
 from wright.infrastructure.storage.artifacts import ArtifactStore
 from wright.domain.model.agent import AgentProfile, CapabilityCatalog, CapabilityError
-from wright.infrastructure.persistence.file_session_repo import SessionCheckpointStore
+from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
 from wright.domain.model.session import Session
 from wright.application.agent import create_agent
 from wright.application.tool_dispatcher import ToolExecutor
@@ -166,7 +166,7 @@ def test_agent_mcp_artifact_survives_checkpoint_and_is_readable(tmp_path):
     ref = session.tool_executions["mcp-call"].result.artifacts[0]
     assert store.path_for(ref).read_bytes() == _png_bytes()
 
-    checkpoints = SessionCheckpointStore(tmp_path / "checkpoints")
+    checkpoints = FileSessionRepository(tmp_path / "checkpoints")
     checkpoints.save(session)
     restored = checkpoints.load(session.session_id)
     restored_ref = restored.tool_executions["mcp-call"].result.artifacts[0]

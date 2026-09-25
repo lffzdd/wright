@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from wright.infrastructure.persistence.file_session_repo import CheckpointError, SessionCheckpointStore
+from wright.infrastructure.persistence.file_session_repo import CheckpointError, FileSessionRepository
 from ...domain.model.session import Session
 from wright.infrastructure.storage.skills import write_skill
 
@@ -20,7 +20,7 @@ def test_checkpoint_round_trips_catalog_flag_not_bodies(tmp_path: Path):
     )
     session = Session.create("goal", workspace)
     session.mark_skill_catalog_sent()
-    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    store = FileSessionRepository(tmp_path / "checkpoints")
     path = store.save(session)
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["session"]["skill_catalog_sent"] is True
@@ -36,7 +36,7 @@ def test_old_checkpoint_without_catalog_flag_still_loads(tmp_path: Path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     session = Session.create("goal", workspace)
-    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    store = FileSessionRepository(tmp_path / "checkpoints")
     path = store.save(session)
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload["session"].pop("skill_catalog_sent", None)
@@ -51,7 +51,7 @@ def test_checkpoint_rejects_non_boolean_catalog_flag(tmp_path: Path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     session = Session.create("goal", workspace)
-    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    store = FileSessionRepository(tmp_path / "checkpoints")
     path = store.save(session)
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload["session"]["skill_catalog_sent"] = "yes"

@@ -4,7 +4,7 @@ import pytest
 
 from wright.tests.responses import event, response
 
-from wright.infrastructure.persistence.file_session_repo import CheckpointError, SessionCheckpointStore
+from wright.infrastructure.persistence.file_session_repo import CheckpointError, FileSessionRepository
 from ..domain.model.session import Session, UsageRecord
 from wright.application.agent import create_agent
 from wright.interfaces.renderer import SilentRenderer
@@ -63,7 +63,7 @@ def test_checkpoint_round_trips_complete_session_state(tmp_path):
         "model": "run-selected-model", "transport": "responses"
     }
     original.active_deferred_tools = ["web_search", "schedule_task"]
-    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    store = FileSessionRepository(tmp_path / "checkpoints")
 
     path = store.save(original)
     restored = store.load(original.session_id)
@@ -111,7 +111,7 @@ def test_checkpoint_round_trips_complete_session_state(tmp_path):
 
 def test_committed_turn_marker_prevents_stale_running_checkpoint_replay(tmp_path):
     original = _populated_session(tmp_path)
-    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    store = FileSessionRepository(tmp_path / "checkpoints")
     path = store.save(original)
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload["session"]["runs"][payload["session"]["active_run_id"]]["status"] = "running"
@@ -141,7 +141,7 @@ def test_reopened_turn_revokes_its_commit_marker(tmp_path):
 
 def test_checkpoint_v2_without_project_fields_defaults_to_local(tmp_path):
     original = _populated_session(tmp_path)
-    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    store = FileSessionRepository(tmp_path / "checkpoints")
     path = store.save(original)
     payload = json.loads(path.read_text())
     for key in ("project_root", "environment", "base_commit", "branch_name"):
@@ -158,7 +158,7 @@ def test_checkpoint_v2_without_project_fields_defaults_to_local(tmp_path):
 
 def test_checkpoint_v2_user_content_is_migrated_to_text_part(tmp_path):
     original = _populated_session(tmp_path)
-    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    store = FileSessionRepository(tmp_path / "checkpoints")
     path = store.save(original)
     payload = json.loads(path.read_text())
     payload["version"] = 2
@@ -174,7 +174,7 @@ def test_checkpoint_v2_user_content_is_migrated_to_text_part(tmp_path):
 
 def test_restored_plan_continues_step_ids_without_collision(tmp_path):
     original = _populated_session(tmp_path)
-    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    store = FileSessionRepository(tmp_path / "checkpoints")
     store.save(original)
     restored = store.load(original.session_id)
 
@@ -186,7 +186,7 @@ def test_checkpoint_does_not_restore_live_autonomy_handles(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     session = Session.create("autonomous", workspace)
-    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    store = FileSessionRepository(tmp_path / "checkpoints")
 
     store.save(session)
     store.load(session.session_id)
@@ -202,7 +202,7 @@ def test_checkpoint_does_not_restore_live_autonomy_handles(tmp_path):
 
 
 def test_unknown_checkpoint_version_is_rejected(tmp_path):
-    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    store = FileSessionRepository(tmp_path / "checkpoints")
     store.directory.mkdir()
     path = store.path_for("abc123")
     path.write_text(json.dumps({"version": 999, "session": {}}))
@@ -232,14 +232,14 @@ def test_phase_two_v5_checkpoint_loads_without_request_context_estimate(tmp_path
 
 def test_checkpoint_refuses_missing_workspace(tmp_path):
     session = Session.create("goal", tmp_path / "missing")
-    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    store = FileSessionRepository(tmp_path / "checkpoints")
 
     with pytest.raises(CheckpointError, match="workspace_dir 不存在"):
         store.save(session)
 
 
 def test_latest_checkpoint_uses_most_recent_file(tmp_path):
-    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    store = FileSessionRepository(tmp_path / "checkpoints")
     first = _populated_session(tmp_path / "first")
     second = _populated_session(tmp_path / "second")
     store.save(first)
@@ -270,7 +270,7 @@ class FinalLLM:
 def test_agent_continues_running_checkpoint_without_new_user_message(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    store = FileSessionRepository(tmp_path / "checkpoints")
     first_session = Session.create("placeholder", workspace)
     first_agent = create_agent(
         CrashLLM(), [], first_session, SilentRenderer(), checkpoint_store=store
@@ -310,7 +310,7 @@ def test_pending_tool_calls_recover_as_unknown_instead_of_replaying(tmp_path):
         "tool_calls",
         [call],
     )
-    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    store = FileSessionRepository(tmp_path / "checkpoints")
     store.save(session)
 
     restored = store.load(session.session_id)
@@ -323,7 +323,7 @@ def test_pending_tool_calls_recover_as_unknown_instead_of_replaying(tmp_path):
 
 
 def test_list_recent_sessions(tmp_path):
-    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    store = FileSessionRepository(tmp_path / "checkpoints")
     s1 = _populated_session(tmp_path)
     store.save(s1)
 
@@ -335,7 +335,7 @@ def test_list_recent_sessions(tmp_path):
 
 
 def test_legacy_json_checkpoint_requires_the_preserved_version(tmp_path):
-    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    store = FileSessionRepository(tmp_path / "checkpoints")
     store.directory.mkdir()
     store.path_for("legacy").write_text(json.dumps({"version": 1, "session": {}}))
     with pytest.raises(CheckpointError, match="legacy-json-react"):
@@ -349,7 +349,7 @@ def test_recovery_inserts_all_missing_results_before_later_messages(tmp_path):
     # A successful call whose result had not reached the transcript before crash.
     session.record_tool_execution("c1", ToolResult.success("already finished"))
     session.append_message({"role": "user", "content": "later reminder"})
-    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    store = FileSessionRepository(tmp_path / "checkpoints")
     store.save(session)
     restored = store.load(session.session_id)
     wire = restored.wire_messages()
@@ -369,7 +369,7 @@ def test_checkpoint_snaps_cwd_back_when_outside_granted_roots(tmp_path):
     session = Session.create("outside cwd", workspace)
     session.add_working_directory(extra)
     session.set_cwd(tmp_path)
-    store = SessionCheckpointStore(tmp_path / "checkpoints")
+    store = FileSessionRepository(tmp_path / "checkpoints")
     store.save(session)
 
     restored = store.load(session.session_id)
