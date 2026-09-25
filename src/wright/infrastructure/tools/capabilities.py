@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from ...application.agent_background import AgentBackgroundRuntime
     from ..runtime import ExecutionPath
     from ...planning import PlanManager
-    from ...tasks import TaskService
+    from ...application.task_service import TaskService
 
 
 @dataclass(frozen=True)

@@ -18,6 +18,14 @@ from .events import ContentDelta, ContentDone, LLMEvent, ReasoningDelta, UsageEv
 from .checkpoint import SessionCheckpointStore
 from .coordination import AgentControlConfig, AgentControlError, AgentControlPlane, AgentTaskRecord
 from .runs import RunRecord, RunStatus
+from .tasks import (
+    TERMINAL_TASK_STATUSES,
+    RuntimeTask,
+    TaskKind,
+    TaskNotFoundError,
+    TaskStatus,
+    TaskWaitCancelled,
+)
 
 __all__ = [
     "AgentControlConfig",
@@ -37,9 +45,15 @@ __all__ = [
     "ReasoningDelta",
     "RunRecord",
     "RunStatus",
+    "RuntimeTask",
     "Session",
     "SessionCheckpointStore",
     "SessionLifecycle",
+    "TERMINAL_TASK_STATUSES",
+    "TaskKind",
+    "TaskNotFoundError",
+    "TaskStatus",
+    "TaskWaitCancelled",
     "ToolAccess",
     "ToolCall",
     "ToolExecutionRecord",

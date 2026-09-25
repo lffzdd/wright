@@ -12,7 +12,7 @@ from ...autonomy import (
 )
 from ...autonomy.triggers import probe_public_web_page
 from ...domain.session import Session
-from ...tasks import TaskService
+from wright.application.task_service import TaskService
 
 
 def _store(tmp_path, session_id="session"):

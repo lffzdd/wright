@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...tasks import TaskNotFoundError, TaskService, TaskWaitCancelled
+from ...domain.model.tasks import TaskNotFoundError, TaskWaitCancelled
+from ...application.task_service import TaskService
 from ...domain.tool_protocol import ToolAccess, ToolResult
 from .base import Tool
 from .runtime import ToolRuntime

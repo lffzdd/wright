@@ -59,9 +59,12 @@ class IMemoryStore(ABC):
         ...
 
 
+from .task_backend import TaskBackend
+
 __all__ = [
     "ILLMProvider",
     "IToolExecutor",
     "ISessionRepository",
     "IMemoryStore",
+    "TaskBackend",
 ]

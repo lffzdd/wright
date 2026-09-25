@@ -6,7 +6,8 @@ from wright.application.tool_runtime import tool_runtime_for_session
 from ..domain.session import Session
 from wright.application.tool_dispatcher import ToolExecutor
 from wright.domain.policy import ToolAccess
-from ..tasks import TaskNotFoundError, TaskService
+from wright.domain.model.tasks import TaskNotFoundError
+from wright.application.task_service import TaskService
 from wright.application.tool_capabilities import assemble_tool_capabilities
 from wright.domain.tool_protocol import ToolCall, ToolResult
 from wright.infrastructure.tools.base import Tool

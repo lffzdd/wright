@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from ..infrastructure.runtime import ExecutionBackend, LocalExecutionBackend
 from ..domain.policy.types import AuthorizationChange
 from ..core.processes import RuntimeResources
-from ..tasks import TaskService
+from .task_service import TaskService
 from ..infrastructure.tools.capabilities import (
     BackgroundTaskOperations,
     DelegationOperations,

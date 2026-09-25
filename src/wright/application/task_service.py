@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING
 
-from ..domain.coordination import AgentControlError, AgentTaskRecord
 from ..core.processes import ProcessRegistry, RuntimeResources, terminate_process_tree
-from .types import (
+from ..domain.coordination import AgentControlError, AgentTaskRecord
+from ..domain.gateway.task_backend import TaskBackend
+from ..domain.model.tasks import (
     RuntimeTask,
     TaskKind,
     TaskNotFoundError,
@@ -17,27 +18,7 @@ from .types import (
 )
 
 if TYPE_CHECKING:
-    from ..application.services import RuntimeServices
-
-
-@runtime_checkable
-class TaskBackend(Protocol):
-    """Adapter contract; a backend remains the owner of its task state."""
-
-    kind: TaskKind
-
-    def get(self, task_id: str) -> RuntimeTask | None: ...
-
-    def list(self) -> list[RuntimeTask]: ...
-
-    def wait(
-        self,
-        task_id: str,
-        timeout: float | None,
-        cancellation_check: Callable[[], bool] | None = None,
-    ) -> RuntimeTask: ...
-
-    def cancel(self, task_id: str, reason: str) -> RuntimeTask: ...
+    from .services import RuntimeServices
 
 
 class AgentTaskBackend:
@@ -302,3 +283,13 @@ class TaskService:
             if task is not None:
                 return backend, task
         raise TaskNotFoundError(f"Unknown task_id: {task_id}")
+
+
+__all__ = [
+    "AgentTaskBackend",
+    "ShellTaskBackend",
+    "TaskBackend",
+    "TaskNotFoundError",
+    "TaskService",
+    "TaskWaitCancelled",
+]

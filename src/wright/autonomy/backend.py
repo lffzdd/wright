@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 
-from ..tasks.types import (
+from ..domain.model.tasks import (
     RuntimeTask,
     TaskKind,
     TaskNotFoundError,

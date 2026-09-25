@@ -1,7 +1,7 @@
 """Shared, read-only task model exposed to callers and the LLM.
 
 Execution-specific state remains in its owner (the Agent control plane or the
-shell background-task registry).  ``RuntimeTask`` is a projection, not another
+shell background-task registry). ``RuntimeTask`` is a projection, not another
 state machine.
 """
 
