@@ -178,7 +178,7 @@ def test_console_live_takes_a_snapshot_not_a_callback(monkeypatch):
         def stop(self):
             captured["stopped"] = True
 
-    monkeypatch.setattr("wright.renderer.Live", FakeLive)
+    monkeypatch.setattr("wright.interfaces.renderer.Live", FakeLive)
     renderer = ConsoleRenderer()
     renderer._can_live = lambda: True
     renderer.on_content_delta("hello")

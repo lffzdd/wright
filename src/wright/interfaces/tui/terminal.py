@@ -31,4 +31,4 @@ def configure_terminal(
         # we own the protocol choice; it reports Shift+Enter while preserving
         # ordinary control shortcuts.
         if environment["TEXTUAL_DISABLE_KITTY_KEY"] == "1":
-            environment.setdefault("TEXTUAL_DRIVER", "wright.tui.driver:ItermDriver")
+            environment.setdefault("TEXTUAL_DRIVER", "wright.interfaces.tui.driver:ItermDriver")

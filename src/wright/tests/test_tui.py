@@ -138,7 +138,7 @@ def test_terminal_selects_iterm_compatibility_driver():
     environment = {"TERM_PROGRAM": "iTerm.app"}
     configure_terminal(environment, "darwin")
     assert environment["TEXTUAL_DISABLE_KITTY_KEY"] == "1"
-    assert environment["TEXTUAL_DRIVER"] == "wright.tui.driver:ItermDriver"
+    assert environment["TEXTUAL_DRIVER"] == "wright.interfaces.tui.driver:ItermDriver"
 
 
 def test_terminal_uses_default_driver_outside_iterm_and_keeps_user_override():

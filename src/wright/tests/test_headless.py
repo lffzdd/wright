@@ -4,7 +4,7 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 
-from .. import headless
+from wright.interfaces import headless
 from wright.application.runtime import RuntimeConfig
 
 
