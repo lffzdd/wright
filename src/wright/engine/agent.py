@@ -26,6 +26,9 @@ from ..tools.base import Tool
 from ..tools.tool_search import MAX_ACTIVE_DEFERRED_TOOLS, make_tool_search_tool
 from ..ui_events import EventPublisher, RendererEventSubscriber, SessionEvents
 from ..util import build_tool_results_messages, estimate_message_tokens
+from .agent_prompt import AgentPromptManager
+from .agent_turns import AgentTurnHandler, RetryCounters, _RetryCounters
+from .agent_usage import AgentUsageTracker
 from .cancellation import CancellationToken
 from .context import ContextBudgetExceeded, ContextBuilder, ContextCompactor
 from .executor import ToolExecutor
@@ -269,13 +272,6 @@ def create_agent(
     return agent
 
 
-@dataclass
-class _RetryCounters:
-    invalid: int = 0
-    verifier: int = 0
-    hook: int = 0
-
-
 class Agent:
     _TERMINAL_MARKERS: ClassVar[dict[str, str]] = {
         "failed": "mark_failed",
@@ -345,6 +341,19 @@ class Agent:
         self.context_builder = components.context_builder
         self.compactor = self.context_builder.compactor
         self.executor = components.executor
+
+        self._usage_tracker = AgentUsageTracker(
+            session_state,
+            events,
+            usage_observer=usage_observer,
+            has_live_agent_tasks=self._has_live_agent_tasks,
+        )
+        self._prompt_manager = AgentPromptManager(
+            session_state,
+            skills=skills,
+            schema_tools=self._schema_tools,
+        )
+        self._turn_handler = AgentTurnHandler(self)
 
     @property
     def context_limit(self) -> int | None:
@@ -547,51 +556,19 @@ class Agent:
         return response, usage_record
 
     def _plan_reminder(self) -> dict | None:
-        block = self.session_state.plan_manager.to_prompt_block()
-        # 计划字段由模型工具调用产生，最终也可能来自不可信用户文本；保持 user role，
-        # 并由 to_prompt_block 的 JSON 数据边界明确它不具备指令权限。
-        return {"role": "user", "content": block} if block else None
+        return self._prompt_manager.plan_reminder()
 
     def _ensure_skill_catalog(self) -> None:
-        """会话里只把 skill 目录写入 transcript 一次。"""
-        # load_skill 走按需发现时，普通对话不应背整个技能目录；它被 tool_search
-        # 激活后的下一次模型调用，才需要目录来选择具体 skill_id。
-        load_skill = next(
-            (tool for tool in self._schema_tools if tool.name == "load_skill"),
-            None,
-        )
-        if (
-            load_skill is not None
-            and load_skill.defer_to_model
-            and "load_skill" not in self._active_deferred_tools
-        ):
-            return
-        if self.skills is None or self.session_state.skill_catalog_sent:
-            return
-        catalog = catalog_reminder(self.skills.list_metas())
-        if catalog:
-            self.session_state.append_message({"role": "user", "content": catalog})
-        self.session_state.mark_skill_catalog_sent()
+        self._prompt_manager.ensure_skill_catalog(self._active_deferred_tools)
 
     def _ephemeral_reminders(self) -> list[dict]:
-        """本轮才需要、不能落进会话记录的提醒。目前只有最新计划块。"""
-        reminders: list[dict] = []
-        plan = self._plan_reminder()
-        if plan is not None:
-            reminders.append(plan)
-        return reminders
+        return self._prompt_manager.ephemeral_reminders()
 
     def _record_auxiliary_usage(self, usage: UsageRecord) -> None:
-        self.session_state.add_usage(usage)
-        self._notify_usage(usage)
+        self._usage_tracker.record_auxiliary_usage(usage)
 
     def _render_usage_summary(self) -> None:
-        if self._has_live_agent_tasks(self.session_state.agent_root_turn_id):
-            return
-        usage = self.session_state.task_usage()
-        self.ui.on_usage_summary(
-            usage.prompt_tokens, usage.completion_tokens, usage.total_tokens,
-        )
+        self._usage_tracker.render_usage_summary()
 
     def _record_usage_for_turn(
         self,
@@ -599,16 +576,12 @@ class Agent:
         usage_record: UsageRecord,
         transient_plan_tokens: int,
     ) -> None:
-        self.session_state.record_usage_for_turn(turn_record, usage_record)
-        self._notify_usage(usage_record)
+        self._usage_tracker.record_usage_for_turn(
+            turn_record, usage_record, transient_plan_tokens
+        )
 
     def _notify_usage(self, usage_record: UsageRecord) -> None:
-        if self._usage_observer is not None:
-            try:
-                self._usage_observer(usage_record)
-            except Exception:
-                # 计量旁路失败不能破坏当前消息账本；控制面仍可用 step 上限止损。
-                logger.debug("usage observer failed", exc_info=True)
+        self._usage_tracker.notify_usage(usage_record)
 
     def _bind_executor_run(self) -> None:
         """Reassemble tool capabilities after the active Run is known."""
@@ -949,124 +922,14 @@ class Agent:
         *,
         record_memory: bool,
     ) -> tuple[str | None, str]:
-        """Return (final_answer, outcome) where outcome is
-        'done' | 'retry' | 'terminated' | 'cancelled'."""
-        turn_record = self.session_state.record_assistant_turn(
-            assistant_raw=content,
-            parsed=turn.parsed,
-            assistant_message=turn.assistant_message,
-            route="final",
+        return self._turn_handler.handle_final_turn(
+            turn,
+            content,
+            usage_record,
+            transient_plan_tokens,
+            counters,
+            record_memory=record_memory,
         )
-        self._record_run_event(
-            "model_step",
-            {
-                "session_run_id": turn_record.run_id,
-                "step_id": turn_record.step_id,
-                "route": "final",
-                "content": content,
-                "parsed": turn.parsed,
-                "usage": (
-                    {
-                        "prompt_tokens": usage_record.prompt_tokens,
-                        "completion_tokens": usage_record.completion_tokens,
-                        "total_tokens": usage_record.total_tokens,
-                    }
-                    if usage_record is not None else {}
-                ),
-            },
-            event_key=f"step:{turn_record.step_id}",
-        )
-        if usage_record is not None:
-            self._record_usage_for_turn(
-                turn_record, usage_record, transient_plan_tokens
-            )
-        if self._stop_if_cancelled(record_memory=record_memory):
-            return None, "cancelled"
-
-        verification = (
-            self.verifier.verify(self.session_state, turn.final_answer)
-            if self.verifier
-            else None
-        )
-        if verification is not None:
-            self.session_state.record_verification(
-                turn_record,
-                verification.approved,
-                [issue.to_dict() for issue in verification.issues],
-            )
-            if not verification.approved:
-                counters.verifier += 1
-                self.ui.on_completion_rejected(verification.issues)
-                self.session_state.append_message(
-                    verification.feedback_message()
-                )
-                self._checkpoint()
-                if counters.verifier >= self.max_verification_retries:
-                    self._terminate(
-                        "failed",
-                        reason="completion verification retry limit",
-                        message="最终答案连续未通过完成验证，任务终止。",
-                        record_memory=record_memory,
-                    )
-                    return None, "terminated"
-                return None, "retry"
-            counters.verifier = 0
-
-        # Persist the terminal state before advertising completion.  If the
-        # process closes immediately after agent_stop, resume must observe a
-        # completed root turn instead of replaying the same prompt.  A rejecting
-        # lifecycle hook rolls the candidate back to running below.
-        self.session_state.mark_completed()
-        self._checkpoint()
-        stop_decision = self._emit_agent_stop(
-            "completed", final_answer=turn.final_answer
-        )
-        if stop_decision is not None and stop_decision.decision == "deny":
-            counters.hook += 1
-            active_run = self.session_state.active_run()
-            if active_run is not None:
-                active_run.resume_after_rejection()
-            self.session_state.revoke_turn_commit()
-            self.session_state.append_message({
-                "role": "user",
-                "content": json.dumps(
-                    {
-                        "error": "agent_stop hook rejected completion",
-                        "reason": stop_decision.reason,
-                    },
-                    ensure_ascii=False,
-                ),
-            })
-            self._checkpoint()
-            if counters.hook >= self.max_verification_retries:
-                self._terminate(
-                    "failed",
-                    reason="agent_stop hook retry limit",
-                    message="最终答案连续未通过 lifecycle hook，任务终止。",
-                    record_memory=record_memory,
-                )
-                return None, "terminated"
-            return None, "retry"
-        counters.hook = 0
-
-        self.ui.on_final(turn.final_answer)
-        active_run = self.session_state.active_run()
-        if active_run is not None:
-            self.runtime_resources.finish_response(active_run.run_id)
-        # 每个终态都记录 episode；只有成功回合才提取长期语义记忆。
-        # 若同 turn 仍有后台 Agent，等最后一条 runtime notification
-        # 收口后再一次性写 episode，避免把 running 摘要永久固化。
-        if (
-            record_memory
-            and not self._has_live_agent_tasks(
-                self.session_state.agent_root_turn_id
-            )
-        ):
-            self._finalize_memory(
-                turn.final_answer, extract_semantic=True
-            )
-        self._checkpoint()
-        return turn.final_answer, "done"
 
     def _handle_tool_calls_turn(
         self,
@@ -1077,90 +940,13 @@ class Agent:
         *,
         record_memory: bool,
     ) -> bool:
-        """Return False if the run was cancelled mid-turn."""
-        turn_record = self.session_state.record_assistant_turn(
-            assistant_raw=content,
-            parsed=turn.parsed,
-            assistant_message=turn.assistant_message,
-            route="tool_calls",
-            tool_calls=turn.tool_calls,
+        return self._turn_handler.handle_tool_calls_turn(
+            turn,
+            content,
+            usage_record,
+            transient_plan_tokens,
+            record_memory=record_memory,
         )
-        self._record_run_event(
-            "model_step",
-            {
-                "session_run_id": turn_record.run_id,
-                "step_id": turn_record.step_id,
-                "route": "tool_calls",
-                "content": content,
-                "parsed": turn.parsed,
-                "tool_call_ids": [call.id for call in turn.tool_calls],
-                "usage": (
-                    {
-                        "prompt_tokens": usage_record.prompt_tokens,
-                        "completion_tokens": usage_record.completion_tokens,
-                        "total_tokens": usage_record.total_tokens,
-                    }
-                    if usage_record is not None else {}
-                ),
-            },
-            event_key=f"step:{turn_record.step_id}",
-        )
-        if usage_record is not None:
-            self._record_usage_for_turn(
-                turn_record, usage_record, transient_plan_tokens
-            )
-        if self._stop_if_cancelled(record_memory=record_memory):
-            cancelled = []
-            for call in turn.tool_calls:
-                result = ToolResult.fail("Cancelled before tool execution")
-                self.session_state.record_tool_execution(call.id, result)
-                cancelled.append((call, result))
-            for message in build_tool_results_messages(cancelled):
-                self.session_state.append_message(message)
-            self._checkpoint()
-            return False
-
-        # 工具副作用前先落 pending checkpoint。若进程在调用期间崩溃，
-        # 恢复层会把这些调用标成 outcome unknown 并要求模型先检查现场，
-        # 不会把同一个写操作静默重放。
-        self._checkpoint()
-        self.executor.bind_step(turn_record.step_id)
-
-        outcomes = self.executor.execute(
-            turn.tool_calls,
-            on_call=self.ui.on_tool_call,
-            on_phase=self.ui.on_tool_phase,
-            on_result=self.ui.on_tool_result,
-        )
-
-        for outcome in outcomes:
-            self.session_state.record_tool_execution(
-                call_id=outcome.call.id,
-                result=outcome.result,
-                status=outcome.status,
-            )
-
-        for message in build_tool_results_messages(
-            [(outcome.call, outcome.result) for outcome in outcomes]
-        ):
-            self.session_state.append_message(message)
-        self._checkpoint()
-        if any(
-            isinstance(outcome.result.data, dict)
-            and outcome.result.data.get("outcome") == "unknown"
-            for outcome in outcomes
-        ):
-            # A durable side effect ran but its commit failed.  Giving the
-            # model another turn would invite an untracked retry of the same
-            # operation, so leave an explicit failed/unknown boundary.
-            self._terminate(
-                "failed",
-                reason="tool execution outcome unknown",
-                message="工具已执行但结果未能可靠持久化；不会自动重试副作用。",
-                record_memory=record_memory,
-            )
-            return False
-        return True
 
     def _handle_invalid_turn(
         self,
@@ -1172,55 +958,14 @@ class Agent:
         *,
         record_memory: bool,
     ) -> str:
-        """Return 'retry' | 'terminated' | 'cancelled'."""
-        counters.invalid += 1
-        turn_record = self.session_state.record_invalid_turn(
-            response.content,
-            f"LLM output could not be parsed or routed: {error}",
-            parsed={
-                "response": response.assistant_message(),
-                "finish_reason": response.finish_reason,
-            },
+        return self._turn_handler.handle_invalid_turn(
+            response,
+            error,
+            usage_record,
+            transient_plan_tokens,
+            counters,
+            record_memory=record_memory,
         )
-        self._record_run_event(
-            "model_step",
-            {
-                "session_run_id": turn_record.run_id,
-                "step_id": turn_record.step_id,
-                "route": "invalid",
-                "content": response.content,
-                "error": str(error),
-                "finish_reason": response.finish_reason,
-            },
-            event_key=f"step:{turn_record.step_id}",
-        )
-        if usage_record is not None:
-            self._record_usage_for_turn(
-                turn_record, usage_record, transient_plan_tokens
-            )
-        if self._stop_if_cancelled(record_memory=record_memory):
-            return "cancelled"
-
-        if counters.invalid >= self.max_consecutive_invalid:
-            self._terminate(
-                "failed",
-                reason="invalid output retry limit",
-                message=(
-                    f"连续 {counters.invalid} 轮输出无法解析，任务终止。"
-                ),
-                record_memory=record_memory,
-            )
-            return "terminated"
-
-        self.session_state.append_message({
-            "role": "user",
-            "content": json.dumps(
-                {"error": f"LLM output could not be parsed or routed: {error}"},
-                ensure_ascii=False,
-            ),
-        })
-        self._checkpoint()
-        return "retry"
 
     def _run_loop(
         self, max_steps: int, *, record_memory: bool = True,
