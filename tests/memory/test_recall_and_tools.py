@@ -3,10 +3,15 @@
 import json
 from pathlib import Path
 
-from wright.tests.responses import event
-
-from wright.application.memory.recall import build_recall_block, find_relevant_memories
-from wright.infrastructure.persistence.memory import write_memory_file
+from tests.responses import event
+from wright.application.memory.memory_service import MemoryService
+from wright.domain.model.events import ContentDelta
+from wright.infrastructure.persistence.memory import (
+    EpisodeStore,
+    SemanticMemoryStore,
+    write_memory_file,
+)
+from wright.infrastructure.persistence.memory.selector import LlmContextSelector
 from wright.infrastructure.tools.memory import (
     build_memory_tools,
     create_memory,
@@ -27,13 +32,21 @@ class FakeLLM:
         yield event(content=self._content, reasoning="")
 
 
+def _service(tmp_path: Path, llm) -> MemoryService:
+    return MemoryService(
+        SemanticMemoryStore(tmp_path),
+        EpisodeStore(tmp_path),
+        selector=LlmContextSelector(llm),
+    )
+
+
 def test_find_relevant_filters_to_valid_filenames(tmp_path: Path):
     write_memory_file("alpha", "about bun", "feedback", "x", directory=tmp_path)
     write_memory_file("beta", "about cats", "user", "y", directory=tmp_path)
     # 选择器返回一个合法 + 一个不存在的文件名,后者应被过滤
     llm = FakeLLM({"selected_memories": ["alpha.md", "ghost.md"]})
-    paths = find_relevant_memories("用 bun", llm, directory=tmp_path)
-    assert [p.name for p in paths] == ["alpha.md"]
+    context = _service(tmp_path, llm).prepare_memory_context("用 bun")
+    assert [record.path.name for record in context.memories] == ["alpha.md"]
 
 
 def test_find_relevant_empty_on_bad_json(tmp_path: Path):
@@ -43,12 +56,16 @@ def test_find_relevant_empty_on_bad_json(tmp_path: Path):
         def __call__(self, messages, **kwargs):
             yield event(content="not json", reasoning="")
 
-    assert find_relevant_memories("q", BadLLM(), directory=tmp_path) == []
+    context = _service(tmp_path, BadLLM()).prepare_memory_context("q")
+    assert context.memories == ()
+    assert context.episodes == ()
 
 
 def test_find_relevant_no_files(tmp_path: Path):
     llm = FakeLLM({"selected_memories": []})
-    assert find_relevant_memories("q", llm, directory=tmp_path) == []
+    context = _service(tmp_path, llm).prepare_memory_context("q")
+    assert context.memories == ()
+    assert context.semantic_text == ""
 
 
 def test_build_recall_block_wraps_in_reminder(tmp_path: Path):
@@ -57,11 +74,25 @@ def test_build_recall_block_wraps_in_reminder(tmp_path: Path):
 
     rebuild_index(tmp_path)
     llm = FakeLLM({"selected_memories": ["alpha.md"]})
-    block = build_recall_block("用 bun 吗", llm, directory=tmp_path)
-    assert block.startswith("<system-reminder>")
+    context = _service(tmp_path, llm).prepare_memory_context("用 bun 吗")
+    block = context.semantic_text
+    assert block.startswith("<system-reminder")
     assert block.rstrip().endswith("</system-reminder>")
     assert "正文B" in block  # 选中记忆全文被注入
     assert "MEMORY.md" in block  # 索引也在
+    assert "wright-semantic-recall" in block
+
+
+def test_selector_ignores_streaming_deltas(tmp_path: Path):
+    write_memory_file("alpha", "about bun", "feedback", "正文", directory=tmp_path)
+
+    class StreamingLLM:
+        def __call__(self, messages, **kwargs):
+            yield ContentDelta(piece='{"selected_memories": ["ghost.md"], ')
+            yield event(content='{"selected_memories": ["alpha.md"], "selected_episodes": []}')
+
+    context = _service(tmp_path, StreamingLLM()).prepare_memory_context("bun")
+    assert [record.path.name for record in context.memories] == ["alpha.md"]
 
 
 def test_create_memory_tool_writes_and_indexes(tmp_path: Path):

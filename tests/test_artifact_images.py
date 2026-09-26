@@ -6,18 +6,17 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from wright.infrastructure.storage.artifacts import ArtifactStore
-from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
-from wright.domain.model.session import Session
+from tests.test_attachments import _png_bytes
+from tests.test_llm import _client, _reply, _responses_client
 from wright.application.agent import create_agent
-from wright.domain.policy import ToolAccess
-from wright.interfaces.renderer import SilentRenderer
+from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolResult
+from wright.domain.policy import ToolAccess
+from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
+from wright.infrastructure.storage.artifacts import ArtifactStore
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.mcp_client import _to_tool_result
-
-from .test_attachments import _png_bytes
-from .test_llm import _client, _reply, _responses_client
+from wright.interfaces.renderer import SilentRenderer
 
 
 @pytest.mark.parametrize("data,media_type", [

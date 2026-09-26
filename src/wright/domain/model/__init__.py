@@ -2,6 +2,55 @@
 
 from __future__ import annotations
 
+from .agent import (
+    AgentProfile,
+    AgentState,
+    CapabilityCatalog,
+    CapabilityError,
+    CapabilitySnapshot,
+)
+from .autonomy import (
+    TERMINAL_DURABLE_RUN_STATUSES,
+    AutomationRecord,
+    AutomationStatus,
+    DurableRunRecord,
+    DurableRunStatus,
+    RecoveryPolicy,
+    TriggerSpec,
+    TriggerType,
+)
+from .coordination import (
+    AgentControlConfig,
+    AgentControlError,
+    AgentControlPlane,
+    AgentTaskRecord,
+)
+from .events import ContentDelta, ContentDone, LLMEvent, ReasoningDelta, UsageEvent
+from .knowledge import KnowledgeHit, KnowledgeUnavailable
+from .memory import (
+    SEMANTIC_MEMORY_TYPES,
+    CoreMemory,
+    EpisodeNotFoundError,
+    EpisodeRecord,
+    EpisodeStatus,
+    EpisodeStoreError,
+    SemanticMemoryAlreadyExistsError,
+    SemanticMemoryHeader,
+    SemanticMemoryNotFoundError,
+    SemanticMemoryRecord,
+    SemanticMemoryStoreError,
+    SemanticMemoryType,
+    parse_semantic_memory_type,
+)
+from .planning import (
+    PlanError,
+    PlanManager,
+    PlanStatus,
+    PlanStep,
+    PlanStepStatus,
+)
+from .request import ModelRequest
+from .runs import RunRecord, RunStatus
 from .session import (
     ConversationMessage,
     ConversationPart,
@@ -15,18 +64,12 @@ from .session import (
     UsageRecord,
     UserTurnInput,
 )
-from .tool import ArtifactRef, ToolAccess, ToolCall, ToolDefinition, ToolResult
-from .request import ModelRequest
-from .agent import (
-    AgentProfile,
-    AgentState,
-    CapabilityCatalog,
-    CapabilityError,
-    CapabilitySnapshot,
+from .skills import (
+    SkillDefinition,
+    SkillMeta,
+    SkillNotFoundError,
+    SkillStoreError,
 )
-from .events import ContentDelta, ContentDone, LLMEvent, ReasoningDelta, UsageEvent
-from .coordination import AgentControlConfig, AgentControlError, AgentControlPlane, AgentTaskRecord
-from .runs import RunRecord, RunStatus
 from .tasks import (
     TERMINAL_TASK_STATUSES,
     RuntimeTask,
@@ -35,52 +78,12 @@ from .tasks import (
     TaskStatus,
     TaskWaitCancelled,
 )
-from .planning import (
-    PlanError,
-    PlanManager,
-    PlanStatus,
-    PlanStep,
-    PlanStepStatus,
-)
-from .knowledge import KnowledgeHit, KnowledgeUnavailable
-from .skills import (
-    SkillDefinition,
-    SkillMeta,
-    SkillNotFoundError,
-    SkillStoreError,
-)
-from .memory import (
-    CoreMemory,
-    Episode,
-    EpisodeNotFoundError,
-    EpisodeOutcome,
-    EpisodeRecord,
-    EpisodeStatus,
-    EpisodeStoreError,
-    Fact,
-    FactCategory,
-    FactScope,
-    MEMORY_TYPES,
-    MemoryAlreadyExistsError,
-    MemoryHeader,
-    MemoryNotFoundError,
-    MemoryRecord,
-    MemoryStoreError,
-    MemoryType,
-    parse_memory_type,
-)
-from .autonomy import (
-    AutomationRecord,
-    AutomationStatus,
-    DurableRunRecord,
-    DurableRunStatus,
-    RecoveryPolicy,
-    TERMINAL_DURABLE_RUN_STATUSES,
-    TriggerSpec,
-    TriggerType,
-)
+from .tool import ArtifactRef, ToolAccess, ToolCall, ToolDefinition, ToolResult
 
 __all__ = [
+    "SEMANTIC_MEMORY_TYPES",
+    "TERMINAL_DURABLE_RUN_STATUSES",
+    "TERMINAL_TASK_STATUSES",
     "AgentControlConfig",
     "AgentControlError",
     "AgentControlPlane",
@@ -96,25 +99,13 @@ __all__ = [
     "CoreMemory",
     "DurableRunRecord",
     "DurableRunStatus",
-    "Episode",
     "EpisodeNotFoundError",
-    "EpisodeOutcome",
     "EpisodeRecord",
     "EpisodeStatus",
     "EpisodeStoreError",
-    "Fact",
-    "FactCategory",
-    "FactScope",
     "KnowledgeHit",
     "KnowledgeUnavailable",
     "LLMEvent",
-    "MEMORY_TYPES",
-    "MemoryAlreadyExistsError",
-    "MemoryHeader",
-    "MemoryNotFoundError",
-    "MemoryRecord",
-    "MemoryStoreError",
-    "MemoryType",
     "MessageRecord",
     "ModelRequest",
     "PlanError",
@@ -127,14 +118,18 @@ __all__ = [
     "RunRecord",
     "RunStatus",
     "RuntimeTask",
+    "SemanticMemoryAlreadyExistsError",
+    "SemanticMemoryHeader",
+    "SemanticMemoryNotFoundError",
+    "SemanticMemoryRecord",
+    "SemanticMemoryStoreError",
+    "SemanticMemoryType",
     "Session",
     "SessionLifecycle",
     "SkillDefinition",
     "SkillMeta",
     "SkillNotFoundError",
     "SkillStoreError",
-    "TERMINAL_DURABLE_RUN_STATUSES",
-    "TERMINAL_TASK_STATUSES",
     "TaskKind",
     "TaskNotFoundError",
     "TaskStatus",

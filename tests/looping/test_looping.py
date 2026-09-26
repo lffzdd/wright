@@ -5,10 +5,7 @@ import time
 
 import pytest
 
-from wright.tests.responses import event, response
-
-from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
-from ...domain.model.session import Session
+from tests.responses import event, response
 from wright.application.agent import create_agent
 from wright.application.looping import (
     LoopError,
@@ -16,10 +13,12 @@ from wright.application.looping import (
     parse_interval,
     parse_loop_command,
 )
-from wright.interfaces.renderer import SilentRenderer
+from wright.domain.model.session import Session
+from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
 from wright.infrastructure.tools.capabilities import RunScope, ToolCapabilities
 from wright.infrastructure.tools.loop_tools import manage_loop_tool
 from wright.infrastructure.tools.runtime import ToolRuntime
+from wright.interfaces.renderer import SilentRenderer
 
 
 def _final(answer):

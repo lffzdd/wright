@@ -6,14 +6,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from ..domain.model.session import Session
-from wright.interfaces.interaction import InteractionBroker
 from wright.core.processes import RuntimeResources
-from wright.infrastructure.workspace.project import ProjectContext
+from wright.domain.model.session import Session
 from wright.domain.model.tool import ArtifactRef, ToolCall, ToolResult
+from wright.infrastructure.workspace.project import ProjectContext
+from wright.interfaces.interaction import InteractionBroker
 from wright.interfaces.ui_events import EventPublisher
 from wright.interfaces.web import runtime_manager as runtime_module
-from wright.interfaces.web.runtime_manager import RuntimeManager, RuntimeManagerError, SessionHandle
+from wright.interfaces.web.runtime_manager import (
+    RuntimeManager,
+    RuntimeManagerError,
+    SessionHandle,
+)
 
 
 def _fake_runtime(session_id, root):
@@ -371,9 +375,9 @@ def test_project_exposes_configured_models_not_a_hardcoded_default(monkeypatch, 
 
 
 def test_closed_local_session_can_be_replaced_without_losing_its_schedules(monkeypatch, tmp_path):
+    from tests.responses import response
     from wright.application import runtime as assembly
-    from ..domain.model.autonomy import TriggerSpec
-    from .responses import response
+    from wright.domain.model.autonomy import TriggerSpec
 
     class Model:
         model = "offline"

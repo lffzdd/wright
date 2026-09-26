@@ -239,6 +239,10 @@ def _serialize_session(session: Session) -> dict[str, Any]:
             "agent_task_id": session.agent_task_id,
             "agent_root_turn_id": session.agent_root_turn_id,
             "committed_turn_ids": list(session.committed_turn_ids),
+            "pending_episode_finalizes": _json_safe(session.pending_episode_finalizes),
+            "semantic_extract_receipts": _json_safe(
+                getattr(session, "semantic_extract_receipts", {}) or {}
+            ),
             "last_usage": _serialize_usage(session.last_usage),
             "total_usage": _serialize_usage(session.total_usage),
             "task_usage_start": _serialize_usage(session.task_usage_start),
@@ -376,6 +380,12 @@ def _deserialize_session(payload: Any) -> Session:
     ):
         raise CheckpointError("committed_turn_ids 必须是非空字符串数组")
     committed_turn_ids = list(dict.fromkeys(committed_value))[-1_000:]
+    pending_episode_finalizes = _deserialize_pending_episodes(
+        data.get("pending_episode_finalizes", [])
+    )
+    semantic_extract_receipts = _deserialize_extract_receipts(
+        data.get("semantic_extract_receipts", {})
+    )
 
     step_count = _nonnegative_int(data.get("step_count"), "step_count")
     active_turn_start_step = _nonnegative_int(
@@ -442,6 +452,8 @@ def _deserialize_session(payload: Any) -> Session:
         agent_task_id=agent_task_id,
         agent_root_turn_id=agent_root_turn_id,
         committed_turn_ids=committed_turn_ids,
+        pending_episode_finalizes=pending_episode_finalizes,
+        semantic_extract_receipts=semantic_extract_receipts,
         active_turn_start_step=active_turn_start_step,
         active_turn_start_message_index=active_turn_start_message_index,
         last_usage=_deserialize_usage(data.get("last_usage"), "last_usage"),
@@ -514,6 +526,47 @@ def _checkpoint_run_status(session_info: dict[str, Any]) -> str:
     # v2-v4 files persisted this as session status.
     value = session_info.get("status", "idle")
     return value if isinstance(value, str) else "idle"
+
+
+def _deserialize_extract_receipts(value: Any) -> dict[str, dict[str, Any]]:
+    """Old checkpoints omit the field. A bad value does not block resume."""
+    if not isinstance(value, dict):
+        return {}
+    receipts: dict[str, dict[str, Any]] = {}
+    for key, item in list(value.items())[:200]:
+        if not isinstance(key, str) or not key or not isinstance(item, dict):
+            continue
+        status = item.get("status")
+        reasons = item.get("reason_codes", [])
+        written = item.get("written", 0)
+        if not isinstance(status, str) or not isinstance(reasons, list):
+            continue
+        if isinstance(written, bool) or not isinstance(written, int):
+            written = 0
+        receipts[key[:200]] = {
+            "status": status[:40],
+            "reason_codes": [str(reason)[:80] for reason in reasons[:20]],
+            "written": max(0, written),
+            "root_run_id": str(item.get("root_run_id") or key)[:200],
+        }
+    return receipts
+
+
+def _deserialize_pending_episodes(value: Any) -> list[dict[str, Any]]:
+    """Old checkpoints omit the field; callers pass ``[]`` in that case."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise CheckpointError("pending_episode_finalizes 必须是数组")
+    pending: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise CheckpointError("pending episode finalize 必须是对象")
+        episode = item.get("episode")
+        if episode is not None and not isinstance(episode, dict):
+            raise CheckpointError("pending episode 必须是对象")
+        pending.append(item)
+    return pending
 
 
 def _deserialize_attachments(value: Any) -> dict[str, AttachmentRecord]:

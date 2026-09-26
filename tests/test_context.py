@@ -4,10 +4,33 @@ import json
 from copy import deepcopy
 from pathlib import Path
 
-from wright.domain.model.session import Session
 from wright.application.agent import ContextBuilder, ContextCompactor, create_agent
-from wright.interfaces.renderer import SilentRenderer
+from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
+from wright.interfaces.renderer import SilentRenderer
+from wright.utils import estimate_message_tokens
+
+
+def test_projected_system_prompt_is_budgeted_without_rewriting_history(tmp_path):
+    session = Session.create("context", tmp_path)
+    session.append_message({
+        "role": "system", "content": "static instructions",
+        "parts": [{"type": "text", "text": "static instructions"}],
+    })
+    original = deepcopy(session.message_records[0].message)
+    builder = ContextBuilder(ContextCompactor())
+    projected_prompt = "current pinned memory " * 1000
+
+    view = builder.build(
+        session.message_records, tools=[], system_prompt=projected_prompt,
+        context_limit=100, output_reserve_tokens=0,
+    )
+
+    assert view.messages[0]["content"] == projected_prompt
+    assert view.messages[0]["parts"] == [{"type": "text", "text": projected_prompt}]
+    assert view.history_tokens == estimate_message_tokens(view.messages[0])
+    assert view.over_budget
+    assert session.message_records[0].message == original
 
 
 def _tool_result(call_id: str, data: str) -> dict:

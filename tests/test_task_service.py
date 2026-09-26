@@ -1,10 +1,10 @@
 import queue
 
-from wright.application.event_dispatch import _task_notification_event
-from wright.application.tool_runtime import tool_runtime_for_session
-from ..domain.model.session import Session
 from wright.application.agent import build_agent_tools
+from wright.application.event_dispatch import _task_notification_event
 from wright.application.task_service import TaskService
+from wright.application.tool_runtime import tool_runtime_for_session
+from wright.domain.model.session import Session
 from wright.infrastructure.tools.command import execute_command
 from wright.infrastructure.tools.task_tools import (
     cancel_task_tool,

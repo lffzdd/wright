@@ -1,11 +1,15 @@
 from wright.application.interactive_approval import InteractiveApprovalHandler
-from ...domain.model.session import Session
-from wright.application.tool_dispatch_service import ToolDispatchService
-from wright.domain.policy import PermissionResolver
-from wright.interfaces.renderer import SilentRenderer
 from wright.application.tool_capabilities import assemble_tool_capabilities
+from wright.application.tool_dispatch_service import ToolDispatchService
+from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall
-from wright.infrastructure.tools.file import edit_file_tool, read_file_tool, write_file_tool
+from wright.domain.policy import PermissionResolver
+from wright.infrastructure.tools.file import (
+    edit_file_tool,
+    read_file_tool,
+    write_file_tool,
+)
+from wright.interfaces.renderer import SilentRenderer
 
 
 class _MockRenderer(SilentRenderer):

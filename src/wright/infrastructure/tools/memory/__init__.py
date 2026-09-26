@@ -1,4 +1,4 @@
-"""Model-facing tools for agent memory subsystems (Core, Fact, Episodic)."""
+"""Model-facing tools for agent memory subsystems (core, semantic, episode)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from .episode_tools import (
     get_episode,
     search_episodes,
 )
-from .fact_tools import (
+from .semantic_tools import (
     build_memory_tools,
     create_memory,
     delete_memory,
@@ -22,13 +22,9 @@ from .fact_tools import (
     update_memory,
 )
 
-# Alias for domain naming symmetry
-build_fact_tools = build_memory_tools
-
 __all__ = [
     "build_core_memory_tools",
     "build_episode_tools",
-    "build_fact_tools",
     "build_memory_tools",
     "create_memory",
     "delete_episode",

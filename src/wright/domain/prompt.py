@@ -23,15 +23,11 @@ def get_role_instruction(mode: str = "coding") -> str:
 def build_system_prompt(
     tools: Sequence[Tool],
     memory_section: str = "",
-    core_memory: str = "",
     role_instruction: str = "",
 ) -> str:
     baseline, deferred = split_tool_catalog(tools)
     names = set(baseline)
     paragraphs = []
-    if core_memory:
-        paragraphs.append(core_memory.strip())
-
     role = role_instruction.strip() if role_instruction else DEFAULT_CODING_ROLE
     paragraphs.append(role)
 

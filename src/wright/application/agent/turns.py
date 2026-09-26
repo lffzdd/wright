@@ -141,12 +141,8 @@ class AgentTurnHandler:
         active_run = agent.session_state.active_run()
         if active_run is not None:
             agent.runtime_resources.finish_response(active_run.run_id)
-        if (
-            record_memory
-            and not agent._has_live_agent_tasks(
-                agent.session_state.agent_root_turn_id
-            )
-        ):
+        if record_memory:
+            # Live background agents defer the episode onto the checkpoint.
             agent._finalize_memory(
                 turn.final_answer, extract_semantic=True
             )

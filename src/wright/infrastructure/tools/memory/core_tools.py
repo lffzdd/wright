@@ -1,15 +1,19 @@
-"""Tools for inspecting and autonomously updating the Agent's Core Memory."""
+"""Tools for inspecting and autonomously updating the Agent's Core Memory.
+
+These entry adapters delegate core memory reads and updates to MemoryService
+and translate application results into ToolResult values.
+"""
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from ...persistence.memory import FileCoreMemoryStore
-from ....domain.policy.memory import CoreMemoryPolicy
 from ....domain.model.tool import AccessTarget, ToolAccess, ToolResult
 from ..base import Tool
 from ..runtime import ToolRuntime
+
+if TYPE_CHECKING:
+    from ....application.memory.memory_service import MemoryService
 
 
 def _describe_core_memory_read(args: dict[str, Any]) -> ToolAccess:
@@ -31,69 +35,48 @@ def _describe_core_memory_write(args: dict[str, Any]) -> ToolAccess:
 
 
 def get_core_memory(
+    service: MemoryService,
     runtime: ToolRuntime | None = None,
-    *,
-    directory: Path | None = None,
 ) -> ToolResult:
     """Read the current pinned core memory (persona, human profile, project anchor)."""
-    store = FileCoreMemoryStore(directory)
-    mem = store.load()
+    mem = service.get_core_memory()
+    if mem is None:
+        return ToolResult.fail("Core memory store is not configured")
     return ToolResult.success(mem.to_dict())
 
 
 def update_core_memory(
+    service: MemoryService,
     section: str,
     content: str,
     mode: str = "append",
     runtime: ToolRuntime | None = None,
-    *,
-    directory: Path | None = None,
 ) -> ToolResult:
-    """Autonomously update human profile or project anchor in the agent's core memory."""
-    policy = CoreMemoryPolicy()
-    is_valid, error_msg = policy.validate_update(section, content)
-    if not is_valid:
-        return ToolResult.fail(error_msg or "Validation failed")
+    """Update core memory through the application service and report its result."""
+    updated, err = service.update_core_memory(section, content, mode)
+    if updated is None:
+        return ToolResult.fail(err or "Update failed")
 
-    store = FileCoreMemoryStore(directory)
-    mem = store.load()
-
-    normalized_section = section.strip().lower()
-    new_text = content.strip()
-
-    if normalized_section == "human_profile":
-        if mode == "append" and mem.human_profile:
-            final_text = f"{mem.human_profile}\n- {new_text}"
-        else:
-            final_text = new_text
-        is_len_valid, len_err = policy.validate_update(normalized_section, final_text)
-        if not is_len_valid:
-            return ToolResult.fail(len_err or "Exceeds length limit")
-        mem.update_human_profile(final_text)
-    elif normalized_section == "project_anchor":
-        if mode == "append" and mem.project_anchor:
-            final_text = f"{mem.project_anchor}\n- {new_text}"
-        else:
-            final_text = new_text
-        is_len_valid, len_err = policy.validate_update(normalized_section, final_text)
-        if not is_len_valid:
-            return ToolResult.fail(len_err or "Exceeds length limit")
-        mem.update_project_anchor(final_text)
-    else:
-        return ToolResult.fail(f"Unsupported section: {section}")
-
-    store.save(mem)
     return ToolResult.success({
         "status": "updated",
-        "section": normalized_section,
-        "content": final_text,
+        "section": updated.section,
+        "content": updated.content,
     })
 
 
-def build_core_memory_tools(directory: Path | None = None) -> list[Tool]:
-    """Construct core memory tools bound to the specified storage directory."""
-    def bind(fn):
-        return lambda args, runtime=None: fn(**args, runtime=runtime, directory=directory)
+def build_core_memory_tools(service: MemoryService) -> list[Tool]:
+    """Construct core memory tools bound to the application service."""
+    def _bind_get(args: dict[str, Any], runtime: ToolRuntime | None = None) -> ToolResult:
+        return get_core_memory(service, runtime=runtime)
+
+    def _bind_update(args: dict[str, Any], runtime: ToolRuntime | None = None) -> ToolResult:
+        return update_core_memory(
+            service,
+            section=args["section"],
+            content=args["content"],
+            mode=args.get("mode", "append"),
+            runtime=runtime,
+        )
 
     return [
         Tool(
@@ -105,7 +88,7 @@ def build_core_memory_tools(directory: Path | None = None) -> list[Tool]:
                 "required": [],
                 "additionalProperties": False,
             },
-            call=bind(get_core_memory),
+            call=_bind_get,
             access_descriptor=_describe_core_memory_read,
             is_concurrency_safe=lambda args: True,
             defer_to_model=True,
@@ -140,7 +123,7 @@ def build_core_memory_tools(directory: Path | None = None) -> list[Tool]:
                 "required": ["section", "content"],
                 "additionalProperties": False,
             },
-            call=bind(update_core_memory),
+            call=_bind_update,
             access_descriptor=_describe_core_memory_write,
             defer_to_model=True,
         ),

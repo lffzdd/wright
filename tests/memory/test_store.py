@@ -5,10 +5,10 @@ from pathlib import Path
 import pytest
 
 from wright.domain.model.memory import (
-    MemoryAlreadyExistsError,
-    MemoryNotFoundError,
+    SemanticMemoryAlreadyExistsError,
+    SemanticMemoryNotFoundError,
 )
-from wright.infrastructure.persistence.memory.fact import (
+from wright.infrastructure.persistence.memory.semantic import (
     MAX_INDEX_LINES,
     create_memory,
     delete_memory,
@@ -115,7 +115,7 @@ def test_semantic_memory_crud_keeps_stable_unicode_id_and_index(tmp_path: Path):
     assert created.id == "用户偏好"
     assert created.path.stat().st_mode & 0o777 == 0o600
 
-    with pytest.raises(MemoryAlreadyExistsError):
+    with pytest.raises(SemanticMemoryAlreadyExistsError):
         create_memory("用户偏好", "重复", "user", "不要覆盖", tmp_path)
 
     updated = update_memory(
@@ -134,7 +134,7 @@ def test_semantic_memory_crud_keeps_stable_unicode_id_and_index(tmp_path: Path):
     deleted = delete_memory(created.id, tmp_path)
     assert deleted.id == created.id
     assert "用户偏好.md" not in (tmp_path / "MEMORY.md").read_text(encoding="utf-8")
-    with pytest.raises(MemoryNotFoundError):
+    with pytest.raises(SemanticMemoryNotFoundError):
         delete_memory(created.id, tmp_path)
 
 

@@ -3,15 +3,15 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 
-from wright.application.tool_runtime import tool_runtime_for_session
-from ..domain.model.session import Session
+from wright.application.tool_capabilities import assemble_tool_capabilities
 from wright.application.tool_dispatch_service import ToolDispatchService
+from wright.application.tool_runtime import tool_runtime_for_session
+from wright.domain.model.session import Session
+from wright.domain.model.tool import ToolCall
 from wright.domain.policy import (
     PermissionResolver,
     PermissionResponse,
 )
-from wright.application.tool_capabilities import assemble_tool_capabilities
-from wright.domain.model.tool import ToolCall
 from wright.infrastructure.tools.file import (
     FILE_UNCHANGED,
     FileView,

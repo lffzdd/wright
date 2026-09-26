@@ -14,16 +14,21 @@ from pathlib import Path
 
 import pytest
 
+from tests.autonomy.test_host_persistence import ScriptLLM
+from tests.paths import REPO_ROOT, SRC_ROOT
 from wright.application.application_host import ApplicationHost
-from ...infrastructure.persistence.autonomy_store import AutonomyStore
 from wright.domain.policy import PermissionSettings
-from ...tests.autonomy.test_host_persistence import ScriptLLM
+from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 
 
 def _child_env() -> dict[str, str]:
     env = os.environ.copy()
-    source_root = str(Path(__file__).parents[3] / "src")
-    env["PYTHONPATH"] = source_root + os.pathsep + env.get("PYTHONPATH", "")
+    # Fresh interpreter: src so `import wright` works, repo root so `import tests` works.
+    entries = [str(SRC_ROOT), str(REPO_ROOT)]
+    existing = env.get("PYTHONPATH")
+    if existing:
+        entries.append(existing)
+    env["PYTHONPATH"] = os.pathsep.join(entries)
     return env
 
 
@@ -233,7 +238,7 @@ def test_real_process_child_agent_side_effect_becomes_unknown_without_replay(tmp
         from wright.infrastructure.persistence.autonomy_store import AutonomyStore
         from wright.domain.model.autonomy import TriggerSpec
         from wright.domain.policy import PermissionSettings
-        from wright.tests.responses import event, response
+        from tests.responses import event, response
         from wright.infrastructure.tools.base import Tool
         from wright.domain.model.tool import ToolResult
 

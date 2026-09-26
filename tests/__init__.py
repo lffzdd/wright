@@ -1,1 +1,1 @@
-"""Wright 测试树:镜像源码结构(tests/permission/ 对应 permission/)。"""
+"""Feature-scoped pytest modules. Not part of the installable package."""

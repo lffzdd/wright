@@ -1,27 +1,60 @@
-"""Domain policies for agent memory (Core, Fact, Episodic)."""
+"""Domain policies for agent memory (core, semantic, episode)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .core import CoreMemoryPolicy
-from .episode import EpisodePolicy
-from .fact import FactPolicy, is_safe_fact
+from .core import CoreMemoryPolicy, CoreMemoryUpdateError
+from .episode import (
+    EpisodeAdmission,
+    EpisodePolicy,
+    has_result_or_verification,
+    is_delivered_answer,
+)
+from .semantic import (
+    ExtractDecision,
+    ExtractSignal,
+    ProvenanceReview,
+    SemanticExtractPolicy,
+    SemanticMemoryPolicy,
+    bounded_safe_text,
+    is_safe_memory,
+    review_provenance,
+)
+from .user_text import (
+    is_substantive_user_text,
+    is_trivial_user_text,
+    normalize_user_text,
+)
 
 
 @dataclass(frozen=True)
 class MemoryPolicy:
     """Unified policy facade for memory management."""
 
-    fact: FactPolicy = field(default_factory=FactPolicy)
     episode: EpisodePolicy = field(default_factory=EpisodePolicy)
+    semantic: SemanticMemoryPolicy = field(default_factory=SemanticMemoryPolicy)
+    extract: SemanticExtractPolicy = field(default_factory=SemanticExtractPolicy)
     core: CoreMemoryPolicy = field(default_factory=CoreMemoryPolicy)
 
 
 __all__ = [
     "CoreMemoryPolicy",
+    "CoreMemoryUpdateError",
+    "EpisodeAdmission",
     "EpisodePolicy",
-    "FactPolicy",
+    "ExtractDecision",
+    "ExtractSignal",
     "MemoryPolicy",
-    "is_safe_fact",
+    "ProvenanceReview",
+    "SemanticExtractPolicy",
+    "SemanticMemoryPolicy",
+    "bounded_safe_text",
+    "has_result_or_verification",
+    "is_delivered_answer",
+    "is_safe_memory",
+    "is_substantive_user_text",
+    "is_trivial_user_text",
+    "normalize_user_text",
+    "review_provenance",
 ]

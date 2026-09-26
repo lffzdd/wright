@@ -3,19 +3,25 @@ import time
 
 import pytest
 
-from wright.tests.responses import event, response
-
-from wright.application.application_host import ApplicationHost
-from ...domain.model.autonomy import TriggerSpec
-from ...infrastructure.persistence.autonomy_store import AutonomyStore, AutonomyStoreError
-from ...domain.model.session import Session
+from tests.responses import event, response
 from wright.application.agent import create_agent
-from wright.application.tool_dispatch_service import ToolDispatchService
-from wright.domain.policy import PermissionPolicy, PermissionResolver, PermissionSettings
-from wright.interfaces.renderer import SilentRenderer
+from wright.application.application_host import ApplicationHost
 from wright.application.tool_capabilities import assemble_tool_capabilities
+from wright.application.tool_dispatch_service import ToolDispatchService
+from wright.domain.model.autonomy import TriggerSpec
+from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
+from wright.domain.policy import (
+    PermissionPolicy,
+    PermissionResolver,
+    PermissionSettings,
+)
+from wright.infrastructure.persistence.autonomy_store import (
+    AutonomyStore,
+    AutonomyStoreError,
+)
 from wright.infrastructure.tools.base import Tool
+from wright.interfaces.renderer import SilentRenderer
 
 
 class ScriptLLM:

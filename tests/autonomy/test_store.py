@@ -3,15 +3,15 @@ import threading
 
 import pytest
 
+from wright.application.autonomy import AutonomyScheduler, probe_public_web_page
 from wright.application.services import RuntimeServices
-from ...domain.model.autonomy import TriggerSpec
-from ...infrastructure.persistence.autonomy_store import (
+from wright.application.task_service import TaskService
+from wright.domain.model.autonomy import TriggerSpec
+from wright.domain.model.session import Session
+from wright.infrastructure.persistence.autonomy_store import (
     AutonomyStore,
     AutonomyStoreError,
 )
-from ...application.autonomy import AutonomyScheduler, probe_public_web_page
-from ...domain.model.session import Session
-from wright.application.task_service import TaskService
 
 
 def _store(tmp_path, session_id="session"):

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from ..domain.model.session import Session
 from wright.application.agent import create_agent
-from wright.domain.prompt import build_system_prompt
-from wright.interfaces.renderer import SilentRenderer
+from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolResult
+from wright.domain.prompt import build_system_prompt
 from wright.infrastructure.tools.base import Tool, split_tool_catalog
 from wright.infrastructure.tools.tool_search import make_tool_search_tool
+from wright.interfaces.renderer import SilentRenderer
 
 
 def _tool(name: str, *, deferred: bool = False, expose: bool = True) -> Tool:

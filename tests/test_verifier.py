@@ -1,12 +1,11 @@
-from wright.tests.responses import event, response
-
-from wright.application.lifecycle import HookRegistration, LifecycleManager
-from ..domain.model.session import Session
+from tests.responses import event, response
 from wright.application.agent import create_agent
-from wright.domain.policy.verifier import Verifier
-from wright.interfaces.renderer import SilentRenderer
+from wright.application.lifecycle import HookRegistration, LifecycleManager
+from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
+from wright.domain.policy.verifier import Verifier
 from wright.infrastructure.tools.plan_tools import update_plan_tool
+from wright.interfaces.renderer import SilentRenderer
 
 
 def _final(answer):

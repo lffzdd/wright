@@ -18,6 +18,21 @@ from ...interfaces.renderer import Renderer
 from ...utils import estimate_message_tokens, estimate_tools_tokens
 
 
+def _is_persisted_memory_recall(message: dict[str, Any]) -> bool:
+    """Historical recall stays in the transcript but is not replayed every turn."""
+    if message.get("role") != "user":
+        return False
+    content = message.get("content")
+    if not isinstance(content, str) or not content.lstrip().startswith("<system-reminder"):
+        return False
+    return (
+        "wright-semantic-recall" in content
+        or "wright-episode-recall" in content
+        or "历史记忆数据" in content
+        or "历史执行经历" in content
+    )
+
+
 class ContextBudgetExceeded(ValueError):
     """The deterministic projection cannot safely fit the request budget."""
 
@@ -44,6 +59,7 @@ class ContextView:
     output_reserve_tokens: int
     folded_record_ids: tuple[str, ...] = ()
     over_budget: bool = False
+    omitted_optional_reminders: bool = False
 
     @property
     def messages(self) -> list[dict[str, Any]]:
@@ -156,15 +172,70 @@ class ContextBuilder:
         *,
         tools: Sequence[dict[str, Any]],
         reminders: Sequence[dict[str, Any]] = (),
+        optional_reminders: Sequence[dict[str, Any]] = (),
+        system_prompt: str | None = None,
         context_limit: int | None = None,
         output_reserve_tokens: int | None = None,
     ) -> ContextView:
-        entries = tuple(
+        view = self._assemble(
+            records,
+            tools=tools,
+            reminders=reminders,
+            optional_reminders=optional_reminders,
+            system_prompt=system_prompt,
+            context_limit=context_limit,
+            output_reserve_tokens=output_reserve_tokens,
+            omitted_optional_reminders=False,
+        )
+        if view.over_budget and optional_reminders:
+            # Episode recall is optional. User text and execution evidence stay.
+            view = self._assemble(
+                records,
+                tools=tools,
+                reminders=reminders,
+                optional_reminders=(),
+                system_prompt=system_prompt,
+                context_limit=context_limit,
+                output_reserve_tokens=output_reserve_tokens,
+                omitted_optional_reminders=True,
+            )
+        return view
+
+    def _assemble(
+        self,
+        records: Sequence[MessageRecord],
+        *,
+        tools: Sequence[dict[str, Any]],
+        reminders: Sequence[dict[str, Any]],
+        optional_reminders: Sequence[dict[str, Any]],
+        system_prompt: str | None,
+        context_limit: int | None,
+        output_reserve_tokens: int | None,
+        omitted_optional_reminders: bool,
+    ) -> ContextView:
+        history = [
             ContextEntry(record.id, deepcopy(record.message), record.source)
             for record in records
-        ) + tuple(
+            if not _is_persisted_memory_recall(record.message)
+        ]
+        # Apply the current system context before budgeting and compaction.
+        # Only this request's copies change; durable records retain history.
+        if system_prompt is not None:
+            system_entry = next(
+                (entry for entry in history if entry.message.get("role") == "system"),
+                None,
+            )
+            if system_entry is not None:
+                system_entry.message["content"] = system_prompt
+                if "parts" in system_entry.message:
+                    system_entry.message["parts"] = [{"type": "text", "text": system_prompt}]
+            else:
+                history.insert(0, ContextEntry(
+                    None, {"role": "system", "content": system_prompt}, "transient",
+                ))
+        entries = tuple(history) + tuple(
             ContextEntry(None, deepcopy(message), "transient")
-            for message in reminders
+            for message in [*reminders, *optional_reminders]
         )
         tool_copies = tuple(deepcopy(tool) for tool in tools)
         history_tokens = sum(
@@ -206,4 +277,5 @@ class ContextBuilder:
             output_reserve_tokens=reserve,
             folded_record_ids=folded_ids,
             over_budget=context_limit is not None and projected_total > context_limit,
+            omitted_optional_reminders=omitted_optional_reminders,
         )

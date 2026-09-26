@@ -8,13 +8,16 @@ LLMClient 用假参数构造(不发起任何网络请求),整套测试离线可�
 """
 
 import json
+import sys
 import tempfile
 import threading
 import time
-from wright.tests.responses import event, response
-
 from pathlib import Path
 from types import SimpleNamespace
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tests.responses import event, response
 
 _TMP = tempfile.TemporaryDirectory(prefix="wright-test-", ignore_cleanup_errors=True)
 _WORKSPACE = Path(_TMP.name)

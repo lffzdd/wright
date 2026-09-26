@@ -77,6 +77,11 @@ class Session:
     # Durable commit markers make a completed user turn idempotent across
     # crashes.  Status is presentation state; this ledger is the replay guard.
     committed_turn_ids: list[str] = field(default_factory=list)
+    # Episode snapshots waiting for background agents. Missing on old checkpoints.
+    pending_episode_finalizes: list[dict[str, Any]] = field(default_factory=list)
+    # Extraction decisions keyed by root_run_id. A stored decision is not retried.
+    # A crash before this field is checkpointed can call the model again.
+    semantic_extract_receipts: dict[str, dict[str, Any]] = field(default_factory=dict)
     # 当前 user turn 从哪个全局 step 之后开始。Verifier 用它隔离多轮 REPL 中
     # 旧任务的工具证据；checkpoint/resume 也靠它恢复本轮边界。
     active_turn_start_step: int = 0

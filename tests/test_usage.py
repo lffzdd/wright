@@ -3,16 +3,16 @@ from io import StringIO
 import pytest
 from rich.console import Console
 
-from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
-from wright.domain.model.session import Session, UsageRecord
+from tests.responses import response
 from wright.application.agent import create_agent
-from wright.domain.policy.verifier import Verifier
-from wright.domain.model.events import UsageEvent
 from wright.application.memory.llm_util import metered_events
-from wright.interfaces.renderer import ConsoleRenderer, SilentRenderer
-from wright.tests.responses import response
+from wright.domain.model.events import UsageEvent
+from wright.domain.model.session import Session, UsageRecord
 from wright.domain.model.tool import ToolCall, ToolResult
+from wright.domain.policy.verifier import Verifier
+from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
 from wright.infrastructure.tools.base import Tool
+from wright.interfaces.renderer import ConsoleRenderer, SilentRenderer
 from wright.utils.token_counter import estimate_message_tokens
 
 
@@ -190,7 +190,10 @@ def test_console_live_takes_a_snapshot_not_a_callback(monkeypatch):
 
 
 def test_legacy_checkpoint_derives_task_boundary(tmp_path):
-    from wright.infrastructure.persistence.file_session_repo import _deserialize_session, _serialize_session
+    from wright.infrastructure.persistence.file_session_repo import (
+        _deserialize_session,
+        _serialize_session,
+    )
 
     session = Session.create('old', tmp_path)
     for goal, usage in [('old', UsageRecord(90, 10, 100)), ('new', UsageRecord(10, 5, 15))]:
@@ -215,7 +218,10 @@ def test_runtime_event_summary_waits_for_memory_finalization(tmp_path):
         def instructions(self):
             return ''
 
-        def finalize_turn(self, session, answer, *, extract_semantic):
+        def project_system_prompt(self, system_prompt):
+            return system_prompt
+
+        def finalize_turn(self, session, answer, *, extract_semantic, termination_reason=None):
             self.usage_observer(UsageRecord(30, 10, 40))
             return {'episode_id': 'episode'}
 

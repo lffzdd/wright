@@ -1,8 +1,9 @@
-"""组装注入 system prompt 的静态记忆指令段。
+"""组装静态记忆指令，以及每次请求使用的 core memory 投影。
 
 只放【静态指令】(类型分类法、两步保存、何时存取、据记忆行动前先核实)。
 MEMORY.md 索引内容和相关记忆全文【不】放这里——它们随会话变化,走 per-turn 注入
-(见 recall.build_recall_block)保证新鲜,与 Claude Code memdir 的做法一致。
+(见 MemoryService.prepare_memory_context)保证新鲜,与 Claude Code memdir 的做法一致。
+Core memory 由 project_core_memory 在请求投影中替换，不写入历史消息。
 """
 
 from __future__ import annotations
@@ -17,6 +18,19 @@ from ...domain.model.memory import (
     WHEN_TO_ACCESS,
 )
 from ...infrastructure.persistence.memory import memory_dir
+
+
+def project_core_memory(system_prompt: str, core_block: str) -> str:
+    """Replace a legacy pinned snapshot in a request copy of the system prompt."""
+    # Earlier sessions persisted the block as the system prompt's prefix.
+    # Remove only that prefix, preserving role instructions and tool catalogs.
+    if system_prompt.startswith("<CORE_MEMORY>\n"):
+        _, closing, remainder = system_prompt.partition("\n</CORE_MEMORY>")
+        if closing:
+            system_prompt = remainder.lstrip("\n")
+    if core_block:
+        return f"{core_block}\n\n{system_prompt}"
+    return system_prompt
 
 
 def build_memory_instructions(directory: Path | None = None) -> str:

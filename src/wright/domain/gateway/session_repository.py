@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Any
 
 
 class SessionRepository(ABC):
@@ -15,7 +15,7 @@ class SessionRepository(ABC):
         ...
 
     @abstractmethod
-    def load(self, session_id: str) -> Optional[Any]:
+    def load(self, session_id: str) -> Any | None:
         """Load session state by identifier."""
         ...
 

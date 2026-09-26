@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from .dto import MemoryContextDTO
+from .dto import CoreMemoryUpdateDTO, MemoryContextDTO
 from .manager import MemoryManager
 from .memory_service import MemoryService
 from .prompt import build_memory_instructions
 
 __all__ = [
+    "CoreMemoryUpdateDTO",
     "MemoryContextDTO",
     "MemoryManager",
     "MemoryService",

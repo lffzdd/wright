@@ -1,4 +1,4 @@
-"""File-backed semantic memory CRUD with atomic index maintenance."""
+"""File-backed semantic memory: one markdown record per durable fact."""
 
 from __future__ import annotations
 
@@ -10,14 +10,15 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ....domain.gateway.memory import ISemanticMemoryStore
 from ....domain.model.memory import (
-    MemoryAlreadyExistsError,
-    MemoryHeader,
-    MemoryNotFoundError,
-    MemoryRecord,
-    MemoryStoreError,
-    MemoryType,
-    parse_memory_type,
+    SemanticMemoryAlreadyExistsError,
+    SemanticMemoryHeader,
+    SemanticMemoryNotFoundError,
+    SemanticMemoryRecord,
+    SemanticMemoryStoreError,
+    SemanticMemoryType,
+    parse_semantic_memory_type,
 )
 from .paths import MEMORY_INDEX, entrypoint_path, memory_dir
 
@@ -74,17 +75,26 @@ def dump_frontmatter(
     *,
     created_at: str | None = None,
     updated_at: str | None = None,
+    origin: str = "",
+    source_refs: tuple[str, ...] = (),
 ) -> str:
     name = _single_line(name, "name", MAX_MEMORY_NAME_CHARS)
     description = _single_line(
         description, "description", MAX_MEMORY_DESCRIPTION_CHARS, allow_empty=True
     )
-    memory_type = parse_memory_type(type_)
+    memory_type = parse_semantic_memory_type(type_)
     if memory_type is None:
-        raise MemoryStoreError(f"非法 memory type: {type_}")
+        raise SemanticMemoryStoreError(f"非法 memory type: {type_}")
     content = _content(body)
     created_at = created_at or _utc_now()
     updated_at = updated_at or created_at
+    provenance = ""
+    if origin or source_refs:
+        origin_line = _single_line(origin, "origin", 40)
+        refs = ",".join(
+            _single_line(item, "source_ref", 180) for item in source_refs
+        )
+        provenance = f"origin: {origin_line}\nsource_refs: {refs}\n"
     return (
         "---\n"
         f"name: {name}\n"
@@ -92,6 +102,7 @@ def dump_frontmatter(
         f"type: {memory_type}\n"
         f"created_at: {created_at}\n"
         f"updated_at: {updated_at}\n"
+        f"{provenance}"
         "---\n\n"
         f"{content}\n"
     )
@@ -111,7 +122,7 @@ def normalize_memory_id(memory_id: str) -> str:
     value = str(memory_id).strip()
     value = value.removesuffix(".md")
     if not value or _SAFE_ID_RE.fullmatch(value) is None:
-        raise MemoryStoreError("memory_id 必须是安全的记忆 id，不能包含路径")
+        raise SemanticMemoryStoreError("memory_id 必须是安全的记忆 id，不能包含路径")
     return value
 
 
@@ -119,7 +130,7 @@ def _memory_path(memory_id: str, directory: Path) -> Path:
     normalized = normalize_memory_id(memory_id)
     path = (directory / f"{normalized}.md").resolve()
     if path.parent != directory:
-        raise MemoryStoreError("memory path 越界")
+        raise SemanticMemoryStoreError("memory path 越界")
     return path
 
 
@@ -131,21 +142,21 @@ def _single_line(
     allow_empty: bool = False,
 ) -> str:
     if not isinstance(value, str):
-        raise MemoryStoreError(f"{field} 必须是字符串")
+        raise SemanticMemoryStoreError(f"{field} 必须是字符串")
     cleaned = " ".join(value.splitlines()).strip()
     if not allow_empty and not cleaned:
-        raise MemoryStoreError(f"{field} 不能为空")
+        raise SemanticMemoryStoreError(f"{field} 不能为空")
     if len(cleaned) > max_chars:
-        raise MemoryStoreError(f"{field} 不能超过 {max_chars} 个字符")
+        raise SemanticMemoryStoreError(f"{field} 不能超过 {max_chars} 个字符")
     return cleaned
 
 
 def _content(value: object) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise MemoryStoreError("content 不能为空")
+        raise SemanticMemoryStoreError("content 不能为空")
     cleaned = value.strip()
     if len(cleaned) > MAX_MEMORY_CONTENT_CHARS:
-        raise MemoryStoreError(
+        raise SemanticMemoryStoreError(
             f"content 不能超过 {MAX_MEMORY_CONTENT_CHARS} 个字符"
         )
     return cleaned
@@ -179,12 +190,12 @@ def _read_head(path: Path, max_lines: int) -> str:
     return "".join(lines)
 
 
-def scan_memory_files(directory: Path | None = None) -> list[MemoryHeader]:
+def scan_memory_files(directory: Path | None = None) -> list[SemanticMemoryHeader]:
     directory = _directory(directory)
     if not directory.is_dir():
         return []
 
-    headers: list[MemoryHeader] = []
+    headers: list[SemanticMemoryHeader] = []
     for path in directory.iterdir():
         if (
             path.name == MEMORY_INDEX
@@ -197,14 +208,14 @@ def scan_memory_files(directory: Path | None = None) -> list[MemoryHeader]:
             head = _read_head(path, FRONTMATTER_MAX_LINES)
             fm, _ = parse_frontmatter(head)
             memory_id = path.stem
-            headers.append(MemoryHeader(
+            headers.append(SemanticMemoryHeader(
                 id=memory_id,
                 filename=path.name,
                 path=path,
                 mtime=path.stat().st_mtime,
                 name=fm.get("name") or memory_id,
                 description=fm.get("description") or None,
-                type=parse_memory_type(fm.get("type")),
+                type=parse_semantic_memory_type(fm.get("type")),
                 created_at=fm.get("created_at"),
                 updated_at=fm.get("updated_at"),
             ))
@@ -214,7 +225,7 @@ def scan_memory_files(directory: Path | None = None) -> list[MemoryHeader]:
     return headers[:MAX_MEMORY_FILES]
 
 
-def format_manifest(headers: list[MemoryHeader]) -> str:
+def format_manifest(headers: list[SemanticMemoryHeader]) -> str:
     lines: list[str] = []
     for header in headers:
         tag = f"[{header.type}] " if header.type else ""
@@ -223,20 +234,20 @@ def format_manifest(headers: list[MemoryHeader]) -> str:
     return "\n".join(lines)
 
 
-def get_memory(memory_id: str, directory: Path | None = None) -> MemoryRecord:
+def get_memory(memory_id: str, directory: Path | None = None) -> SemanticMemoryRecord:
     directory = _directory(directory)
     path = _memory_path(memory_id, directory)
     try:
         text = path.read_text(encoding="utf-8")
         stat = path.stat()
     except OSError as exc:
-        raise MemoryNotFoundError(f"记忆不存在: {normalize_memory_id(memory_id)}") from exc
+        raise SemanticMemoryNotFoundError(f"记忆不存在: {normalize_memory_id(memory_id)}") from exc
     fm, body = parse_frontmatter(text)
-    memory_type = parse_memory_type(fm.get("type"))
+    memory_type = parse_semantic_memory_type(fm.get("type"))
     if memory_type is None:
-        raise MemoryStoreError(f"记忆 {path.name} 缺少合法 type")
+        raise SemanticMemoryStoreError(f"记忆 {path.name} 缺少合法 type")
     fallback_time = datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat()
-    return MemoryRecord(
+    return SemanticMemoryRecord(
         id=path.stem,
         name=fm.get("name") or path.stem,
         description=fm.get("description") or "",
@@ -245,7 +256,15 @@ def get_memory(memory_id: str, directory: Path | None = None) -> MemoryRecord:
         created_at=fm.get("created_at") or fallback_time,
         updated_at=fm.get("updated_at") or fallback_time,
         path=path,
+        origin=fm.get("origin") or "",
+        source_refs=_source_refs(fm.get("source_refs", "")),
     )
+
+
+def _source_refs(value: str) -> tuple[str, ...]:
+    if not value:
+        return ()
+    return tuple(part.strip() for part in value.split(",") if part.strip())
 
 
 def create_memory(
@@ -254,24 +273,37 @@ def create_memory(
     type_: str,
     content: str,
     directory: Path | None = None,
-) -> MemoryRecord:
+    *,
+    origin: str = "",
+    source_refs: tuple[str, ...] = (),
+) -> SemanticMemoryRecord:
     directory = _directory(directory)
     memory_id = slugify(_single_line(name, "name", MAX_MEMORY_NAME_CHARS))
     path = _memory_path(memory_id, directory)
     with _lock_for(directory):
         if path.exists():
-            raise MemoryAlreadyExistsError(
+            raise SemanticMemoryAlreadyExistsError(
                 f"记忆已存在: {memory_id}; 请使用 update_memory"
             )
         now = _utc_now()
         _atomic_write(
             path,
             dump_frontmatter(
-                name, description, type_, content, created_at=now, updated_at=now
+                name,
+                description,
+                type_,
+                content,
+                created_at=now,
+                updated_at=now,
+                origin=origin,
+                source_refs=source_refs,
             ),
         )
         _rebuild_index_unlocked(directory)
     return get_memory(memory_id, directory)
+
+
+_UNSET = object()
 
 
 def update_memory(
@@ -282,12 +314,25 @@ def update_memory(
     type_: str | None = None,
     content: str | None = None,
     directory: Path | None = None,
-) -> MemoryRecord:
+    origin: str | object = _UNSET,
+    source_refs: tuple[str, ...] | object = _UNSET,
+) -> SemanticMemoryRecord:
     directory = _directory(directory)
     normalized = normalize_memory_id(memory_id)
     with _lock_for(directory):
         current = get_memory(normalized, directory)
         updated_name = current.name if name is None else name
+        if content is not None and origin is _UNSET and source_refs is _UNSET:
+            # A new body cannot keep citations that described the previous text.
+            next_origin = ""
+            next_refs: tuple[str, ...] = ()
+        else:
+            next_origin = current.origin if origin is _UNSET else str(origin)
+            next_refs = (
+                current.source_refs
+                if source_refs is _UNSET
+                else tuple(source_refs)  # type: ignore[arg-type]
+            )
         text = dump_frontmatter(
             updated_name,
             current.description if description is None else description,
@@ -295,6 +340,8 @@ def update_memory(
             current.content if content is None else content,
             created_at=current.created_at,
             updated_at=_utc_now(),
+            origin=next_origin,
+            source_refs=next_refs,
         )
         current_path = _memory_path(normalized, directory)
         _atomic_write(current_path, text)
@@ -302,7 +349,7 @@ def update_memory(
     return get_memory(normalized, directory)
 
 
-def delete_memory(memory_id: str, directory: Path | None = None) -> MemoryRecord:
+def delete_memory(memory_id: str, directory: Path | None = None) -> SemanticMemoryRecord:
     directory = _directory(directory)
     normalized = normalize_memory_id(memory_id)
     with _lock_for(directory):
@@ -311,7 +358,7 @@ def delete_memory(memory_id: str, directory: Path | None = None) -> MemoryRecord
         try:
             current_path.unlink()
         except OSError as exc:
-            raise MemoryStoreError(f"删除记忆失败: {exc}") from exc
+            raise SemanticMemoryStoreError(f"删除记忆失败: {exc}") from exc
         _rebuild_index_unlocked(directory)
     return current
 
@@ -322,20 +369,20 @@ def search_memories(
     type_: str | None = None,
     limit: int = 20,
     directory: Path | None = None,
-) -> list[MemoryRecord]:
+) -> list[SemanticMemoryRecord]:
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
-        raise MemoryStoreError("limit 必须是 1..100 的整数")
-    if type_ is not None and parse_memory_type(type_) is None:
-        raise MemoryStoreError(f"非法 memory type: {type_}")
+        raise SemanticMemoryStoreError("limit 必须是 1..100 的整数")
+    if type_ is not None and parse_semantic_memory_type(type_) is None:
+        raise SemanticMemoryStoreError(f"非法 memory type: {type_}")
     query_text = str(query).strip().casefold()
     terms = [term for term in re.split(r"\s+", query_text) if term]
-    scored: list[tuple[int, float, MemoryRecord]] = []
+    scored: list[tuple[int, float, SemanticMemoryRecord]] = []
     for header in scan_memory_files(directory):
         if type_ is not None and header.type != type_:
             continue
         try:
             record = get_memory(header.id, directory)
-        except MemoryStoreError:
+        except SemanticMemoryStoreError:
             continue
         haystack = f"{record.id}\n{record.name}\n{record.description}\n{record.type}\n{record.content}".casefold()
         if terms and not all(term in haystack for term in terms):
@@ -439,48 +486,77 @@ def read_memories_for_surfacing(paths: list[Path]) -> str:
     return "\n\n".join(blocks)
 
 
-from ....domain.gateway.memory import IFactRepository
-from ....domain.model.memory import Fact
-
-
-class FileFactRepository(IFactRepository):
-    """File-backed implementation of IFactRepository using Markdown/frontmatter storage."""
+class SemanticMemoryStore(ISemanticMemoryStore):
+    """Markdown semantic memories. The id is the slug of the name."""
 
     def __init__(self, directory: Path | None = None) -> None:
         self.directory = _directory(directory)
 
-    def get_facts(self, scope: str | None = None) -> list[Fact]:
-        records = scan_memory_files(self.directory)
-        facts = [r.to_fact(scope="PROJECT" if scope is None else scope) for r in records]
-        if scope:
-            facts = [f for f in facts if f.scope == scope]
-        return facts
+    def read_index(self) -> str:
+        return read_entrypoint(self.directory)
 
-    def save_fact(self, fact: Fact) -> None:
-        name = fact.key or fact.id
+    def list(self, limit: int = 100) -> list[SemanticMemoryRecord]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise SemanticMemoryStoreError("limit 必须是 1..200 的整数")
+        records: list[SemanticMemoryRecord] = []
+        for header in scan_memory_files(self.directory):
+            try:
+                records.append(get_memory(header.id, self.directory))
+            except SemanticMemoryStoreError:
+                continue
+            if len(records) >= limit:
+                break
+        return records
+
+    def get(self, memory_id: str) -> SemanticMemoryRecord:
+        return get_memory(memory_id, self.directory)
+
+    def search(self, query: str = "", *, limit: int = 20) -> list[SemanticMemoryRecord]:
+        return search_memories(query, limit=limit, directory=self.directory)
+
+    def save(
+        self,
+        *,
+        name: str,
+        description: str,
+        type_: SemanticMemoryType,
+        content: str,
+        origin: str = "",
+        source_refs: tuple[str, ...] = (),
+        memory_id: str = "",
+    ) -> SemanticMemoryRecord:
+        target = memory_id or slugify(name)
         try:
-            get_memory(name, self.directory)
-            update_memory(
+            get_memory(target, self.directory)
+        except SemanticMemoryNotFoundError:
+            if memory_id:
+                raise
+            return create_memory(
                 name,
-                content=fact.content,
-                directory=self.directory,
+                description,
+                type_,
+                content,
+                self.directory,
+                origin=origin,
+                source_refs=source_refs,
             )
-        except MemoryNotFoundError:
-            create_memory(
-                name=name,
-                description=fact.content[:60],
-                memory_type="project" if fact.scope == "PROJECT" else "user",
-                content=fact.content,
-                directory=self.directory,
-            )
+        return update_memory(
+            target,
+            name=name,
+            description=description,
+            type_=type_,
+            content=content,
+            directory=self.directory,
+            origin=origin,
+            source_refs=source_refs,
+        )
 
-    def delete_fact(self, fact_id: str) -> bool:
-        return delete_memory(fact_id, directory=self.directory)
+    def delete(self, memory_id: str) -> SemanticMemoryRecord:
+        return delete_memory(memory_id, directory=self.directory)
 
 
 __all__ = [
     "FRONTMATTER_MAX_LINES",
-    "FileFactRepository",
     "MAX_INDEX_BYTES",
     "MAX_INDEX_LINES",
     "MAX_MEMORY_CHARS",
@@ -488,7 +564,8 @@ __all__ = [
     "MAX_MEMORY_DESCRIPTION_CHARS",
     "MAX_MEMORY_FILES",
     "MAX_MEMORY_NAME_CHARS",
-    "MemoryStoreError",
+    "SemanticMemoryStore",
+    "SemanticMemoryStoreError",
     "create_memory",
     "delete_memory",
     "dump_frontmatter",

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
+from tests.paths import PACKAGE_ROOT
 
 
 def test_core_records_context_and_execution_do_not_import_chat_sdk_types():
-    root = Path(__file__).parents[1]
+    root = PACKAGE_ROOT
     for relative in (
         "domain/model/session/session.py", "domain/model/runs.py", "application/agent/context.py",
         "application/agent/runner.py", "application/tool_dispatch_service.py",
@@ -17,7 +17,7 @@ def test_core_records_context_and_execution_do_not_import_chat_sdk_types():
 
 
 def test_session_has_no_live_process_handles_and_web_has_no_tui_business_import():
-    root = Path(__file__).parents[1]
+    root = PACKAGE_ROOT
     session = (root / "domain" / "model" / "session" / "session.py").read_text(encoding="utf-8")
     web_runtime = (root / "interfaces" / "web" / "runtime_manager.py").read_text(encoding="utf-8")
 

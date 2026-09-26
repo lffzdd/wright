@@ -1,4 +1,4 @@
-"""Domain models, types, and constants for factual and semantic memory."""
+"""Domain models for semantic memory: durable facts not tied to one episode."""
 
 from __future__ import annotations
 
@@ -6,74 +6,59 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from ....base.value_object import ValueObject
-
-MemoryType = Literal["user", "feedback", "project", "reference"]
-MEMORY_TYPES: tuple[MemoryType, ...] = ("user", "feedback", "project", "reference")
-
-FactScope = Literal["GLOBAL", "PROJECT"]
-FactCategory = Literal["USER_PREFERENCE", "PROJECT_FACT", "LESSON_LEARNED", "REFERENCE"]
+SemanticMemoryType = Literal["user", "feedback", "project", "reference"]
+SEMANTIC_MEMORY_TYPES: tuple[SemanticMemoryType, ...] = ("user", "feedback", "project", "reference")
 
 
-def parse_memory_type(raw: object) -> MemoryType | None:
-    """把 frontmatter 里的原始 type 值归一成合法 MemoryType。"""
-    if isinstance(raw, str) and raw in MEMORY_TYPES:
+def parse_semantic_memory_type(raw: object) -> SemanticMemoryType | None:
+    """把 frontmatter 里的原始 type 值归一成合法 SemanticMemoryType。"""
+    if isinstance(raw, str) and raw in SEMANTIC_MEMORY_TYPES:
         return raw  # type: ignore[return-value]
     return None
 
 
-class MemoryStoreError(ValueError):
+class SemanticMemoryStoreError(ValueError):
     """Semantic memory input or state is invalid."""
 
 
-class MemoryAlreadyExistsError(MemoryStoreError):
+class SemanticMemoryAlreadyExistsError(SemanticMemoryStoreError):
     pass
 
 
-class MemoryNotFoundError(MemoryStoreError):
+class SemanticMemoryNotFoundError(SemanticMemoryStoreError):
     pass
 
 
 @dataclass(frozen=True)
-class Fact(ValueObject):
-    """Structured immutable fact memory item."""
-
-    id: str
-    content: str
-    key: str = ""
-    scope: FactScope = "PROJECT"
-    category: FactCategory = "PROJECT_FACT"
-    importance: float = 1.0
-    created_at: str = ""
-    updated_at: str = ""
-
-
-@dataclass(frozen=True)
-class MemoryHeader:
+class SemanticMemoryHeader:
     id: str
     filename: str
     path: Any
     mtime: float
     name: str
     description: str | None
-    type: MemoryType | None
+    type: SemanticMemoryType | None
     created_at: str | None = None
     updated_at: str | None = None
 
 
 @dataclass(frozen=True)
-class MemoryRecord:
+class SemanticMemoryRecord:
     id: str
     name: str
     description: str
-    type: MemoryType
+    type: SemanticMemoryType
     content: str
     created_at: str
     updated_at: str
     path: Path
+    # Empty origin means the record was not produced by automatic extraction
+    # (or the file predates provenance). source_refs do not prove the text.
+    origin: str = ""
+    source_refs: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "id": self.id,
             "name": self.name,
             "description": self.description,
@@ -83,24 +68,11 @@ class MemoryRecord:
             "updated_at": self.updated_at,
             "file": self.path.name,
         }
-
-    def to_fact(self, scope: FactScope = "PROJECT") -> Fact:
-        """Convert a file-based MemoryRecord into a domain Fact value object."""
-        category_map: dict[MemoryType, FactCategory] = {
-            "user": "USER_PREFERENCE",
-            "feedback": "LESSON_LEARNED",
-            "project": "PROJECT_FACT",
-            "reference": "REFERENCE",
-        }
-        return Fact(
-            id=self.id,
-            key=self.name,
-            content=self.content,
-            scope=scope,
-            category=category_map.get(self.type, "PROJECT_FACT"),
-            created_at=self.created_at,
-            updated_at=self.updated_at,
-        )
+        if self.origin:
+            payload["origin"] = self.origin
+        if self.source_refs:
+            payload["source_refs"] = list(self.source_refs)
+        return payload
 
 
 TYPES_SECTION = """## 记忆的类型
@@ -201,19 +173,16 @@ type: {{user, feedback, project, reference 之一}}
 
 __all__ = [
     "FRONTMATTER_EXAMPLE",
-    "Fact",
-    "FactCategory",
-    "FactScope",
-    "MEMORY_TYPES",
-    "MemoryAlreadyExistsError",
-    "MemoryHeader",
-    "MemoryNotFoundError",
-    "MemoryRecord",
-    "MemoryStoreError",
-    "MemoryType",
+    "SEMANTIC_MEMORY_TYPES",
     "TRUSTING_RECALL",
     "TYPES_SECTION",
     "WHAT_NOT_TO_SAVE",
     "WHEN_TO_ACCESS",
-    "parse_memory_type",
+    "SemanticMemoryAlreadyExistsError",
+    "SemanticMemoryHeader",
+    "SemanticMemoryNotFoundError",
+    "SemanticMemoryRecord",
+    "SemanticMemoryStoreError",
+    "SemanticMemoryType",
+    "parse_semantic_memory_type",
 ]

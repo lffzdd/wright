@@ -1,5 +1,5 @@
 
-from ...domain.model.session import Session
+from wright.domain.model.session import Session
 
 
 def test_session_lifecycle_is_independent_of_run_status(tmp_path):

@@ -2,15 +2,18 @@ import json
 
 import pytest
 
-from wright.tests.responses import event, response
-
-from wright.application.lifecycle import HookRegistration, LifecycleManager, TraceRecorder
-from wright.application.tool_runtime import tool_runtime_for_session
-from ...domain.model.session import Session
+from tests.responses import event, response
 from wright.application.agent import create_agent, make_spawn_agent_tool
-from wright.interfaces.renderer import SilentRenderer
+from wright.application.lifecycle import (
+    HookRegistration,
+    LifecycleManager,
+    TraceRecorder,
+)
+from wright.application.tool_runtime import tool_runtime_for_session
+from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolResult
 from wright.infrastructure.tools.base import Tool
+from wright.interfaces.renderer import SilentRenderer
 
 
 def _final(answer):
@@ -38,14 +41,25 @@ class BrokenLLM:
 class RecordingMemory:
     def __init__(self):
         self.finalized = []
+        self.deferred = []
 
     def instructions(self):
         return ""
 
+    def project_system_prompt(self, system_prompt):
+        return system_prompt
+
     def recall_block(self, query):
         return ""
 
-    def finalize_turn(self, session, answer, *, extract_semantic):
+    def finalize_turn(self, session, answer, *, extract_semantic, termination_reason=None):
+        live = any(
+            str(task.get("status") or "") in {"pending", "running"}
+            for task in session.control_plane.tree(session.agent_root_turn_id)
+        )
+        if live:
+            self.deferred.append(answer)
+            return {"episode_id": None, "deferred": True, "semantic_memories_written": 0}
         self.finalized.append((answer, extract_semantic))
         return {"episode_id": "episode", "semantic_memories_written": 0}
 
@@ -204,6 +218,7 @@ def test_runtime_notification_preserves_user_turn_and_defers_episode(tmp_path):
     original_boundary = session.active_turn_start_message_index
     original_plan = session.plan_manager.snapshot()
     assert memory.finalized == []
+    assert memory.deferred == ["initial answer"]
 
     session.control_plane.finish_task(
         task.id,

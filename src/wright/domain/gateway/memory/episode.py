@@ -1,27 +1,74 @@
-"""Episodic memory store port for experience case study retrieval and append-only persistence."""
+"""Episode memory store port: append and read finished-turn records."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
-    from ...model.memory import Episode
+from ...model.memory import (
+    EpisodeRecord,
+    EpisodeSearchHit,
+    EpisodeSearchScope,
+    EpisodeStatus,
+)
 
 
-class IEpisodicMemoryStore(ABC):
-    """Port for searching similar experience episodes and appending new ones."""
+class IEpisodeStore(ABC):
+    """Port for the episode log the application actually persists."""
 
     @abstractmethod
-    def search_episodes(self, query: str, top_k: int = 3) -> Sequence[tuple[Any, float]]:
-        """Search episodes by similarity to given query, returning (episode, score) tuples."""
+    def save(self, episode: EpisodeRecord) -> EpisodeRecord:
+        """Append one record. A repeated id returns the stored record unchanged."""
         ...
 
     @abstractmethod
-    def record_episode(self, episode: Any) -> None:
-        """Append an episodic case study."""
+    def get(self, episode_id: str) -> EpisodeRecord:
+        """Load one record by id, including a legacy flat file."""
+        ...
+
+    @abstractmethod
+    def delete(self, episode_id: str) -> EpisodeRecord:
+        """Delete one record by id, including a legacy flat file."""
+        ...
+
+    @abstractmethod
+    def list(
+        self,
+        limit: int = 100,
+        *,
+        project_id: str | None = None,
+        scope: EpisodeSearchScope | None = None,
+    ) -> Sequence[EpisodeRecord]:
+        """Return records ordered by created_at, then id. File mtime is not a key."""
+        ...
+
+    @abstractmethod
+    def search(
+        self,
+        query: str = "",
+        *,
+        status: EpisodeStatus | None = None,
+        limit: int = 20,
+        scope: EpisodeSearchScope = "current_project",
+        project_id: str = "",
+    ) -> Sequence[EpisodeSearchHit]:
+        """Rank records in scope by lexical score.
+
+        ``lexical_score`` is a BM25 rank key, not a 0–1 similarity. An empty
+        query returns recent records with score 0. Cross-project and legacy
+        records appear only when ``scope`` asks for them.
+        """
+        ...
+
+    @abstractmethod
+    def recent(
+        self,
+        *,
+        project_id: str,
+        limit: int = 10,
+    ) -> Sequence[EpisodeRecord]:
+        """Newest records for one project, by created_at then id."""
         ...
 
 
-__all__ = ["IEpisodicMemoryStore"]
+__all__ = ["IEpisodeStore"]

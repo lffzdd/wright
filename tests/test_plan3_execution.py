@@ -10,15 +10,15 @@ from pathlib import Path
 import pytest
 
 from wright.application.lifecycle import HookDecision
+from wright.application.tool_capabilities import assemble_tool_capabilities
+from wright.application.tool_dispatch_service import ToolDispatchService
 from wright.application.tool_runtime import tool_runtime_for_session
 from wright.domain.model.agent import AgentProfile, CapabilitySnapshot
-from ..domain.model.session import Session
-from wright.application.tool_dispatch_service import ToolDispatchService
+from wright.domain.model.session import Session
+from wright.domain.model.tool import ToolCall, ToolResult
+from wright.domain.policy import PermissionResolver, PermissionResponse, ToolAccess
 from wright.infrastructure.runtime import ExecutionPath, LocalExecutionBackend
 from wright.infrastructure.runtime import local as local_execution
-from wright.domain.policy import PermissionResolver, PermissionResponse, ToolAccess
-from wright.application.tool_capabilities import assemble_tool_capabilities
-from wright.domain.model.tool import ToolCall, ToolResult
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.file import grep_files, grep_tool, write_file_tool
 

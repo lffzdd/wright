@@ -1,7 +1,7 @@
 from wright.application.services import RuntimeServices
 from wright.application.tool_runtime import tool_runtime_for_session
-from ...infrastructure.persistence.autonomy_store import AutonomyStore
-from ...domain.model.session import Session
+from wright.domain.model.session import Session
+from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 from wright.infrastructure.tools.autonomy_tools import (
     cancel_schedule_tool,
     get_schedule_tool,

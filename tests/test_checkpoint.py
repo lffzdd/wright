@@ -2,14 +2,16 @@ import json
 
 import pytest
 
-from wright.tests.responses import event, response
-
-from wright.infrastructure.persistence.file_session_repo import CheckpointError, FileSessionRepository
-from ..domain.model.session import Session, UsageRecord
+from tests.responses import event, response
 from wright.application.agent import create_agent
-from wright.interfaces.renderer import SilentRenderer
+from wright.domain.model.session import Session, UsageRecord
 from wright.domain.model.tool import ArtifactRef, ToolCall, ToolResult
 from wright.domain.protocol import build_tool_results_messages
+from wright.infrastructure.persistence.file_session_repo import (
+    CheckpointError,
+    FileSessionRepository,
+)
+from wright.interfaces.renderer import SilentRenderer
 
 
 def _populated_session(tmp_path):
@@ -212,7 +214,10 @@ def test_unknown_checkpoint_version_is_rejected(tmp_path):
 
 
 def test_phase_two_v5_checkpoint_loads_without_request_context_estimate(tmp_path):
-    from wright.infrastructure.persistence.file_session_repo import _deserialize_session, _serialize_session
+    from wright.infrastructure.persistence.file_session_repo import (
+        _deserialize_session,
+        _serialize_session,
+    )
 
     session = _populated_session(tmp_path)
     payload = _serialize_session(session)

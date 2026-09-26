@@ -9,7 +9,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+from tests.paths import PACKAGE_ROOT
 
 
 def _module_name(path: Path) -> str:
@@ -25,7 +25,7 @@ def _module_name(path: Path) -> str:
 def _collect_modules() -> dict[str, Path]:
     modules: dict[str, Path] = {}
     for path in PACKAGE_ROOT.rglob("*.py"):
-        if "__pycache__" in path.parts or "tests" in path.parts:
+        if "__pycache__" in path.parts:
             continue
         modules[_module_name(path)] = path
     return modules

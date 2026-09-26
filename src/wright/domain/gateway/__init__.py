@@ -7,8 +7,8 @@ from .knowledge_provider import IKnowledgeProvider, KnowledgeProvider
 from .llm_gateway import ILLMGateway, ILLMProvider, LLMProvider
 from .memory import (
     ICoreMemoryStore,
-    IEpisodicMemoryStore,
-    IFactRepository,
+    IEpisodeStore,
+    ISemanticMemoryStore,
 )
 from .session_repository import ISessionRepository, IStorageGateway, SessionRepository
 from .task_backend import TaskBackend
@@ -18,11 +18,11 @@ from .vector_store import IVectorStore
 __all__ = [
     "ICoreMemoryStore",
     "IEmbedder",
-    "IEpisodicMemoryStore",
-    "IFactRepository",
+    "IEpisodeStore",
     "IKnowledgeProvider",
     "ILLMGateway",
     "ILLMProvider",
+    "ISemanticMemoryStore",
     "ISessionRepository",
     "IStorageGateway",
     "IToolExecutor",

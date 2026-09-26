@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-import pytest
 
-from wright.domain.model.memory import CoreMemory, DEFAULT_PERSONA
+from wright.application.memory.memory_service import MemoryService
+from wright.domain.gateway.memory import IEpisodeStore, ISemanticMemoryStore
+from wright.domain.model.memory import DEFAULT_PERSONA, CoreMemory
 from wright.domain.policy.memory import CoreMemoryPolicy
 from wright.infrastructure.persistence.memory import FileCoreMemoryStore
 from wright.infrastructure.tools.memory import (
@@ -21,8 +22,6 @@ from wright.infrastructure.tools.memory import (
     get_core_memory,
     update_core_memory,
 )
-from wright.domain.gateway.memory import IEpisodicMemoryStore, IFactRepository
-from wright.application.memory.memory_service import MemoryService
 
 
 def test_core_memory_model_and_rendering():
@@ -100,12 +99,55 @@ def test_file_core_memory_store():
         assert reloaded.human_profile == "Custom Human Profile Note"
 
 
+class DummySemanticStore(ISemanticMemoryStore):
+    def list(self, limit=100):
+        return []
+
+    def get(self, memory_id):
+        raise AssertionError(memory_id)
+
+    def search(self, query="", *, limit=20):
+        return []
+
+    def save(self, *, name, description, type_, content):
+        raise AssertionError(name)
+
+    def delete(self, memory_id):
+        raise AssertionError(memory_id)
+
+
+class DummyEpisodeStore(IEpisodeStore):
+    def save(self, episode):
+        return episode
+
+    def get(self, episode_id):
+        raise AssertionError(episode_id)
+
+    def list(self, limit=100):
+        return []
+
+    def delete(self, episode_id):
+        raise AssertionError(episode_id)
+
+    def search(self, query="", *, status=None, limit=20, scope="current_project", project_id=""):
+        return []
+
+    def recent(self, *, project_id, limit=10):
+        return []
+
+
 def test_core_memory_tools():
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
+        store = FileCoreMemoryStore(tmp_path)
+        service = MemoryService(
+            semantic_store=DummySemanticStore(),
+            episode_store=DummyEpisodeStore(),
+            core_memory_store=store,
+        )
 
         # 1. get_core_memory tool
-        res = get_core_memory(directory=tmp_path)
+        res = get_core_memory(service)
         assert res.ok is True
         data = res.data
         assert "persona" in data
@@ -113,45 +155,29 @@ def test_core_memory_tools():
         assert "project_anchor" in data
 
         # 2. update_core_memory forbidden section
-        res = update_core_memory("persona", "I am a rogue AI", directory=tmp_path)
+        res = update_core_memory(service, "persona", "I am a rogue AI")
         assert res.ok is False
         assert "prohibited" in res.err
 
         # 3. update_core_memory append mode
-        res = update_core_memory("human_profile", "Rule 1: Always check types", mode="append", directory=tmp_path)
+        res = update_core_memory(service, "human_profile", "Rule 1: Always check types", mode="append")
         assert res.ok is True
         assert "Rule 1: Always check types" in res.data["content"]
 
         # Check persistence
-        res2 = get_core_memory(directory=tmp_path)
+        res2 = get_core_memory(service)
         assert "Rule 1: Always check types" in res2.data["human_profile"]
 
         # 4. update_core_memory replace mode
-        res = update_core_memory("project_anchor", "Clean Root", mode="replace", directory=tmp_path)
+        res = update_core_memory(service, "project_anchor", "Clean Root", mode="replace")
         assert res.ok is True
         assert res.data["content"] == "Clean Root"
 
         # Check tool builder
-        tools = build_core_memory_tools(tmp_path)
+        tools = build_core_memory_tools(service)
         assert len(tools) == 2
         tool_names = {t.name for t in tools}
         assert tool_names == {"get_core_memory", "update_core_memory"}
-
-
-class DummyFactRepo(IFactRepository):
-    def get_facts(self, scope=None):
-        return []
-    def save_fact(self, fact):
-        pass
-    def delete_fact(self, fact_id):
-        return True
-
-
-class DummyEpisodeStore(IEpisodicMemoryStore):
-    def search_episodes(self, query, top_k=3):
-        return []
-    def record_episode(self, episode):
-        pass
 
 
 def test_core_memory_service_integration():
@@ -159,20 +185,23 @@ def test_core_memory_service_integration():
         tmp_path = Path(tmpdir)
         store = FileCoreMemoryStore(tmp_path)
         service = MemoryService(
-            fact_repo=DummyFactRepo(),
+            semantic_store=DummySemanticStore(),
             episode_store=DummyEpisodeStore(),
             core_memory_store=store,
         )
 
         ctx = service.prepare_memory_context("test task")
         assert ctx.core_memory is not None
-        assert "<CORE_MEMORY>" in ctx.prompt_injection
-        assert ctx.prompt_injection.startswith("<CORE_MEMORY>")
+        assert "<CORE_MEMORY>" in ctx.core_memory.render_block()
+        assert "<CORE_MEMORY>" not in ctx.prompt_injection
 
         # Update core memory via service
-        ok, err = service.update_core_memory("human_profile", "Always use uv", mode="append")
-        assert ok is True
+        updated, err = service.update_core_memory("human_profile", "Always use uv", mode="append")
+        assert updated is not None
         assert err is None
+        assert updated.section == "human_profile"
+        assert updated.content == store.load().human_profile
 
         ctx2 = service.prepare_memory_context("test task")
-        assert "Always use uv" in ctx2.prompt_injection
+        assert ctx2.core_memory is not None
+        assert "Always use uv" in ctx2.core_memory.human_profile

@@ -1,13 +1,12 @@
 import queue
 import time
 
-from wright.tests.responses import event, response
-
+from tests.responses import event, response
+from wright.application.agent import AgentBackgroundRuntime, make_spawn_agent_tool
 from wright.application.services import RuntimeServices
 from wright.application.tool_runtime import tool_runtime_for_session
-from ...domain.model.session import Session
-from wright.application.agent import AgentBackgroundRuntime, make_spawn_agent_tool
 from wright.domain.model.events import ContentDone
+from wright.domain.model.session import Session
 from wright.infrastructure.tools.task_tools import cancel_task_tool, get_task_tool
 
 

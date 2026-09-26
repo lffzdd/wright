@@ -161,17 +161,9 @@ def ensure_system_prompt(
     memory: MemoryManager | None,
     role_instruction: str = "",
 ) -> None:
-    """Write the system prompt once, when the session has no messages yet."""
+    """Persist static instructions once; mutable memory is projected per request."""
     if session.message_records:
         return
-    core_block = ""
-    if memory is not None and hasattr(memory, "service") and memory.service.core_memory_store is not None:
-        try:
-            core_mem = memory.service.core_memory_store.load()
-            if core_mem is not None:
-                core_block = core_mem.render_block()
-        except Exception:
-            pass
     memory_section = memory.instructions() if memory else ""
     prompt_tools = [tool for tool in prepared.tools if tool.name != "tool_search"]
     effective_role = role_instruction or getattr(prepared.profile, "role_instruction", "")
@@ -180,7 +172,6 @@ def ensure_system_prompt(
         "content": build_system_prompt(
             prompt_tools,
             memory_section=memory_section,
-            core_memory=core_block,
             role_instruction=effective_role,
         ),
     })
@@ -353,6 +344,10 @@ class Agent:
         self._execution_journal = execution_journal
         if self.memory is not None:
             self.memory.usage_observer = self._record_auxiliary_usage
+            bind_project = getattr(self.memory, "bind_project", None)
+            if callable(bind_project):
+                bind_project(self.session_state.project_root)
+            self._recover_pending_episodes()
         self.lifecycle = lifecycle
         self._memory_finalized_turns: set[str] = set()
         if max_verification_retries < 1:
@@ -490,12 +485,37 @@ class Agent:
         usage_record: UsageRecord | None = None
         self.ui.on_turn_begin()
 
+        system_prompt = None
+        if self.memory is not None:
+            base_prompt = next(
+                (
+                    record.message["content"]
+                    for record in self.session_state.message_records
+                    if record.message.get("role") == "system"
+                ),
+                "",
+            )
+            system_prompt = self.memory.project_system_prompt(base_prompt)
+        optional_reminders: list[dict] = []
+        recall = None
+        recall_for_turn = getattr(self.memory, "recall_for_turn", None) if self.memory is not None else None
+        if callable(recall_for_turn):
+            recall = recall_for_turn(self.session_state)
+            reminders = list(reminders)
+            if recall.semantic_text:
+                reminders.append({"role": "user", "content": recall.semantic_text})
+            if recall.episode_text:
+                optional_reminders.append({"role": "user", "content": recall.episode_text})
         view = self.context_builder.build(
             self.session_state.message_records,
             tools=self.tool_schemas,
             reminders=reminders,
+            optional_reminders=optional_reminders,
+            system_prompt=system_prompt,
             context_limit=self.context_limit,
         )
+        if view.omitted_optional_reminders:
+            logger.info("episode_recall omitted reason=context_budget")
         self.session_state.request_context_tokens = view.estimated_tokens
         if view.folded_record_ids:
             # ContextView owns the projection. Session owns the decision to
@@ -518,6 +538,16 @@ class Agent:
             raise ContextBudgetExceeded(
                 "context exceeds the request budget after deterministic compression"
             )
+        note_injection = (
+            getattr(self.memory, "note_injection", None)
+            if self.memory is not None
+            else None
+        )
+        if callable(note_injection):
+            try:
+                note_injection(recall, omitted=bool(view.omitted_optional_reminders))
+            except Exception:
+                logger.info("memory_meter failure_type=exception")
         wire_messages = view.messages
 
         self._emit_lifecycle("llm_start", {
@@ -738,16 +768,9 @@ class Agent:
                 ),
             })
 
-        # 自动召回:针对本轮 prompt 选出相关记忆 + MEMORY.md 索引,作为 system-reminder
-        # 注入(role=user 以兼容各端点)。走 append_message 自动计入 context_tokens。
-        # 召回是尽力而为的旁路,内部已吞异常,空块则跳过。
-        if self.memory:
-            recall_block = self.memory.recall_block(turn_goal)
-            if recall_block:
-                self.session_state.append_message(
-                    {"role": "user", "content": recall_block}
-                )
-
+        # Recall is projected onto the current user turn only. It is not appended
+        # to the transcript, so later turns do not accumulate old recall blocks.
+        self._recover_pending_episodes()
         self._ensure_skill_catalog()
         self._checkpoint()
         self._emit_agent_start(turn_goal)
@@ -775,7 +798,7 @@ class Agent:
         """Let root react to an internal event without forging a user turn.
 
         The current user goal, plan, evidence boundary, root-turn identity and
-        episodic-memory boundary stay intact. The event is still model-visible
+        episode-memory boundary stay intact. The event is still model-visible
         as a clearly typed data message and receives its own lifecycle trace.
         """
         if self.session_state.agent_task_id is not None:
@@ -816,17 +839,29 @@ class Agent:
             str(event.get("type") or "runtime_event"), source="runtime_event"
         )
         result = self._run_loop(budget, record_memory=False, render_summary=False)
-        event_root_turn_id = str(
-            (event.get("task") or {}).get("root_turn_id")
-            if isinstance(event.get("task"), dict) else ""
-        )
+        task = event.get("task") if isinstance(event.get("task"), dict) else {}
+        event_root_turn_id = str(task.get("root_turn_id") or "")
         current_turn_id = self.session_state.agent_root_turn_id
+        settle_previous = (
+            getattr(self.memory, "settle_previous_turn", None)
+            if self.memory is not None else None
+        )
         if (
+            callable(settle_previous)
+            and event_root_turn_id
+            and event_root_turn_id != current_turn_id
+        ):
+            settle_previous(
+                self.session_state,
+                root_turn_id=event_root_turn_id,
+                task=task,
+            )
+            self._checkpoint()
+        elif (
             self.memory is not None
             and result is not None
-            and event_root_turn_id == current_turn_id
+            and (not event_root_turn_id or event_root_turn_id == current_turn_id)
             and current_turn_id not in self._memory_finalized_turns
-            and not self._has_live_agent_tasks(current_turn_id)
         ):
             self._finalize_memory(result, extract_semantic=True)
             self._checkpoint()
@@ -872,6 +907,7 @@ class Agent:
                 f"{self.session_state.active_turn_start_message_index}"
             )
         self._bind_executor_run()
+        self._recover_pending_episodes()
         self._ensure_skill_catalog()
         self._checkpoint()
         self._emit_agent_start(self.session_state.current_goal(), resumed=True)
@@ -897,14 +933,28 @@ class Agent:
         """Persist process-local orchestration fields changed outside Agent."""
         self._checkpoint()
 
+    def _recover_pending_episodes(self) -> None:
+        recover = getattr(self.memory, "recover_pending", None)
+        if self.memory is None or not callable(recover):
+            return
+        before = list(self.session_state.pending_episode_finalizes)
+        recover(self.session_state)
+        if self.session_state.pending_episode_finalizes != before:
+            self._checkpoint()
+
     def _finalize_memory(
-        self, final_answer: str | None, *, extract_semantic: bool
+        self,
+        final_answer: str | None,
+        *,
+        extract_semantic: bool,
+        termination_reason: str | None = None,
     ) -> None:
         if self.memory is not None:
             outcome = self.memory.finalize_turn(
                 self.session_state,
                 final_answer,
                 extract_semantic=extract_semantic,
+                termination_reason=termination_reason,
             )
             if outcome.get("episode_id") is not None:
                 self._memory_finalized_turns.add(
@@ -938,7 +988,11 @@ class Agent:
         if active_run is not None:
             self.runtime_resources.finish_response(active_run.run_id)
         if record_memory:
-            self._finalize_memory(None, extract_semantic=False)
+            self._finalize_memory(
+                None,
+                extract_semantic=False,
+                termination_reason=status,
+            )
         self._checkpoint()
         self._emit_agent_stop(status, reason=reason)
 

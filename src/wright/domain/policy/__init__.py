@@ -1,5 +1,11 @@
 """Public permission subsystem API."""
 
+from .approval import (
+    FallbackApprovalHandler,
+    PermissionApprovalHandler,
+    PermissionRequest,
+    UserInteractionHandler,
+)
 from .config import (
     PermissionMode,
     PermissionRule,
@@ -9,15 +15,17 @@ from .config import (
     default_settings_path,
     load_permission_settings,
 )
-from .approval import (
-    FallbackApprovalHandler,
-    PermissionApprovalHandler,
-    PermissionRequest,
-    UserInteractionHandler,
-)
 from .context_policy import ContextPolicy, TokenBudgetPolicy
 from .guardrail_policy import GuardrailPolicy, SecurityPolicy
-from .memory import CoreMemoryPolicy, EpisodePolicy, FactPolicy, MemoryPolicy, is_safe_fact
+from .memory import (
+    CoreMemoryPolicy,
+    EpisodePolicy,
+    MemoryPolicy,
+    SemanticExtractPolicy,
+    SemanticMemoryPolicy,
+    is_delivered_answer,
+    is_safe_memory,
+)
 from .resolver import (
     PermissionPolicy,
     PermissionResolver,
@@ -45,7 +53,6 @@ __all__ = [
     "ContextPolicy",
     "CoreMemoryPolicy",
     "EpisodePolicy",
-    "FactPolicy",
     "FallbackApprovalHandler",
     "GrantTarget",
     "GuardrailPolicy",
@@ -67,6 +74,8 @@ __all__ = [
     "PermissionSettings",
     "PermissionSubject",
     "SecurityPolicy",
+    "SemanticExtractPolicy",
+    "SemanticMemoryPolicy",
     "TokenBudgetPolicy",
     "ToolAccess",
     "UserInteractionHandler",
@@ -74,7 +83,8 @@ __all__ = [
     "append_allow_rule",
     "default_settings_path",
     "forbidden_paths",
-    "is_safe_fact",
+    "is_delivered_answer",
+    "is_safe_memory",
     "is_under",
     "load_permission_settings",
     "resolve_root",

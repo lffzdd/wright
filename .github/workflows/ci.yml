@@ -16,7 +16,7 @@ jobs:
       - name: Install
         run: uv sync --group dev
       - name: Lint
-        run: uv run ruff check src
+        run: uv run ruff check src tests
       - name: Pytest
         run: uv run pytest -q
       - name: Offline runtime tests

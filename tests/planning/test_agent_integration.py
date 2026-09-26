@@ -1,10 +1,9 @@
 
-from wright.tests.responses import event, response
-
-from ...domain.model.session import Session
+from tests.responses import event, response
 from wright.application.agent import create_agent
-from wright.interfaces.renderer import SilentRenderer
+from wright.domain.model.session import Session
 from wright.infrastructure.tools.plan_tools import create_plan_tool
+from wright.interfaces.renderer import SilentRenderer
 
 
 class PlanningLLM:

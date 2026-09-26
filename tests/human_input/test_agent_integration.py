@@ -1,12 +1,11 @@
 
 
-from wright.tests.responses import event, response
-
-from ...domain.model.session import Session
+from tests.responses import event, response
 from wright.application.agent import create_agent
+from wright.domain.model.session import Session
 from wright.domain.policy import PermissionResolver, PermissionResponse
-from wright.interfaces.renderer import SilentRenderer
 from wright.infrastructure.tools.human_input import ask_user_tool
+from wright.interfaces.renderer import SilentRenderer
 
 
 def _tool_turn(name, **arguments):

@@ -98,7 +98,7 @@ Wright 不会触发 RAG 导入、模型加载或网络请求。
 
 ```bash
 WRIGHT_KNOWLEDGE_LIVE_TEST=1 pytest -q \
-  src/wright/tests/knowledge/test_rag_provider.py \
+  tests/knowledge/test_rag_provider.py \
   -k live_rag_provider
 ```
 

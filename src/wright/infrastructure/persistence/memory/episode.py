@@ -1,142 +1,112 @@
-"""Immutable episodic memory: one compact execution record per user turn."""
+"""Project-scoped episode storage.
+
+New records live under ``episodes/projects/<project_id>/``. Flat ``episodes/ep-*.json``
+files stay readable as legacy records with an unknown project. They are not
+migrated, deleted, or returned by automatic current-project search.
+
+Ordering uses ``created_at`` and then id. File mtime is not a semantic key.
+"""
 
 from __future__ import annotations
 
-import hashlib
+import fcntl
 import json
 import os
-import re
 import tempfile
 import threading
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
-from ....domain.gateway.memory import IEpisodicMemoryStore
+from ....domain.gateway.memory import IEpisodeStore
 from ....domain.model.memory import (
-    Episode,
+    EPISODE_ID_RE,
+    EPISODE_SEARCH_SCOPES,
+    EPISODE_STATUSES,
+    PROJECT_ID_RE,
     EpisodeNotFoundError,
     EpisodeRecord,
+    EpisodeSearchHit,
+    EpisodeSearchScope,
     EpisodeStatus,
     EpisodeStoreError,
+    episode_fact_pieces,
 )
+from ....domain.policy.memory import has_result_or_verification
+from .lexical import bm25_scores, tokenize
 from .paths import memory_dir
 
 EPISODES_DIRECTORY = "episodes"
+PROJECTS_DIRECTORY = "projects"
 MAX_EPISODES = 500
-MAX_EPISODE_GOAL_CHARS = 2_000
-MAX_EPISODE_OUTCOME_CHARS = 4_000
-MAX_EPISODE_TOOLS = 100
-MAX_EPISODE_VERIFICATIONS = 100
-MAX_EPISODE_AGENTS = 64
 MAX_EPISODE_FILE_BYTES = 256_000
-_EPISODE_ID_RE = re.compile(r"ep-[A-Za-z0-9_-]{1,180}")
 _locks_guard = threading.Lock()
 _store_locks: dict[Path, threading.RLock] = {}
 
 
-class EpisodeStore(IEpisodicMemoryStore):
+class EpisodeStore(IEpisodeStore):
     def __init__(self, memory_directory: Path | None = None) -> None:
         self.root = (memory_directory or memory_dir()).expanduser().resolve()
         self.directory = self.root / EPISODES_DIRECTORY
 
-    def search_episodes(
-        self, query: str, top_k: int = 3
-    ) -> list[tuple[EpisodeRecord, float]]:
-        """Search episodes by query terms, returning (record, score) tuples."""
-        results = self.search(query, limit=top_k)
-        return [(rec, 1.0) for rec in results]
-
-    def record_episode(self, episode: Episode | EpisodeRecord) -> None:
-        """Persist an episodic case study."""
-        if isinstance(episode, EpisodeRecord):
-            self.save(episode)
-            return
-        if hasattr(episode, "to_record"):
-            self.save(episode.to_record())
-            return
-        rec = EpisodeRecord(
-            id=getattr(episode, "id", f"ep-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"),
-            session_id="default",
-            goal=getattr(episode, "task_description", "") or getattr(episode, "goal", ""),
-            status="completed" if getattr(episode, "outcome", "") == "SUCCESS" else "failed",
-            outcome=getattr(episode, "resolution", "") or getattr(episode, "outcome", ""),
-            started_step=0,
-            ended_step=1,
-            created_at=getattr(episode, "created_at", "") or datetime.now(timezone.utc).isoformat(),
-            plan={},
-            tools=(),
-            agents=(),
-            verification=(),
-            usage={
-                "total_tokens": getattr(episode, "token_count", 0),
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-            },
-        )
-        self.save(rec)
-
-
     def save(self, episode: EpisodeRecord) -> EpisodeRecord:
-        path = self.path_for(episode.id)
-        with _lock_for(self.directory):
-            self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-            self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-            if path.exists():
-                return self.get(episode.id)
-            _atomic_write(path, json.dumps(
-                episode.to_dict(), ensure_ascii=False, indent=2
-            ) + "\n")
-            self._prune_unlocked()
-        return episode
+        checked = EpisodeRecord.from_dict(episode.to_dict())
+        with _StoreLock(self.directory):
+            existing = self._find_unlocked(checked.id)
+            if existing is not None:
+                return self._read_path(existing)
+            if not checked.project_id:
+                raise EpisodeStoreError("新 episode 必须带 project_id")
+            path = self._destination(checked)
+            path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            text = json.dumps(checked.to_dict(), ensure_ascii=False, indent=2) + "\n"
+            if len(text.encode("utf-8")) > MAX_EPISODE_FILE_BYTES:
+                raise EpisodeStoreError("episode 文件超出大小上限")
+            _atomic_write(path, text)
+            if checked.project_id:
+                self._prune_project_unlocked(checked.project_id)
+        return checked
 
     def get(self, episode_id: str) -> EpisodeRecord:
-        path = self.path_for(episode_id)
-        try:
-            if path.is_symlink():
-                raise EpisodeStoreError("拒绝读取符号链接 episode")
-            if path.stat().st_size > MAX_EPISODE_FILE_BYTES:
-                raise EpisodeStoreError("episode 文件超出大小上限")
-            return EpisodeRecord.from_dict(
-                json.loads(path.read_text(encoding="utf-8"))
-            )
-        except FileNotFoundError as exc:
-            raise EpisodeNotFoundError(f"episode 不存在: {episode_id}") from exc
-        except (OSError, json.JSONDecodeError) as exc:
-            raise EpisodeStoreError(f"episode 无法读取: {exc}") from exc
+        with _StoreLock(self.directory):
+            path = self._find_unlocked(episode_id)
+            if path is None:
+                raise EpisodeNotFoundError(f"episode 不存在: {episode_id}")
+            return self._read_path(path)
 
     def delete(self, episode_id: str) -> EpisodeRecord:
-        with _lock_for(self.directory):
-            episode = self.get(episode_id)
+        with _StoreLock(self.directory):
+            path = self._find_unlocked(episode_id)
+            if path is None:
+                raise EpisodeNotFoundError(f"episode 不存在: {episode_id}")
+            episode = self._read_path(path)
             try:
-                self.path_for(episode_id).unlink()
+                path.unlink()
             except OSError as exc:
                 raise EpisodeStoreError(f"episode 删除失败: {exc}") from exc
         return episode
 
-    def list(self, limit: int = 100) -> list[EpisodeRecord]:
+    def list(
+        self,
+        limit: int = 100,
+        *,
+        project_id: str | None = None,
+        scope: EpisodeSearchScope | None = None,
+    ) -> list[EpisodeRecord]:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_EPISODES:
             raise EpisodeStoreError(f"limit 必须是 1..{MAX_EPISODES} 的整数")
-        if not self.directory.is_dir():
+        with _StoreLock(self.directory):
+            episodes = self._load_scope(scope=scope, project_id=project_id or "")
+        _sort_by_time(episodes)
+        return episodes[:limit]
+
+    def recent(self, *, project_id: str, limit: int = 10) -> list[EpisodeRecord]:
+        if not project_id:
             return []
-        paths = sorted(
-            (
-                path
-                for path in self.directory.glob("ep-*.json")
-                if path.is_file() and not path.is_symlink()
-            ),
-            key=lambda path: path.stat().st_mtime_ns,
-            reverse=True,
-        )
-        episodes: list[EpisodeRecord] = []
-        for path in paths:
-            try:
-                episodes.append(self.get(path.stem))
-            except EpisodeStoreError:
-                continue
-            if len(episodes) >= limit:
-                break
-        return episodes
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_EPISODES:
+            raise EpisodeStoreError(f"limit 必须是 1..{MAX_EPISODES} 的整数")
+        with _StoreLock(self.directory):
+            episodes = self._load_scope(scope="current_project", project_id=project_id)
+        _sort_by_time(episodes)
+        return episodes[:limit]
 
     def search(
         self,
@@ -144,188 +114,246 @@ class EpisodeStore(IEpisodicMemoryStore):
         *,
         status: EpisodeStatus | None = None,
         limit: int = 20,
-    ) -> list[EpisodeRecord]:
-        if status is not None and status not in {"completed", "failed", "max_steps"}:
+        scope: EpisodeSearchScope = "current_project",
+        project_id: str = "",
+    ) -> list[EpisodeSearchHit]:
+        if scope not in EPISODE_SEARCH_SCOPES:
+            raise EpisodeStoreError("episode scope 非法")
+        if status is not None and status not in EPISODE_STATUSES:
             raise EpisodeStoreError("episode status 非法")
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
             raise EpisodeStoreError("limit 必须是 1..100 的整数")
-        query_text = str(query).strip().casefold()
-        terms = [term for term in re.split(r"\s+", query_text) if term]
-        scored: list[tuple[int, str, EpisodeRecord]] = []
-        for episode in self.list(MAX_EPISODES):
-            if status is not None and episode.status != status:
-                continue
-            haystack = "\n".join([
-                episode.goal,
-                episode.outcome,
-                episode.status,
-                " ".join(str(tool.get("name", "")) for tool in episode.tools),
-            ]).casefold()
-            if terms and not all(term in haystack for term in terms):
-                continue
-            score = sum(haystack.count(term) for term in terms) if terms else 0
-            scored.append((score, episode.created_at, episode))
-        scored.sort(key=lambda row: (row[0], row[1]), reverse=True)
-        return [episode for _, _, episode in scored[:limit]]
+        if scope == "current_project" and not project_id:
+            return []
+        with _StoreLock(self.directory):
+            loaded = self._load_scope(scope=scope, project_id=project_id)
+        episodes = [
+            episode
+            for episode in loaded
+            if status is None or episode.status == status
+        ]
+        query_tokens = tokenize(str(query))
+        if not query_tokens:
+            _sort_by_time(episodes)
+            return [
+                EpisodeSearchHit(episode=episode, lexical_score=0.0)
+                for episode in episodes[:limit]
+            ]
+        documents = [_weighted_tokens(episode) for episode in episodes]
+        scores = bm25_scores(documents, query_tokens)
+        hits = [
+            EpisodeSearchHit(episode=episode, lexical_score=score)
+            for episode, score in zip(episodes, scores, strict=True)
+            if score > 0
+        ]
+        _sort_hits(hits)
+        return hits[:limit]
 
     def path_for(self, episode_id: str) -> Path:
-        if not isinstance(episode_id, str) or _EPISODE_ID_RE.fullmatch(episode_id) is None:
-            raise EpisodeStoreError("episode_id 非法")
-        return self.directory / f"{episode_id}.json"
+        path = self._find_unlocked(episode_id) if self.directory.is_dir() else None
+        if path is None:
+            raise EpisodeNotFoundError(f"episode 不存在: {episode_id}")
+        return path
 
-    def _prune_unlocked(self) -> None:
-        paths = sorted(
-            self.directory.glob("ep-*.json"),
-            key=lambda path: path.stat().st_mtime_ns,
-            reverse=True,
-        )
-        for path in paths[MAX_EPISODES:]:
+    def _destination(self, episode: EpisodeRecord) -> Path:
+        if episode.project_id:
+            self._check_project_id(episode.project_id)
+            return (
+                self.directory / PROJECTS_DIRECTORY / episode.project_id / f"{episode.id}.json"
+            )
+        self._check_episode_id(episode.id)
+        return self.directory / f"{episode.id}.json"
+
+    def _find_unlocked(self, episode_id: str) -> Path | None:
+        self._check_episode_id(episode_id)
+        name = f"{episode_id}.json"
+        legacy = self.directory / name
+        if _is_regular_file(legacy):
+            return legacy
+        projects = self.directory / PROJECTS_DIRECTORY
+        if not projects.is_dir():
+            return None
+        for child in projects.iterdir():
+            if not child.is_dir() or child.is_symlink():
+                continue
+            if PROJECT_ID_RE.fullmatch(child.name) is None:
+                continue
+            path = child / name
+            if _is_regular_file(path):
+                return path
+        return None
+
+    def _load_scope(
+        self,
+        *,
+        scope: EpisodeSearchScope | None,
+        project_id: str,
+    ) -> list[EpisodeRecord]:
+        if scope is not None and scope not in EPISODE_SEARCH_SCOPES:
+            raise EpisodeStoreError("episode scope 非法")
+        if scope == "legacy":
+            paths = self._legacy_files()
+        elif scope == "current_project":
+            if not project_id:
+                return []
+            self._check_project_id(project_id)
+            paths = self._project_files(project_id)
+        elif scope == "all_projects":
+            paths = self._all_project_files()
+        elif project_id:
+            self._check_project_id(project_id)
+            paths = self._project_files(project_id)
+        else:
+            paths = [*self._all_project_files(), *self._legacy_files()]
+        episodes: list[EpisodeRecord] = []
+        for path in paths:
+            try:
+                episodes.append(self._read_path(path))
+            except EpisodeStoreError:
+                continue
+        return episodes
+
+    def _legacy_files(self) -> list[Path]:
+        if not self.directory.is_dir():
+            return []
+        return [
+            path
+            for path in self.directory.glob("ep-*.json")
+            if _is_regular_file(path)
+        ]
+
+    def _project_files(self, project_id: str) -> list[Path]:
+        directory = self.directory / PROJECTS_DIRECTORY / project_id
+        if not directory.is_dir() or directory.is_symlink():
+            return []
+        return [
+            path
+            for path in directory.glob("ep-*.json")
+            if _is_regular_file(path)
+        ]
+
+    def _all_project_files(self) -> list[Path]:
+        projects = self.directory / PROJECTS_DIRECTORY
+        if not projects.is_dir():
+            return []
+        paths: list[Path] = []
+        for child in projects.iterdir():
+            if (
+                child.is_dir()
+                and not child.is_symlink()
+                and PROJECT_ID_RE.fullmatch(child.name) is not None
+            ):
+                paths.extend(self._project_files(child.name))
+        return paths
+
+    def _prune_project_unlocked(self, project_id: str) -> None:
+        ranked: list[tuple[str, str, Path]] = []
+        for path in self._project_files(project_id):
+            try:
+                episode = self._read_path(path)
+            except EpisodeStoreError:
+                continue
+            ranked.append((episode.created_at, episode.id, path))
+        ranked.sort(key=lambda row: row[1])
+        ranked.sort(key=lambda row: row[0], reverse=True)
+        for _, _, path in ranked[MAX_EPISODES:]:
             path.unlink(missing_ok=True)
 
+    def _read_path(self, path: Path) -> EpisodeRecord:
+        try:
+            if path.is_symlink() or not path.is_file():
+                raise EpisodeStoreError("拒绝读取符号链接 episode")
+            if path.stat().st_size > MAX_EPISODE_FILE_BYTES:
+                raise EpisodeStoreError("episode 文件超出大小上限")
+            return EpisodeRecord.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        except EpisodeStoreError:
+            raise
+        except FileNotFoundError as exc:
+            raise EpisodeNotFoundError(f"episode 不存在: {path.stem}") from exc
+        except (OSError, json.JSONDecodeError) as exc:
+            raise EpisodeStoreError(f"episode 无法读取: {exc}") from exc
 
-def episode_from_session(session_state: Any, final_answer: str | None) -> EpisodeRecord:
-    start = int(getattr(session_state, "active_turn_start_step", 0))
-    end = int(getattr(session_state, "step_count", start))
-    current_goal = getattr(session_state, "current_goal", None)
-    goal = str(current_goal() if callable(current_goal) else "")[:MAX_EPISODE_GOAL_CHARS]
-    run_status = getattr(session_state, "current_run_status", None)
-    status = run_status() if callable(run_status) else "failed"
-    if status not in {"completed", "failed", "cancelled"}:
-        raise EpisodeStoreError(f"不能记录未终止的 run status: {status}")
-    outcome = (
-        str(final_answer)
-        if final_answer is not None
-        else f"任务以 run status={status} 结束，没有可交付 final_answer。"
-    )[:MAX_EPISODE_OUTCOME_CHARS]
-    digest = hashlib.sha256(goal.encode("utf-8")).hexdigest()[:10]
-    message_start = int(
-        getattr(session_state, "active_turn_start_message_index", 0)
-    )
-    episode_id = (
-        f"ep-{session_state.session_id}-{start}-{message_start}-{digest}"
-    )
+    @staticmethod
+    def _check_episode_id(episode_id: str) -> None:
+        if not isinstance(episode_id, str) or EPISODE_ID_RE.fullmatch(episode_id) is None:
+            raise EpisodeStoreError("episode_id 非法")
 
-    executions = sorted(
-        (
-            execution
-            for execution in getattr(session_state, "tool_executions", {}).values()
-            if execution.step > start
-        ),
-        key=lambda execution: execution.step,
-    )[:MAX_EPISODE_TOOLS]
-    tools = tuple({
-        "step": execution.step,
-        "name": execution.call.name,
-        "status": execution.status,
-        "ok": execution.result.ok if execution.result is not None else False,
-        "error": (
-            execution.result.err[:500]
-            if execution.result is not None and execution.result.err
-            else ""
-        ),
-    } for execution in executions)
-
-    current_turns = [
-        turn
-        for turn in getattr(session_state, "turns", [])
-        if turn.step > start
-    ]
-    verification = tuple(
-        {
-            "step": turn.step,
-            "approved": turn.verification.approved,
-            "issues": turn.verification.issues,
-        }
-        for turn in current_turns
-        if turn.verification is not None
-    )
-    prompt_tokens = sum(
-        turn.usage.prompt_tokens for turn in current_turns if turn.usage is not None
-    )
-    completion_tokens = sum(
-        turn.usage.completion_tokens for turn in current_turns if turn.usage is not None
-    )
-    total_tokens = sum(
-        turn.usage.total_tokens for turn in current_turns if turn.usage is not None
-    )
-    agent_tree = session_state.control_plane.tree_summary(
-        getattr(session_state, "agent_root_turn_id", "")
-    )
-
-    def flatten(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        flattened: list[dict[str, Any]] = []
-        for node in nodes:
-            children = node.get("children", [])
-            flattened.append({
-                "id": node.get("id"),
-                "parent_id": node.get("parent_id"),
-                "depth": node.get("depth"),
-                "task": str(node.get("task", ""))[:300],
-                "status": node.get("status"),
-                "steps_used": node.get("steps_used", 0),
-                "total_tokens": node.get("total_tokens", 0),
-                "result": str(node.get("result", ""))[:500],
-                "error": str(node.get("error", ""))[:500],
-            })
-            if isinstance(children, list):
-                flattened.extend(flatten(children))
-        return flattened
-
-    agents = tuple(flatten(agent_tree)[:MAX_EPISODE_AGENTS])
-    return EpisodeRecord(
-        id=episode_id,
-        session_id=str(session_state.session_id),
-        goal=goal,
-        status=status,
-        outcome=outcome,
-        started_step=start,
-        ended_step=end,
-        created_at=datetime.now(timezone.utc).isoformat(),
-        plan=session_state.plan_manager.snapshot(),
-        tools=tools,
-        agents=agents,
-        verification=verification,
-        usage={
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens,
-        },
-    )
+    @staticmethod
+    def _check_project_id(project_id: str) -> None:
+        if not isinstance(project_id, str) or PROJECT_ID_RE.fullmatch(project_id) is None:
+            raise EpisodeStoreError("project_id 非法")
 
 
-def format_episode_manifest(episodes: list[EpisodeRecord]) -> str:
-    return "\n".join(
-        f"- {episode.id} [{episode.status}] {episode.created_at}: "
-        f"{episode.goal[:180]} -> {episode.outcome[:240]}"
-        for episode in episodes
-    )
+def _weighted_tokens(episode: EpisodeRecord) -> list[str]:
+    """Field weights: goal 3, outcome 2, errors and verification 2, names 1.
+
+    Token usage and other counters are excluded.
+    """
+    tokens: list[str] = []
+
+    def add(text: str, weight: int) -> None:
+        parts = tokenize(text)
+        for _ in range(weight):
+            tokens.extend(parts)
+
+    facts = episode_fact_pieces(episode)
+    add(episode.goal, 3)
+    add(episode.outcome, 2)
+    add(facts["errors"], 2)
+    add(facts["verification"], 2)
+    add(facts["objects"], 2)
+    add(facts["names"], 1)
+    return tokens
 
 
-def read_episodes_for_surfacing(episodes: list[EpisodeRecord]) -> str:
-    blocks = []
-    for episode in episodes:
-        tool_line = ", ".join(
-            f"{tool.get('name')}:{tool.get('status')}" for tool in episode.tools
-        ) or "无"
-        agent_line = ", ".join(
-            f"{agent.get('id')}:{agent.get('status')}"
-            for agent in episode.agents
-        ) or "无"
-        blocks.append(
-            f"### {episode.id}\n"
-            f"时间: {episode.created_at}\n"
-            f"目标: {episode.goal}\n"
-            f"状态: {episode.status}\n"
-            f"结果: {episode.outcome}\n"
-            f"工具轨迹: {tool_line}\n"
-            f"子 Agent: {agent_line}"
-        )
-    return "\n\n".join(blocks)
+def _sort_by_time(episodes: list[EpisodeRecord]) -> None:
+    episodes.sort(key=lambda episode: episode.id)
+    episodes.sort(key=lambda episode: episode.created_at, reverse=True)
 
 
-def _lock_for(directory: Path) -> threading.RLock:
+def _sort_hits(hits: list[EpisodeSearchHit]) -> None:
+    hits.sort(key=lambda hit: hit.episode.id)
+    hits.sort(key=lambda hit: hit.episode.created_at, reverse=True)
+    hits.sort(key=lambda hit: 0 if has_result_or_verification(hit.episode) else 1)
+    hits.sort(key=lambda hit: hit.lexical_score, reverse=True)
+
+
+def _is_regular_file(path: Path) -> bool:
+    return path.is_file() and not path.is_symlink()
+
+
+def _thread_lock(directory: Path) -> threading.RLock:
     with _locks_guard:
         return _store_locks.setdefault(directory, threading.RLock())
+
+
+class _StoreLock:
+    """In-process re-entrant lock plus an exclusive inter-process file lock."""
+
+    def __init__(self, directory: Path) -> None:
+        self.directory = directory
+        self._thread = _thread_lock(directory)
+        self._fd: int | None = None
+
+    def __enter__(self) -> _StoreLock:
+        self._thread.acquire()
+        try:
+            self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            fd = os.open(self.directory / ".lock", os.O_CREAT | os.O_RDWR, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            self._fd = fd
+        except Exception:
+            self._thread.release()
+            raise
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        try:
+            if self._fd is not None:
+                fcntl.flock(self._fd, fcntl.LOCK_UN)
+                os.close(self._fd)
+        finally:
+            self._thread.release()
 
 
 def _atomic_write(path: Path, text: str) -> None:
@@ -345,40 +373,12 @@ def _atomic_write(path: Path, text: str) -> None:
         raise
 
 
-def _string(value: Any, field: str, *, allow_empty: bool = False) -> str:
-    if not isinstance(value, str) or (not allow_empty and not value):
-        raise EpisodeStoreError(f"{field} 必须是字符串")
-    return value
-
-
-def _bounded_string(
-    value: Any,
-    field: str,
-    max_chars: int,
-    *,
-    allow_empty: bool = False,
-) -> str:
-    text = _string(value, field, allow_empty=allow_empty)
-    if len(text) > max_chars:
-        raise EpisodeStoreError(f"{field} 不能超过 {max_chars} 个字符")
-    return text
-
-
-def _nonnegative_int(value: Any, field: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise EpisodeStoreError(f"{field} 必须是非负整数")
-    return value
-
-
 __all__ = [
     "EPISODES_DIRECTORY",
+    "MAX_EPISODES",
     "EpisodeNotFoundError",
     "EpisodeRecord",
     "EpisodeStatus",
     "EpisodeStore",
     "EpisodeStoreError",
-    "MAX_EPISODES",
-    "episode_from_session",
-    "format_episode_manifest",
-    "read_episodes_for_surfacing",
 ]

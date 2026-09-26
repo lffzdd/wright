@@ -620,7 +620,11 @@ def assemble_runtime(
     # 它若信息不足，应把缺口作为结果交回父 Agent。子 Agent 也保持无长期记忆、
     # 无 skill 加载器的纯净上下文——委派时把需要的流程写进任务描述。
     # loop 同理：会话内重跑必须看见当前对话，不能下放到隔离的子 Agent。
-    memory_manager = MemoryManager(llm_client, selector_llm=selector_llm)
+    memory_manager = MemoryManager(
+        llm_client,
+        selector_llm=selector_llm,
+        session_repository=checkpoint_store,
+    )
     skill_registry = SkillRegistry(skill_directories(workspace_dir))
     skill_tools = [
         replace(tool, defer_to_model=True)

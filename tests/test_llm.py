@@ -5,18 +5,18 @@ import httpx
 import pytest
 from openai import OpenAI
 
-from wright.infrastructure.storage.attachments import AttachmentStore
-from ..domain.model.session import Session
 from wright.application.agent import create_agent
-from wright.domain.model.events import ContentDone, UsageEvent
-from wright.infrastructure.llm.llm import LLMClient
 from wright.application.memory.llm_util import side_query
 from wright.domain.model import ModelRequest
+from wright.domain.model.events import ContentDone, UsageEvent
+from wright.domain.model.session import Session
+from wright.domain.model.tool import ToolResult
 from wright.domain.policy import ToolAccess
 from wright.domain.protocol import TurnAbort, parse_turn
-from wright.interfaces.renderer import SilentRenderer
-from wright.domain.model.tool import ToolResult
+from wright.infrastructure.llm.llm import LLMClient
+from wright.infrastructure.storage.attachments import AttachmentStore
 from wright.infrastructure.tools.base import Tool
+from wright.interfaces.renderer import SilentRenderer
 
 
 def _client(handler, *, stream):
@@ -480,7 +480,7 @@ def test_responses_stream_maps_text_usage_and_tool_continuation_state():
 
 
 def test_mcp_alias_executes_original_tool_and_preserves_wire_name(tmp_path):
-    from .responses import response
+    from tests.responses import response
 
     original = "mcp__external.server__" + "long.tool." * 9
     observed = []
@@ -515,7 +515,7 @@ def test_mcp_alias_executes_original_tool_and_preserves_wire_name(tmp_path):
 
 
 def test_invalid_batch_is_traced_without_executing_or_leaving_orphan_calls(tmp_path):
-    from .responses import response
+    from tests.responses import response
 
     invalid = response(calls=[{"name": "write"}, {"name": "write"}])
     invalid.tool_calls[1]["function"]["arguments"] = '{"incomplete":'
@@ -546,7 +546,7 @@ def test_invalid_batch_is_traced_without_executing_or_leaving_orphan_calls(tmp_p
 
 
 def test_cancellation_after_model_response_closes_calls_for_resume(tmp_path):
-    from .responses import response
+    from tests.responses import response
 
     cancelled = False
 

@@ -2,72 +2,86 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
-from ...persistence.memory import EpisodeStore
-from ....domain.model.memory import EpisodeStoreError
+from ....application.memory.memory_service import MemoryService
+from ....domain.model.memory import EPISODE_STATUSES
 from ....domain.model.tool import ToolAccess, ToolResult
 from ..base import Tool
 from ..runtime import ToolRuntime
+
+_SCOPES = ("current_project", "all_projects", "legacy")
 
 
 def search_episodes(
     query: str = "",
     status: str | None = None,
     limit: int = 20,
+    scope: str = "current_project",
     runtime: ToolRuntime | None = None,
     *,
-    directory: Path | None = None,
+    service: MemoryService,
+    project_id: str = "",
 ) -> ToolResult:
-    try:
-        episodes = EpisodeStore(directory).search(
-            query, status=status, limit=limit  # type: ignore[arg-type]
-        )
-        return ToolResult.success({
-            "count": len(episodes),
-            "episodes": [
-                {
-                    "id": episode.id,
-                    "created_at": episode.created_at,
-                    "goal": episode.goal,
-                    "status": episode.status,
-                    "outcome": episode.outcome,
-                }
-                for episode in episodes
-            ],
-        })
-    except EpisodeStoreError as exc:
-        return ToolResult.fail(str(exc))
+    del runtime
+    if scope not in _SCOPES:
+        return ToolResult.fail("episode scope 非法")
+    views, error = service.search_episodes(
+        query,
+        status=status,
+        limit=limit,
+        scope=scope,  # type: ignore[arg-type]
+        project_id=project_id if scope == "current_project" else "",
+    )
+    if error is not None:
+        return ToolResult.fail(error)
+    return ToolResult.success({
+        "count": len(views),
+        "scope": scope,
+        "episodes": [view.summary_dict() for view in views],
+    })
 
 
 def get_episode(
     episode_id: str,
+    include_evidence: bool = False,
     runtime: ToolRuntime | None = None,
     *,
-    directory: Path | None = None,
+    service: MemoryService,
+    project_id: str = "",
 ) -> ToolResult:
-    try:
-        return ToolResult.success(EpisodeStore(directory).get(episode_id).to_dict())
-    except EpisodeStoreError as exc:
-        return ToolResult.fail(str(exc))
+    del runtime, project_id
+    view, error = service.get_episode(episode_id, include_evidence=include_evidence)
+    if error is not None or view is None or view.record is None:
+        return ToolResult.fail(error or "episode 不存在")
+    payload = view.record.to_dict()
+    payload["project_source"] = view.project_source
+    payload["verification_summary"] = view.verification_summary
+    if include_evidence:
+        payload["evidence_reads"] = [
+            item.to_dict() if hasattr(item, "to_dict") else dict(item)
+            for item in view.evidence_reads
+        ]
+    return ToolResult.success(payload)
 
 
 def delete_episode(
     episode_id: str,
     runtime: ToolRuntime | None = None,
     *,
-    directory: Path | None = None,
+    service: MemoryService,
+    project_id: str = "",
 ) -> ToolResult:
-    try:
-        episode = EpisodeStore(directory).delete(episode_id)
-        return ToolResult.success({
-            "message": "Episode deleted",
-            "id": episode.id,
-            "goal": episode.goal,
-        })
-    except EpisodeStoreError as exc:
-        return ToolResult.fail(str(exc))
+    del runtime, project_id
+    view, error = service.delete_episode(episode_id)
+    if error is not None or view is None:
+        return ToolResult.fail(error or "episode 不存在")
+    return ToolResult.success({
+        "message": "Episode deleted",
+        "id": view.id,
+        "goal": view.goal,
+        "project_source": view.project_source,
+    })
 
 
 def _describe_episode_read(arguments: dict[str, Any]) -> ToolAccess:
@@ -87,18 +101,26 @@ def _describe_episode_delete(arguments: dict[str, Any]) -> ToolAccess:
     )
 
 
-def build_episode_tools(directory: Path | None = None) -> list[Tool]:
+def build_episode_tools(
+    service: MemoryService,
+    *,
+    project_id: str = "",
+) -> list[Tool]:
     def bind(function):
         return lambda args, runtime: function(
-            **args, runtime=runtime, directory=directory
+            **args, runtime=runtime, service=service, project_id=project_id
         )
 
     return [
         Tool(
             name="search_episodes",
             description=(
-                "Search past task episodes: goal, outcome, and completion status. "
-                "Episodes are historical experience; re-check current state before acting on them."
+                "Search past task episodes: goal, outcome, status, project source, "
+                "and verification summary. Default scope is the current project. "
+                "Use scope=all_projects or scope=legacy only when the user explicitly "
+                "asks for other projects or older unscoped records. "
+                "Episodes are historical experience; re-check current state before acting. "
+                "lexical_score is a rank key, not a similarity probability."
             ),
             parameters={
                 "type": "object",
@@ -106,9 +128,13 @@ def build_episode_tools(directory: Path | None = None) -> list[Tool]:
                     "query": {"type": "string"},
                     "status": {
                         "type": "string",
-                        "enum": ["completed", "failed", "max_steps"],
+                        "enum": sorted(EPISODE_STATUSES),
                     },
                     "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                    "scope": {
+                        "type": "string",
+                        "enum": list(_SCOPES),
+                    },
                 },
                 "required": [],
                 "additionalProperties": False,
@@ -120,10 +146,18 @@ def build_episode_tools(directory: Path | None = None) -> list[Tool]:
         ),
         Tool(
             name="get_episode",
-            description="Read a full historical episode by episode_id, including plan, tool trace, and verification.",
+            description=(
+                "Read a full historical episode by episode_id, including plan, "
+                "tool trace, and verification. Known ids include legacy records. "
+                "Set include_evidence=true to read the registered source excerpts. "
+                "That does not rerun tools or resume the old task."
+            ),
             parameters={
                 "type": "object",
-                "properties": {"episode_id": {"type": "string", "minLength": 1}},
+                "properties": {
+                    "episode_id": {"type": "string", "minLength": 1},
+                    "include_evidence": {"type": "boolean"},
+                },
                 "required": ["episode_id"],
                 "additionalProperties": False,
             },
@@ -134,7 +168,10 @@ def build_episode_tools(directory: Path | None = None) -> list[Tool]:
         ),
         Tool(
             name="delete_episode",
-            description="Delete a historical episode the user asked to forget. Models cannot create or edit episodes.",
+            description=(
+                "Delete a historical episode the user asked to forget. "
+                "Models cannot create or edit episodes."
+            ),
             parameters={
                 "type": "object",
                 "properties": {"episode_id": {"type": "string", "minLength": 1}},

@@ -1,28 +1,27 @@
 import base64
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from wright.application.tool_runtime import tool_runtime_for_session
-from wright.infrastructure.storage.artifacts import ArtifactStore
-from wright.domain.model.agent import AgentProfile, CapabilityCatalog, CapabilityError
-from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
-from wright.domain.model.session import Session
+from tests.paths import PACKAGE_ROOT
+from tests.responses import response
+from tests.test_attachments import _png_bytes
 from wright.application.agent import create_agent
-from wright.application.tool_dispatch_service import ToolDispatchService
-from wright.infrastructure.runtime import LocalExecutionBackend
-from wright.domain.policy import ToolAccess
-from wright.interfaces.renderer import SilentRenderer
-from wright.tests.responses import response
 from wright.application.tool_capabilities import assemble_tool_capabilities
+from wright.application.tool_dispatch_service import ToolDispatchService
+from wright.application.tool_runtime import tool_runtime_for_session
+from wright.domain.model.agent import AgentProfile, CapabilityCatalog, CapabilityError
+from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
+from wright.domain.policy import ToolAccess
+from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
+from wright.infrastructure.runtime import LocalExecutionBackend
+from wright.infrastructure.storage.artifacts import ArtifactStore
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.command import execute_command
 from wright.infrastructure.tools.file import read_file_tool
 from wright.infrastructure.tools.mcp_client import _to_tool_result
-
-from .test_attachments import _png_bytes
+from wright.interfaces.renderer import SilentRenderer
 
 
 def _png_base64():
@@ -186,7 +185,7 @@ def test_managed_artifact_survives_source_cleanup_and_rejects_escape(tmp_path):
 
 
 def test_production_tools_cannot_reach_session_or_service_containers():
-    root = Path(__file__).parents[1]
+    root = PACKAGE_ROOT
     sources = [
         *sorted((root / "infrastructure" / "tools").glob("*.py")),
         root / "application" / "agent" / "subagent.py",

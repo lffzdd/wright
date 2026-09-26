@@ -9,16 +9,24 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from ....domain.model.memory import SEMANTIC_MEMORY_TYPES
+from ....domain.model.tool import ToolAccess, ToolResult
 from ...persistence.memory import (
-    MemoryStoreError,
+    SemanticMemoryStoreError,
     search_memories,
+)
+from ...persistence.memory import (
     create_memory as store_create_memory,
+)
+from ...persistence.memory import (
     delete_memory as store_delete_memory,
+)
+from ...persistence.memory import (
     get_memory as store_get_memory,
+)
+from ...persistence.memory import (
     update_memory as store_update_memory,
 )
-from ....domain.model.memory import MEMORY_TYPES
-from ....domain.model.tool import ToolAccess, ToolResult
 from ..base import Tool
 from ..runtime import ToolRuntime
 
@@ -36,7 +44,7 @@ def create_memory(
         return ToolResult.success(
             store_create_memory(name, description, type, content, directory).to_dict()
         )
-    except (MemoryStoreError, OSError) as exc:
+    except (SemanticMemoryStoreError, OSError) as exc:
         return ToolResult.fail(str(exc))
 
 
@@ -48,7 +56,7 @@ def get_memory(
 ) -> ToolResult:
     try:
         return ToolResult.success(store_get_memory(memory_id, directory).to_dict())
-    except (MemoryStoreError, OSError) as exc:
+    except (SemanticMemoryStoreError, OSError) as exc:
         return ToolResult.fail(str(exc))
 
 
@@ -74,7 +82,7 @@ def update_memory(
             directory=directory,
         )
         return ToolResult.success(record.to_dict())
-    except (MemoryStoreError, OSError) as exc:
+    except (SemanticMemoryStoreError, OSError) as exc:
         return ToolResult.fail(str(exc))
 
 
@@ -89,7 +97,7 @@ def delete_memory(
         return ToolResult.success(
             {"message": "Memory deleted", "id": deleted.id, "name": deleted.name}
         )
-    except (MemoryStoreError, OSError) as exc:
+    except (SemanticMemoryStoreError, OSError) as exc:
         return ToolResult.fail(str(exc))
 
 
@@ -131,7 +139,7 @@ def search_memory(
             ) or "(no memories)",
             "results": results,
         })
-    except (MemoryStoreError, OSError) as exc:
+    except (SemanticMemoryStoreError, OSError) as exc:
         return ToolResult.fail(str(exc))
 
 
@@ -155,7 +163,7 @@ def _describe_memory_write(arguments: dict[str, Any]) -> ToolAccess:
 _MEMORY_FIELDS = {
     "name": {"type": "string", "minLength": 1, "maxLength": 120},
     "description": {"type": "string", "maxLength": 500},
-    "type": {"type": "string", "enum": list(MEMORY_TYPES)},
+    "type": {"type": "string", "enum": list(SEMANTIC_MEMORY_TYPES)},
     "content": {"type": "string", "minLength": 1, "maxLength": 12_000},
 }
 
@@ -242,7 +250,7 @@ def build_memory_tools(
             "type": "object",
             "properties": {
                 "query": {"type": "string"},
-                "type": {"type": "string", "enum": list(MEMORY_TYPES)},
+                "type": {"type": "string", "enum": list(SEMANTIC_MEMORY_TYPES)},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 100},
             },
             "required": [],

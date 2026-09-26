@@ -1,18 +1,17 @@
-import json
-
 import pytest
 
-from wright.tests.responses import event
-
-from ...domain.model.session import Session, UsageRecord
+from wright.application.memory import MemoryManager
+from wright.application.memory.episode import episode_from_session
+from wright.application.memory.memory_service import MemoryService
+from wright.domain.gateway.memory import SelectorChoice
+from wright.domain.model.session import Session, UsageRecord
+from wright.domain.model.tool import ToolCall, ToolResult
 from wright.infrastructure.persistence.memory import (
     EpisodeNotFoundError,
     EpisodeStore,
     EpisodeStoreError,
-    episode_from_session,
+    SemanticMemoryStore,
 )
-from wright.application.memory.recall import build_recall_block
-from wright.domain.model.tool import ToolCall, ToolResult
 from wright.infrastructure.tools.memory import build_episode_tools
 
 
@@ -93,8 +92,15 @@ def test_episode_store_search_get_delete_and_validation(tmp_path):
     episode = store.save(episode_from_session(_completed_session(tmp_path), "已修复登录"))
 
     assert store.get(episode.id) == episode
-    assert store.search("登录", status="completed") == [episode]
-    assert store.search("没有匹配") == []
+    hits = store.search(
+        "登录", status="completed", scope="current_project", project_id=episode.project_id
+    )
+    assert [hit.episode for hit in hits] == [episode]
+    assert hits[0].lexical_score > 0
+    assert hits[0].lexical_score != 1.0
+    assert store.search(
+        "没有匹配", scope="current_project", project_id=episode.project_id
+    ) == []
     with pytest.raises(EpisodeStoreError, match="status"):
         store.search(status="unknown")  # type: ignore[arg-type]
     with pytest.raises(EpisodeStoreError, match="limit"):
@@ -109,26 +115,33 @@ class _EpisodeSelector:
     def __init__(self, episode_id):
         self.episode_id = episode_id
 
-    def __call__(self, messages, **kwargs):
-        yield event(json.dumps({
-            "selected_memories": [],
-            "selected_episodes": [self.episode_id],
-        }, ensure_ascii=False))
+    def select(self, *, task, semantic_manifest, episode_manifest):
+        del task, semantic_manifest, episode_manifest
+        return SelectorChoice(episode_ids=(self.episode_id,))
 
 
 def test_episode_recall_is_marked_as_historical_not_current_evidence(tmp_path):
     store = EpisodeStore(tmp_path)
     episode = store.save(episode_from_session(_completed_session(tmp_path), "已修复"))
+    service = MemoryService(
+        SemanticMemoryStore(tmp_path),
+        store,
+        selector=_EpisodeSelector(episode.id),
+    )
 
-    block = build_recall_block("登录测试怎么修", _EpisodeSelector(episode.id), tmp_path)
+    context = service.prepare_memory_context(
+        "登录测试怎么修", project_id=episode.project_id
+    )
 
-    assert episode.id in block
-    assert "历史执行经历" in block
-    assert "不代表当前文件、测试或外部状态" in block
+    assert episode.id in context.episode_text
+    assert "历史执行经历" in context.episode_text
+    assert "不表示测试已经通过" in context.episode_text
+    assert "测试已通过" not in context.episode_text
 
 
 def test_episode_tools_are_read_only_except_permissioned_forget(tmp_path):
-    tools = build_episode_tools(tmp_path)
+    service = MemoryService(SemanticMemoryStore(tmp_path), EpisodeStore(tmp_path))
+    tools = build_episode_tools(service, project_id="demo")
     assert [tool.name for tool in tools] == [
         "search_episodes", "get_episode", "delete_episode"
     ]
@@ -165,3 +178,55 @@ def test_episode_captures_compact_subagent_execution_summary(tmp_path):
         "result": "auth finding",
         "error": "",
     },)
+
+
+class _UnusedLLM:
+    def __call__(self, messages, **kwargs):
+        raise AssertionError("episode gate must not call the model")
+
+
+def test_record_episode_skips_empty_turns_and_keeps_traces(tmp_path):
+    manager = MemoryManager(_UnusedLLM(), directory=tmp_path)
+
+    empty = Session.create("placeholder", tmp_path)
+    empty.begin_user_turn("hi")
+    empty.append_message({"role": "user", "content": "hi"})
+    empty.mark_cancelled()
+    assert manager.record_episode(empty, None) is None
+    assert manager.episode_store.list() == []
+
+    answered = Session.create("placeholder", tmp_path)
+    answered.begin_user_turn("我该用什么包管理器")
+    answered.append_message({"role": "user", "content": "我该用什么包管理器"})
+    answered.mark_completed()
+    saved_answer = manager.record_episode(answered, "用 bun")
+    assert saved_answer is not None
+    assert saved_answer.tools == ()
+    assert saved_answer.outcome == "用 bun"
+
+    failed = Session.create("placeholder", tmp_path)
+    failed.begin_user_turn("修复登录测试")
+    failed.append_message({"role": "user", "content": "修复登录测试"})
+    call = ToolCall("execute_command", {"command": "pytest"}, "call_1")
+    failed.record_assistant_turn("tool call", {"tool_calls": []}, "tool_calls", [call])
+    failed.record_tool_execution("call_1", ToolResult.fail("assertion failed"))
+    failed.mark_failed()
+    saved_failure = manager.record_episode(failed, None)
+    assert saved_failure is not None
+    assert saved_failure.status == "failed"
+    assert saved_failure.tools[0]["ok"] is False
+    assert manager.episode_store.get(saved_failure.id).status == "failed"
+
+    cancelled = Session.create("placeholder", tmp_path)
+    cancelled.begin_user_turn("修复登录测试")
+    cancelled.append_message({"role": "user", "content": "修复登录测试"})
+    cancel_call = ToolCall("execute_command", {"command": "pytest"}, "call_1")
+    cancelled.record_assistant_turn(
+        "tool call", {"tool_calls": []}, "tool_calls", [cancel_call]
+    )
+    cancelled.record_tool_execution("call_1", ToolResult.fail("cancelled"))
+    cancelled.mark_cancelled()
+    saved_cancel = manager.record_episode(cancelled, None)
+    assert saved_cancel is not None
+    assert saved_cancel.status == "cancelled"
+    assert manager.episode_store.get(saved_cancel.id).status == "cancelled"

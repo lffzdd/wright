@@ -9,12 +9,15 @@
 """
 
 import json
+import sys
 import tempfile
 import threading
 import time
-from wright.tests.responses import event, response
-
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tests.responses import event, response
 
 from wright.application.agent import build_agent_tools, create_agent, make_spawn_agent_tool
 from wright.domain.model.events import ContentDone

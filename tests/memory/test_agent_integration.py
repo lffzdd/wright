@@ -4,14 +4,14 @@
 """
 
 import json
+import re
 from pathlib import Path
 
-from wright.tests.responses import event, response
-
-from ...domain.model.session import Session
+from tests.responses import event, response
 from wright.application.agent import create_agent
-from wright.domain.model.events import UsageEvent
 from wright.application.memory import MemoryManager
+from wright.domain.model.events import UsageEvent
+from wright.domain.model.session import Session
 from wright.infrastructure.persistence.memory import write_memory_file
 from wright.interfaces.renderer import SilentRenderer
 
@@ -27,7 +27,11 @@ class MainLLM:
 
     context_limit = 128000
 
+    def __init__(self):
+        self.requests = []
+
     def __call__(self, messages, **kwargs):
+        self.requests.append(list(messages))
         yield UsageEvent(_Usage())
         yield event(
             content=response(content="done", calls=[]),
@@ -44,18 +48,24 @@ class SelectorLLM:
     def __call__(self, messages, **kwargs):
         self.calls += 1
         yield UsageEvent(_Usage())
-        payload = {
-            "selected_memories": ["user-likes-bun.md"],  # recall 取这个
-            "memories": [  # extract 取这个
-                {
+        text = str(messages[-1].get("content") if messages else "")
+        if "kind=user_statement" in text:
+            found = re.search(r"\[(ev-[A-Za-z0-9_-]+)", text)
+            payload = {
+                "memories": [{
                     "name": "session-fact",
                     "description": "extracted in session",
-                    "type": "project",
-                    "content": "事实正文",
+                    "type": "user",
+                    "content": "以后只用 bun",
                     "action": "create",
-                }
-            ],
-        }
+                    "source_refs": [found.group(1)] if found else [],
+                }]
+            }
+        else:
+            payload = {
+                "selected_memories": ["user-likes-bun.md"],
+                "selected_episodes": [],
+            }
         yield event(content=json.dumps(payload, ensure_ascii=False), reasoning="")
 
 
@@ -75,11 +85,12 @@ def test_agent_recall_injection_and_extraction(tmp_path: Path):
     )
 
     selector = SelectorLLM()
-    manager = MemoryManager(MainLLM(), selector_llm=selector, directory=tmp_path)
+    main = MainLLM()
+    manager = MemoryManager(main, selector_llm=selector, directory=tmp_path)
     session = Session.create(initial_goal="t", workspace_dir=tmp_path)
-    agent = create_agent(MainLLM(), [], session, SilentRenderer(), memory=manager)
+    agent = create_agent(main, [], session, SilentRenderer(), memory=manager)
 
-    answer = agent.run("我该用什么包管理器")
+    answer = agent.run("记住我以后只用 bun")
     assert answer == "done"
     assert session.total_usage.total_tokens == 15 * (1 + selector.calls)
     assert session.last_usage.total_tokens == 15
@@ -90,14 +101,20 @@ def test_agent_recall_injection_and_extraction(tmp_path: Path):
     assert sys_msg["role"] == "system"
     assert "长期记忆" in sys_msg["content"]
 
-    # 2) 召回块作为 system-reminder 被注入(用户消息之后)
-    wire = [r.message for r in session.message_records]
-    reminders = [
-        m for m in wire
-        if m["role"] == "user" and "<system-reminder>" in str(m.get("content", ""))
+    # 2) 召回块只出现在本次请求投影，不写入历史 transcript
+    projected = [
+        message
+        for request in main.requests
+        for message in request
+        if message.get("role") == "user" and "<system-reminder" in str(message.get("content", ""))
     ]
-    assert reminders, "召回块未注入"
-    assert "用 bun" in reminders[0]["content"]
+    assert projected, "召回块未注入"
+    assert "用 bun" in projected[0]["content"]
+    assert "wright-semantic-recall" in projected[0]["content"]
+    assert not any(
+        "<system-reminder" in str(record.message.get("content", ""))
+        for record in session.message_records
+    )
 
     # 3) 收口后提取落盘了新记忆 + 重建了索引
     assert (tmp_path / "session-fact.md").is_file()
@@ -106,9 +123,21 @@ def test_agent_recall_injection_and_extraction(tmp_path: Path):
     # 4) 同一个 user turn 自动形成独立 episode；语义扫描不会把它当成 markdown 记忆
     episodes = manager.episode_store.list()
     assert len(episodes) == 1
-    assert episodes[0].goal == "我该用什么包管理器"
+    assert episodes[0].goal == "记住我以后只用 bun"
     assert episodes[0].status == "completed"
     assert episodes[0].outcome == "done"
+
+
+def test_greeting_skips_semantic_extract_and_episode(tmp_path: Path):
+    selector = SelectorLLM()
+    manager = MemoryManager(MainLLM(), selector_llm=selector, directory=tmp_path)
+    session = Session.create(initial_goal="t", workspace_dir=tmp_path)
+    agent = create_agent(MainLLM(), [], session, SilentRenderer(), memory=manager)
+
+    assert agent.run("hi") == "done"
+    assert selector.calls == 0
+    assert not (tmp_path / "session-fact.md").exists()
+    assert manager.episode_store.list() == []
 
 
 def test_agent_without_memory_unaffected(tmp_path: Path):

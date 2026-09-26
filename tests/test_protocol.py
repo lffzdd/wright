@@ -1,8 +1,8 @@
 import pytest
 
+from tests.responses import response
 from wright.domain.model.events import ContentDone
 from wright.domain.protocol import TurnAbort, parse_turn
-from .responses import response
 
 
 def test_natural_text_and_json_answers_are_not_control_protocols():
