@@ -12,11 +12,8 @@ from wright.domain.gateway.embedder import IEmbedder
 from wright.domain.gateway.knowledge_provider import IKnowledgeProvider
 from wright.domain.gateway.vector_store import IVectorStore
 from wright.domain.model.knowledge import DocumentChunk, KnowledgeHit
-from wright.infrastructure.knowledge import (
-    ApiEmbedder,
-    SimpleVectorStore,
-    build_knowledge_tools,
-)
+from wright.infrastructure.knowledge import ApiEmbedder, SimpleVectorStore
+from wright.infrastructure.tools.knowledge import build_knowledge_tools
 from wright.utils.text_splitter import split_text
 
 

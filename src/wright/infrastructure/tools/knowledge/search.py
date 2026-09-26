@@ -1,20 +1,24 @@
-"""把 KnowledgeProvider 暴露成模型可调用的 knowledge_search。"""
+"""Model-facing tools for knowledge base retrieval."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from ...domain.gateway.knowledge_provider import KnowledgeProvider
-from ...domain.model.knowledge import (
+from ....domain.gateway.knowledge_provider import IKnowledgeProvider, KnowledgeProvider
+from ....domain.model.knowledge import (
     MAX_HIT_CONTENT_CHARS,
     MAX_SEARCH_OUTPUT_CHARS,
     MAX_TOP_K,
     KnowledgeUnavailable,
     truncate_hits,
 )
-from ...domain.model.tool import ToolAccess, ToolResult
-from ..tools.base import Tool
-from ..tools.runtime import ToolRuntime
+from ....domain.model.tool import ToolAccess, ToolResult
+from ...knowledge.rag_provider import (
+    RagKnowledgeProvider,
+    knowledge_enabled,
+)
+from ..base import Tool
+from ..runtime import ToolRuntime
 
 
 def _describe_network(args: dict[str, Any]) -> ToolAccess:
@@ -40,7 +44,7 @@ def knowledge_search(
     top_k: int = 3,
     runtime: ToolRuntime | None = None,
     *,
-    provider: KnowledgeProvider,
+    provider: KnowledgeProvider | IKnowledgeProvider,
 ) -> ToolResult:
     del runtime
     try:
@@ -72,7 +76,7 @@ def knowledge_search(
     })
 
 
-def build_knowledge_tools(provider: KnowledgeProvider) -> list[Tool]:
+def build_knowledge_tools(provider: KnowledgeProvider | IKnowledgeProvider) -> list[Tool]:
     def call(args: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
         return knowledge_search(provider=provider, runtime=runtime, **args)
 
@@ -109,3 +113,19 @@ def build_knowledge_tools(provider: KnowledgeProvider) -> list[Tool]:
             defer_to_model=True,
         )
     ]
+
+
+def optional_knowledge_tools(*, enabled: bool | None = None) -> list[Tool]:
+    """未显式启用时返回空列表，避免不可用工具占住每个新会话。"""
+    is_active = enabled if enabled is not None else knowledge_enabled()
+    if not is_active:
+        return []
+
+    return build_knowledge_tools(RagKnowledgeProvider.from_env())
+
+
+__all__ = [
+    "build_knowledge_tools",
+    "knowledge_search",
+    "optional_knowledge_tools",
+]

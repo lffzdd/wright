@@ -32,7 +32,7 @@ from .agent import (
 from .looping import SessionLoopRegistry
 from ..domain.policy.verifier import Verifier
 from ..interfaces.interaction import InteractionHub
-from ..infrastructure.knowledge import optional_knowledge_tools
+from ..infrastructure.tools.knowledge import optional_knowledge_tools
 from ..infrastructure.llm.llm import LLMClient
 from ..core.logger import get_logger
 from .memory import MemoryManager

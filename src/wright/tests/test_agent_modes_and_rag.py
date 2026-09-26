@@ -23,7 +23,7 @@ from wright.domain.prompt import (
 )
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolResult
-from wright.infrastructure.knowledge import optional_knowledge_tools
+from wright.infrastructure.tools.knowledge import optional_knowledge_tools
 from wright.infrastructure.tools.base import Tool
 from wright.interfaces.renderer import SilentRenderer
 
