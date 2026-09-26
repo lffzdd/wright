@@ -1,21 +1,26 @@
+"""execute_command tool implementation."""
+
+from __future__ import annotations
+
 import threading
 import time
 import uuid
 from collections.abc import Callable
 from typing import Any
 
-from ..runtime import ExecutionPath, ProcessHandle
-from ...core.logger import get_logger
-from ...core.processes import ProcessResources
-from ...domain.model.tool import ToolResult
-from .base import Tool
-from .command_permissions import (
+from ....core.logger import get_logger
+from ....core.processes import ProcessResources
+from ....domain.model.tool import ToolResult
+from ...runtime import ExecutionPath, ProcessHandle
+from ..base import Tool
+from ..runtime import ToolCancelledError, ToolRuntime
+from .permissions import (
     describe_execute_command_access,
     is_execute_command_concurrency_safe,
 )
-from .runtime import ToolCancelledError, ToolRuntime
 
 logger = get_logger(__name__)
+
 
 def _capabilities(runtime: ToolRuntime | None):
     capabilities = runtime.capabilities if runtime is not None else None
@@ -39,8 +44,7 @@ def _make_background_task(
     run_id: str = "",
     on_done: Callable[[], None] | None = None,
 ):
-    # 延迟导入避免 session -> tools.base -> tools.__init__ -> command_tools 的环。
-    from ...domain.model.session import BackgroundTask
+    from ....domain.model.session import BackgroundTask
 
     task = BackgroundTask(
         task_id=task_id,
@@ -56,8 +60,6 @@ def _make_background_task(
     )
 
 
-# ── execute_command ───────────────────────────────────────────────────────────
-
 MAX_OUTPUT_CHARS = 8000
 
 
@@ -67,15 +69,7 @@ def execute_command(
     run_in_background: bool = False,
     runtime: ToolRuntime | None = None,
 ) -> ToolResult:
-    """
-    执行 shell 命令，对齐 Claude Code BashTool 的核心机制：
-
-    - cwd 注入法：在命令末尾追加 `&& pwd -P > $tmpfile`，命令执行完后
-      读回临时文件来更新 session cwd，能正确捕获命令内部 cd 的效果。
-    - 流式输出：后台读线程实时触发 runtime 里的输出回调。
-    - 超时转后台：前台命令超时后不 kill，转为后台任务返回 task_id。
-    - run_in_background：立即后台运行，返回 task_id。
-    """
+    """执行 shell 命令，对齐 Claude Code BashTool 的核心机制。"""
     try:
         capabilities = _capabilities(runtime)
 
@@ -97,8 +91,7 @@ def execute_command(
                 "This Agent cannot create background tasks",
                 data=result_data(),
             )
-        # The tool owns shell-specific cwd tracking and output semantics; the
-        # execution backend owns where/how the approved process is created.
+        assert runtime is not None and runtime.execution is not None
         proc = runtime.execution.start_shell(command)
     except FileNotFoundError:
         return ToolResult.fail(
@@ -112,8 +105,6 @@ def execute_command(
     done_event = threading.Event()
     cwd_result: list[ExecutionPath] = []
 
-    # 后台 task 可能在 reader 启动后才创建（前台 timeout 转后台）。holder
-    # 让 reader 在完成时补 ended_at 和通知；极短命令先结束时，注册路径会补发。
     background_holder: list[Any | None] = [None]
     notification_lock = threading.Lock()
     notification_sent = False
@@ -139,8 +130,6 @@ def execute_command(
             if runtime and runtime.emit_output:
                 runtime.emit_output(line)
         proc.wait()
-        # reader 只采集命令结束时的 cwd，不负责提交。只有前台调用路径确认命令
-        # 没有转后台后才会更新 session，彻底消除 timeout 临界点的提交竞态。
         new_cwd = proc.cwd_result()
         if new_cwd is not None:
             cwd_result.append(new_cwd)
@@ -197,7 +186,6 @@ def execute_command(
                 f"Command exceeded {timeout}s; this Agent cannot convert it to a background task",
                 data=result_data({"timed_out": True, "output_so_far": output_so_far}),
             )
-        # 超时：不 kill，转后台
         task_id = f"task_{uuid.uuid4().hex[:8]}"
         notify = runtime.notify_background_done if runtime else None
         background, resources = _make_background_task(
@@ -223,6 +211,7 @@ def execute_command(
             "output_so_far": output_so_far,
         }))
 
+    assert runtime is not None and runtime.execution is not None
     current_cwd = cwd_result[0] if cwd_result else runtime.execution.cwd()
     if cwd_result and capabilities.set_cwd is not None:
         capabilities.set_cwd(current_cwd)
@@ -266,8 +255,6 @@ def _format_cwd(
     return runtime.execution.display_path(cwd or runtime.execution.cwd())
 
 
-# ── 工具定义 ──────────────────────────────────────────────────────────────────
-
 execute_command_tool = Tool(
     name="execute_command",
     description=(
@@ -301,6 +288,5 @@ execute_command_tool = Tool(
     access_descriptor=describe_execute_command_access,
     is_concurrency_safe=is_execute_command_concurrency_safe,
     required_capabilities=frozenset({"execution", "cwd", "background"}),
-    # shell 自己负责前台 timeout → 后台 task 的语义。
     timeout_owner="tool",
 )

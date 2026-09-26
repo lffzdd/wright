@@ -13,7 +13,7 @@ from wright.domain.policy import PermissionPolicy, PermissionResolver, Permissio
 from wright.interfaces.renderer import SilentRenderer
 from wright.application.tool_capabilities import assemble_tool_capabilities
 from wright.domain.model.tool import ToolCall
-from wright.infrastructure.tools.command_tools import execute_command
+from wright.infrastructure.tools.command import execute_command
 
 
 def _tool(name, **arguments):

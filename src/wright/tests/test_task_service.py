@@ -5,7 +5,7 @@ from wright.application.tool_runtime import tool_runtime_for_session
 from ..domain.model.session import Session
 from wright.application.agent import build_agent_tools
 from wright.application.task_service import TaskService
-from wright.infrastructure.tools.command_tools import execute_command
+from wright.infrastructure.tools.command import execute_command
 from wright.infrastructure.tools.task_tools import (
     cancel_task_tool,
     get_task_tool,

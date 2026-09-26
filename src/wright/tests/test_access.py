@@ -22,8 +22,8 @@ from wright.domain.policy import (
 from wright.application.tool_capabilities import assemble_tool_capabilities
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.infrastructure.tools.base import Tool
-from wright.infrastructure.tools.command_tools import execute_command
-from wright.infrastructure.tools.file_tools import (
+from wright.infrastructure.tools.command import execute_command
+from wright.infrastructure.tools.file import (
     edit_file,
     grep_files,
     grep_tool,

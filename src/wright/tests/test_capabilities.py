@@ -18,8 +18,8 @@ from wright.tests.responses import response
 from wright.application.tool_capabilities import assemble_tool_capabilities
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.infrastructure.tools.base import Tool
-from wright.infrastructure.tools.command_tools import execute_command
-from wright.infrastructure.tools.file_tools import read_file_tool
+from wright.infrastructure.tools.command import execute_command
+from wright.infrastructure.tools.file import read_file_tool
 from wright.infrastructure.tools.mcp_client import _to_tool_result
 
 from .test_attachments import _png_bytes

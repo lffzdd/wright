@@ -11,9 +11,11 @@ from wright.application.task_service import TaskService
 from wright.application.tool_capabilities import assemble_tool_capabilities
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.infrastructure.tools.base import Tool
-from wright.infrastructure.tools.command_permissions import is_execute_command_concurrency_safe
-from wright.infrastructure.tools.command_tools import execute_command
-from wright.infrastructure.tools.file_tools import read_file, write_file
+from wright.infrastructure.tools.command import (
+    execute_command,
+    is_execute_command_concurrency_safe,
+)
+from wright.infrastructure.tools.file import read_file, write_file
 from wright.infrastructure.tools.web_tools import http_request_tool
 
 

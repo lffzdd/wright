@@ -65,7 +65,7 @@ from .skills import SkillRegistry
 from ..infrastructure.tools.skill_tools import optional_skill_tools
 from .tool_capabilities import assemble_tool_capabilities
 from ..infrastructure.tools import tools as base_tools
-from ..infrastructure.tools.ask_user_tool import ask_user_tool
+from ..infrastructure.tools.human_input import ask_user_tool
 from ..infrastructure.tools.base import Tool
 from ..infrastructure.tools.loop_tools import manage_loop_tool
 from ..infrastructure.tools.mcp_client import McpManager, load_mcp_configs

@@ -20,7 +20,7 @@ from wright.interfaces.renderer import SilentRenderer
 from wright.application.skills import SkillRegistry
 from wright.infrastructure.storage.skills import write_skill
 from wright.domain.model.tool import ToolResult
-from wright.infrastructure.tools.ask_user_tool import ask_user_tool
+from wright.infrastructure.tools.human_input import ask_user_tool
 from wright.infrastructure.tools.autonomy_tools import autonomy_tools
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.knowledge import build_knowledge_tools

@@ -20,7 +20,7 @@ from wright.domain.policy import PermissionResolver, PermissionResponse, ToolAcc
 from wright.application.tool_capabilities import assemble_tool_capabilities
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.infrastructure.tools.base import Tool
-from wright.infrastructure.tools.file_tools import grep_files, grep_tool, write_file_tool
+from wright.infrastructure.tools.file import grep_files, grep_tool, write_file_tool
 
 
 class _RecordingLifecycle:

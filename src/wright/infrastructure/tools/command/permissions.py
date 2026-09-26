@@ -1,8 +1,12 @@
+"""Command security checks, risk-flag classification, and access descriptors."""
+
+from __future__ import annotations
+
 import re
 import shlex
 from pathlib import Path
 
-from ...domain.model.tool import AccessTarget, ToolAccess
+from ....domain.model.tool import AccessTarget, ToolAccess
 
 _READ_ONLY_COMMANDS = {
     "cat",

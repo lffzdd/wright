@@ -6,7 +6,7 @@ from ...domain.model.session import Session
 from wright.application.agent import create_agent
 from wright.domain.policy import PermissionResolver, PermissionResponse
 from wright.interfaces.renderer import SilentRenderer
-from wright.infrastructure.tools.ask_user_tool import ask_user_tool
+from wright.infrastructure.tools.human_input import ask_user_tool
 
 
 def _tool_turn(name, **arguments):

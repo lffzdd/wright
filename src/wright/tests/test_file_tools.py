@@ -12,7 +12,7 @@ from wright.domain.policy import (
 )
 from wright.application.tool_capabilities import assemble_tool_capabilities
 from wright.domain.model.tool import ToolCall
-from wright.infrastructure.tools.file_tools import (
+from wright.infrastructure.tools.file import (
     FILE_UNCHANGED,
     FileView,
     _remembered_file_view,

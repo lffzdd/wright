@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from ...domain.model.tool import ToolAccess, ToolResult
-from .base import Tool
-from .runtime import ToolRuntime
+from ....domain.model.tool import ToolAccess, ToolResult
+from ..base import Tool
+from ..runtime import ToolRuntime
 
 MAX_QUESTION_LENGTH = 1_000
 MAX_CONTEXT_LENGTH = 1_000

@@ -1,5 +1,5 @@
 from wright.infrastructure.tools import tools as base_tools
-from wright.infrastructure.tools.ask_user_tool import ask_user
+from wright.infrastructure.tools.human_input import ask_user
 from wright.infrastructure.tools.runtime import ToolRuntime
 
 

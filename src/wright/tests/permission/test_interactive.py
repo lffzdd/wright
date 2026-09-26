@@ -5,7 +5,7 @@ from wright.domain.policy import PermissionResolver
 from wright.interfaces.renderer import SilentRenderer
 from wright.application.tool_capabilities import assemble_tool_capabilities
 from wright.domain.model.tool import ToolCall
-from wright.infrastructure.tools.file_tools import edit_file_tool, read_file_tool, write_file_tool
+from wright.infrastructure.tools.file import edit_file_tool, read_file_tool, write_file_tool
 
 
 class _MockRenderer(SilentRenderer):
