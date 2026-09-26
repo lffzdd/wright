@@ -1,13 +1,15 @@
-"""Knowledge infrastructure adapters and tools."""
+"""Knowledge infrastructure adapters, providers, and tools."""
 
 from __future__ import annotations
 
+from .embedder import ApiEmbedder
 from .rag_provider import (
     RagKnowledgeProvider,
     knowledge_enabled,
     knowledge_index_path,
 )
 from .tools import build_knowledge_tools
+from .vector_store import SimpleVectorStore
 
 
 def optional_knowledge_tools(*, enabled: bool | None = None):
@@ -20,7 +22,9 @@ def optional_knowledge_tools(*, enabled: bool | None = None):
 
 
 __all__ = [
+    "ApiEmbedder",
     "RagKnowledgeProvider",
+    "SimpleVectorStore",
     "build_knowledge_tools",
     "knowledge_enabled",
     "knowledge_index_path",

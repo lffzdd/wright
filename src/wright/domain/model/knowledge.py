@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 MAX_HIT_CONTENT_CHARS = 2_000
 MAX_SEARCH_OUTPUT_CHARS = 8_000
@@ -11,6 +11,24 @@ MAX_TOP_K = 10
 
 class KnowledgeUnavailable(RuntimeError):
     """检索能力当前不可用；工具层应转成 ToolResult.fail，而不是炸掉回合。"""
+
+
+@dataclass(frozen=True)
+class DocumentChunk:
+    """A bounded segment of a document with associated metadata and vector embedding."""
+
+    id: str
+    content: str
+    metadata: dict[str, object] = field(default_factory=dict)
+    embedding: tuple[float, ...] = ()
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "id": self.id,
+            "content": self.content,
+            "metadata": dict(self.metadata),
+            "has_embedding": bool(self.embedding),
+        }
 
 
 @dataclass(frozen=True)
@@ -134,6 +152,7 @@ __all__ = [
     "MAX_HIT_CONTENT_CHARS",
     "MAX_SEARCH_OUTPUT_CHARS",
     "MAX_TOP_K",
+    "DocumentChunk",
     "KnowledgeHit",
     "KnowledgeUnavailable",
     "knowledge_hit_from_search_result",

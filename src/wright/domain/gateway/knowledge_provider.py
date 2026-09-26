@@ -16,4 +16,6 @@ class KnowledgeProvider(Protocol):
         ...
 
 
-__all__ = ["KnowledgeProvider"]
+IKnowledgeProvider = KnowledgeProvider
+
+__all__ = ["IKnowledgeProvider", "KnowledgeProvider"]
