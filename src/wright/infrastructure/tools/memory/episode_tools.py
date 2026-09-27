@@ -10,7 +10,7 @@ from ....domain.model.tool import ToolAccess, ToolResult
 from ..base import Tool
 from ..runtime import ToolRuntime
 
-_SCOPES = ("current_project", "all_projects", "legacy")
+_SCOPES = ("current_project", "all_projects")
 
 
 def search_episodes(
@@ -117,8 +117,8 @@ def build_episode_tools(
             description=(
                 "Search past task episodes: goal, outcome, status, project source, "
                 "and verification summary. Default scope is the current project. "
-                "Use scope=all_projects or scope=legacy only when the user explicitly "
-                "asks for other projects or older unscoped records. "
+                "Use scope=all_projects only when the user explicitly asks to "
+                "search other projects. "
                 "Episodes are historical experience; re-check current state before acting. "
                 "lexical_score is a rank key, not a similarity probability."
             ),
@@ -148,7 +148,7 @@ def build_episode_tools(
             name="get_episode",
             description=(
                 "Read a full historical episode by episode_id, including plan, "
-                "tool trace, and verification. Known ids include legacy records. "
+                "tool trace, and verification. "
                 "Set include_evidence=true to read the registered source excerpts. "
                 "That does not rerun tools or resume the old task."
             ),

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from .core import (
     CORE_MEMORY_FILE,
+    PROJECT_CORE_DIRECTORY,
+    CoreMemoryStoreError,
     FileCoreMemoryStore,
 )
 from .episode import (
@@ -42,6 +44,8 @@ from .semantic import (
 __all__ = [
     "CORE_MEMORY_FILE",
     "MEMORY_INDEX",
+    "PROJECT_CORE_DIRECTORY",
+    "CoreMemoryStoreError",
     "EpisodeNotFoundError",
     "EpisodeRecord",
     "EpisodeStatus",

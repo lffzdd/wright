@@ -1,4 +1,8 @@
-"""Domain models for semantic memory: durable facts not tied to one episode."""
+"""Domain models for semantic memory: durable facts not tied to one episode.
+
+``type`` is what the note is about. ``scope`` is where it applies. Neither
+field implies the other. A stable ``id`` is not derived from the display name.
+"""
 
 from __future__ import annotations
 
@@ -8,11 +12,42 @@ from typing import Any, Literal
 
 SemanticMemoryType = Literal["user", "feedback", "project", "reference"]
 SEMANTIC_MEMORY_TYPES: tuple[SemanticMemoryType, ...] = ("user", "feedback", "project", "reference")
+SemanticScope = Literal["global", "project"]
+SEMANTIC_SCOPES: tuple[SemanticScope, ...] = ("global", "project")
+SemanticStatus = Literal["active", "inactive"]
+SEMANTIC_STATUSES: tuple[SemanticStatus, ...] = ("active", "inactive")
+SemanticReadScope = Literal["applicable", "current_project", "global", "all_projects"]
+SEMANTIC_READ_SCOPES: tuple[SemanticReadScope, ...] = (
+    "applicable",
+    "current_project",
+    "global",
+    "all_projects",
+)
+SEMANTIC_SCHEMA_VERSION = 1
+EXPLICIT_ORIGIN = "explicit"
 
 
 def parse_semantic_memory_type(raw: object) -> SemanticMemoryType | None:
     """把 frontmatter 里的原始 type 值归一成合法 SemanticMemoryType。"""
     if isinstance(raw, str) and raw in SEMANTIC_MEMORY_TYPES:
+        return raw  # type: ignore[return-value]
+    return None
+
+
+def parse_semantic_scope(raw: object) -> SemanticScope | None:
+    if isinstance(raw, str) and raw in SEMANTIC_SCOPES:
+        return raw  # type: ignore[return-value]
+    return None
+
+
+def parse_semantic_status(raw: object) -> SemanticStatus | None:
+    if isinstance(raw, str) and raw in SEMANTIC_STATUSES:
+        return raw  # type: ignore[return-value]
+    return None
+
+
+def parse_semantic_read_scope(raw: object) -> SemanticReadScope | None:
+    if isinstance(raw, str) and raw in SEMANTIC_READ_SCOPES:
         return raw  # type: ignore[return-value]
     return None
 
@@ -29,6 +64,103 @@ class SemanticMemoryNotFoundError(SemanticMemoryStoreError):
     pass
 
 
+class SemanticMemoryConflictError(SemanticMemoryStoreError):
+    """The record changed after the caller read it. Do not overwrite."""
+
+    def __init__(self, message: str, *, current_revision: int) -> None:
+        super().__init__(message)
+        self.current_revision = current_revision
+
+
+class SemanticMemoryScopeError(SemanticMemoryStoreError):
+    """The record exists, but this operation's scope does not include it."""
+
+
+@dataclass(frozen=True)
+class SourceLocator:
+    """Persistent pointer back to one recorded source.
+
+    A bare local id such as ``ev-u-msg_1`` is not a stored ref: the same id can
+    exist in another session. Callers map a short id onto this locator before
+    writing. Parsing never accepts a token that has no session.
+    """
+
+    session_id: str = ""
+    root_run_id: str = ""
+    run_id: str = ""
+    kind: str = ""
+    message_id: str = ""
+    tool_call_id: str = ""
+    step_id: str = ""
+    episode_id: str = ""
+    local_id: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "root_run_id": self.root_run_id,
+            "run_id": self.run_id,
+            "kind": self.kind,
+            "message_id": self.message_id,
+            "tool_call_id": self.tool_call_id,
+            "step_id": self.step_id,
+            "episode_id": self.episode_id,
+            "local_id": self.local_id,
+        }
+
+
+def encode_locator(locator: SourceLocator) -> str:
+    """Stable single-line form. Values cannot contain separators."""
+    if not locator.session_id:
+        raise SemanticMemoryStoreError("source_ref 必须包含 session")
+    fields = (
+        ("sess", locator.session_id),
+        ("root", locator.root_run_id),
+        ("run", locator.run_id),
+        ("kind", locator.kind),
+        ("msg", locator.message_id),
+        ("tool", locator.tool_call_id),
+        ("step", locator.step_id),
+        ("ep", locator.episode_id),
+        ("local", locator.local_id),
+    )
+    parts: list[str] = []
+    for key, value in fields:
+        if not value:
+            continue
+        if any(char in value for char in ";=\n"):
+            raise SemanticMemoryStoreError("source_ref 含有非法分隔符")
+        parts.append(f"{key}={value}")
+    return ";".join(parts)
+
+
+def parse_locator(token: str) -> SourceLocator:
+    """Parse one stored ref. A token without a session is rejected."""
+    text = token.strip()
+    if not text or "=" not in text:
+        raise SemanticMemoryStoreError("source_ref 必须包含 session")
+    fields: dict[str, str] = {}
+    for part in text.split(";"):
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        fields[key] = value
+    session_id = fields.get("sess", "")
+    if not session_id:
+        raise SemanticMemoryStoreError("source_ref 必须包含 session")
+    return SourceLocator(
+        session_id=session_id,
+        root_run_id=fields.get("root", ""),
+        run_id=fields.get("run", ""),
+        kind=fields.get("kind", ""),
+        message_id=fields.get("msg", ""),
+        tool_call_id=fields.get("tool", ""),
+        step_id=fields.get("step", ""),
+        episode_id=fields.get("ep", ""),
+        local_id=fields.get("local", ""),
+    )
+
+
 @dataclass(frozen=True)
 class SemanticMemoryHeader:
     id: str
@@ -38,8 +170,12 @@ class SemanticMemoryHeader:
     name: str
     description: str | None
     type: SemanticMemoryType | None
+    scope: SemanticScope
     created_at: str | None = None
     updated_at: str | None = None
+    project_id: str = ""
+    status: SemanticStatus = "active"
+    revision: int = 0
 
 
 @dataclass(frozen=True)
@@ -52,27 +188,41 @@ class SemanticMemoryRecord:
     created_at: str
     updated_at: str
     path: Path
-    # Empty origin means the record was not produced by automatic extraction
-    # (or the file predates provenance). source_refs do not prove the text.
+    scope: SemanticScope
+    # Empty origin means no provenance is attached. ``explicit`` means a person
+    # asked to save it and no tool evidence was attached. Source refs never
+    # promote the body to a verified fact.
     origin: str = ""
     source_refs: tuple[str, ...] = ()
+    schema_version: int = SEMANTIC_SCHEMA_VERSION
+    project_id: str = ""
+    status: SemanticStatus = "active"
+    revision: int = 0
+    locators: tuple[SourceLocator, ...] = ()
+
+    def resolved_locators(self) -> tuple[SourceLocator, ...]:
+        if self.locators:
+            return self.locators
+        return tuple(parse_locator(item) for item in self.source_refs if item)
 
     def to_dict(self) -> dict[str, Any]:
-        payload = {
+        return {
             "id": self.id,
+            "schema_version": self.schema_version,
             "name": self.name,
             "description": self.description,
             "type": self.type,
+            "scope": self.scope,
+            "project_id": self.project_id,
+            "status": self.status,
             "content": self.content,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "revision": self.revision,
             "file": self.path.name,
+            "origin": self.origin,
+            "source_refs": [item.to_dict() for item in self.resolved_locators()],
         }
-        if self.origin:
-            payload["origin"] = self.origin
-        if self.source_refs:
-            payload["source_refs"] = list(self.source_refs)
-        return payload
 
 
 TYPES_SECTION = """## 记忆的类型
@@ -139,13 +289,14 @@ WHAT_NOT_TO_SAVE = """## 不要存进记忆的内容
 
 WHEN_TO_ACCESS = """## 何时存取记忆
 
-- 当记忆看起来相关、或用户提及过往对话里的工作时,主动调用记忆。
-- 当用户明确要你检查、回忆、记住某事时,你【必须】存取记忆。
-- 如果用户说【忽略】或【不要用】记忆:就当 MEMORY.md 是空的——不要套用、不要引用、
-  不要对比、也不要提及任何记忆内容。
+- 当本次注入的当前范围索引看起来相关、或用户提及过往对话里的工作时,用记忆工具读取。
+- 当用户明确要你检查、回忆、记住某事时,你【必须】使用记忆工具。
+- 如果用户说【忽略】或【不要用】记忆:不要套用、不要引用、不要对比、也不要提及任何记忆内容。
+- 自动注入只包含当前项目与全局的 active 记忆。其他项目和已停用记录不在其中。
+- 不要直接读取记忆目录里的 MEMORY.md 来找回遗漏。那份文件是给人看的全库导航,可能含有其他项目或过期条目。
 - 记忆会随时间过期。把记忆当作「某个时间点为真」的上下文。在据此回答或做假设之前,
   先读当前文件/资源核实它是否仍然正确。若记忆与当前情况冲突,相信你现在观察到的,
-  并更新或删除那条陈旧记忆,而不是照着它行动。"""
+  并更新或停用那条陈旧记忆。只有用户明确要求忘记时才删除。"""
 
 TRUSTING_RECALL = """## 据记忆推荐之前
 
@@ -163,26 +314,48 @@ TRUSTING_RECALL = """## 据记忆推荐之前
 
 FRONTMATTER_EXAMPLE = """```markdown
 ---
-name: {{记忆名,短横线 kebab-case}}
+schema_version: 1
+id: mem-{{稳定 id,与标题无关}}
+name: {{可修改的显示标题}}
 description: {{一句话描述——未来据此判断是否相关,写具体些}}
 type: {{user, feedback, project, reference 之一}}
+scope: {{global 或 project}}
+project_id: {{scope=project 时必填}}
+status: {{active 或 inactive}}
+revision: 1
 ---
 
 {{记忆正文——feedback/project 类型请按:规则/事实,然后 **Why:** 和 **How to apply:** 两行}}
 ```"""
 
 __all__ = [
+    "EXPLICIT_ORIGIN",
     "FRONTMATTER_EXAMPLE",
     "SEMANTIC_MEMORY_TYPES",
+    "SEMANTIC_READ_SCOPES",
+    "SEMANTIC_SCHEMA_VERSION",
+    "SEMANTIC_SCOPES",
+    "SEMANTIC_STATUSES",
     "TRUSTING_RECALL",
     "TYPES_SECTION",
     "WHAT_NOT_TO_SAVE",
     "WHEN_TO_ACCESS",
     "SemanticMemoryAlreadyExistsError",
+    "SemanticMemoryConflictError",
     "SemanticMemoryHeader",
     "SemanticMemoryNotFoundError",
     "SemanticMemoryRecord",
+    "SemanticMemoryScopeError",
     "SemanticMemoryStoreError",
     "SemanticMemoryType",
+    "SemanticReadScope",
+    "SemanticScope",
+    "SemanticStatus",
+    "SourceLocator",
+    "encode_locator",
+    "parse_locator",
     "parse_semantic_memory_type",
+    "parse_semantic_read_scope",
+    "parse_semantic_scope",
+    "parse_semantic_status",
 ]

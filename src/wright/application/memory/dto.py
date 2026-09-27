@@ -14,6 +14,8 @@ class CoreMemoryUpdateDTO:
 
     section: str
     content: str
+    scope: str = ""
+    project_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -75,6 +77,7 @@ class MemoryContextDTO:
     selector_attempted: bool = False
     selector_failed: bool = False
     selector_failure_type: str = ""
+    semantic_generation: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -111,7 +114,12 @@ class MemoryContextDTO:
             "selector_attempted": self.selector_attempted,
             "selector_failed": self.selector_failed,
             "selector_failure_type": self.selector_failure_type,
+            "semantic_generation": self.semantic_generation,
         }
 
 
-__all__ = ["CoreMemoryUpdateDTO", "EpisodeViewDTO", "MemoryContextDTO"]
+__all__ = [
+    "CoreMemoryUpdateDTO",
+    "EpisodeViewDTO",
+    "MemoryContextDTO",
+]

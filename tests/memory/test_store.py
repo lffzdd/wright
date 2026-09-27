@@ -5,8 +5,10 @@ from pathlib import Path
 import pytest
 
 from wright.domain.model.memory import (
+    SEMANTIC_SCHEMA_VERSION,
     SemanticMemoryAlreadyExistsError,
     SemanticMemoryNotFoundError,
+    SemanticMemoryRecord,
 )
 from wright.infrastructure.persistence.memory.semantic import (
     MAX_INDEX_LINES,
@@ -14,6 +16,7 @@ from wright.infrastructure.persistence.memory.semantic import (
     delete_memory,
     dump_frontmatter,
     format_manifest,
+    get_memory,
     parse_frontmatter,
     read_entrypoint,
     read_memories_for_surfacing,
@@ -26,10 +29,22 @@ from wright.infrastructure.persistence.memory.semantic import (
 )
 
 
-def test_frontmatter_round_trip():
-    text = dump_frontmatter(
-        "user-role", "user is a data scientist", "user", "正文内容\n第二行"
+def test_frontmatter_round_trip(tmp_path: Path):
+    record = SemanticMemoryRecord(
+        id="mem-user",
+        name="user-role",
+        description="user is a data scientist",
+        type="user",
+        content="正文内容\n第二行",
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:00+00:00",
+        path=tmp_path / "mem-user.md",
+        schema_version=SEMANTIC_SCHEMA_VERSION,
+        scope="global",
+        status="active",
+        revision=1,
     )
+    text = dump_frontmatter(record)
     fm, body = parse_frontmatter(text)
     assert fm["name"] == "user-role"
     assert fm["description"] == "user is a data scientist"
@@ -110,13 +125,16 @@ def test_read_memories_for_surfacing(tmp_path: Path):
 
 def test_semantic_memory_crud_keeps_stable_unicode_id_and_index(tmp_path: Path):
     created = create_memory(
-        "用户偏好", "用户偏好的包管理器", "user", "优先使用 uv", tmp_path
+        "用户偏好", "用户偏好的包管理器", "user", "优先使用 uv", tmp_path, scope="global"
     )
-    assert created.id == "用户偏好"
+    assert created.id.startswith("mem-")
+    assert created.id != "用户偏好"
+    assert created.scope == "global"
     assert created.path.stat().st_mode & 0o777 == 0o600
 
-    with pytest.raises(SemanticMemoryAlreadyExistsError):
-        create_memory("用户偏好", "重复", "user", "不要覆盖", tmp_path)
+    again = create_memory("用户偏好", "重复", "user", "另一条正文", tmp_path, scope="global")
+    assert again.id != created.id
+    assert get_memory(created.id, tmp_path).content == "优先使用 uv"
 
     updated = update_memory(
         created.id,
@@ -124,20 +142,22 @@ def test_semantic_memory_crud_keeps_stable_unicode_id_and_index(tmp_path: Path):
         description="更新后的描述",
         content="优先使用 uv，除非项目明确要求其它工具",
         directory=tmp_path,
+        expected_revision=created.revision,
     )
     assert updated.id == created.id  # 改展示名不会破坏已有引用
     assert updated.name == "Python 工具偏好"
     assert updated.created_at == created.created_at
     assert updated.updated_at >= created.updated_at
+    assert updated.revision == created.revision + 1
     assert search_memories("uv", type_="user", directory=tmp_path) == [updated]
 
     deleted = delete_memory(created.id, tmp_path)
     assert deleted.id == created.id
-    assert "用户偏好.md" not in (tmp_path / "MEMORY.md").read_text(encoding="utf-8")
+    assert created.id not in (tmp_path / "MEMORY.md").read_text(encoding="utf-8")
     with pytest.raises(SemanticMemoryNotFoundError):
         delete_memory(created.id, tmp_path)
 
 
 def test_memory_id_rejects_path_traversal(tmp_path: Path):
     with pytest.raises(Exception, match="memory_id"):
-        update_memory("../outside", content="x", directory=tmp_path)
+        update_memory("../outside", content="x", directory=tmp_path, expected_revision=0)

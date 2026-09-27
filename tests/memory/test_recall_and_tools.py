@@ -98,11 +98,14 @@ def test_selector_ignores_streaming_deltas(tmp_path: Path):
 def test_create_memory_tool_writes_and_indexes(tmp_path: Path):
     res = create_memory(
         "user-likes-bun", "prefers bun", "feedback", "用 bun 不用 npm",
+        scope="global",
         directory=tmp_path,
     )
     assert res.ok
-    assert (tmp_path / "user-likes-bun.md").is_file()
+    assert (tmp_path / f"{res.data['id']}.md").is_file()
     assert "user-likes-bun" in (tmp_path / "MEMORY.md").read_text(encoding="utf-8")
+    assert res.data["scope"] == "global"
+    assert res.data["origin"] == "explicit"
 
 
 def test_create_memory_rejects_bad_type(tmp_path: Path):
@@ -112,25 +115,41 @@ def test_create_memory_rejects_bad_type(tmp_path: Path):
 
 
 def test_search_memory_lists(tmp_path: Path):
-    create_memory("a", "desc a", "user", "x", directory=tmp_path)
-    res = search_memory("anything", directory=tmp_path)
+    created = create_memory("a", "desc a", "user", "x", scope="global", directory=tmp_path)
+    res = search_memory("desc", directory=tmp_path)
     assert res.ok
     assert res.data["count"] == 1
-    assert "a.md" in res.data["memories"]
+    assert created.data["id"] in res.data["memories"]
+    missed = search_memory("anything", directory=tmp_path)
+    assert missed.ok and missed.data["count"] == 0
 
 
 def test_explicit_memory_crud_tools(tmp_path: Path):
-    created = create_memory("project-api", "API decision", "project", "use v2", directory=tmp_path)
+    created = create_memory(
+        "project-api", "API decision", "project", "use v2", scope="global", directory=tmp_path
+    )
     assert created.ok
     memory_id = created.data["id"]
-    assert not create_memory("project-api", "duplicate", "project", "x", directory=tmp_path).ok
+    duplicate = create_memory(
+        "project-api", "duplicate", "project", "other body", scope="global", directory=tmp_path
+    )
+    assert duplicate.ok and duplicate.data["id"] != memory_id
+    assert get_memory(memory_id, directory=tmp_path).data["content"] == "use v2"
 
     fetched = get_memory(memory_id, directory=tmp_path)
     assert fetched.ok and fetched.data["content"] == "use v2"
 
-    updated = update_memory(memory_id, content="use v3", directory=tmp_path)
+    updated = update_memory(
+        memory_id,
+        content="use v3",
+        expected_revision=created.data["revision"],
+        directory=tmp_path,
+    )
     assert updated.ok and updated.data["content"] == "use v3"
-    assert not update_memory(memory_id, directory=tmp_path).ok
+    assert updated.data["id"] == memory_id
+    assert not update_memory(
+        memory_id, expected_revision=updated.data["revision"], directory=tmp_path
+    ).ok
 
     deleted = delete_memory(memory_id, directory=tmp_path)
     assert deleted.ok
@@ -143,7 +162,11 @@ def test_bound_toolset_uses_explicit_crud(tmp_path: Path):
         "create_memory", "get_memory", "update_memory", "delete_memory", "search_memory"
     ]
     create = tools[0].call({
-        "name": "bound", "description": "same directory", "type": "project", "content": "yes"
+        "name": "bound",
+        "description": "same directory",
+        "type": "project",
+        "content": "yes",
+        "scope": "global",
     }, None)
     assert create.ok
-    assert (tmp_path / "bound.md").is_file()
+    assert (tmp_path / f"{create.data['id']}.md").is_file()

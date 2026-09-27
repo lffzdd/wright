@@ -116,8 +116,9 @@ def test_agent_recall_injection_and_extraction(tmp_path: Path):
         for record in session.message_records
     )
 
-    # 3) 收口后提取落盘了新记忆 + 重建了索引
-    assert (tmp_path / "session-fact.md").is_file()
+    # 3) 收口后提取落盘了新记忆 + 重建了索引。身份不是标题。
+    bodies = [path.read_text(encoding="utf-8") for path in tmp_path.glob("mem-*.md")]
+    assert any("以后只用 bun" in text for text in bodies)
     assert "session-fact" in (tmp_path / "MEMORY.md").read_text(encoding="utf-8")
 
     # 4) 同一个 user turn 自动形成独立 episode；语义扫描不会把它当成 markdown 记忆
@@ -176,4 +177,6 @@ def test_recall_failure_is_best_effort(tmp_path: Path):
             raise RuntimeError("selector unavailable")
 
     manager = MemoryManager(MainLLM(), selector_llm=BrokenSelector(), directory=tmp_path)
-    assert manager.recall_block("query") == ""
+    block = manager.recall_block("query")
+    assert "forces selector call" in block
+    assert "Traceback" not in block

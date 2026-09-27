@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from wright.application.memory.episode import episode_from_session
 from wright.application.memory.extract import extract_from_snapshot
 from wright.application.memory.llm_util import SideQueryResult
@@ -18,7 +20,13 @@ from wright.application.memory.projection import candidate_summary
 from wright.core.paths import project_id
 from wright.domain.gateway.memory import SelectorChoice
 from wright.domain.model.events import ContentDelta, ContentDone, UsageEvent
-from wright.domain.model.memory import EpisodeRecord, EvidenceRef
+from wright.domain.model.memory import (
+    EpisodeNotFoundError,
+    EpisodeRecord,
+    EpisodeStoreError,
+    EvidenceRef,
+    SemanticMemoryStoreError,
+)
 from wright.domain.model.session import Session, UsageRecord
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.domain.policy.memory import (
@@ -108,13 +116,29 @@ def _service(tmp_path: Path, session: Session | None = None) -> MemoryService:
     )
 
 
-def _snapshot(*evidence: dict, outcome: str = "") -> dict:
+def _snapshot(*evidence: dict, outcome: str = "", project_id: str = "proj-test") -> dict:
+    rows = []
+    for item in evidence:
+        row = dict(item)
+        row.setdefault("session_id", "sess-test")
+        row.setdefault("root_run_id", "root-1")
+        kind = row.get("kind")
+        if kind in {"user_statement", "assistant_statement"}:
+            row.setdefault("message_id", "msg_1")
+        elif kind == "tool_observation":
+            row.setdefault("tool_call_id", "call_1")
+        elif kind == "verification_record":
+            row.setdefault("step_id", "step_1")
+        rows.append(row)
     return {
         "episode": {
+            "id": "ep-test",
             "goal": "goal",
             "outcome": outcome,
+            "session_id": "sess-test",
             "root_run_id": "root-1",
-            "evidence": list(evidence),
+            "project_id": project_id,
+            "evidence": rows,
             "verification": [],
         }
     }
@@ -275,10 +299,15 @@ def test_evidence_rejects_foreign_and_missing_sources(tmp_path: Path):
     assert view.record.goal == episode.goal
 
 
-def test_old_episode_without_evidence_stays_readable(tmp_path: Path):
-    legacy = EpisodeRecord.from_dict({
+def test_old_episode_files_are_not_read(tmp_path: Path):
+    store = EpisodeStore(tmp_path)
+    flat = store.directory / "ep-legacy.json"
+    flat.parent.mkdir(parents=True, exist_ok=True)
+    body = {
+        "version": 2,
         "id": "ep-legacy",
         "session_id": "old",
+        "project_id": "alpha",
         "goal": "旧记录",
         "status": "completed",
         "outcome": "没有来源",
@@ -290,20 +319,27 @@ def test_old_episode_without_evidence_stays_readable(tmp_path: Path):
         "agents": [],
         "verification": [],
         "usage": {},
-    })
-    assert legacy.version == 1
-    assert legacy.evidence == ()
-    store = EpisodeStore(tmp_path)
-    path = store.directory / "ep-legacy.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = legacy.to_dict()
-    payload.pop("evidence")
-    payload["version"] = 2
-    path.write_text(json.dumps(payload), encoding="utf-8")
-    loaded = store.get("ep-legacy")
-    assert loaded.evidence == ()
-    assert loaded.version == 2
-    assert "ev-" not in path.read_text(encoding="utf-8")
+    }
+    flat.write_text(json.dumps(body), encoding="utf-8")
+    with pytest.raises(EpisodeNotFoundError):
+        store.get("ep-legacy")
+
+    project_file = store.directory / "projects" / "alpha" / "ep-old.json"
+    project_file.parent.mkdir(parents=True)
+    project_file.write_text(json.dumps({**body, "id": "ep-old"}), encoding="utf-8")
+    with pytest.raises(EpisodeStoreError, match="version"):
+        store.get("ep-old")
+    exhausted = store.directory / "projects" / "alpha" / "ep-steps.json"
+    exhausted.write_text(json.dumps({
+        **body,
+        "id": "ep-steps",
+        "version": 3,
+        "status": "max_steps",
+        "evidence": [],
+    }), encoding="utf-8")
+    with pytest.raises(EpisodeStoreError, match="status"):
+        store.get("ep-steps")
+    assert store.search("旧记录", scope="current_project", project_id="alpha") == []
 
 
 def test_evidence_read_marks_truncation(tmp_path: Path):
@@ -480,7 +516,7 @@ def test_provenance_rejects_invented_and_assistant_only_sources(tmp_path: Path):
     }]}))
     assert invented.status == "invalid"
     assert "unknown_source_ref" in invented.reason_codes
-    assert service.semantic_store.list() == []
+    assert list(directory.glob("*.md")) == []
 
     assistant_only = run(json.dumps({"memories": [{
         "name": "tests",
@@ -501,9 +537,13 @@ def test_provenance_rejects_invented_and_assistant_only_sources(tmp_path: Path):
     }]}))
     assert saved.status == "succeeded"
     assert saved.written == 1
-    record = service.semantic_store.list()[0]
+    record = service.semantic_store.list(read_scope="current_project", project_id="proj-test")[0]
     assert record.origin == "user_statement"
-    assert record.source_refs == ("ev-u-1",)
+    assert record.scope == "project"
+    assert record.project_id == "proj-test"
+    assert record.locators[0].local_id == "ev-u-1"
+    assert record.locators[0].session_id == "sess-test"
+    assert record.locators[0].message_id == "msg_1"
 
     empty = run('{"memories": []}')
     assert empty.status == "empty"
@@ -520,13 +560,21 @@ def test_provenance_rejects_invented_and_assistant_only_sources(tmp_path: Path):
     assert updated.written == 1
     current = get_memory(record.id, directory)
     assert "不用 npm" in current.content
-    assert current.source_refs == ("ev-u-1",)
-    cleared = update_memory(record.id, content="正文已改", directory=directory)
+    assert current.locators[0].local_id == "ev-u-1"
+    assert current.locators[0].session_id == "sess-test"
+    cleared = update_memory(
+        record.id,
+        content="正文已改",
+        directory=directory,
+        expected_revision=current.revision,
+        read_scope="current_project",
+        project_id="proj-test",
+    )
     assert cleared.origin == ""
     assert cleared.source_refs == ()
 
 
-def test_legacy_semantic_file_without_provenance_loads(tmp_path: Path):
+def test_old_semantic_file_is_not_loaded(tmp_path: Path):
     directory = tmp_path / "memory"
     directory.mkdir()
     (directory / "old-note.md").write_text(
@@ -535,10 +583,9 @@ def test_legacy_semantic_file_without_provenance_loads(tmp_path: Path):
         "---\n\nlegacy body\n",
         encoding="utf-8",
     )
-    loaded = get_memory("old-note", directory)
-    assert loaded.content == "legacy body"
-    assert loaded.origin == ""
-    assert loaded.source_refs == ()
+    with pytest.raises(SemanticMemoryStoreError, match="不是当前语义记忆格式"):
+        get_memory("old-note", directory)
+    assert list(directory.glob("*.md")) == [directory / "old-note.md"]
 
 
 def test_candidate_summary_keeps_tail_and_omits_usage():

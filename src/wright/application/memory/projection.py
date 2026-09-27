@@ -7,7 +7,7 @@ is not an input.
 
 from __future__ import annotations
 
-from ...domain.model.memory import EpisodeRecord, episode_fact_pieces
+from ...domain.model.memory import EpisodeRecord, SemanticMemoryRecord, episode_fact_pieces
 from ...utils.token_counter import estimate_tokens
 
 _TRUNCATED = "…(已截断)"
@@ -252,14 +252,46 @@ def _one_line(text: str, limit: int) -> str:
     return flattened[:limit] + _TRUNCATED
 
 
+def semantic_candidate_line(record: SemanticMemoryRecord) -> str:
+    """One selector line. Scope is visible so a global note is not a project rule."""
+    project = f" project={record.project_id}" if record.scope == "project" else ""
+    description = _one_line(record.description or record.name, 240)
+    return (
+        f"- {record.id} | {record.path.name} | {record.type}/{record.scope}{project}"
+        f" | {description}"
+    )
+
+
+def budget_semantic_manifest(
+    records: list[SemanticMemoryRecord],
+    *,
+    token_budget: int,
+) -> tuple[str, tuple[SemanticMemoryRecord, ...]]:
+    """Fit selector lines after scope filtering. Dropped records cannot be selected."""
+    if token_budget <= 0 or not records:
+        return "", ()
+    kept: list[SemanticMemoryRecord] = []
+    lines: list[str] = []
+    for record in records:
+        line = semantic_candidate_line(record)
+        trial = "\n".join([*lines, line])
+        if estimate_tokens(trial) > token_budget and lines:
+            break
+        lines.append(line)
+        kept.append(record)
+    return "\n".join(lines), tuple(kept)
+
+
 __all__ = [
     "EPISODE_RECALL_PREFIX",
     "EPISODE_RECALL_SUFFIX",
     "SEMANTIC_RECALL_PREFIX",
     "budget_episode_manifest",
+    "budget_semantic_manifest",
     "candidate_summary",
     "estimate_recall_text",
     "recall_overhead_tokens",
     "render_episode_for_budget",
+    "semantic_candidate_line",
     "verification_summary",
 ]

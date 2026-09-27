@@ -101,6 +101,10 @@ def _memory(memory_id: str, name: str, content: str, type_: str = "project") -> 
         created_at="",
         updated_at="",
         path=Path(f"{memory_id}.md"),
+        scope="global",
+        status="active",
+        schema_version=1,
+        revision=1,
     )
 
 
@@ -108,21 +112,28 @@ class MockSemanticStore(ISemanticMemoryStore):
     def __init__(self, memories: list[SemanticMemoryRecord] | None = None) -> None:
         self.memories = list(memories or [])
 
-    def list(self, limit: int = 100) -> list[SemanticMemoryRecord]:
+    def list(self, limit: int = 100, **kwargs) -> list[SemanticMemoryRecord]:
+        del kwargs
         return self.memories[:limit]
 
     def get(self, memory_id: str) -> SemanticMemoryRecord:
         raise AssertionError(memory_id)
 
-    def search(self, query: str = "", *, limit: int = 20) -> list[SemanticMemoryRecord]:
+    def search(self, query: str = "", *, limit: int = 20, **kwargs) -> list[SemanticMemoryRecord]:
+        del query, kwargs
         return self.memories[:limit]
 
-    def save(self, *, name: str, description: str, type_: str, content: str) -> SemanticMemoryRecord:
+    def create(self, *, name: str, description: str, type_: str, content: str, **kwargs) -> SemanticMemoryRecord:
+        del description, kwargs
         record = _memory(name, name, content, type_)
         self.memories.append(record)
         return record
 
-    def delete(self, memory_id: str) -> SemanticMemoryRecord:
+    def update(self, memory_id: str, **kwargs) -> SemanticMemoryRecord:
+        raise AssertionError(memory_id)
+
+    def delete(self, memory_id: str, **kwargs) -> SemanticMemoryRecord:
+        del kwargs
         raise AssertionError(memory_id)
 
 
@@ -211,7 +222,9 @@ def test_memory_service_orchestration():
     assert err is not None
     assert "Sensitive credential pattern detected" in err
 
-    saved, err = service.record_memory(name="sync", content="Always use uv sync")
+    saved, err = service.record_memory(
+        name="sync", content="Always use uv sync", scope="global"
+    )
     assert err is None
     assert saved is not None
     assert saved.name == "sync"

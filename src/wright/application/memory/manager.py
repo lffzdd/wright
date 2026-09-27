@@ -75,9 +75,13 @@ class MemoryManager:
         return project_id(self._project_root)
 
     def bind_project(self, project_root: Path) -> None:
-        """Bind the session's stable project root. cwd is not consulted."""
+        """Bind the session's stable project root. cwd is not consulted.
+
+        A new project cannot keep the previous project's recall cache.
+        """
         self._project_root = Path(project_root).expanduser().resolve()
         self._service = None
+        self._recall_by_turn.clear()
 
     @property
     def service(self) -> MemoryService:
@@ -151,7 +155,7 @@ class MemoryManager:
         """Read current core memory for one request without changing history."""
         core_block = ""
         try:
-            memory = self.service.get_core_memory()
+            memory = self.service.get_core_memory(self.current_project_id)
             if memory is not None:
                 core_block = memory.render_block()
         except Exception as exc:
@@ -159,15 +163,20 @@ class MemoryManager:
         return project_core_memory(system_prompt, core_block)
 
     def recall_for_turn(self, session_state: Any) -> MemoryContextDTO:
-        """Recall once per user turn. Later steps and continuations reuse it."""
+        """Recall once per user turn. A semantic write refreshes text without a new selector."""
         key = self._recall_key(session_state)
-        cached = self._recall_by_turn.get(key)
-        if cached is not None and key:
+        current = project_id(_project_root_of(session_state))
+        cached = self._recall_by_turn.get(key) if key else None
+        if cached is not None and cached.project_id != current:
+            cached = None
+            self._recall_by_turn.pop(key, None)
+        if cached is not None and cached.semantic_generation == self.service.semantic_generation:
             return cached
-        context = self._prepare_context(
-            _goal(session_state),
-            project_id=project_id(_project_root_of(session_state)),
-        )
+        if cached is not None:
+            context = self.service.reproject_semantic(cached)
+            self._recall_by_turn[key] = context
+            return context
+        context = self._prepare_context(_goal(session_state), project_id=current)
         if key:
             self._recall_by_turn[key] = context
         return context
@@ -309,8 +318,14 @@ class MemoryManager:
         )
 
         return [
-            *build_core_memory_tools(self.service),
-            *build_memory_tools(self.directory),
+            *build_core_memory_tools(
+                service_reader=lambda: self.service,
+                project_id_reader=lambda: self.current_project_id,
+            ),
+            *build_memory_tools(
+                service_reader=lambda: self.service,
+                project_id_reader=lambda: self.current_project_id,
+            ),
             *build_episode_tools(self.service, project_id=self.current_project_id),
         ]
 

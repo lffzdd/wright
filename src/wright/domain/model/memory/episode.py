@@ -6,14 +6,13 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
-EpisodeStatus = Literal["completed", "failed", "cancelled", "max_steps"]
-EPISODE_STATUSES = frozenset({"completed", "failed", "cancelled", "max_steps"})
-# New records are failed + termination_reason=max_steps. max_steps stays readable.
+EpisodeStatus = Literal["completed", "failed", "cancelled"]
+EPISODE_STATUSES = frozenset({"completed", "failed", "cancelled"})
 EPISODE_ID_RE = re.compile(r"ep-[A-Za-z0-9_-]{1,180}")
 EPISODE_SCHEMA_VERSION = 3
 PROJECT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,180}")
-EpisodeSearchScope = Literal["current_project", "all_projects", "legacy"]
-EPISODE_SEARCH_SCOPES = frozenset({"current_project", "all_projects", "legacy"})
+EpisodeSearchScope = Literal["current_project", "all_projects"]
+EPISODE_SEARCH_SCOPES = frozenset({"current_project", "all_projects"})
 SourceKind = Literal[
     "user_statement",
     "tool_observation",
@@ -205,9 +204,9 @@ class EpisodeSearchHit:
 
 
 def _parse_evidence(value: Any) -> tuple[EvidenceRef, ...]:
-    """Missing evidence means an older record did not store source locators."""
+    """An empty list means this turn recorded no locators."""
     if value is None:
-        return ()
+        raise EpisodeStoreError("episode evidence 缺失")
     if not isinstance(value, list):
         raise EpisodeStoreError("episode evidence 非法")
     if len(value) > MAX_EPISODE_EVIDENCE:
@@ -223,10 +222,8 @@ def _parse_evidence(value: Any) -> tuple[EvidenceRef, ...]:
 class EpisodeRecord:
     """One finished user turn: goal, terminal status, answer text, and execution trace.
 
-    Version 1 records may omit project fields. An empty ``project_id`` means the
-    project is unknown (legacy flat files). Version 2 adds project identity.
-    Version 3 adds evidence locators. Missing ``evidence`` stays an empty tuple
-    and is not backfilled.
+    Records are schema version 3 and always name a project. ``evidence`` may be
+    empty when the turn had no locators. Older files are not read.
     """
 
     id: str
@@ -242,7 +239,7 @@ class EpisodeRecord:
     agents: tuple[dict[str, Any], ...]
     verification: tuple[dict[str, Any], ...]
     usage: dict[str, int]
-    version: int = 1
+    version: int = EPISODE_SCHEMA_VERSION
     project_id: str = ""
     project_root: str = ""
     root_run_id: str = ""
@@ -309,16 +306,14 @@ class EpisodeRecord:
         ended_step = _nonnegative_int(value.get("ended_step"), "ended_step")
         if ended_step < started_step:
             raise EpisodeStoreError("ended_step 不能小于 started_step")
-        version = value.get("version", 1)
-        if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+        version = value.get("version")
+        if version != EPISODE_SCHEMA_VERSION:
             raise EpisodeStoreError("episode version 非法")
         project = value.get("project_id", "")
-        if project is None:
-            project = ""
-        if not isinstance(project, str) or (
-            project and PROJECT_ID_RE.fullmatch(project) is None
-        ):
+        if not isinstance(project, str) or PROJECT_ID_RE.fullmatch(project) is None:
             raise EpisodeStoreError("episode project_id 非法")
+        if "evidence" not in value:
+            raise EpisodeStoreError("episode evidence 缺失")
         return cls(
             id=episode_id,
             session_id=_bounded_string(value.get("session_id"), "session_id", 128),
@@ -370,7 +365,7 @@ class EpisodeRecord:
                     usage.get("total_tokens", 0), "usage.total_tokens"
                 ),
             },
-            evidence=_parse_evidence(value["evidence"]) if "evidence" in value else (),
+            evidence=_parse_evidence(value.get("evidence")),
         )
 
 

@@ -1,10 +1,7 @@
 """Project-scoped episode storage.
 
-New records live under ``episodes/projects/<project_id>/``. Flat ``episodes/ep-*.json``
-files stay readable as legacy records with an unknown project. They are not
-migrated, deleted, or returned by automatic current-project search.
-
-Ordering uses ``created_at`` and then id. File mtime is not a semantic key.
+Records live under ``episodes/projects/<project_id>/``. Ordering uses
+``created_at`` and then id. File mtime is not a semantic key.
 """
 
 from __future__ import annotations
@@ -156,20 +153,14 @@ class EpisodeStore(IEpisodeStore):
         return path
 
     def _destination(self, episode: EpisodeRecord) -> Path:
-        if episode.project_id:
-            self._check_project_id(episode.project_id)
-            return (
-                self.directory / PROJECTS_DIRECTORY / episode.project_id / f"{episode.id}.json"
-            )
-        self._check_episode_id(episode.id)
-        return self.directory / f"{episode.id}.json"
+        self._check_project_id(episode.project_id)
+        return (
+            self.directory / PROJECTS_DIRECTORY / episode.project_id / f"{episode.id}.json"
+        )
 
     def _find_unlocked(self, episode_id: str) -> Path | None:
         self._check_episode_id(episode_id)
         name = f"{episode_id}.json"
-        legacy = self.directory / name
-        if _is_regular_file(legacy):
-            return legacy
         projects = self.directory / PROJECTS_DIRECTORY
         if not projects.is_dir():
             return None
@@ -191,9 +182,7 @@ class EpisodeStore(IEpisodeStore):
     ) -> list[EpisodeRecord]:
         if scope is not None and scope not in EPISODE_SEARCH_SCOPES:
             raise EpisodeStoreError("episode scope 非法")
-        if scope == "legacy":
-            paths = self._legacy_files()
-        elif scope == "current_project":
+        if scope == "current_project":
             if not project_id:
                 return []
             self._check_project_id(project_id)
@@ -204,7 +193,7 @@ class EpisodeStore(IEpisodeStore):
             self._check_project_id(project_id)
             paths = self._project_files(project_id)
         else:
-            paths = [*self._all_project_files(), *self._legacy_files()]
+            paths = self._all_project_files()
         episodes: list[EpisodeRecord] = []
         for path in paths:
             try:
@@ -212,15 +201,6 @@ class EpisodeStore(IEpisodeStore):
             except EpisodeStoreError:
                 continue
         return episodes
-
-    def _legacy_files(self) -> list[Path]:
-        if not self.directory.is_dir():
-            return []
-        return [
-            path
-            for path in self.directory.glob("ep-*.json")
-            if _is_regular_file(path)
-        ]
 
     def _project_files(self, project_id: str) -> list[Path]:
         directory = self.directory / PROJECTS_DIRECTORY / project_id

@@ -19,7 +19,10 @@ from .semantic import (
     SemanticMemoryPolicy,
     bounded_safe_text,
     is_safe_memory,
+    normalize_stored_scope,
+    record_in_read_scope,
     review_provenance,
+    scope_denial_message,
 )
 from .user_text import (
     is_substantive_user_text,
@@ -55,6 +58,9 @@ __all__ = [
     "is_safe_memory",
     "is_substantive_user_text",
     "is_trivial_user_text",
+    "normalize_stored_scope",
     "normalize_user_text",
+    "record_in_read_scope",
     "review_provenance",
+    "scope_denial_message",
 ]

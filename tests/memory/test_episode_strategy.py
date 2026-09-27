@@ -87,7 +87,7 @@ def _record(
             "completion_tokens": 0,
             "total_tokens": usage,
         },
-        version=2,
+        version=3,
         project_id=project,
         project_root=project_root,
         root_run_id=episode_id.removeprefix("ep-"),
@@ -297,41 +297,14 @@ def test_project_isolation_retention_and_legacy(tmp_path: Path):
     assert store.get("ep-keep-0500").project_id == shared_id
     assert store.get("ep-foreign-1").project_id == project_id(other)
 
-    legacy = {
-        "id": "ep-legacy-old",
-        "session_id": "old",
-        "goal": "旧登录记录",
-        "status": "max_steps",
-        "outcome": "当时停在步数上限",
-        "started_step": 0,
-        "ended_step": 3,
-        "created_at": "2023-01-01T00:00:00Z",
-        "plan": {},
-        "tools": [],
-        "agents": [],
-        "verification": [],
-        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-    }
-    store.directory.mkdir(parents=True, exist_ok=True)
-    (store.directory / "ep-legacy-old.json").write_text(
-        json.dumps(legacy), encoding="utf-8"
-    )
-    loaded = store.get("ep-legacy-old")
-    assert loaded.version == 1
-    assert loaded.project_id == ""
-    assert loaded.status == "max_steps"
-    legacy_hits = store.search("旧登录", scope="legacy")
-    assert [hit.episode.id for hit in legacy_hits] == ["ep-legacy-old"]
     current_ids = {
         hit.episode.id
         for hit in store.search("登录", scope="current_project", project_id=shared_id, limit=100)
     }
     assert "ep-foreign-1" not in current_ids
-    assert "ep-legacy-old" not in current_ids
     bare = _record("ep-no-project", "x", project="")
     with pytest.raises(EpisodeStoreError):
         store.save(bare)
-    assert store.delete("ep-legacy-old").id == "ep-legacy-old"
 
 
 def test_labeled_lexical_candidates_match_expectations(tmp_path: Path):
@@ -528,21 +501,27 @@ def test_budget_ignores_historical_usage():
 
 
 class _MemorylessSemantic:
-    def list(self, limit=100):
-        del limit
+    def list(self, limit=100, **kwargs):
+        del limit, kwargs
         return []
 
     def get(self, memory_id):
         raise AssertionError(memory_id)
 
-    def search(self, query="", *, limit=20):
-        del query, limit
+    def search(self, query="", *, limit=20, **kwargs):
+        del query, limit, kwargs
         return []
 
-    def save(self, *, name, description, type_, content):
+    def create(self, *, name, description, type_, content, **kwargs):
+        del description, type_, content, kwargs
         raise AssertionError(name)
 
-    def delete(self, memory_id):
+    def update(self, memory_id, **kwargs):
+        del kwargs
+        raise AssertionError(memory_id)
+
+    def delete(self, memory_id, **kwargs):
+        del kwargs
         raise AssertionError(memory_id)
 
     def read_index(self):
@@ -908,22 +887,6 @@ def test_tool_executor_search_scopes(tmp_path: Path):
     other = store.save(_record(
         "ep-cross-login", "修复登录", outcome="其他项目", project="beta-proj"
     ))
-    legacy_path = store.directory / "ep-legacy-login.json"
-    legacy_path.write_text(json.dumps({
-        "id": "ep-legacy-login",
-        "session_id": "old",
-        "goal": "旧的登录记录",
-        "status": "completed",
-        "outcome": "旧结果",
-        "started_step": 0,
-        "ended_step": 1,
-        "created_at": "2022-01-01T00:00:00Z",
-        "plan": {},
-        "tools": [],
-        "agents": [],
-        "verification": [],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-    }), encoding="utf-8")
     service = MemoryService(SemanticMemoryStore(tmp_path / "semantic"), store)
     tools = {tool.name: tool for tool in build_episode_tools(service, project_id="alpha-proj")}
     delete_access = tools["delete_episode"].describe_access({"episode_id": current.id})
@@ -953,16 +916,8 @@ def test_tool_executor_search_scopes(tmp_path: Path):
 
     everything = execute("search_episodes", {"query": "登录", "scope": "all_projects"})
     assert {item["id"] for item in everything["episodes"]} == {current.id, other.id}
-
-    legacy_hits = execute("search_episodes", {"query": "旧的登录", "scope": "legacy"})
-    assert [item["id"] for item in legacy_hits["episodes"]] == ["ep-legacy-login"]
-    assert legacy_hits["episodes"][0]["project_source"] == "legacy"
-
-    loaded = execute("get_episode", {"episode_id": "ep-legacy-login"})
-    assert loaded["project_source"] == "legacy"
-    assert loaded["status"] == "completed"
-    deleted = execute("delete_episode", {"episode_id": "ep-legacy-login"})
-    assert deleted["id"] == "ep-legacy-login"
-    missing, error = service.get_episode("ep-legacy-login")
-    assert missing is None
-    assert error
+    rejected = tools["search_episodes"].call(
+        {"query": "登录", "scope": "legacy"},
+        ToolRuntime(tool_name="search_episodes"),
+    )
+    assert not rejected.ok

@@ -39,22 +39,20 @@ def build_memory_instructions(directory: Path | None = None) -> str:
 
     how_to_save = f"""## 如何保存记忆
 
-保存一条记忆分两步:
+使用记忆工具，不要手写文件，也不要改 `MEMORY.md`。
 
-第 1 步——把记忆写进它自己的文件(如 `user-role.md`),用如下 frontmatter 格式:
+- `type` 是内容类别（user / feedback / project / reference）。`scope` 是适用范围，二者互不替代。
+- 默认写入当前项目。即使用户偏好或反馈，也不要自动写成所有项目通用。
+- 只有用户明确要一条所有项目都适用的记忆时，才在 `create_memory` 里传 `scope=global`。
+- 没有当前项目时，项目写入会失败。不要改成 global。
+- 新主题使用 `create_memory`。同名标题不会覆盖已有记忆，身份是稳定 id。
+- 修改已有记忆使用 `update_memory`，必须带 `get_memory` 返回的 id 和 `expected_revision`。改标题不改 id。
+- 记忆过时但还要留档时，把 `status` 设为 `inactive`。这不是删除，正文修改也不会自动重新启用。
+- 用户明确要求忘记时才 `delete_memory`。
+- 写之前先 `search_memory`。默认范围是当前项目加全局。其他项目要显式改 scope。
+- 文件格式如下，工具会维护它。不要把正文写进 `MEMORY.md`：
 
-{FRONTMATTER_EXAMPLE}
-
-第 2 步——在 `MEMORY.md` 里加一行指向该文件的指针。`MEMORY.md` 是索引不是记忆,
-每条一行、不带 frontmatter。绝不要把记忆正文直接写进 `MEMORY.md`。
-
-(用 `create_memory` / `update_memory` 工具保存时，以上两步会自动完成：
-记忆文件和索引会作为一次存储操作一起维护。)
-
-- 按主题(语义)组织记忆,而非按时间顺序。
-- 新主题使用 `create_memory`；已有主题使用 `update_memory`，不要静默覆盖。
-- 发现某条记忆过时或错了,就更新；用户明确要求忘记时才删除。
-- 不要写重复记忆:写新记忆前先用 `search_memory` 查找，并用 `get_memory` 阅读候选正文。"""
+{FRONTMATTER_EXAMPLE}"""
 
     sections = [
         "# 长期记忆",
@@ -74,6 +72,14 @@ def build_memory_instructions(directory: Path | None = None) -> str:
         WHEN_TO_ACCESS,
         "",
         TRUSTING_RECALL,
+        "",
+        "## Core Memory",
+        ("Core Memory 是每次模型请求重新读取的少量常驻背景，保存的是可修正的长期信息，"
+         "不能压过用户当前这一次的明确指令。"),
+        "- `persona` 是固定角色设定，不包含未经确认的用户职业、系统或项目身份，工具不能修改或清空。",
+        "- `human_profile` 只放当前用户跨项目的信息和偏好，存在全局 Core Memory。项目约束不要写到这里。",
+        "- `project_anchor` 只放当前项目的少量长期约束，按 project_id 分开保存。没有项目上下文时写入会失败。",
+        "- `append` / `replace` 必须提供非空内容。清空要用 `mode=clear`。空字符串不是清空。",
         "",
         "## 记忆与其它持久化机制的边界",
         ("记忆用于【未来对话】仍有用的信息。只在【当前对话】范围内有用的东西不要存记忆——"

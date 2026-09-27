@@ -14,6 +14,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from ...model.memory.semantic import SEMANTIC_READ_SCOPES, SEMANTIC_SCOPES, SEMANTIC_STATUSES
 from .user_text import is_blank_user_text, is_trivial_user_text
 
 _SENSITIVE_PATTERNS: tuple[tuple[str, str], ...] = (
@@ -54,7 +55,12 @@ def is_safe_memory(content: str) -> tuple[bool, str | None]:
 
 @dataclass(frozen=True)
 class SemanticMemoryPolicy:
-    """Rules for accepting one semantic memory's text."""
+    """Rules for accepting one semantic memory's text and sizing its recall."""
+
+    max_candidates: int = 200
+    selector_input_token_budget: int = 2048
+    max_semantic_tokens_budget: int = 1200
+    max_selected: int = 5
 
     def validate(self, content: str) -> tuple[bool, str | None]:
         if not content.strip():
@@ -260,6 +266,71 @@ def _skip_reason(
     return "no_durable_signal"
 
 
+def record_in_read_scope(
+    *,
+    scope: str,
+    project_id: str,
+    status: str,
+    read_scope: str,
+    current_project_id: str,
+    include_inactive: bool = False,
+) -> bool:
+    """Whether one record may enter this read. Scope and status are independent.
+
+    Inactive records stay out of automatic recall unless the caller asks to
+    include them. An empty current project sees global memories only.
+    """
+    if read_scope not in SEMANTIC_READ_SCOPES or status not in SEMANTIC_STATUSES:
+        return False
+    if scope not in SEMANTIC_SCOPES:
+        return False
+    if status != "active" and not include_inactive:
+        return False
+    if read_scope == "global":
+        return scope == "global"
+    if read_scope == "current_project":
+        return (
+            scope == "project"
+            and bool(current_project_id)
+            and project_id == current_project_id
+        )
+    if read_scope == "all_projects":
+        return scope == "project" and bool(project_id)
+    if scope == "global":
+        return True
+    return (
+        scope == "project"
+        and bool(current_project_id)
+        and project_id == current_project_id
+    )
+
+
+def scope_denial_message(
+    *,
+    scope: str,
+    status: str,
+    read_scope: str,
+) -> str:
+    """Explain a hidden record without claiming the file was deleted."""
+    if status == "inactive":
+        return (
+            "这条记忆已停用，默认检索和自动召回不包含它。"
+            "文件仍在。在其所属范围内可以直接读取；恢复需要显式操作。"
+        )
+    if read_scope == "applicable":
+        return "这条记忆不属于全局或当前项目。跨项目读取或修改需要显式 scope。"
+    return "这条记忆不在本次操作的范围内。"
+
+
+def normalize_stored_scope(scope: str | None, project_id: str) -> tuple[str, str] | None:
+    """Return a stored scope, or None when the file is not a current memory."""
+    if scope == "global":
+        return "global", ""
+    if scope == "project" and project_id:
+        return "project", project_id
+    return None
+
+
 def review_provenance(
     *,
     memory_type: str,
@@ -312,5 +383,8 @@ __all__ = [
     "SemanticMemoryPolicy",
     "bounded_safe_text",
     "is_safe_memory",
+    "normalize_stored_scope",
+    "record_in_read_scope",
     "review_provenance",
+    "scope_denial_message",
 ]

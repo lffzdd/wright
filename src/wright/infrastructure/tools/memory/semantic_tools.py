@@ -1,34 +1,36 @@
-"""Model-facing semantic memory CRUD tools.
+"""Model-facing semantic memory tools.
 
-Tools are built by ``build_memory_tools(directory)`` so the Agent and its tools
-always operate on the same store.
+Tools parse arguments, call MemoryService, and return ToolResult. Scope checks
+live in the service, not in a second copy of the rules.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from ....domain.model.memory import SEMANTIC_MEMORY_TYPES
+from ....application.memory.memory_service import MemoryService
+from ....domain.model.memory import SEMANTIC_MEMORY_TYPES, SEMANTIC_READ_SCOPES
 from ....domain.model.tool import ToolAccess, ToolResult
-from ...persistence.memory import (
-    SemanticMemoryStoreError,
-    search_memories,
-)
-from ...persistence.memory import (
-    create_memory as store_create_memory,
-)
-from ...persistence.memory import (
-    delete_memory as store_delete_memory,
-)
-from ...persistence.memory import (
-    get_memory as store_get_memory,
-)
-from ...persistence.memory import (
-    update_memory as store_update_memory,
-)
 from ..base import Tool
 from ..runtime import ToolRuntime
+
+_READ_SCOPES = list(SEMANTIC_READ_SCOPES)
+_WRITE_SCOPES = ["project", "global"]
+
+
+def _service_for(
+    service: MemoryService | None,
+    directory: Path | None,
+) -> MemoryService:
+    if service is not None:
+        return service
+    from ....application.memory.memory_service import MemoryService as Service
+    from ...persistence.memory import EpisodeStore, SemanticMemoryStore, memory_dir
+
+    path = (directory or memory_dir()).expanduser().resolve()
+    return Service(SemanticMemoryStore(path), EpisodeStore(path))
 
 
 def create_memory(
@@ -36,111 +38,165 @@ def create_memory(
     description: str,
     type: str,
     content: str,
+    scope: str | None = None,
     runtime: ToolRuntime | None = None,
     *,
+    service: MemoryService | None = None,
+    project_id: str = "",
     directory: Path | None = None,
 ) -> ToolResult:
-    try:
-        return ToolResult.success(
-            store_create_memory(name, description, type, content, directory).to_dict()
-        )
-    except (SemanticMemoryStoreError, OSError) as exc:
-        return ToolResult.fail(str(exc))
+    del runtime
+    chosen = scope or "project"
+    record, error = _service_for(service, directory).create_semantic(
+        name=name,
+        description=description,
+        type_=type,  # type: ignore[arg-type]
+        content=content,
+        scope=chosen,
+        project_id=project_id,
+    )
+    if error is not None or record is None:
+        return ToolResult.fail(error or "create failed")
+    return ToolResult.success(record.to_dict())
 
 
 def get_memory(
     memory_id: str,
+    scope: str = "applicable",
+    include_evidence: bool = False,
     runtime: ToolRuntime | None = None,
     *,
+    service: MemoryService | None = None,
+    project_id: str = "",
     directory: Path | None = None,
 ) -> ToolResult:
-    try:
-        return ToolResult.success(store_get_memory(memory_id, directory).to_dict())
-    except (SemanticMemoryStoreError, OSError) as exc:
-        return ToolResult.fail(str(exc))
+    del runtime
+    if scope not in SEMANTIC_READ_SCOPES:
+        return ToolResult.fail("memory scope 非法")
+    record, reads, error = _service_for(service, directory).get_semantic(
+        memory_id,
+        project_id=project_id,
+        read_scope=scope,
+        include_evidence=include_evidence,
+    )
+    if error is not None or record is None:
+        return ToolResult.fail(error or "memory not found")
+    payload = record.to_dict()
+    if include_evidence:
+        payload["evidence_reads"] = [item.to_dict() for item in reads]
+    return ToolResult.success(payload)
 
 
 def update_memory(
     memory_id: str,
+    expected_revision: int,
     name: str | None = None,
     description: str | None = None,
     type: str | None = None,
     content: str | None = None,
+    status: str | None = None,
+    scope: str = "applicable",
     runtime: ToolRuntime | None = None,
     *,
+    service: MemoryService | None = None,
+    project_id: str = "",
     directory: Path | None = None,
 ) -> ToolResult:
-    if all(value is None for value in (name, description, type, content)):
-        return ToolResult.fail("Provide at least one field to update")
-    try:
-        record = store_update_memory(
-            memory_id,
-            name=name,
-            description=description,
-            type_=type,
-            content=content,
-            directory=directory,
-        )
-        return ToolResult.success(record.to_dict())
-    except (SemanticMemoryStoreError, OSError) as exc:
-        return ToolResult.fail(str(exc))
+    del runtime
+    if scope not in SEMANTIC_READ_SCOPES:
+        return ToolResult.fail("memory scope 非法")
+    record, error = _service_for(service, directory).update_semantic(
+        memory_id,
+        expected_revision=expected_revision,
+        project_id=project_id,
+        read_scope=scope,
+        name=name,
+        description=description,
+        type_=type,  # type: ignore[arg-type]
+        content=content,
+        status=status,
+    )
+    if error is not None or record is None:
+        return ToolResult.fail(error or "update failed")
+    return ToolResult.success(record.to_dict())
 
 
 def delete_memory(
     memory_id: str,
+    scope: str = "applicable",
     runtime: ToolRuntime | None = None,
     *,
+    service: MemoryService | None = None,
+    project_id: str = "",
     directory: Path | None = None,
 ) -> ToolResult:
-    try:
-        deleted = store_delete_memory(memory_id, directory)
-        return ToolResult.success(
-            {"message": "Memory deleted", "id": deleted.id, "name": deleted.name}
-        )
-    except (SemanticMemoryStoreError, OSError) as exc:
-        return ToolResult.fail(str(exc))
+    del runtime
+    if scope not in SEMANTIC_READ_SCOPES:
+        return ToolResult.fail("memory scope 非法")
+    deleted, error = _service_for(service, directory).delete_semantic(
+        memory_id,
+        project_id=project_id,
+        read_scope=scope,
+    )
+    if error is not None or deleted is None:
+        return ToolResult.fail(error or "delete failed")
+    return ToolResult.success({
+        "message": "Memory deleted",
+        "id": deleted.id,
+        "name": deleted.name,
+        "scope": deleted.scope,
+        "status": deleted.status,
+    })
 
 
 def search_memory(
     query: str = "",
     type: str | None = None,
     limit: int = 20,
+    scope: str = "applicable",
+    include_inactive: bool = False,
     runtime: ToolRuntime | None = None,
     *,
+    service: MemoryService | None = None,
+    project_id: str = "",
     directory: Path | None = None,
 ) -> ToolResult:
-    try:
-        records = search_memories(
-            query, type_=type, limit=limit, directory=directory
-        )
-        # Keep the original tool's discovery behavior: an unmatched query still
-        # returns the newest memories instead of pretending the store is empty.
-        # The store-level search remains strict for programmatic callers.
-        if query.strip() and not records:
-            records = search_memories(
-                "", type_=type, limit=limit, directory=directory
-            )
-        results = [
-            {
-                "id": record.id,
-                "name": record.name,
-                "description": record.description,
-                "type": record.type,
-                "updated_at": record.updated_at,
-            }
+    del runtime
+    if scope not in SEMANTIC_READ_SCOPES:
+        return ToolResult.fail("memory scope 非法")
+    records, error = _service_for(service, directory).search_semantic(
+        query,
+        type_=type,  # type: ignore[arg-type]
+        limit=limit,
+        project_id=project_id,
+        read_scope=scope,
+        include_inactive=include_inactive,
+    )
+    if error is not None:
+        return ToolResult.fail(error)
+    results = [
+        {
+            "id": record.id,
+            "name": record.name,
+            "description": record.description,
+            "type": record.type,
+            "scope": record.scope,
+            "project_id": record.project_id,
+            "status": record.status,
+            "updated_at": record.updated_at,
+            "revision": record.revision,
+        }
+        for record in records
+    ]
+    return ToolResult.success({
+        "count": len(records),
+        "scope": scope,
+        "memories": "\n".join(
+            f"- [{record.type}/{record.scope}] {record.id}: {record.description}"
             for record in records
-        ]
-        return ToolResult.success({
-            "count": len(records),
-            # `memories` 保留旧的可读清单形状，`results` 提供完整结构化结果。
-            "memories": "\n".join(
-                f"- [{record.type}] {record.id}.md: {record.description}"
-                for record in records
-            ) or "(no memories)",
-            "results": results,
-        })
-    except (SemanticMemoryStoreError, OSError) as exc:
-        return ToolResult.fail(str(exc))
+        ) or "(no memories)",
+        "results": results,
+    })
 
 
 def _describe_memory_read(arguments: dict[str, Any]) -> ToolAccess:
@@ -170,21 +226,48 @@ _MEMORY_FIELDS = {
 
 def build_memory_tools(
     directory: Path | None = None,
+    *,
+    service: MemoryService | None = None,
+    project_id: str = "",
+    service_reader: Callable[[], MemoryService] | None = None,
+    project_id_reader: Callable[[], str] | None = None,
 ) -> list[Tool]:
+    """Build tools bound to one service. ``directory`` remains for older callers."""
+
+    def resolve_service() -> MemoryService:
+        if service_reader is not None:
+            return service_reader()
+        return _service_for(service, directory)
+
+    def resolve_project() -> str:
+        if project_id_reader is not None:
+            return project_id_reader()
+        return project_id
+
     def bind(function):
-        return lambda args, runtime: function(
-            **args, runtime=runtime, directory=directory
-        )
+        def call(args, runtime):
+            return function(
+                **args,
+                runtime=runtime,
+                service=resolve_service(),
+                project_id=resolve_project(),
+            )
+        return call
 
     create_tool = Tool(
         name="create_memory",
         description=(
-            "Create a new cross-session semantic memory. Fails if the id already exists; "
-            "search_memory first, then update_memory for existing entries instead of overwriting."
+            "Create one semantic memory in the current project. "
+            "A matching title does not overwrite an existing memory. "
+            "Pass scope=global only when the user explicitly wants it in every project. "
+            "Without a project, a project write fails instead of becoming global."
         ),
         parameters={
             "type": "object",
-            "properties": dict(_MEMORY_FIELDS),
+            "properties": {
+                **_MEMORY_FIELDS,
+                "scope": {"type": "string", "enum": _WRITE_SCOPES},
+            },
             "required": ["name", "description", "type", "content"],
             "additionalProperties": False,
         },
@@ -193,10 +276,19 @@ def build_memory_tools(
     )
     get_tool = Tool(
         name="get_memory",
-        description="Read the full body and metadata of one long-term memory by memory_id.",
+        description=(
+            "Read one semantic memory by stable id, including inactive records in scope. "
+            "The default scope is applicable (global plus the current project). "
+            "Other projects need scope=all_projects. "
+            "Set include_evidence to resolve stored source locators; it does not load a session by default."
+        ),
         parameters={
             "type": "object",
-            "properties": {"memory_id": {"type": "string", "minLength": 1}},
+            "properties": {
+                "memory_id": {"type": "string", "minLength": 1},
+                "scope": {"type": "string", "enum": _READ_SCOPES},
+                "include_evidence": {"type": "boolean"},
+            },
             "required": ["memory_id"],
             "additionalProperties": False,
         },
@@ -207,21 +299,28 @@ def build_memory_tools(
     update_tool = Tool(
         name="update_memory",
         description=(
-            "Update an existing long-term memory. Send only fields that change; "
-            "memory_id stays stable even if name changes."
+            "Update one semantic memory by stable id and expected_revision. "
+            "Changing the title does not change the id. "
+            "status=inactive deactivates without deleting; status=active reactivates. "
+            "A content edit does not reactivate an inactive memory. "
+            "The default scope cannot modify another project's memory."
         ),
         parameters={
             "type": "object",
             "properties": {
                 "memory_id": {"type": "string", "minLength": 1},
+                "expected_revision": {"type": "integer", "minimum": 0},
+                "status": {"type": "string", "enum": ["active", "inactive"]},
+                "scope": {"type": "string", "enum": _READ_SCOPES},
                 **_MEMORY_FIELDS,
             },
-            "required": ["memory_id"],
+            "required": ["memory_id", "expected_revision"],
             "anyOf": [
                 {"required": ["name"]},
                 {"required": ["description"]},
                 {"required": ["type"]},
                 {"required": ["content"]},
+                {"required": ["status"]},
             ],
             "additionalProperties": False,
         },
@@ -230,10 +329,17 @@ def build_memory_tools(
     )
     delete_tool = Tool(
         name="delete_memory",
-        description="Delete a long-term memory that is stale, wrong, or that the user asked to forget.",
+        description=(
+            "Delete a semantic memory the user explicitly asked to forget. "
+            "Deactivate with update_memory status=inactive when the file should remain. "
+            "The default scope cannot delete another project's memory."
+        ),
         parameters={
             "type": "object",
-            "properties": {"memory_id": {"type": "string", "minLength": 1}},
+            "properties": {
+                "memory_id": {"type": "string", "minLength": 1},
+                "scope": {"type": "string", "enum": _READ_SCOPES},
+            },
             "required": ["memory_id"],
             "additionalProperties": False,
         },
@@ -243,8 +349,9 @@ def build_memory_tools(
     search_tool = Tool(
         name="search_memory",
         description=(
-            "Search long-term memories by keyword and optional type; returns id, type, and "
-            "description. Call get_memory when you need the body."
+            "Search semantic memories inside one scope. The default is applicable: "
+            "active global memories plus the current project. "
+            "An unmatched query returns no rows. Call get_memory for the body."
         ),
         parameters={
             "type": "object",
@@ -252,6 +359,8 @@ def build_memory_tools(
                 "query": {"type": "string"},
                 "type": {"type": "string", "enum": list(SEMANTIC_MEMORY_TYPES)},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                "scope": {"type": "string", "enum": _READ_SCOPES},
+                "include_inactive": {"type": "boolean"},
             },
             "required": [],
             "additionalProperties": False,
@@ -260,5 +369,4 @@ def build_memory_tools(
         access_descriptor=_describe_memory_read,
         is_concurrency_safe=lambda args: True,
     )
-    tools = [create_tool, get_tool, update_tool, delete_tool, search_tool]
-    return tools
+    return [create_tool, get_tool, update_tool, delete_tool, search_tool]

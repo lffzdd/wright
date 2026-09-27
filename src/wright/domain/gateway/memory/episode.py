@@ -23,12 +23,12 @@ class IEpisodeStore(ABC):
 
     @abstractmethod
     def get(self, episode_id: str) -> EpisodeRecord:
-        """Load one record by id, including a legacy flat file."""
+        """Load one record by id."""
         ...
 
     @abstractmethod
     def delete(self, episode_id: str) -> EpisodeRecord:
-        """Delete one record by id, including a legacy flat file."""
+        """Delete one record by id."""
         ...
 
     @abstractmethod
@@ -55,8 +55,8 @@ class IEpisodeStore(ABC):
         """Rank records in scope by lexical score.
 
         ``lexical_score`` is a BM25 rank key, not a 0–1 similarity. An empty
-        query returns recent records with score 0. Cross-project and legacy
-        records appear only when ``scope`` asks for them.
+        query returns recent records with score 0. Other projects appear only
+        when ``scope`` is ``all_projects``.
         """
         ...
 
