@@ -28,6 +28,29 @@ UI_EVENT_TYPES = frozenset({
 })
 
 
+def notice_text(event_type: str, payload: dict[str, Any]) -> str:
+    """Text shown for a notice. Snapshots and the web reducer use this wording."""
+
+    if event_type == "turn.failed":
+        detail = payload.get("error") or payload.get("status") or "unknown error"
+        return f"Turn failed: {detail}"
+    if event_type == "turn.cancelled":
+        return "Turn cancelled."
+    if event_type == "system.checkpoint_error":
+        return f"Checkpoint failed: {payload.get('error') or 'unknown error'}"
+    if event_type == "command.rejected":
+        return str(payload.get("reason") or "Command rejected")
+    if event_type == "task.updated":
+        task = payload.get("task") if isinstance(payload.get("task"), dict) else {}
+        return str(task.get("description") or payload.get("description") or "Background task updated")
+    if payload.get("kind") == "completion_rejected":
+        return "Completion check requested another attempt."
+    if payload.get("kind") == "context_compact":
+        folded = payload.get("folded_count") or 0
+        return f"Context compacted ({int(folded)} items)."
+    return str(payload.get("text") or "System notice")
+
+
 def _json_value(value: Any) -> Any:
     try:
         return json.loads(json.dumps(value, ensure_ascii=False, default=repr))
@@ -228,11 +251,15 @@ class SessionEvents:
         completion_tokens: int | None,
         total_tokens: int | None,
         context_limit: int | None,
+        context_tokens: int | None = None,
     ) -> None:
-        self.emit("usage.request", {
+        payload: dict[str, Any] = {
             "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
             "total_tokens": total_tokens, "context_limit": context_limit,
-        })
+        }
+        if context_tokens is not None:
+            payload["context_tokens"] = context_tokens
+        self.emit("usage.request", payload)
 
     def on_usage_summary(
         self, prompt_tokens: int, completion_tokens: int, total_tokens: int,

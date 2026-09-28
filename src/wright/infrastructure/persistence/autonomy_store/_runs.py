@@ -6,11 +6,26 @@ import secrets
 import sqlite3
 import time
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any
 
-from ....domain.model.autonomy import AutomationRecord, DurableRunRecord
+from ....domain.model.automation import AutomationRecord, DurableRunRecord
 from ._base import AutonomyNotFoundError, AutonomyStoreError, _StoreBase
-from ._helpers import _dump, _load_object
+from ._helpers import (
+    StorePage,
+    _dump,
+    _load_object,
+    decode_page_cursor,
+    encode_page_cursor,
+    page_limit,
+)
+
+
+@dataclass(frozen=True)
+class RunCancelResult:
+    run: DurableRunRecord
+    changed: bool
+    cooperative: bool
 
 
 class _RunsMixin(_StoreBase):
@@ -18,20 +33,43 @@ class _RunsMixin(_StoreBase):
         with self._read():
             row = self._run_query("r.id = ?", (run_id,)).fetchone()
         if row is None:
-            raise AutonomyNotFoundError(f"Unknown task_id: {run_id}")
+            raise AutonomyNotFoundError(f"Unknown run_id: {run_id}")
         return self._run_from_row(row)
 
-    def list_runs(self, automation_id: str | None = None) -> list[DurableRunRecord]:
+    def list_runs(
+        self,
+        automation_id: str | None = None,
+        *,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> StorePage:
+        """Return one stable page. The query itself is bounded by ``limit``."""
+        limit = page_limit(limit)
         if automation_id is not None:
             self.get_automation(automation_id)
+        predicate = "1 = 1" if automation_id is None else "r.automation_id = ?"
+        parameters: tuple[Any, ...] = () if automation_id is None else (automation_id,)
+        if cursor is not None:
+            created_at, row_id = decode_page_cursor(cursor)
+            predicate += " AND (r.created_at < ? OR (r.created_at = ? AND r.id < ?))"
+            parameters = (*parameters, created_at, created_at, row_id)
         with self._read():
-            if automation_id is None:
-                rows = self._run_query("1 = 1", ()).fetchall()
-            else:
-                rows = self._run_query(
-                    "r.automation_id = ?", (automation_id,)
-                ).fetchall()
-        return [self._run_from_row(row) for row in rows]
+            rows = self._conn.execute(
+                f"""SELECT r.*, a.name AS automation_name, a.prompt AS prompt
+                    FROM durable_runs r JOIN automations a ON a.id = r.automation_id
+                    WHERE r.session_id = ? AND {predicate}
+                    ORDER BY r.created_at DESC, r.id DESC
+                    LIMIT ?""",
+                (self.session_id, *parameters, limit + 1),
+            ).fetchall()
+        extra = len(rows) > limit
+        visible = rows[:limit]
+        records = tuple(self._run_from_row(row) for row in visible)
+        next_cursor = None
+        if extra and records:
+            last = records[-1]
+            next_cursor = encode_page_cursor(last.created_at, last.id)
+        return StorePage(records, next_cursor)
 
     def claim_next_run(
         self, *, owner_id: str = "", now: float | None = None
@@ -123,27 +161,51 @@ class _RunsMixin(_StoreBase):
             )
         return self.get_run(run_id)
 
-    def cancel_run(self, run_id: str, reason: str) -> DurableRunRecord:
-        current = self.get_run(run_id)
-        if current.terminal:
-            return current
+    def cancel_run(self, run_id: str, reason: str) -> RunCancelResult:
+        """Cancel inside one immediate transaction.
+
+        A run that is already executing only records a cooperative request.
+        A terminal row is never overwritten.
+        """
         now = time.time()
         reason = str(reason)[:1_000]
         with self._write():
-            if current.status in {"queued", "dispatched", "waiting_retry"}:
-                self._conn.execute(
-                    """UPDATE durable_runs
-                       SET status = 'cancelled', ended_at = ?, cancel_requested = 1,
-                           cancel_reason = ? WHERE id = ?""",
-                    (now, reason, run_id),
+            row = self._run_query("r.id = ?", (run_id,)).fetchone()
+            if row is None:
+                raise AutonomyNotFoundError(f"Unknown run_id: {run_id}")
+            current = self._run_from_row(row)
+            if current.terminal:
+                return RunCancelResult(current, changed=False, cooperative=False)
+            terminalized = self._conn.execute(
+                """UPDATE durable_runs
+                   SET status = 'cancelled', ended_at = ?, cancel_requested = 1,
+                       cancel_reason = ?
+                   WHERE id = ? AND session_id = ?
+                     AND status IN ('queued', 'dispatched', 'waiting_retry')""",
+                (now, reason, run_id, self.session_id),
+            )
+            if terminalized.rowcount == 1:
+                updated = self._run_from_row(
+                    self._run_query("r.id = ?", (run_id,)).fetchone()
                 )
-            else:
-                self._conn.execute(
-                    """UPDATE durable_runs SET cancel_requested = 1,
-                       cancel_reason = ? WHERE id = ?""",
-                    (reason, run_id),
-                )
-        return self.get_run(run_id)
+                return RunCancelResult(updated, changed=True, cooperative=False)
+            requested = self._conn.execute(
+                """UPDATE durable_runs
+                   SET cancel_requested = 1, cancel_reason = ?
+                   WHERE id = ? AND session_id = ? AND status = 'running'
+                     AND cancel_requested = 0""",
+                (reason, run_id, self.session_id),
+            )
+            updated = self._run_from_row(
+                self._run_query("r.id = ?", (run_id,)).fetchone()
+            )
+            if requested.rowcount == 1:
+                return RunCancelResult(updated, changed=True, cooperative=True)
+            return RunCancelResult(
+                updated,
+                changed=False,
+                cooperative=updated.status == "running" and updated.cancel_requested,
+            )
 
     def is_cancel_requested(self, run_id: str) -> bool:
         try:

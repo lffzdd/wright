@@ -10,7 +10,7 @@ from pathlib import Path
 from tests.responses import event, response
 from wright.application.agent import create_agent
 from wright.application.memory.assembly import assemble_memory_manager
-from wright.domain.model.events import UsageEvent
+from wright.domain.model.llm.events import UsageEvent
 from wright.domain.model.session import Session
 from wright.infrastructure.persistence.memory import write_memory_file
 

@@ -3,6 +3,9 @@ from pathlib import Path
 
 from tests.responses import event, response
 from wright.application.agent import make_spawn_agent_tool
+from wright.application.command.execution import CommandExecution
+from wright.application.execution.identity import bind_identity
+from wright.application.session.live_resources import RuntimeResources
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.application.tool_execution.runtime import tool_runtime_for_session
@@ -303,6 +306,7 @@ def test_one_executor_refreshes_scope_for_shell_and_child(tmp_path):
         permission_resolver=resolver,
         authorization_commit_factory=authorization_commit_factory,
     )
+    identity = bind_identity(parent)
     executor = ToolDispatchService(
         {
             write_file_tool.name: write_file_tool,
@@ -310,7 +314,13 @@ def test_one_executor_refreshes_scope_for_shell_and_child(tmp_path):
             spawn.name: spawn,
         },
         assemble_tool_capabilities(
-            parent, None, None,
+            parent,
+            None,
+            RuntimeResources(
+                parent.session_id,
+                commands=CommandExecution(parent, identity),
+                identity=identity,
+            ),
             workspace_dir=workspace,
             cwd_provider=parent.get_cwd,
             authorization_commit_factory=authorization_commit_factory,

@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import json
-import threading
 from dataclasses import replace
-from glob import escape
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
-from urllib.parse import urlsplit
 
 from ...gateway.execution import ExecutionPath, PathResolver
 from ...model.tool import ToolAccess, ToolCall
@@ -19,7 +16,14 @@ from .approval import (
     UserInteractionHandler,
     normalize_response,
 )
-from .scope import AccessScope, PathClass, forbidden_paths
+from .scope import AccessScope, PathClass, forbidden_paths, is_under
+from .settings import (
+    MatchContext,
+    PermissionRule,
+    parse_http_origin,
+    redact_http_target,
+    relative_to_root,
+)
 from .types import (
     AccessTarget,
     AuthorizationChange,
@@ -45,34 +49,6 @@ class PermissionPolicy:
 
     def __init__(self, settings: PermissionSettings | None = None):
         self.settings = settings
-        self._session_allow_rules: list[object] = []
-        self._session_rules_lock = threading.RLock()
-
-    def add_session_rules(self, rules: tuple[str, ...]) -> None:
-        """Apply rules approved for this resolver after their commit succeeds."""
-        if not rules:
-            return
-        # Imported lazily so config parsing stays independent during module
-        # initialization.
-        from .settings import PermissionRule
-
-        with self._session_rules_lock:
-            known = {
-                (rule.tool_name, rule.subject_glob)
-                for rule in self._session_allow_rules
-            }
-            for raw in rules:
-                rule = PermissionRule.parse(raw)
-                key = (rule.tool_name, rule.subject_glob)
-                if key not in known:
-                    self._session_allow_rules.append(rule)
-                    known.add(key)
-
-    def _session_rule_matches(self, tool_name: str, subject: str) -> bool:
-        with self._session_rules_lock:
-            return any(
-                rule.matches(tool_name, subject) for rule in self._session_allow_rules
-            )
 
     def evaluate(
         self,
@@ -81,6 +57,8 @@ class PermissionPolicy:
         tool_name: str,
         subject: str,
         in_scope: bool,
+        context: MatchContext | None = None,
+        session_rules: tuple[PermissionRule, ...] = (),
     ) -> tuple[PermissionDecision, str, str]:
         """Return decision/source before an approval adapter is consulted."""
 
@@ -105,9 +83,9 @@ class PermissionPolicy:
         ):
             return "deny", "plan 模式禁止该操作", "mode"
 
-        if settings is not None and _matches(settings.deny, tool_name, subject):
+        if settings is not None and _matches(settings.deny, tool_name, subject, effect="deny", context=context):
             return "deny", f"命中 deny 规则: {tool_name}({subject})", "rule_config"
-        if settings is not None and _matches(settings.ask, tool_name, subject):
+        if settings is not None and _matches(settings.ask, tool_name, subject, effect="ask", context=context):
             return "ask", f"命中 ask 规则,需确认: {tool_name}({subject})", "rule_config"
 
         if mode == "bypass":
@@ -117,8 +95,10 @@ class PermissionPolicy:
                 return "allow", "acceptEdits 模式放行范围内文件编辑", "mode"
 
         if (
-            settings is not None and _matches(settings.allow, tool_name, subject)
-        ) or self._session_rule_matches(tool_name, subject):
+            settings is not None and _matches(
+                settings.allow, tool_name, subject, effect="allow", context=context
+            )
+        ) or _matches(session_rules, tool_name, subject, effect="allow", context=context):
             return "allow", f"命中 allow 规则: {tool_name}({subject})", "rule_config"
 
         if "unknown" in access.operations:
@@ -140,12 +120,16 @@ class PermissionPolicy:
         tool_name: str,
         subject: str,
         in_scope: bool,
+        context: MatchContext | None = None,
+        session_rules: tuple[PermissionRule, ...] = (),
     ) -> tuple[PermissionDecision, str, str]:
         return self.evaluate(
             access,
             tool_name=tool_name,
             subject=subject,
             in_scope=in_scope,
+            context=context,
+            session_rules=session_rules,
         )
 
 
@@ -166,12 +150,6 @@ class PermissionResolver:
         self.approval_handler = approval_handler
         self.interaction_handler = interaction_handler
 
-    def commit_authorization_change(self, change: AuthorizationChange) -> None:
-        """Apply resolver-local memory after the executor commits the change."""
-        add_session_rules = getattr(self.policy, "add_session_rules", None)
-        if callable(add_session_rules):
-            add_session_rules(change.session_rules)
-
     def resolve(
         self,
         tool_call: ToolCall,
@@ -181,6 +159,7 @@ class PermissionResolver:
         scope: AccessScope,
         identity: InvocationIdentity,
         cwd: ExecutionPath | None = None,
+        session_rules: tuple[PermissionRule, ...] = (),
         _rewrite_depth: int = 0,
     ) -> PermissionResolution:
         arguments = dict(tool_call.arguments)
@@ -229,14 +208,19 @@ class PermissionResolver:
         access_subject = access.subject or _subject_from_arguments(arguments)
         if effective_access.subject != access_subject:
             effective_access = replace(effective_access, subject=access_subject)
+        context = _match_context(arguments, resolved, scope)
         decision, reason, source = self.policy.apply(
             effective_access,
             tool_name=subject.name,
             subject=access_subject,
             in_scope=in_scope,
+            context=context,
+            session_rules=session_rules,
         )
 
-        remember_rule = _rememberable_rule(subject.name, arguments, effective_access)
+        remember_rule = _rememberable_rule(
+            subject.name, arguments, effective_access, resolved, scope
+        )
 
         if subject.requires_user_interaction and decision != "deny":
             decision = "ask"
@@ -252,6 +236,7 @@ class PermissionResolver:
             reason,
             remember_rule=remember_rule,
             subject=access_subject,
+            cwd=fixed_cwd,
         )
         request = PermissionRequest(
             tool_call,
@@ -360,6 +345,7 @@ class PermissionResolver:
                     scope=scope,
                     identity=identity,
                     cwd=fixed_cwd,
+                    session_rules=session_rules,
                     _rewrite_depth=_rewrite_depth + 1,
                 )
 
@@ -413,62 +399,80 @@ class PermissionResolver:
         identity: InvocationIdentity,
         reason: str,
         *,
-        remember_rule: str | None,
+        remember_rule: PermissionRule | None,
         subject: str,
+        cwd: ExecutionPath,
     ) -> PermissionPrompt:
         outside = any(item.classification == PathClass.OUTSIDE for item in targets)
+        directories = _outside_directories(targets)
+        directory_scope = _directory_grant_text(directories)
+        rule_scope = remember_rule.describe() if remember_rule is not None else ""
         if outside:
             choices = (
-                PermissionChoice("allow_once", "Allow once", "This invocation", "No save"),
+                PermissionChoice("allow_once", "Allow once", "This invocation only", "No save"),
                 PermissionChoice(
                     "allow_session_directory",
                     "Allow directory for this session",
-                    "Candidate parent/directory",
-                    "Save in session checkpoint",
+                    directory_scope,
+                    "Save in this session checkpoint",
                 ),
                 PermissionChoice(
                     "allow_persistent_directory",
                     "Allow directory permanently",
-                    "Candidate parent/directory",
-                    "Save in user permissions",
+                    directory_scope,
+                    "Save in user permissions for later sessions",
                 ),
                 PermissionChoice("deny", "Deny", "No execution", "No save"),
             )
+            grant_summary = directory_scope
         elif remember_rule is not None:
             choices = (
-                PermissionChoice("allow_once", "Allow once", "This invocation", "No save"),
+                PermissionChoice("allow_once", "Allow once", "This invocation only", "No save"),
                 PermissionChoice(
                     "allow_session_rule",
                     "Allow this rule for the session",
-                    remember_rule,
-                    "Save in session memory",
+                    rule_scope,
+                    "Save on this session only",
                 ),
                 PermissionChoice(
                     "allow_persistent_rule",
                     "Allow this rule permanently",
-                    remember_rule,
-                    "Save in user permissions",
+                    rule_scope,
+                    "Save in user permissions for later sessions",
                 ),
                 PermissionChoice("deny", "Deny", "No execution", "No save"),
             )
+            grant_summary = rule_scope
         else:
             choices = (
-                PermissionChoice("allow_once", "Allow once", "This invocation", "No save"),
+                PermissionChoice("allow_once", "Allow once", "This invocation only", "No save"),
                 PermissionChoice("deny", "Deny", "No execution", "No save"),
             )
+            grant_summary = "This invocation only. No additional rule or directory is saved."
+        preview, http_method, http_target, command, shell_note = _display_details(
+            tool_name, tool_call.arguments, cwd.value
+        )
         target_display = tuple(dict.fromkeys(
-            item.path.value if item.path is not None else item.declaration.value
-            for item in targets
+            _target_text(item) for item in targets
         ))
+        shown_subject = http_target or subject
         return PermissionPrompt(
             request_id=tool_call.id or f"{identity.session_id}:{identity.call_id}",
             tool_name=tool_name,
-            subject=subject,
+            subject=shown_subject,
             reason=reason,
             risk_flags=access.risk_flags,
             targets=target_display,
             choices=choices,
             principal=identity.agent_task_id or identity.session_id,
+            operation=", ".join(sorted(access.operations)),
+            grant_summary=grant_summary,
+            preview=preview,
+            cwd=cwd.value,
+            command=command,
+            http_method=http_method,
+            http_target=http_target,
+            shell_note=shell_note,
         )
 
     def _allowed(
@@ -482,13 +486,13 @@ class PermissionResolver:
         source: str,
         *,
         backend: PathResolver | None,
-        remember_rule: str | None = None,
+        remember_rule: PermissionRule | None = None,
         choice: str = "allow_once",
     ) -> PermissionResolution:
         session_dirs: list[ExecutionPath] = []
         persistent_dirs: list[ExecutionPath] = []
-        session_rules: list[str] = []
-        persistent_rules: list[str] = []
+        session_rules: list[dict[str, object]] = []
+        persistent_rules: list[dict[str, object]] = []
         if choice in {"allow_session_directory", "allow_persistent_directory"}:
             for target in targets:
                 if target.path is None or target.classification != PathClass.OUTSIDE:
@@ -498,12 +502,13 @@ class PermissionResolver:
                     session_dirs.append(directory)
                 if choice == "allow_persistent_directory" and directory not in persistent_dirs:
                     persistent_dirs.append(directory)
-        if remember_rule is not None:
+        if remember_rule is not None and not remember_rule.unresolved:
+            record = remember_rule.to_persistent()
             if choice == "allow_session_rule":
-                session_rules.append(remember_rule)
+                session_rules.append(record)
             elif choice == "allow_persistent_rule":
-                session_rules.append(remember_rule)
-                persistent_rules.append(remember_rule)
+                session_rules.append(record)
+                persistent_rules.append(record)
         grant_targets = tuple(
             GrantTarget(item.path, item.declaration.operation, item.declaration.recursive)
             for item in targets
@@ -545,8 +550,11 @@ class PermissionResolver:
         return PermissionResolution(arguments, "deny", reason, risk_flags, source)
 
 
-def _matches(rules, tool_name: str, subject: str) -> bool:
-    return any(rule.matches(tool_name, subject) for rule in rules)
+def _matches(rules, tool_name: str, subject: str, *, effect: str, context: MatchContext | None) -> bool:
+    return any(
+        rule.matches(tool_name, subject, effect=effect, context=context)
+        for rule in rules
+    )
 
 
 def _subject_from_arguments(arguments: dict) -> str:
@@ -561,8 +569,11 @@ def _rememberable_rule(
     tool_name: str,
     arguments: dict,
     access: ToolAccess,
-) -> str | None:
-    """Return a bounded low-risk rule that the approval UI may offer."""
+    resolved: tuple[ResolvedTarget, ...],
+    scope: AccessScope,
+) -> PermissionRule | None:
+    """Return a bounded rule. The pattern is built from the canonical path."""
+
     if any(target.kind == "directory" for target in access.targets):
         return None
     if access.operations & {
@@ -583,18 +594,145 @@ def _rememberable_rule(
     } & set(access.risk_flags):
         return None
 
-    file_value = arguments.get("file")
-    if isinstance(file_value, str) and file_value:
-        parent = PurePosixPath(file_value).parent.as_posix()
-        subject = escape(file_value) if parent == "." else f"{escape(parent)}/*"
-        return f"{tool_name}({subject})"
+    file_targets = [
+        item for item in resolved
+        if item.path is not None and item.declaration.kind == "file"
+        and item.classification in {PathClass.IN_ORIGIN, PathClass.IN_GRANTED}
+    ]
+    paths = {item.path.value for item in file_targets if item.path is not None}
+    if len(paths) == 1:
+        item = file_targets[0]
+        assert item.path is not None
+        root = _containing_root(item.path.value, scope)
+        relative = relative_to_root(item.path.value, root) if root else None
+        if root and relative and ".." not in PurePosixPath(relative).parts:
+            parent = PurePosixPath(relative).parent.as_posix()
+            pattern = PurePosixPath(relative).name if parent == "." else f"{parent}/*"
+            operations = tuple(sorted({
+                target.declaration.operation for target in file_targets
+            }))
+            return PermissionRule.file_grant(tool_name, root, pattern, operations)
 
     url_value = arguments.get("url")
-    if isinstance(url_value, str) and url_value:
-        parsed = urlsplit(url_value)
-        if parsed.scheme in {"http", "https"} and parsed.netloc:
-            return f"{tool_name}({escape(parsed.scheme + '://' + parsed.netloc)}*)"
+    if isinstance(url_value, str) and url_value and "network_read" in access.operations:
+        origin = parse_http_origin(url_value)
+        method = str(arguments.get("method", "GET")).upper()
+        if origin is not None and method in {"GET", "HEAD", "OPTIONS"}:
+            scheme, host, port = origin
+            return PermissionRule.network_grant(tool_name, scheme, host, port, (method,))
     return None
+
+
+def _containing_root(path: str, scope: AccessScope) -> str | None:
+    roots = [str(Path(scope.origin).resolve())]
+    roots.extend(str(Path(item).resolve()) for item in scope.additional)
+    containing = [root for root in roots if path == root or is_under(path, root)]
+    if not containing:
+        return None
+    return max(containing, key=len)
+
+
+def _outside_directories(targets: tuple[ResolvedTarget, ...]) -> tuple[str, ...]:
+    found: list[str] = []
+    for item in targets:
+        if item.path is None or item.classification != PathClass.OUTSIDE:
+            continue
+        directory = item.path.parent if item.declaration.kind == "file" else item.path
+        if directory.value not in found:
+            found.append(directory.value)
+    return tuple(found)
+
+
+def _directory_grant_text(directories: tuple[str, ...]) -> str:
+    shown = "; ".join(directories) or "(no directory)"
+    return (
+        f"Adds file root {shown}. File tools may use this directory for the "
+        "chosen lifetime. This does not grant shell, network, or every operation."
+    )
+
+
+def _match_context(
+    arguments: dict,
+    resolved: tuple[ResolvedTarget, ...],
+    scope: AccessScope,
+) -> MatchContext:
+    files = tuple(
+        (item.path.value, item.declaration.operation)
+        for item in resolved
+        if item.path is not None and item.declaration.kind in {"file", "directory"}
+    )
+    url = ""
+    for item in resolved:
+        if item.declaration.kind == "url" and isinstance(item.declaration.value, str):
+            url = item.declaration.value
+            break
+    if not url:
+        raw_url = arguments.get("url")
+        url = raw_url if isinstance(raw_url, str) else ""
+    method = arguments.get("method", "GET")
+    return MatchContext(
+        session_origin=str(Path(scope.origin).resolve()),
+        files=files,
+        url=url,
+        method=str(method).upper() if isinstance(method, str) else "GET",
+    )
+
+
+_PREVIEW_LIMIT = 800
+
+
+def _display_details(
+    tool_name: str,
+    arguments: dict,
+    cwd: str,
+) -> tuple[str, str, str, str, str]:
+    preview = ""
+    http_method = ""
+    http_target = ""
+    command = ""
+    shell_note = ""
+    if tool_name in {"write_file", "edit_file"}:
+        if "content" in arguments:
+            preview = _bound_preview(str(arguments.get("content", "")))
+        elif "old_text" in arguments or "new_text" in arguments:
+            preview = _bound_preview(
+                "replace:\n"
+                + str(arguments.get("old_text", ""))
+                + "\nwith:\n"
+                + str(arguments.get("new_text", ""))
+            )
+    if tool_name in {"http_request", "web_fetch"}:
+        http_method = str(arguments.get("method", "GET")).upper()
+        raw_url = arguments.get("url")
+        http_target = redact_http_target(raw_url) if isinstance(raw_url, str) else ""
+        header_count = len(arguments.get("headers") or {}) if isinstance(arguments.get("headers"), dict) else 0
+        if header_count:
+            http_target = f"{http_target} (headers redacted: {header_count})"
+        if arguments.get("body") not in (None, "", {}):
+            http_target = f"{http_target} (body redacted)"
+    if tool_name == "execute_command":
+        raw_command = arguments.get("command")
+        command = raw_command if isinstance(raw_command, str) else ""
+        shell_note = (
+            f"Approves this whole command in a local process at {cwd}. "
+            "File grants and protected-path checks do not confine that process. "
+            "There is no OS sandbox."
+        )
+    return preview, http_method, http_target, command, shell_note
+
+
+def _target_text(item: ResolvedTarget) -> str:
+    if item.path is not None:
+        return item.path.value
+    if item.declaration.kind == "url":
+        return redact_http_target(str(item.declaration.value))
+    return str(item.declaration.value)
+
+
+def _bound_preview(text: str) -> str:
+    if len(text) <= _PREVIEW_LIMIT:
+        return text
+    return text[:_PREVIEW_LIMIT] + "\n… preview truncated"
 
 
 def _permission_shape(access: ToolAccess) -> tuple:

@@ -485,25 +485,59 @@ class ConsoleRenderer(Renderer):
         targets: list[str] | tuple[str, ...],
         choices: list[dict[str, str]] | tuple[dict[str, str], ...],
         principal: str = "",
+        operation: str = "",
+        grant_summary: str = "",
+        preview: str = "",
+        cwd: str = "",
+        command: str = "",
+        http_method: str = "",
+        http_target: str = "",
+        shell_note: str = "",
     ) -> None:
         with self._prompt_lock:
             self._suspend_live()
             info = Text()
             info.append("工具: ", style="bold")
             info.append(f"{tool_name}\n")
+            if operation:
+                info.append("操作: ", style="bold")
+                info.append(f"{operation}\n")
             if subject:
-                info.append("参数: ", style="bold")
+                info.append("目标: ", style="bold")
                 info.append(f"{subject}\n")
+            info.append("原因: ", style="bold")
+            info.append(f"{reason}\n")
             info.append("风险: ", style="bold")
-            info.append(f"{', '.join(risk_flags)}\n")
-            info.append("说明: ", style="bold")
-            info.append(reason)
+            info.append(", ".join(risk_flags))
+            if grant_summary:
+                info.append("\n授权: ", style="bold")
+                info.append(grant_summary)
+            if command:
+                info.append("\n命令: ", style="bold")
+                info.append(command)
+            if cwd:
+                info.append("\n目录: ", style="bold")
+                info.append(cwd)
+            if shell_note:
+                info.append("\n边界: ", style="bold")
+                info.append(shell_note)
+            if http_method or http_target:
+                info.append("\nHTTP: ", style="bold")
+                info.append(f"{http_method} {http_target}".strip())
+            if preview:
+                info.append("\n预览:\n", style="bold")
+                info.append(preview)
             if targets:
-                info.append("\n目标: ", style="bold")
+                info.append("\n资源: ", style="bold")
                 info.append("; ".join(targets))
             if principal:
                 info.append("\n主体: ", style="bold")
                 info.append(principal)
+            for choice in choices:
+                info.append(
+                    f"\n- {choice.get('id', '')}: {choice.get('label', '')} | "
+                    f"{choice.get('scope', '')} | {choice.get('persistence', '')}"
+                )
             self._console.print()
             self._console.print(
                 Panel(

@@ -8,7 +8,7 @@ from wright.application.agent import create_agent
 from wright.application.composition.host import ApplicationHost
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
-from wright.domain.model.autonomy import TriggerSpec
+from wright.domain.model.automation import TriggerSpec
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.domain.policy import (
@@ -144,7 +144,7 @@ def test_application_host_runs_persisted_automation_without_source_session(tmp_p
     host.start()
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
-        rows = store.list_runs(automation.id)
+        rows = store.list_runs(automation.id).records
         if rows and rows[0].terminal:
             break
         time.sleep(0.01)
@@ -343,7 +343,7 @@ def test_host_does_not_retry_unknown_effect_even_with_retry_policy(tmp_path, mon
     try:
         host.start()
         assert finished.wait(3)
-        run = store.list_runs(automation.id)[0]
+        run = store.list_runs(automation.id).records[0]
         assert run.status == "unknown"
         assert run.attempt == 1
         assert marker.read_text() == "effect\n"
@@ -424,7 +424,7 @@ def test_sessions_sharing_host_share_dispatch_capacity(tmp_path):
         assert host.snapshot().active_runs == 1
         release.set()
         assert all_done.wait(3)
-        assert first.list_runs()[0].status == second.list_runs()[0].status == "completed"
+        assert first.list_runs().records[0].status == second.list_runs().records[0].status == "completed"
     finally:
         release.set()
         host.close()

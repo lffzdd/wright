@@ -25,7 +25,7 @@ def test_registered_management_tools_work_through_capability_restriction(tmp_pat
     session.begin_user_turn("management")
     executor = ToolDispatchService(
         {t.name: t for t in [*autonomy_tools, manage_loop_tool]},
-        assemble_tool_capabilities(session, services, None),
+        assemble_tool_capabilities(session, services, None, expose_autonomy=True),
         session=session,
         permission_resolver=PermissionResolver(
             approval_handler=lambda _: PermissionResponse("allow_once"),

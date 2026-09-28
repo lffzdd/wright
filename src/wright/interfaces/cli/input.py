@@ -64,9 +64,11 @@ class CliInputController:
                 result = prompter.collect_user(request.payload)
             else:
                 result = "deny"
-        except Exception:  # 必须给 reply 队列一个值，否则 Agent 线程会挂
+        except Exception:  # 必须结束这次请求，否则 Agent 线程会挂
             result = None if request.kind == "ask_user" else "deny"
-        request.reply.put(result)
+        if self._hub is None:
+            return
+        self._hub.resolve(request.request_id, result)
 
     def read_main_input(self, *, queueing: bool = False) -> str | None:
         if self._read_main is not None:

@@ -10,16 +10,15 @@ import json
 from collections.abc import Sequence
 from copy import copy
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from ...core.logger import get_logger
 from ...domain.model.agent import AgentProfile
-from ...domain.model.autonomy import DurableRunRecord
-from ...domain.model.coordination import AgentControlError, AgentControlPlane
-from ...domain.model.session import Session, UsageRecord
+from ...domain.model.agent.control import AgentControlError, AgentControlPlane
+from ...domain.model.automation import DurableRunRecord
+from ...domain.model.llm import UsageRecord
+from ...domain.model.session import Session
 from ...domain.policy import PermissionResolver, PermissionSettings
-from ...infrastructure.config import append_additional_directory, append_allow_rule
 from ...infrastructure.llm.llm import LLMClient, resolve_transport
 from ...infrastructure.tools.base import Tool
 from ..agent import (
@@ -30,8 +29,11 @@ from ..agent import (
     ensure_system_prompt,
     prepare_model_tools,
 )
-from ..agent.subagent import _child_base_tools
+from ..command.execution import CommandExecution
+from ..composition.roles import tools_for_role
 from ..composition.services import RuntimeServices
+from ..execution.identity import bind_identity
+from ..session.live_resources import RuntimeResources
 from ..session.publisher import open_session_events
 from ..tool_execution.capabilities import assemble_tool_capabilities
 from .scheduler import AutonomyScheduler
@@ -140,42 +142,6 @@ class _DurableToolJournal:
 DURABLE_MAX_DEPTH = 2
 
 
-# Durable runs must not ask a human, spawn more schedules, or write memory.
-# Autonomy names are also in ``_child_base_tools``; listed here so the
-# isolation policy stays explicit if that helper changes.
-# knowledge_search 会消耗外部 API 额度并依赖网络；skill 加载会占用步数和上下文。
-# 无人值守任务应把流程写进 prompt，而不是现场发现并加载。
-_DURABLE_EXCLUDED_TOOLS = frozenset({
-    "ask_user",
-    "create_schedule",
-    "get_schedule",
-    "list_schedules",
-    "pause_schedule",
-    "resume_schedule",
-    "cancel_schedule",
-    "list_schedule_runs",
-    "get_schedule_run",
-    "wait_schedule_run",
-    "cancel_schedule_run",
-    "get_agent",
-    "wait_agent",
-    "cancel_agent",
-    "get_command",
-    "wait_command",
-    "terminate_command",
-    "list_commands",
-    "create_memory",
-    "get_memory",
-    "update_memory",
-    "delete_memory",
-    "search_memory",
-    "search_episodes",
-    "get_episode",
-    "delete_episode",
-    "knowledge_search",
-    "load_skill",
-})
-
 _UNATTENDED_DENY_NOTE = (
     "durable run is unattended and cannot prompt for confirmation"
 )
@@ -190,11 +156,7 @@ class DurableLaunch:
 
 
 def _durable_base_tools(base_tools: Sequence[Tool]) -> list[Tool]:
-    return [
-        tool
-        for tool in _child_base_tools(base_tools)
-        if tool.name not in _DURABLE_EXCLUDED_TOOLS
-    ]
+    return tools_for_role(base_tools, "durable")
 
 
 def _durable_root_turn_id(run_id: str) -> str:
@@ -333,12 +295,11 @@ def launch_durable_run(
 
     def authorization_commit_factory(target_session: Session):
         def commit_authorization(change) -> None:
-            for directory in change.session_directories:
-                target_session.add_working_directory(Path(directory.value))
-            for rule in change.persistent_rules:
-                append_allow_rule(rule)
-            for directory in change.persistent_directories:
-                append_additional_directory(directory.value)
+            from ..tool_execution.commit import commit_authorization as commit_change
+
+            # Durable runs have no session checkpoint. The change stays on
+            # target_session, which is the child when a child is committing.
+            commit_change(change, session=target_session)
 
         return commit_authorization
 
@@ -404,10 +365,15 @@ def launch_durable_run(
             run_llm.base_url, str(configured_transport)
         )
 
+    durable_commands = CommandExecution(
+        child_session,
+        bind_identity(child_session),
+        allow_background=False,
+    )
     child_assembly = assemble_tool_capabilities(
         child_session,
-        services,
         None,
+        RuntimeResources(child_session.session_id, commands=durable_commands),
         execution_journal_factory=child_journal_factory,
         authorization_commit_factory=authorization_commit_factory,
     )
@@ -441,7 +407,7 @@ def launch_durable_run(
         max_consecutive_invalid=3,
         usage_observer=observe_usage,
         lifecycle=lifecycle,
-        services=services,
+        services=None,
         execution_journal=root_journal,
         execution_journal_factory=child_journal_factory,
         authorization_commit=authorization_commit_factory(child_session),
@@ -482,6 +448,7 @@ def launch_durable_run(
                 f"{type(exc).__name__}: {exc}",
             )
         finally:
+            durable_commands.close()
             finished = _commit_durable_run(
                 scheduler=scheduler,
                 control=control,
@@ -516,6 +483,7 @@ def launch_durable_run(
             done_payload=run_id,
         )
     except Exception as exc:
+        durable_commands.close()
         control.finish_task(
             record.id, status="failed", steps_used=0, error=str(exc)
         )

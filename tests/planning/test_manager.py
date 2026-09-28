@@ -1,5 +1,6 @@
 import pytest
 
+from wright.application.planning.prompt import plan_prompt_block
 from wright.domain.model.planning import PlanError, PlanManager
 
 
@@ -153,11 +154,12 @@ def test_restore_rejects_inconsistent_derived_status():
 
 def test_prompt_block_is_empty_and_serializes_plan_as_data():
     manager = PlanManager()
-    assert manager.to_prompt_block() == ""
+
+    assert plan_prompt_block(manager) == ""
 
     manager.create_plan("ship", ["code", "test"])
     manager.update_step("step_1", "in_progress", note="working")
-    block = manager.to_prompt_block()
+    block = plan_prompt_block(manager)
 
     assert block.startswith("<system-reminder>")
     assert "<plan-state>" in block

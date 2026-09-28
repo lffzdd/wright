@@ -1,0 +1,28 @@
+{
+  "version": 2,
+  "types": [
+    "session.snapshot",
+    "session.status_changed",
+    "turn.started",
+    "turn.completed",
+    "turn.failed",
+    "turn.cancelled",
+    "reasoning.delta",
+    "content.delta",
+    "content.final",
+    "tool.planned",
+    "tool.awaiting_approval",
+    "tool.running",
+    "tool.output",
+    "tool.finished",
+    "interaction.requested",
+    "interaction.resolved",
+    "task.updated",
+    "usage.request",
+    "usage.task",
+    "system.notice",
+    "system.checkpoint_error",
+    "command.accepted",
+    "command.rejected"
+  ]
+}

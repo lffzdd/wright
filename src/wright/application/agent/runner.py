@@ -4,17 +4,19 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, ClassVar
 
 from ...core.logger import get_logger
-from ...domain.model import ModelRequest
-from ...domain.model.events import ContentDelta, ContentDone, ReasoningDelta, UsageEvent
-from ...domain.model.session import Session, UsageRecord
+from ...domain.model.llm import ModelRequest, UsageRecord
+from ...domain.model.llm.events import (
+    ContentDelta,
+    ContentDone,
+    ReasoningDelta,
+    UsageEvent,
+)
+from ...domain.model.session import Session
 from ...domain.policy import AuthorizationChange
 from ...domain.policy.verifier import Verifier
-from ...domain.protocol import (
-    TurnAbort,
-    encode_tools,
-    parse_turn,
-)
+from ...domain.protocol import encode_tools
 from ...infrastructure.llm.llm import LLMClient
+from ...infrastructure.llm.usage import usage_from_provider
 from ...infrastructure.storage.attachments import (
     MAX_ATTACHMENTS_PER_TURN,
     MAX_TOTAL_ATTACHMENT_BYTES,
@@ -31,6 +33,7 @@ from ..tool_execution.capabilities import (
 )
 from .components import AgentComponents, PreparedTools
 from .context import ContextBudgetExceeded
+from .parse import TurnAbort, parse_turn
 from .prompt import AgentPromptManager
 from .turns import (
     RetryCounters,
@@ -76,6 +79,7 @@ class Agent:
         on_run_started: Callable[[str], None] | None = None,
         authorization_commit: Callable[[AuthorizationChange], None] | None = None,
         authorization_commit_factory=None,
+        expose_autonomy: bool = False,
     ):
         self.llm = llm
         self.session_state = session_state
@@ -86,7 +90,8 @@ class Agent:
         self._authorization_commit = authorization_commit
         self.runtime_resources = assembly.runtime_resources or runtime_resources
         if self.runtime_resources is None:
-            self.runtime_resources = RuntimeResources.for_session(session_state.session_id)
+            self.runtime_resources = RuntimeResources(session_state.session_id)
+        self._expose_autonomy = expose_autonomy
         # 长期记忆协作者:只主 Agent 注入,子 Agent 传 None(保持纯净隔离上下文)。
         # Agent 只在主循环里喊它三声:构造时取指令、每轮注入召回、收口后提取落盘。
         self.memory = memory
@@ -335,7 +340,7 @@ class Agent:
                 elif isinstance(event, ContentDone):
                     response = event
                 elif isinstance(event, UsageEvent):
-                    usage_record = UsageRecord.from_usage(event.usage)
+                    usage_record = usage_from_provider(event.usage)
 
         except Exception as exc:
             if usage_record is not None:
@@ -351,6 +356,7 @@ class Agent:
             usage_record.completion_tokens if usage_record else None,
             usage_record.total_tokens if usage_record else None,
             self.context_limit,
+            context_tokens=getattr(self.session_state, "request_context_tokens", None),
         )
 
         self._emit_lifecycle("llm_end", {
@@ -412,6 +418,7 @@ class Agent:
             execution_backend=self.executor.backend,
             execution_journal_factory=self._execution_journal_factory,
             authorization_commit_factory=self._authorization_commit_factory,
+            expose_autonomy=self._expose_autonomy,
         )
         self.executor.bind_run(
             assembly, authorization_commit=self._authorization_commit

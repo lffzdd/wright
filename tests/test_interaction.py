@@ -8,7 +8,7 @@ from wright.application.session.interaction import RoutedPrompter
 from wright.domain.policy import PermissionChoice, PermissionPrompt
 from wright.interfaces.cli.input import CliInputController
 from wright.interfaces.cli.prompter import ConsolePrompter
-from wright.interfaces.interaction import InteractionHub, InteractionRequest
+from wright.interfaces.interaction import InteractionHub
 
 
 def test_hub_delivers_reply_from_collector():
@@ -26,7 +26,7 @@ def test_hub_delivers_reply_from_collector():
     request = hub.poll()
     assert request is not None
     assert request.payload["tool_name"] == "write_file"
-    request.reply.put("allow_once")
+    assert hub.resolve(request.request_id, "allow_once") is True
     thread.join(timeout=2)
     assert result == ["allow_once"]
 
@@ -54,8 +54,8 @@ def test_hub_serializes_two_agent_threads():
     first = hub.poll()
     second = hub.poll()
     assert first is not None and second is not None
-    first.reply.put("allow_once")
-    second.reply.put("deny")
+    assert hub.resolve(first.request_id, "allow_once") is True
+    assert hub.resolve(second.request_id, "deny") is True
     for thread in threads:
         thread.join(timeout=2)
     assert sorted(results) == ["a:allow_once", "b:deny"] or sorted(results) == ["a:deny", "b:allow_once"]
@@ -83,7 +83,7 @@ def test_console_permission_uses_hub_off_collector_thread():
     assert request is not None
     assert request.kind == "permission"
     assert request.payload["tool_name"] == "write_file"
-    request.reply.put("allow_once")
+    assert hub.resolve(request.request_id, "allow_once") is True
     thread.join(timeout=2)
     assert answers == ["allow_once"]
 
@@ -138,21 +138,114 @@ def test_fulfill_exception_unblocks_the_waiting_agent():
         def collect_permission(self, payload):
             raise RuntimeError("terminal failed")
 
+    hub = InteractionHub()
     answered: list[object] = []
-    request = InteractionRequest(kind="permission", payload={"tool_name": "write"})
 
     def agent() -> None:
-        answered.append(request.reply.get())
+        answered.append(hub.request("permission", {"tool_name": "write"}))
 
     thread = threading.Thread(target=agent)
     thread.start()
+    deadline = time.time() + 2
+    request = None
+    while request is None and time.time() < deadline:
+        request = hub.poll()
+    assert request is not None
     CliInputController(
         service=object(),
         agent_idle=threading.Event(),
+        hub=hub,
         prompter=Boom(renderer=object()),  # type: ignore[arg-type]
     ).fulfill(request)
     thread.join(timeout=2)
     assert answered == ["deny"]
+
+
+def test_resolve_and_cancel_wake_the_waiter_once():
+    hub = InteractionHub()
+    ready = threading.Event()
+    entered = threading.Event()
+    release = threading.Event()
+
+    def on_requested(*_args) -> None:
+        ready.set()
+
+    def on_resolved(*_args) -> None:
+        entered.set()
+        release.wait()
+
+    hub.set_persistence(on_requested, on_resolved)
+    answered: list[object] = []
+
+    def agent() -> None:
+        answered.append(hub.request("permission", {"tool_name": "write_file"}))
+
+    thread = threading.Thread(target=agent)
+    thread.start()
+    assert ready.wait(timeout=2)
+    request = hub.poll()
+    assert request is not None
+    resolver = threading.Thread(
+        target=hub.resolve, args=(request.request_id, "allow_once")
+    )
+    resolver.start()
+    assert entered.wait(timeout=2)
+    # Persist is in progress. Cancel must not raise or deliver a second answer.
+    hub.cancel_pending()
+    release.set()
+    resolver.join(timeout=2)
+    thread.join(timeout=2)
+    assert answered == ["allow_once"]
+    assert hub.resolve(request.request_id, "deny") is False
+
+
+def test_cancel_before_resolve_rejects_a_late_answer():
+    hub = InteractionHub()
+    ready = threading.Event()
+    hub.set_persistence(lambda *_args: ready.set(), lambda *_args: None)
+    answered: list[object] = []
+
+    def agent() -> None:
+        answered.append(hub.request("permission", {"tool_name": "write_file"}))
+
+    thread = threading.Thread(target=agent)
+    thread.start()
+    assert ready.wait(timeout=2)
+    request = hub.poll()
+    assert request is not None
+    hub.cancel_pending()
+    thread.join(timeout=2)
+    assert answered == ["deny"]
+    assert hub.resolve(request.request_id, "allow_once") is False
+
+
+def test_persist_failure_keeps_the_request_pending():
+    hub = InteractionHub()
+    ready = threading.Event()
+    attempts = {"count": 0}
+
+    def on_resolved(*_args) -> None:
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("store down")
+
+    hub.set_persistence(lambda *_args: ready.set(), on_resolved)
+    answered: list[object] = []
+
+    def agent() -> None:
+        answered.append(hub.request("permission", {"tool_name": "write_file"}))
+
+    thread = threading.Thread(target=agent)
+    thread.start()
+    assert ready.wait(timeout=2)
+    request = hub.poll()
+    assert request is not None
+    assert hub.resolve(request.request_id, "allow_once") is False
+    assert hub.has_pending()
+    assert answered == []
+    assert hub.resolve(request.request_id, "allow_once") is True
+    thread.join(timeout=2)
+    assert answered == ["allow_once"]
 
 
 def test_input_reader_holds_main_prompt_until_idle():

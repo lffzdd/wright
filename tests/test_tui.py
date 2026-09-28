@@ -242,7 +242,7 @@ def test_tui_prompter_uses_hub_off_collector_thread():
     request = hub.poll()
     assert request is not None
     assert request.kind == "permission"
-    request.reply.put("allow_once")
+    assert hub.resolve(request.request_id, "allow_once") is True
     thread.join(timeout=2)
     assert answers == ["allow_once"]
 
@@ -524,3 +524,61 @@ async def test_multiline_composer_submits_on_enter_and_accepts_newline_shortcuts
         assert app.submitted == ["hi\nthere\nline3\nline4"]
         assert composer.text == ""
         assert composer.styles.height.value == 5
+
+
+@pytest.mark.anyio
+async def test_permission_modal_shows_scope_preview_and_escape_denies():
+    from textual.app import App
+    from textual.widgets import Button, Static
+
+    from wright.interfaces.tui.modals import PermissionModal
+
+    class Host(App):
+        def __init__(self) -> None:
+            super().__init__()
+            self.result: str | None = None
+
+        def on_mount(self) -> None:
+            def done(choice: str | None) -> None:
+                self.result = choice
+
+            self.push_screen(
+                PermissionModal(
+                    tool_name="write_file",
+                    subject="nested/a.txt",
+                    risk_flags=("writes_files",),
+                    reason="needs approval <script>",
+                    grant_summary="Adds file root " + ("nested/" * 40),
+                    preview="new line <b>literal</b>",
+                    choices=(
+                        {
+                            "id": "allow_once",
+                            "label": "Allow once",
+                            "scope": "This invocation only",
+                            "persistence": "No save",
+                        },
+                        {
+                            "id": "deny",
+                            "label": "Deny",
+                            "scope": "No execution",
+                            "persistence": "No save",
+                        },
+                    ),
+                ),
+                done,
+            )
+
+    app = Host()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        rendered = " ".join(
+            str(widget.render())
+            for widget in (*app.screen.query(Static), *app.screen.query(Button))
+        )
+        assert "needs approval <script>" in rendered
+        assert "Adds file root" in rendered
+        assert "new line <b>literal</b>" in rendered
+        assert "This invocation only" in rendered
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.result == "deny"

@@ -12,9 +12,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
-from ....domain.model.coordination import AgentControlError, AgentControlPlane
+from ....domain.model.agent.control import AgentControlError, AgentControlPlane
+from ....domain.model.llm import UsageRecord
 from ....domain.model.planning import PlanManager
-from ....domain.model.runs import RunRecord
 from ....domain.model.session import (
     MessageRecord,
     Session,
@@ -23,9 +23,9 @@ from ....domain.model.session import (
     ToolExecutionStatus,
     TurnRecord,
     TurnRoute,
-    UsageRecord,
     VerificationRecord,
 )
+from ....domain.model.session.run import RunRecord
 from ....domain.model.tool import ArtifactRef, ToolCall, ToolResult
 from ...storage.attachments import AttachmentError, AttachmentRecord
 from .errors import CheckpointError
@@ -59,6 +59,7 @@ def _serialize_session(session: Session) -> dict[str, Any]:
             "additional_working_directories": [
                 str(path) for path in session.additional_working_directories
             ],
+            "permission_rules": [dict(rule) for rule in session.permission_rules],
             "environment": session.environment,
             "base_commit": session.base_commit,
             "branch_name": session.branch_name,
@@ -307,6 +308,7 @@ def _deserialize_session(payload: Any) -> Session:
         cwd=cwd,
         project_root=project_root,
         additional_working_directories=additional_working_directories,
+        permission_rules=_deserialize_permission_rules(data.get("permission_rules", [])),
         environment=environment,
         base_commit=base_commit,
         branch_name=branch_name,
@@ -315,7 +317,7 @@ def _deserialize_session(payload: Any) -> Session:
         tool_executions=tool_executions,
         # OS processes cannot survive a Python process crash.  Completed tool
         # execution history is restored; live background process handles are not.
-        background_tasks={},
+        commands={},
         plan_manager=plan_manager,
         skill_catalog_sent=skill_catalog_sent,
         active_deferred_tools=active_deferred_tools,
@@ -672,6 +674,30 @@ def _deserialize_additional_directories(
         seen.add(resolved)
         unique.append(resolved)
     return unique
+
+
+def _deserialize_permission_rules(value: Any) -> list[dict]:
+    """Load session allow rules. Missing data grants nothing.
+
+    A legacy string is kept only as an unresolved record, so an old allow
+    glob cannot start matching a different path after resume.
+    """
+    if value in (None, []):
+        return []
+    if not isinstance(value, list):
+        raise CheckpointError("permission_rules 必须是数组")
+    from ....domain.policy.permission.settings import PermissionRule
+
+    rules: list[dict] = []
+    for item in value:
+        if isinstance(item, dict):
+            rules.append(dict(item))
+            continue
+        if isinstance(item, str) and item.strip():
+            rules.append(PermissionRule.parse(item, effect="allow").to_persistent())
+            continue
+        raise CheckpointError("permission_rules 含有无法识别的规则")
+    return rules
 
 
 def _cwd_in_granted_roots(

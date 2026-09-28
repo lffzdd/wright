@@ -16,8 +16,9 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from ...core.logger import get_logger
-from ...domain.model.runs import TERMINAL_RUN_STATUSES
+from ...domain.model.session.run import TERMINAL_RUN_STATUSES
 from ...infrastructure.llm.model_adapters import available_models
+from ...infrastructure.storage.attachments import AttachmentError
 from .errors import SessionClosedError, SessionServiceError
 from .runner import RuntimeShutdown, SessionRunner
 
@@ -93,6 +94,7 @@ class SessionService:
         self._queued: dict[str, dict[str, Any]] = {}
         self._cancelled: set[str] = set()
         self._active_command: str | None = None
+        self._active_attachment_ids: set[str] = set()
         # A new process receives a unique consumer id.  SQLite is the arbiter;
         # this value only identifies the winner of a claim, never grants a
         # second right to execute work.
@@ -254,6 +256,78 @@ class SessionService:
             ]
         except (AttributeError, ValueError) as exc:
             raise SessionServiceError(str(exc)) from exc
+
+    def _checkpoint(self) -> None:
+        store = getattr(self.runtime.agent, "checkpoint_store", None)
+        if store is None:
+            return
+        try:
+            store.save(self.runtime.session_state)
+        except Exception as exc:
+            raise SessionServiceError(f"checkpoint failed: {exc}") from exc
+
+    def _inflight_attachment_ids(self) -> set[str]:
+        with self._lock:
+            found = set(self._active_attachment_ids)
+            for item in self._queued.values():
+                for attachment in item.get("attachments") or []:
+                    if isinstance(attachment, dict) and attachment.get("id"):
+                        found.add(str(attachment["id"]))
+            return found
+
+    def add_attachment(self, session_id: str, filename: str, data: bytes) -> dict[str, Any]:
+        """Validate and commit an attachment. The web route only transfers bytes."""
+
+        self._require_accepting_input()
+        if session_id != self.runtime.session_state.session_id:
+            raise SessionServiceError("attachment session does not match")
+        store = getattr(self.runtime, "attachment_store", None)
+        if store is None:
+            raise SessionServiceError("attachment storage is unavailable")
+        try:
+            record = store.register_bytes(filename, data, self.runtime.session_state.attachments)
+        except AttachmentError as exc:
+            raise SessionServiceError(str(exc)) from exc
+        already_present = record.id in self.runtime.session_state.attachments
+        self.runtime.session_state.attachments[record.id] = record
+        try:
+            self._checkpoint()
+        except SessionServiceError:
+            if not already_present:
+                self.runtime.session_state.attachments.pop(record.id, None)
+                try:
+                    store.remove(record)
+                except AttachmentError:
+                    logger.warning("could not remove attachment after checkpoint failure", exc_info=True)
+            raise
+        return record.to_dict()
+
+    def remove_attachment(self, session_id: str, attachment_id: str) -> None:
+        self._require_accepting_input()
+        if session_id != self.runtime.session_state.session_id:
+            raise SessionServiceError("attachment session does not match")
+        record = self.runtime.session_state.attachments.get(attachment_id)
+        if record is None:
+            raise SessionServiceError("attachment not found")
+        if any(
+            attachment_id in (message.message.get("attachments") or [])
+            for message in getattr(self.runtime.session_state, "message_records", []) or []
+        ):
+            raise SessionServiceError("attachment is already part of conversation history")
+        if attachment_id in self._inflight_attachment_ids():
+            raise SessionServiceError("attachment is referenced by a queued or running command")
+        store = getattr(self.runtime, "attachment_store", None)
+        self.runtime.session_state.attachments.pop(attachment_id, None)
+        try:
+            self._checkpoint()
+        except SessionServiceError:
+            self.runtime.session_state.attachments[attachment_id] = record
+            raise
+        if store is not None:
+            try:
+                store.remove(record)
+            except AttachmentError as exc:
+                raise SessionServiceError(str(exc)) from exc
 
     def submit(
         self,
@@ -498,11 +572,16 @@ class SessionService:
         )
         if command_id:
             with self._lock:
-                self._queued.pop(command_id, None)
+                item = self._queued.pop(command_id, None)
                 cancelled = command_id in self._cancelled
                 self._cancelled.discard(command_id)
                 if not cancelled:
                     self._active_command = command_id
+                    self._active_attachment_ids = {
+                        str(attachment["id"])
+                        for attachment in ((item or {}).get("attachments") or [])
+                        if isinstance(attachment, dict) and attachment.get("id")
+                    }
             if cancelled:
                 store = getattr(self.runtime, "autonomy_store", None)
                 if store is not None:
@@ -555,6 +634,7 @@ class SessionService:
                 with self._lock:
                     if self._active_command == command_id:
                         self._active_command = None
+                        self._active_attachment_ids = set()
 
     @property
     def _event_processor(self) -> EventProcessor:

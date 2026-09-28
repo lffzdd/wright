@@ -36,11 +36,7 @@ from ...domain.policy import (
 )
 from ...domain.policy.verifier import Verifier
 from ...domain.prompt import get_role_instruction
-from ...infrastructure.config import (
-    append_additional_directory,
-    append_allow_rule,
-    load_permission_settings,
-)
+from ...infrastructure.config import load_permission_settings
 from ...infrastructure.lifecycle.loader import load_lifecycle_manager
 from ...infrastructure.llm.llm import LLMClient
 from ...infrastructure.persistence.autonomy_store import AutonomyStore
@@ -192,7 +188,7 @@ class _OpenedRuntime:
         resources = self.runtime_resources
         if resources is not None and session_state is not None:
             cancelled_tasks = resources.close()
-            session_state.mark_background_tasks_cancel_requested(
+            session_state.mark_commands_cancel_requested(
                 cancelled_tasks, "runtime assembly failed"
             )
         broker = self.interaction_broker
@@ -357,8 +353,7 @@ def assemble_runtime(
     session_state.llm_transport = llm_client.transport_name
     llm_client.session_attachments = session_state.attachments
     draft_attachments = DraftAttachments(attachment_store, session_state.attachments)
-    runtime_resources = RuntimeResources.for_session(session_state.session_id)
-    assert runtime_resources is not None
+    runtime_resources = None  # created after the event queue exists
 
     # 记忆的召回/提取 side-query 可选用更便宜的模型省钱(对标 memdir 用 Sonnet 选记忆)。
     # 配了 OPENAI_MEMORY_MODEL 就单独建个非流式 client,否则复用主 client。
@@ -377,7 +372,6 @@ def assemble_runtime(
 
     opened = _OpenedRuntime(application_host)
     opened.session_state = session_state
-    opened.runtime_resources = runtime_resources
     opened.interaction_broker = interaction_broker
     opened.owns_publisher = publisher is None
     event_queue: queue.Queue[tuple[str, object]] = queue.Queue()
@@ -402,6 +396,20 @@ def assemble_runtime(
             raise
     opened.background_runtime = background_runtime
     opened.autonomy_store = autonomy_store
+    from ..command.execution import CommandExecution
+    from ..execution.identity import bind_identity
+
+    identity = bind_identity(session_state, autonomy_store)
+    runtime_resources = RuntimeResources(
+        session_state.session_id,
+        commands=CommandExecution(
+            session_state,
+            identity,
+            notify=lambda command_id: event_queue.put(("TASK_DONE", command_id)),
+        ),
+        identity=identity,
+    )
+    opened.runtime_resources = runtime_resources
     loop_registry = SessionLoopRegistry(event_queue, agent_idle)
     opened.loop_registry = loop_registry
     services = RuntimeServices(
@@ -423,9 +431,18 @@ def assemble_runtime(
                 )
 
             def resolve_interaction(request_id, _kind, resolution) -> None:
+                status = str(resolution.get("status") or "resolved")
+                if status not in {"approved", "denied", "cancelled", "resolved"}:
+                    status = "cancelled"
                 autonomy_store.resolve_interaction(
-                    interaction_scope, request_id, resolution=resolution,
-                    status="cancelled" if resolution.get("cancelled") else "resolved",
+                    interaction_scope,
+                    request_id,
+                    resolution={
+                        "status": status,
+                        "choice": resolution.get("choice"),
+                        "tool_name": resolution.get("tool_name", ""),
+                    },
+                    status=status,
                 )
 
             bind_persistence(record_interaction, resolve_interaction)
@@ -514,14 +531,15 @@ def assemble_runtime(
         """Create the commit route owned by one root or child Session."""
 
         def commit_authorization(change: AuthorizationChange) -> None:
-            for directory in change.session_directories:
-                target_session.add_working_directory(Path(directory.value))
-            if change.session_directories and not config.no_session_persistence:
-                checkpoint_store.save(target_session)
-            for rule in change.persistent_rules:
-                append_allow_rule(rule)
-            for directory in change.persistent_directories:
-                append_additional_directory(directory.value)
+            from ..tool_execution.commit import commit_authorization as commit_change
+
+            commit_change(
+                change,
+                session=target_session,
+                save_checkpoint=(
+                    None if config.no_session_persistence else checkpoint_store.save
+                ),
+            )
 
         return commit_authorization
 
@@ -614,6 +632,7 @@ def assemble_runtime(
         runtime_resources,
         workspace_dir=workspace_dir,
         authorization_commit_factory=authorization_commit_factory,
+        expose_autonomy=True,
     )
 
     prepared = prepare_model_tools(session_state, tools)
@@ -653,6 +672,7 @@ def assemble_runtime(
         runtime_resources=runtime_resources,
         authorization_commit=commit_authorization,
         authorization_commit_factory=authorization_commit_factory,
+        expose_autonomy=True,
     )
     bind_root_checkpoint(agent)
 
@@ -703,7 +723,7 @@ def shutdown_runtime(rt: WrightRuntime) -> None:
     if rt.interaction_broker is not None:
         rt.interaction_broker.close()
     cancelled_tasks = rt.runtime_resources.close()
-    rt.session_state.mark_background_tasks_cancel_requested(
+    rt.session_state.mark_commands_cancel_requested(
         cancelled_tasks, "runtime shutdown"
     )
     # A selected-but-never-sent image has no conversational meaning and should

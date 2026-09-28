@@ -6,14 +6,15 @@ import pytest
 from openai import OpenAI
 
 from wright.application.agent import create_agent
+from wright.application.agent.parse import TurnAbort, parse_turn
 from wright.application.memory.llm_util import side_query
-from wright.domain.model import ModelRequest
-from wright.domain.model.events import ContentDone, UsageEvent
+from wright.domain.model.llm import ModelRequest
+from wright.domain.model.llm.events import ContentDone, UsageEvent
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolResult
 from wright.domain.policy import ToolAccess
-from wright.domain.protocol import TurnAbort, parse_turn
 from wright.infrastructure.llm.llm import LLMClient
+from wright.infrastructure.llm.wire import assistant_message
 from wright.infrastructure.storage.attachments import AttachmentStore
 from wright.infrastructure.tools.base import Tool
 
@@ -471,7 +472,7 @@ def test_responses_stream_maps_text_usage_and_tool_continuation_state():
         "id": "call_1", "type": "function", "function": {"name": "echo", "arguments": '{"value":"x"}'},
     }]
     continuation = llm._responses_input([
-        events[-1].assistant_message(),
+        assistant_message(events[-1]),
         {"role": "tool", "tool_call_id": "call_1", "content": "{\"ok\":true}"},
     ])
     assert continuation[0]["type"] == "function_call"

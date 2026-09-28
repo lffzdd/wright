@@ -24,8 +24,9 @@ _WORKSPACE = Path(_TMP.name)
 
 from wright.application.agent import Agent, create_agent
 from wright.application.session.publisher import open_session_events
-from wright.domain.model.events import ContentDelta, ContentDone, UsageEvent
-from wright.domain.model.session import Session, UsageRecord
+from wright.domain.model.llm.events import ContentDelta, ContentDone, UsageEvent
+from wright.domain.model.llm import UsageRecord
+from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.infrastructure.llm.llm import LLMClient
 from wright.infrastructure.tools.base import Tool

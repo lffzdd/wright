@@ -45,6 +45,7 @@ export type Attachment = {
 
 export type ActiveTurn = {
   turn_id?: string;
+  run_id?: string;
   prompt: string;
   attachments: Attachment[];
   reasoning: string;
@@ -52,9 +53,34 @@ export type ActiveTurn = {
   tools: ToolState[];
 };
 
+export type HistoryTurn = {
+  turn_id?: string;
+  run_id?: string;
+  status?: string;
+  user: string;
+  assistant: string;
+  attachments?: Attachment[];
+  tools?: ToolState[];
+};
+
+export type AgentView = {
+  task_id: string;
+  depth: number;
+  content: string;
+  tools: ToolState[];
+  status: string;
+  request_usage?: {
+    prompt_tokens: number | null;
+    completion_tokens: number | null;
+    total_tokens: number | null;
+  };
+};
+
 export type Interaction = {
   request_id: string;
   kind: "permission" | "ask_user";
+  agent_task_id?: string;
+  agent_depth?: number;
   question?: string;
   context?: string;
   options?: string[];
@@ -64,6 +90,14 @@ export type Interaction = {
   risk_flags?: string[];
   targets?: string[];
   principal?: string;
+  operation?: string;
+  grant_summary?: string;
+  preview?: string;
+  cwd?: string;
+  command?: string;
+  http_method?: string;
+  http_target?: string;
+  shell_note?: string;
   choices?: Array<{
     id: string;
     label: string;
@@ -85,27 +119,23 @@ export type Snapshot = {
   stream_id: string;
   last_seq: number;
   session: SessionSummary;
-  history: Array<{
-    user: string;
-    assistant: string;
-    attachments?: Attachment[];
-    tools?: ToolState[];
-  }>;
+  history: HistoryTurn[];
   active_turn: ActiveTurn | null;
+  agents?: AgentView[];
   plan: { objective?: string; status?: string; steps?: Array<{ id: string; title: string; status: string; note?: string }> };
   pending_interactions: Interaction[];
   notices: Notice[];
   queued_commands: QueuedCommand[];
   queue_depth: number;
   usage: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-    request_prompt_tokens: number;
-    request_completion_tokens: number;
-    request_total_tokens: number;
-    context_tokens: number;
-    context_limit: number;
+    prompt_tokens: number | null;
+    completion_tokens: number | null;
+    total_tokens: number | null;
+    request_prompt_tokens: number | null;
+    request_completion_tokens: number | null;
+    request_total_tokens: number | null;
+    context_tokens: number | null;
+    context_limit: number | null;
   };
 };
 
@@ -122,4 +152,8 @@ export type UiEvent = {
   payload: Record<string, unknown>;
 };
 
-export type ViewState = Snapshot & { seen: string[]; connection: "connecting" | "connected" | "disconnected" };
+export type ViewState = Snapshot & {
+  seen: string[];
+  connection: "connecting" | "connected" | "reconnecting" | "disconnected" | "closed";
+  resync?: boolean;
+};

@@ -11,10 +11,11 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from ....utils.token_counter import estimate_message_tokens
+from ..agent.control import AgentControlPlane
 from ..attachment import AttachmentRecord
-from ..coordination import AgentControlPlane
+from ..command.record import CommandRecord
+from ..llm.usage import UsageRecord
 from ..planning import PlanManager
-from ..runs import TERMINAL_RUN_STATUSES, RunRecord, RunStatus, new_run_id
 from ..tool import ToolCall, ToolResult
 from .conversation import (
     ConversationMessage,
@@ -26,15 +27,14 @@ from .conversation import (
 )
 from .environment import ExecutionEnvironment
 from .records import (
-    BackgroundTask,
     CallId,
     SessionLifecycle,
     ToolExecutionRecord,
     ToolExecutionTerminal,
     TurnRecord,
-    UsageRecord,
     VerificationRecord,
 )
+from .run import TERMINAL_RUN_STATUSES, RunRecord, RunStatus, new_run_id
 
 
 @dataclass
@@ -49,7 +49,7 @@ class Session:
     message_records: list[MessageRecord]
 
     tool_executions: dict[CallId, ToolExecutionRecord]
-    background_tasks: dict[str, BackgroundTask]
+    commands: dict[str, CommandRecord]
     plan_manager: PlanManager
     # A stable label for the long-lived conversation, not the current task.
     # Every executable goal belongs to its RunRecord.
@@ -58,6 +58,9 @@ class Session:
     # Durable state is grouped by project_root. workspace_dir remains the
     # actual execution directory for compatibility with existing tools.
     additional_working_directories: list[Path] = field(default_factory=list)
+    # Structured allow rules for this session only. They are not stored on a
+    # shared policy object, so a child session cannot widen its parent.
+    permission_rules: list[dict] = field(default_factory=list)
     project_root: Path | None = None
     environment: ExecutionEnvironment = "local"
     base_commit: str | None = None
@@ -115,7 +118,7 @@ class Session:
     _cwd_lock: threading.RLock = field(
         default_factory=threading.RLock, repr=False
     )
-    _background_tasks_lock: threading.RLock = field(
+    _commands_lock: threading.RLock = field(
         default_factory=threading.RLock, repr=False
     )
 
@@ -150,7 +153,7 @@ class Session:
             turns=[],
             message_records=[],
             tool_executions={},
-            background_tasks={},
+            commands={},
             plan_manager=PlanManager(),
             max_steps=max_steps,
         )
@@ -187,36 +190,55 @@ class Session:
         with self._cwd_lock:
             return tuple(self.additional_working_directories)
 
+    def add_permission_rule(self, rule: dict) -> None:
+        """Remember one structured allow rule on this session."""
+        if not isinstance(rule, dict):
+            raise TypeError("permission rule must be a structured record")
+        record = dict(rule)
+        with self._cwd_lock:
+            if record not in self.permission_rules:
+                self.permission_rules.append(record)
+
+    def restore_authorization(
+        self,
+        directories: tuple[Path, ...] | list[Path],
+        rules: list[dict],
+    ) -> None:
+        """Put session grants back after a failed authorization commit."""
+        with self._cwd_lock:
+            self.additional_working_directories = list(directories)
+            self.permission_rules = [dict(item) for item in rules]
+
     def access_scope(self):
         """Build an immutable permission snapshot at a composition boundary."""
         from ...policy.permission.scope import AccessScope
 
         return AccessScope(self.workspace_dir, self.working_directories_snapshot())
 
-    def register_background_task(self, task: BackgroundTask) -> None:
-        """Persist task metadata; RuntimeResources owns its live handles."""
-        with self._background_tasks_lock:
-            self.background_tasks[task.task_id] = task
+    def register_command(self, record: CommandRecord) -> None:
+        """Store command metadata. The command runtime owns process handles."""
+        with self._commands_lock:
+            self.commands[record.command_id] = record
 
-    def get_background_task(self, task_id: str) -> BackgroundTask | None:
-        with self._background_tasks_lock:
-            return self.background_tasks.get(task_id)
+    def get_command(self, command_id: str) -> CommandRecord | None:
+        with self._commands_lock:
+            return self.commands.get(command_id)
 
-    def list_background_tasks(self) -> list[BackgroundTask]:
-        """Return a stable registry snapshot; individual tasks remain live."""
-        with self._background_tasks_lock:
-            return list(self.background_tasks.values())
+    def list_commands(self) -> list[CommandRecord]:
+        """Return command metadata without output logs or process handles."""
+        with self._commands_lock:
+            return list(self.commands.values())
 
-    def mark_background_tasks_cancel_requested(
-        self, task_ids: tuple[str, ...], reason: str
+    def mark_commands_cancel_requested(
+        self, command_ids: tuple[str, ...], reason: str
     ) -> None:
-        """Reflect a RuntimeResources shutdown in durable task metadata."""
-        with self._background_tasks_lock:
-            for task_id in task_ids:
-                task = self.background_tasks.get(task_id)
-                if task is not None:
-                    task.cancel_requested = True
-                    task.cancel_reason = reason[:1_000]
+        """Reflect a runtime shutdown in command metadata."""
+        with self._commands_lock:
+            for command_id in command_ids:
+                record = self.commands.get(command_id)
+                if record is not None and record.disposition == "running":
+                    record.cancel_requested = True
+                    record.cancel_reason = reason[:1_000]
 
     def _next_step(self) -> int:
         self.step_count += 1

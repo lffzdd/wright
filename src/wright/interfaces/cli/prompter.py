@@ -47,6 +47,14 @@ class ConsolePrompter:
             targets=payload.get("targets") or (),
             choices=choices,
             principal=str(payload.get("principal", "")),
+            operation=str(payload.get("operation", "")),
+            grant_summary=str(payload.get("grant_summary", "")),
+            preview=str(payload.get("preview", "")),
+            cwd=str(payload.get("cwd", "")),
+            command=str(payload.get("command", "")),
+            http_method=str(payload.get("http_method", "")),
+            http_target=str(payload.get("http_target", "")),
+            shell_note=str(payload.get("shell_note", "")),
         )
         prompt_text = HTML("  <b><ansiyellow>允许执行? </ansiyellow></b>")
         try:

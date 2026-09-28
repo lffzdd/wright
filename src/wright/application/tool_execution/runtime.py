@@ -12,6 +12,8 @@ from ...domain.policy.permission.types import (
 )
 from ...infrastructure.runtime import AuthorizedExecution
 from ...infrastructure.tools.runtime import ToolRuntime
+from ..command.execution import CommandExecution
+from ..execution.identity import bind_identity
 from ..session.live_resources import RuntimeResources
 from .capabilities import assemble_tool_capabilities
 
@@ -28,6 +30,19 @@ def tool_runtime_for_session(
 ) -> ToolRuntime:
     """Build a bounded runtime for direct tool adapters and tests."""
 
+    if session is not None:
+        store = getattr(services, "durable_store", None)
+        if runtime_resources is None:
+            runtime_resources = RuntimeResources(session.session_id)
+        if runtime_resources.identity is None:
+            runtime_resources.identity = bind_identity(session, store)
+        if runtime_resources.commands is None:
+            runtime_resources.commands = CommandExecution(
+                session,
+                runtime_resources.identity,
+                allow_background=kwargs.get("allow_background_tasks", True),
+                notify=kwargs.get("notify_background_done"),
+            )
     assembly = assemble_tool_capabilities(
         session,
         services,
@@ -35,9 +50,9 @@ def tool_runtime_for_session(
         workspace_dir=workspace_dir,
         cwd_provider=cwd_provider,
         execution_backend=execution_backend,
+        expose_autonomy=getattr(services, "durable_store", None) is not None,
     )
     capabilities = assembly.capabilities
-    resources = assembly.runtime_resources
     backend = assembly.backend
     workspace = (
         workspace_dir or getattr(session, "workspace_dir", None) or Path.cwd()
@@ -79,6 +94,5 @@ def tool_runtime_for_session(
         capabilities=capabilities,
         execution=execution,
         access_scope=access_scope,
-        runtime_resources=resources,
         **kwargs,
     )

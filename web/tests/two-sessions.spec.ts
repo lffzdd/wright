@@ -63,7 +63,7 @@ test("isolates sessions and completes a structured permission flow", async ({ pa
         const turnId = "turn-e2e";
         const emit = (seq: number, type: string, payload: Record<string, unknown>) => {
           const event = {
-            version: 1,
+            version: 2,
             stream_id: `stream-${sessionId}`,
             event_id: `event-${sessionId}-${seq}`,
             seq,

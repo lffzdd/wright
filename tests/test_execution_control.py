@@ -4,11 +4,14 @@ import os
 import subprocess
 import time
 
+from wright.application.command.execution import CommandExecution
 from wright.application.composition.services import RuntimeServices
+from wright.application.execution.identity import bind_identity
+from wright.application.session.live_resources import RuntimeResources
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
-from wright.application.tool_execution.runtime import tool_runtime_for_session
-from wright.domain.model.session import BackgroundTask, Session
+from wright.domain.model.command import CommandRecord
+from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall
 from wright.domain.policy import PermissionPolicy, PermissionSettings
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
@@ -19,12 +22,24 @@ from wright.infrastructure.tools.command.control import command_tools
 
 
 def _executor(session, services=None):
+    store = services.durable_store if services is not None else None
+    identity = bind_identity(session, store)
+    resources = RuntimeResources(
+        session.session_id,
+        commands=CommandExecution(session, identity),
+        identity=identity,
+    )
     return ToolDispatchService(
         {
             tool.name: tool
             for tool in [*agent_tools, *command_tools, *autonomy_tools, execute_command_tool]
         },
-        assemble_tool_capabilities(session, services, None),
+        assemble_tool_capabilities(
+            session,
+            services,
+            resources,
+            expose_autonomy=store is not None,
+        ),
         session=session,
         permission_policy=PermissionPolicy(PermissionSettings(mode="bypass")),
     )
@@ -75,15 +90,14 @@ def test_command_tools_follow_background_and_timeout_handoff(tmp_path):
 
 def test_wait_timeout_does_not_terminate_and_list_stays_in_session(tmp_path):
     session = _session(tmp_path, "turn-one")
-    first_runtime = tool_runtime_for_session(session, workspace_dir=tmp_path)
-    first = execute_command_tool.call(
-        {"command": "sleep 5", "run_in_background": True}, first_runtime
+    current = _executor(session)
+    first = _call(
+        current, "execute_command", command="sleep 5", run_in_background=True
     )
     session.append_message({"role": "user", "content": "next turn"})
     session.begin_user_turn("turn-two")
     second = Session.create("other", tmp_path)
     second.begin_user_turn("other")
-    current = _executor(session)
     other = _executor(second)
     launched = _call(
         current, "execute_command", command="echo current-turn", run_in_background=True
@@ -100,14 +114,14 @@ def test_wait_timeout_does_not_terminate_and_list_stays_in_session(tmp_path):
     current_only = _call(current, "list_commands")
     assert current_only.data["scope"] == "current_user_turn"
     assert [row["command_id"] for row in current_only.data["commands"]] == [command_id]
-    whole_session = _call(current, "list_commands", include_all_turns=True)
+    whole_session = _call(current, "list_commands", scope="session")
     assert whole_session.data["scope"] == "session"
     assert {row["command_id"] for row in whole_session.data["commands"]} == {
         first.data["command_id"],
         command_id,
     }
-    assert _call(other, "list_commands", include_all_turns=True).data["count"] == 0
-    running = _call(current, "list_commands", status="running", include_all_turns=True)
+    assert _call(other, "list_commands", scope="session").data["count"] == 0
+    running = _call(current, "list_commands", status="running", scope="session")
     assert [row["command_id"] for row in running.data["commands"]] == [
         first.data["command_id"]
     ]
@@ -118,15 +132,16 @@ def test_list_commands_caps_count_and_output(tmp_path):
     session = _session(tmp_path)
     turn_id = session.agent_root_turn_id
     for index in range(101):
-        session.register_background_task(BackgroundTask(
-            task_id=f"cmd_{index:03d}",
+        session.register_command(CommandRecord(
+            command_id=f"cmd_{index:03d}",
             command="x" * 2_000,
             root_turn_id=turn_id,
+            created_at=index,
         ))
     listed = _call(_executor(session), "list_commands")
     assert listed.ok
     assert listed.data["count"] == 100
-    assert listed.data["truncated"] is True
+    assert listed.data["next_cursor"]
     sample = listed.data["commands"][0]
     assert len(sample["description"]) <= 500
     assert len(sample["output"]) <= 500
@@ -137,8 +152,8 @@ def test_list_commands_caps_count_and_output(tmp_path):
 
 def test_unknown_command_is_not_a_successful_completion(tmp_path):
     session = _session(tmp_path)
-    session.register_background_task(BackgroundTask(
-        task_id="cmd_lost",
+    session.register_command(CommandRecord(
+        command_id="cmd_lost",
         command="lost",
         root_turn_id=session.agent_root_turn_id,
     ))
@@ -231,7 +246,7 @@ def test_cross_type_ids_fail_before_any_control(tmp_path):
     assert not wrong_agent.ok and "command execution" in wrong_agent.err
     assert not wrong_command.ok and "delegated agent execution" in wrong_command.err
     assert not wrong_run.ok and "delegated agent execution" in wrong_run.err
-    assert session.get_background_task(command_id).cancel_requested is False
+    assert session.get_command(command_id).cancel_requested is False
     assert _call(executor, "get_command", command_id=command_id).data["status"] == "running"
     assert session.control_plane.get(agent.id).cancel_requested is False
     assert store.get_run(run_id).status == "queued"

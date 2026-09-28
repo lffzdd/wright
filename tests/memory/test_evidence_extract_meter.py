@@ -20,7 +20,8 @@ from wright.application.memory.meter import MemoryMeter
 from wright.application.memory.projection import candidate_summary
 from wright.core.paths import project_id
 from wright.domain.gateway.memory import SelectorChoice
-from wright.domain.model.events import ContentDelta, ContentDone, UsageEvent
+from wright.domain.model.llm import UsageRecord
+from wright.domain.model.llm.events import ContentDelta, ContentDone, UsageEvent
 from wright.domain.model.memory import (
     EpisodeNotFoundError,
     EpisodeRecord,
@@ -28,7 +29,7 @@ from wright.domain.model.memory import (
     EvidenceRef,
     SemanticMemoryStoreError,
 )
-from wright.domain.model.session import Session, UsageRecord
+from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.domain.policy.memory import (
     EpisodePolicy,

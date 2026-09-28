@@ -107,7 +107,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, summary:focus
 
 .interaction-card { max-width: 780px; margin: 18px 0 18px 17px; border: 1px solid #6a582e; background: #211c12; padding: 15px; border-radius: 5px; }
 .interaction-title { display: flex; align-items: center; gap: 8px; color: var(--warning); }
-.interaction-card p { margin: 9px 0; font-size: 13px; line-height: 1.5; }
+.interaction-card p, .interaction-card pre { margin: 9px 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+.interaction-card button small { display: block; font-weight: 400; opacity: 0.8; }
 .interaction-card small { color: var(--muted); }
 .permission-scope { display: grid; gap: 5px; margin-top: 9px; padding: 9px; border: 1px solid #514526; background: #18150f; }
 .permission-scope code { overflow-wrap: anywhere; }
@@ -298,7 +299,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, summary:focus
   .inspector.responsive-open { width: 100%; }
 }
 .queue-list,
-.system-notice {
+.system-notice,
+.agent-progress {
   margin: 8px 28px;
   padding: 9px 12px;
   border: 1px solid var(--border);

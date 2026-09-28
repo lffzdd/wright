@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 
-from .tool import ModelVisibleTool
+from ..tool import ModelVisibleTool
 
 
 class AgentState(str, Enum):

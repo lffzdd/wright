@@ -276,8 +276,11 @@ def test_command_tool_starts_and_waits_through_execution_backend(tmp_path):
             backend = self
 
             class RecordingHandle:
-                def iter_output(self):
-                    return handle.iter_output()
+                def read_output(self, max_bytes):
+                    return handle.read_output(max_bytes)
+
+                def group_alive(self):
+                    return handle.group_alive()
 
                 def wait(self, timeout=None):
                     backend.events.append(("wait", None))
@@ -290,8 +293,8 @@ def test_command_tool_starts_and_waits_through_execution_backend(tmp_path):
                 def returncode(self):
                     return handle.returncode
 
-                def terminate(self):
-                    return handle.terminate()
+                def terminate(self, *, grace_seconds=2.0):
+                    return handle.terminate(grace_seconds=grace_seconds)
 
                 def cwd_result(self):
                     return handle.cwd_result()
@@ -346,7 +349,7 @@ def test_profile_filters_the_system_catalog_as_well_as_execution(tmp_path):
 
 def _tool_llm(answer):
     def call(_messages, **_kwargs):
-        from wright.domain.model.events import ContentDone
+        from wright.domain.model.llm.events import ContentDone
 
         yield ContentDone(content=answer, finish_reason="stop")
 

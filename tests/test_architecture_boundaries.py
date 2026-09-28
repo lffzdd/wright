@@ -7,6 +7,7 @@ that are allowed to know about concrete adapters.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 from tests.paths import PACKAGE_ROOT
@@ -230,3 +231,36 @@ def test_session_repository_keeps_io_separate_from_codec() -> None:
     construct_at = codec.index("session = Session(")
     recover_at = codec.index("recover_interrupted_tool_calls(")
     assert validate_at < construct_at < recover_at
+
+
+def test_tools_do_not_own_stores_schedulers_or_process_registries() -> None:
+    banned = ("AutonomyStore", "AutonomyScheduler", "ProcessRegistry", "TaskService")
+    offenders: list[str] = []
+    for path in _py_files(PACKAGE_ROOT / "infrastructure/tools"):
+        text = path.read_text(encoding="utf-8")
+        for name in banned:
+            if re.search(rf"\b{name}\b", text):
+                offenders.append(f"{path.name}:{name}")
+    assert offenders == []
+    assert not (PACKAGE_ROOT / "domain/model/tasks.py").exists()
+    assert not (PACKAGE_ROOT / "domain/gateway/task_backend.py").exists()
+    assert not (PACKAGE_ROOT / "application/tasks").exists()
+
+
+def test_domain_records_do_not_carry_runtime_callbacks() -> None:
+    offenders: list[str] = []
+    for path in _py_files(PACKAGE_ROOT / "domain/model"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                if node.target.id in {"on_done", "process", "stdout"}:
+                    offenders.append(f"{path.name}:{node.target.id}")
+    assert offenders == []
+
+
+def test_autonomy_tools_do_not_wake_the_scheduler() -> None:
+    text = (PACKAGE_ROOT / "infrastructure/tools/autonomy_tools.py").read_text(
+        encoding="utf-8"
+    )
+    assert "notify_changed" not in text
+    assert "durable_store" not in text

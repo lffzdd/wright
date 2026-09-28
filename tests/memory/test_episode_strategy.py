@@ -25,9 +25,10 @@ from wright.application.memory.memory_service import MemoryService
 from wright.application.memory.projection import render_episode_for_budget
 from wright.core.paths import project_id
 from wright.domain.gateway.memory import SelectorChoice
-from wright.domain.model.events import ContentDelta, ContentDone, UsageEvent
+from wright.domain.model.llm import UsageRecord
+from wright.domain.model.llm.events import ContentDelta, ContentDone, UsageEvent
 from wright.domain.model.memory import EpisodeRecord
-from wright.domain.model.session import MessageRecord, Session, UsageRecord
+from wright.domain.model.session import MessageRecord, Session
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.infrastructure.llm.context_selector import (
     SELECT_SYSTEM_PROMPT,

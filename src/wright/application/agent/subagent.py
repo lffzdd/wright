@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from ...domain.model.agent import AgentProfile
-from ...domain.model.coordination import AgentControlError, AgentTaskRecord
-from ...domain.model.session import Session, UsageRecord
+from ...domain.model.agent.control import AgentControlError, AgentTaskRecord
+from ...domain.model.llm import UsageRecord
+from ...domain.model.session import Session
 from ...domain.model.tool import ToolAccess, ToolResult
 from ...domain.policy import PermissionResolver
 from ...infrastructure.llm.llm import LLMClient
@@ -23,7 +23,11 @@ from ...infrastructure.tools.autonomy_tools import autonomy_tools
 from ...infrastructure.tools.base import Tool
 from ...infrastructure.tools.command.control import command_tools
 from ...infrastructure.tools.runtime import ToolRuntime
+from ..command.execution import CommandExecution
+from ..composition.roles import tools_for_role
+from ..execution.identity import bind_identity
 from ..session.events import EventScope, SessionEvents
+from ..session.live_resources import RuntimeResources
 from ..session.publisher import EventPublisher, open_session_events
 from ..tool_execution.capabilities import assemble_tool_capabilities
 from .assembly import (
@@ -93,43 +97,6 @@ def _emit(runtime: ToolRuntime, record: AgentTaskRecord) -> None:
         })
 
 
-def _child_base_tools(base_tools: Sequence[Tool]) -> list[Tool]:
-    """Remove capabilities whose lifecycle cannot outlive an isolated child."""
-    child_tools: list[Tool] = []
-    for tool in base_tools:
-        if tool.name in {
-            "get_agent", "wait_agent", "cancel_agent",
-            "get_command", "wait_command", "terminate_command", "list_commands",
-            "create_schedule", "get_schedule", "list_schedules",
-            "pause_schedule", "resume_schedule", "cancel_schedule",
-            "list_schedule_runs", "get_schedule_run", "wait_schedule_run",
-            "cancel_schedule_run",
-            "load_skill",
-        }:
-            continue
-        if tool.name == "execute_command":
-            parameters = deepcopy(tool.parameters)
-            properties = parameters.get("properties", {})
-            if isinstance(properties, dict):
-                properties["run_in_background"] = {
-                    "type": "boolean",
-                    "const": False,
-                    "default": False,
-                    "description": "Must be false; child Agents cannot leave background processes",
-                }
-            child_tools.append(replace(
-                tool,
-                description=(
-                    "Execute a foreground shell command in the shared workspace. "
-                    "Sub-Agents cannot create or retain background processes."
-                ),
-                parameters=parameters,
-            ))
-            continue
-        child_tools.append(tool)
-    return child_tools
-
-
 def make_spawn_agent_tool(
     llm: LLMClient,
     base_tools: Sequence[Tool],
@@ -162,11 +129,10 @@ def make_spawn_agent_tool(
             or delegation is None
         ):
             return ToolResult.fail("spawn_agent requires delegation capability")
-        control = delegation.control
         if run_in_background and capabilities.scope.agent_task_id is not None:
             return ToolResult.fail("Child Agents cannot launch background Agents")
         child_depth = depth + 1
-        effective_max_depth = min(max_depth, control.config.max_depth)
+        effective_max_depth = min(max_depth, delegation.limits()["max_depth"])
         root_turn_id = capabilities.scope.root_turn_id
         if not root_turn_id:
             return ToolResult.fail("spawn_agent requires an active run scope")
@@ -188,7 +154,7 @@ def make_spawn_agent_tool(
                 f"spawn_agent does not support cwd environment {parent_cwd.environment_id}"
             )
         try:
-            record = control.begin_task(
+            record = delegation.begin_task(
                 root_turn_id=root_turn_id,
                 parent_id=capabilities.scope.agent_task_id,
                 tool_call_id=runtime.tool_call_id,
@@ -207,7 +173,7 @@ def make_spawn_agent_tool(
         if record.status != "running":
             return ToolResult.fail(record.error, data=agent_execution_view(record))
 
-        child_base_tools = _child_base_tools(base_tools)
+        child_base_tools = tools_for_role(base_tools, "child")
         child_tools = build_agent_tools(
             llm,
             child_base_tools,
@@ -233,13 +199,13 @@ def make_spawn_agent_tool(
             # one-call InvocationGrant that may have led to this delegation.
             additional_working_directories=list(access_scope.additional),
         )
-        child_session.control_plane = control
+        delegation.share_control_plane(child_session)
         child_session.agent_task_id = record.id
         child_session.agent_root_turn_id = root_turn_id
         try:
             child_session.set_cwd(Path(parent_cwd.value))
         except Exception as exc:
-            finished = control.finish_task(
+            finished = delegation.finish_task(
                 record.id,
                 status="failed",
                 steps_used=0,
@@ -247,7 +213,7 @@ def make_spawn_agent_tool(
             )
             _emit(runtime, finished)
             return ToolResult.fail(finished.error, data=agent_execution_view(finished))
-        control.bind_child_session(record.id, child_session.session_id)
+        delegation.bind_child_session(record.id, child_session.session_id)
 
         child_journal = None
         journal_factory = delegation.execution_journal_factory
@@ -257,7 +223,7 @@ def make_spawn_agent_tool(
                     record.id, capabilities.scope.agent_task_id or ""
                 )
             except Exception as exc:
-                finished = control.finish_task(
+                finished = delegation.finish_task(
                     record.id, status="failed", steps_used=0,
                     error=f"could not create child execution journal: {exc}",
                 )
@@ -276,12 +242,12 @@ def make_spawn_agent_tool(
         def cancelled() -> bool:
             if runtime.is_cancelled():
                 reason = runtime.get_cancellation_reason() or "parent_cancelled"
-                control.request_cancel(record.id, reason)
+                delegation.request_cancel(record.id, reason)
                 return True
-            return control.is_cancelled(record.id)
+            return delegation.is_cancelled(record.id)
 
         def observe_usage(usage: UsageRecord) -> None:
-            control.add_usage(
+            delegation.add_usage(
                 record.id,
                 usage.prompt_tokens,
                 usage.completion_tokens,
@@ -295,10 +261,15 @@ def make_spawn_agent_tool(
         if child_commit_factory is not None:
             child_authorization_commit = child_commit_factory(child_session)
 
+        child_commands = CommandExecution(
+            child_session,
+            bind_identity(child_session),
+            allow_background=False,
+        )
         child_assembly = assemble_tool_capabilities(
             child_session,
             None,
-            None,
+            RuntimeResources(child_session.session_id, commands=child_commands),
             execution_journal_factory=journal_factory,
             authorization_commit_factory=child_commit_factory,
         )
@@ -340,8 +311,14 @@ def make_spawn_agent_tool(
 
         def run_child() -> ToolResult:
             try:
+                return _run_child_body()
+            finally:
+                child_commands.close()
+
+        def _run_child_body() -> ToolResult:
+            try:
                 final_answer = child_agent.run(task, max_steps=record.step_budget)
-                cancellation_reason = control.cancellation_reason(record.id)
+                cancellation_reason = delegation.cancellation_reason(record.id)
                 runtime_reason = runtime.get_cancellation_reason()
                 if runtime_reason == "timeout":
                     task_status, error = "timed_out", "Child Agent exceeded parent tool deadline"
@@ -358,7 +335,7 @@ def make_spawn_agent_tool(
                 final_answer = None
                 task_status, error = "failed", f"Child Agent error: {type(exc).__name__}: {exc}"
 
-            finished = control.finish_task(
+            finished = delegation.finish_task(
                 record.id, status=task_status, steps_used=child_session.step_count,
                 result=final_answer or "", error=error,
             )
@@ -369,18 +346,19 @@ def make_spawn_agent_tool(
             return ToolResult.success(view)
 
         if run_in_background:
-            background_runtime = delegation.agent_background
-            if background_runtime is None:
-                finished = control.finish_task(
+            if delegation.submit_background is None:
+                child_commands.close()
+                finished = delegation.finish_task(
                     record.id, status="failed", steps_used=0,
                     error="Current session has no background Agent runtime",
                 )
                 _emit(runtime, finished)
                 return ToolResult.fail(finished.error, data=agent_execution_view(finished))
             try:
-                background_runtime.submit(record.id, run_child, control)
+                delegation.submit_background(record.id, run_child)
             except Exception as exc:
-                finished = control.finish_task(
+                child_commands.close()
+                finished = delegation.finish_task(
                     record.id, status="failed", steps_used=0, error=str(exc)
                 )
                 _emit(runtime, finished)
@@ -418,8 +396,8 @@ def _get_agent_tree(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResu
     include_all = bool(arguments.get("include_all_turns", False))
     return ToolResult.success({
         "root_turn_id": capabilities.scope.root_turn_id,
-        "limits": delegation.control.config.to_dict(),
-        "tasks": public_agent_tree(delegation.control.tree_summary(
+        "limits": delegation.limits(),
+        "tasks": public_agent_tree(delegation.tree(
             None if include_all else capabilities.scope.root_turn_id
         )),
     })

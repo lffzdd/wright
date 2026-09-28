@@ -8,9 +8,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...application.tasks.service import TaskService
-from ...domain.model.coordination import TERMINAL_AGENT_TASK_STATUSES, AgentTaskRecord
-from ...domain.model.tasks import TaskKindMismatch, TaskNotFoundError, TaskWaitCancelled
+from ...application.execution.identity import (
+    ExecutionKindMismatch,
+    ExecutionNotFound,
+    ExecutionWaitCancelled,
+)
+from ...domain.model.agent.control import TERMINAL_AGENT_TASK_STATUSES, AgentTaskRecord
 from ...domain.model.tool import ToolAccess, ToolResult
 from .base import Tool
 from .runtime import ToolRuntime
@@ -63,19 +66,19 @@ def public_agent_tree(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return projected
 
 
-def _service(runtime: ToolRuntime) -> TaskService:
-    service = runtime.capabilities.tasks if runtime.capabilities else None
-    if service is None:
-        raise RuntimeError("agent tool requires task classification")
-    return service
+def _agents(runtime: ToolRuntime):
+    agents = runtime.capabilities.agents if runtime.capabilities else None
+    if agents is None:
+        raise RuntimeError("agent tool requires agent operations")
+    return agents
 
 
 def _observe(exc: Exception, *, agent_task_id: str) -> ToolResult:
-    if isinstance(exc, TaskKindMismatch):
+    if isinstance(exc, ExecutionKindMismatch):
         return ToolResult.fail(str(exc))
-    if isinstance(exc, TaskNotFoundError):
+    if isinstance(exc, ExecutionNotFound):
         return ToolResult.fail(f"Unknown agent_task_id: {agent_task_id}")
-    if isinstance(exc, TaskWaitCancelled):
+    if isinstance(exc, ExecutionWaitCancelled):
         return ToolResult.fail(
             "This wait was cancelled. The agent delegation was not cancelled."
         )
@@ -85,8 +88,8 @@ def _observe(exc: Exception, *, agent_task_id: str) -> ToolResult:
 def get_agent(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
     agent_task_id = str(arguments["agent_task_id"])
     try:
-        record = _service(runtime).agent_record(agent_task_id)
-    except (RuntimeError, TaskKindMismatch, TaskNotFoundError) as exc:
+        record = _agents(runtime).get(agent_task_id)
+    except (RuntimeError, ExecutionKindMismatch, ExecutionNotFound) as exc:
         return _observe(exc, agent_task_id=agent_task_id)
     return ToolResult.success(agent_execution_view(record))
 
@@ -95,15 +98,18 @@ def wait_agent(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
     agent_task_id = str(arguments["agent_task_id"])
     timeout = float(arguments.get("timeout", 30))
     try:
-        service = _service(runtime)
-        service.wait_kind(
+        record = _agents(runtime).wait(
             agent_task_id,
-            "agent",
             timeout=timeout,
             cancellation_check=runtime.is_cancelled,
         )
-        record = service.agent_record(agent_task_id)
-    except (RuntimeError, TaskKindMismatch, TaskNotFoundError, TaskWaitCancelled, ValueError) as exc:
+    except (
+        RuntimeError,
+        ExecutionKindMismatch,
+        ExecutionNotFound,
+        ExecutionWaitCancelled,
+        ValueError,
+    ) as exc:
         return _observe(exc, agent_task_id=agent_task_id)
     data = agent_execution_view(record)
     data["wait_completed"] = data["terminal"]
@@ -115,14 +121,11 @@ def cancel_agent(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
     agent_task_id = str(arguments["agent_task_id"])
     reason = str(arguments.get("reason") or "Root Agent requested cancellation")[:1_000]
     try:
-        service = _service(runtime)
-        before = service.agent_record(agent_task_id)
-        service.cancel_kind(agent_task_id, "agent", reason=reason)
-        record = service.agent_record(agent_task_id)
-    except (RuntimeError, TaskKindMismatch, TaskNotFoundError) as exc:
+        record, already = _agents(runtime).cancel(agent_task_id, reason)
+    except (RuntimeError, ExecutionKindMismatch, ExecutionNotFound) as exc:
         return _observe(exc, agent_task_id=agent_task_id)
     data = agent_execution_view(record)
-    data["already_terminal"] = before.status in TERMINAL_AGENT_TASK_STATUSES
+    data["already_terminal"] = already
     return ToolResult.success(data)
 
 
@@ -172,7 +175,7 @@ get_agent_tool = Tool(
     parameters=_ID,
     call=get_agent,
     access_descriptor=_describe_read,
-    required_capabilities=frozenset({"tasks"}),
+    required_capabilities=frozenset({"agents"}),
     is_concurrency_safe=lambda args: True,
 )
 
@@ -201,7 +204,7 @@ wait_agent_tool = Tool(
     },
     call=wait_agent,
     access_descriptor=_describe_read,
-    required_capabilities=frozenset({"tasks"}),
+    required_capabilities=frozenset({"agents"}),
     is_concurrency_safe=lambda args: True,
     timeout_owner="tool",
 )
@@ -226,7 +229,7 @@ cancel_agent_tool = Tool(
     },
     call=cancel_agent,
     access_descriptor=_describe_cancel,
-    required_capabilities=frozenset({"tasks"}),
+    required_capabilities=frozenset({"agents"}),
     is_concurrency_safe=lambda args: False,
 )
 

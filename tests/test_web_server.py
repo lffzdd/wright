@@ -232,3 +232,133 @@ def test_authenticated_artifact_delivery_uses_registered_reference(tmp_path):
     assert response.status_code == 200
     assert response.content == b"# Report\ncount: 2"
     assert response.headers["content-type"].startswith("text/markdown")
+
+
+def test_malformed_command_json_does_not_drop_the_stream(tmp_path):
+    client, _auth = _authenticated_client(tmp_path)
+    with client.websocket_connect(
+        "/api/v1/sessions/session/stream?last_seq=0",
+        headers={"origin": "http://testserver"},
+    ) as websocket:
+        assert websocket.receive_json()["type"] == "system.notice"
+        websocket.send_text("{")
+        rejected = websocket.receive_json()
+        assert rejected["type"] == "command.rejected"
+        websocket.send_text("[]")
+        assert websocket.receive_json()["type"] == "command.rejected"
+
+
+def test_event_published_inside_snapshot_is_still_delivered(tmp_path):
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("Wright", encoding="utf-8")
+    auth = BootstrapAuth("bootstrap-secret")
+    manager = FakeManager()
+    publisher = manager.handle.publisher
+
+    def snapshot():
+        body = {"stream_id": publisher.stream_id, "last_seq": publisher.latest_seq, "session": {"session_id": "session"}}
+        publisher.publish("content.delta", {"piece": "during"})
+        return body
+
+    manager.handle.snapshot = snapshot
+    client = TestClient(create_app(manager, auth, static_dir=static))
+    client.post(
+        "/api/v1/auth/exchange",
+        json={"token": "bootstrap-secret"},
+        headers={"origin": "http://testserver"},
+    )
+    with client.websocket_connect(
+        "/api/v1/sessions/session/stream?stream_id=missing&last_seq=0",
+        headers={"origin": "http://testserver"},
+    ) as websocket:
+        frame = websocket.receive_json()
+        assert frame["type"] == "snapshot_required"
+        assert frame["snapshot"]["last_seq"] == 1
+        delivered = websocket.receive_json()
+        assert delivered["payload"]["piece"] == "during"
+        assert delivered["seq"] == frame["snapshot"]["last_seq"] + 1
+
+
+def test_real_socket_delivers_a_scripted_turn_without_mixing_child_events(tmp_path):
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("Wright", encoding="utf-8")
+    auth = BootstrapAuth("bootstrap-secret")
+    manager = FakeManager()
+    publisher = manager.handle.publisher
+    seen: set[str] = set()
+
+    def submit(prompt, command_id, attachment_ids=None):
+        duplicate = command_id in seen
+        seen.add(command_id)
+        publisher.publish("command.accepted", {
+            "command_id": command_id,
+            "command": "turn.submit",
+            "prompt": prompt,
+            "queued": False,
+            "duplicate": duplicate,
+        })
+        if duplicate:
+            return {"duplicate": True}
+        publisher.publish("turn.started", {"prompt": prompt, "command_id": command_id}, turn_id="turn-1")
+        publisher.publish("content.final", {"content": "root answer"})
+        publisher.publish(
+            "content.final",
+            {"content": "child answer", "agent_depth": 1, "agent_task_id": "task-1"},
+        )
+        return {"duplicate": False}
+
+    manager.handle.submit = submit
+    client = TestClient(create_app(manager, auth, static_dir=static))
+    client.post(
+        "/api/v1/auth/exchange",
+        json={"token": "bootstrap-secret"},
+        headers={"origin": "http://testserver"},
+    )
+    with client.websocket_connect(
+        "/api/v1/sessions/session/stream?last_seq=0",
+        headers={"origin": "http://testserver"},
+    ) as websocket:
+        assert websocket.receive_json()["type"] == "system.notice"
+        command = {
+            "type": "turn.submit",
+            "command_id": "cmd-same",
+            "prompt": "hello",
+            "attachment_ids": [],
+        }
+        websocket.send_json(command)
+        events = [websocket.receive_json() for _ in range(4)]
+        assert [event["type"] for event in events] == [
+            "command.accepted", "turn.started", "content.final", "content.final",
+        ]
+        assert events[2]["payload"]["content"] == "root answer"
+        assert events[2]["payload"].get("agent_task_id") is None
+        assert events[3]["payload"]["agent_task_id"] == "task-1"
+        assert [event["seq"] for event in events] == [2, 3, 4, 5]
+        websocket.send_json(command)
+        duplicate = websocket.receive_json()
+        assert duplicate["payload"]["duplicate"] is True
+        assert publisher.display.view()["active_turn"]["content"] == "root answer"
+        assert publisher.display.view()["agents"][0]["content"] == "child answer"
+
+
+def test_default_static_directory_is_the_vite_build(tmp_path):
+    from wright.interfaces.web.server import default_static_dir
+
+    static = default_static_dir()
+    assert static.name == "static"
+    assert static.parent.name == "web"
+    assert static.parent.parent.name == "wright"
+    if not (static / "index.html").is_file():
+        return
+    auth = BootstrapAuth("bootstrap-secret")
+    client = TestClient(create_app(FakeManager(), auth))
+    client.post(
+        "/api/v1/auth/exchange",
+        json={"token": "bootstrap-secret"},
+        headers={"origin": "http://testserver"},
+    )
+    page = client.get("/")
+    assert page.status_code == 200
+    assert "Wright" in page.text or "assets/" in page.text

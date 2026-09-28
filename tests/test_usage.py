@@ -7,8 +7,9 @@ from tests.responses import response
 from wright.application.agent import create_agent
 from wright.application.memory.llm_util import metered_events
 from wright.application.session.publisher import open_session_events
-from wright.domain.model.events import UsageEvent
-from wright.domain.model.session import Session, UsageRecord
+from wright.domain.model.llm import UsageRecord
+from wright.domain.model.llm.events import UsageEvent
+from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.domain.policy.verifier import Verifier
 from wright.infrastructure.persistence.session.repository import FileSessionRepository

@@ -39,11 +39,12 @@ class _StoreBase:
             self.path,
             check_same_thread=False,
             timeout=10,
+            isolation_level=None,
         )
         self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA foreign_keys = ON")
+        self._conn.execute("PRAGMA journal_mode = WAL")
         with self._write():
-            self._conn.execute("PRAGMA foreign_keys = ON")
-            self._conn.execute("PRAGMA journal_mode = WAL")
             self._initialize_schema()
         try:
             os.chmod(self.path, 0o600)
@@ -73,7 +74,14 @@ class _StoreBase:
 
     @contextmanager
     def _write(self) -> Iterator[None]:
+        """Take the SQLite reserved lock before the first read in the transaction."""
         with self._lock:
             self._ensure_open()
-            with self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
                 yield
+            except BaseException:
+                self._conn.rollback()
+                raise
+            else:
+                self._conn.commit()

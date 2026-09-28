@@ -14,6 +14,7 @@ from collections.abc import Callable, Iterable, Iterator
 from itertools import islice
 from pathlib import Path
 
+from .process_group import OwnedProcessGroup
 from .types import DirectoryEntry, ExecutionPath, FileMetadata, SearchMatch
 
 
@@ -26,11 +27,23 @@ class LocalProcessHandle:
         self._cwd_file = cwd_file
         self._cwd_result: ExecutionPath | None = None
         self._cwd_consumed = False
+        self._group = OwnedProcessGroup(process.pid)
+        if process.stdout is not None:
+            os.set_blocking(process.stdout.fileno(), False)
 
-    def iter_output(self) -> Iterator[str]:
-        if self._process.stdout is None:
-            return iter(())
-        return iter(self._process.stdout)
+    def read_output(self, max_bytes: int) -> bytes | None:
+        stream = self._process.stdout
+        if stream is None:
+            return None
+        try:
+            chunk = os.read(stream.fileno(), max_bytes)
+        except BlockingIOError:
+            return b""
+        except OSError:
+            return None
+        if not chunk:
+            return None
+        return chunk
 
     def wait(self, timeout: float | None = None) -> int:
         result = self._process.wait(timeout=timeout)
@@ -47,8 +60,17 @@ class LocalProcessHandle:
     def returncode(self) -> int | None:
         return self._process.returncode
 
-    def terminate(self) -> None:
-        _terminate_process_tree(self._process)
+    def group_alive(self) -> bool:
+        return self._group.alive()
+
+    def terminate(self, *, grace_seconds: float = 2.0) -> bool:
+        stopped = self._group.terminate(grace_seconds)
+        if self._process.poll() is None:
+            try:
+                self._process.wait(timeout=0.2)
+            except subprocess.TimeoutExpired:
+                pass
+        return stopped and not self.group_alive()
 
     def cwd_result(self) -> ExecutionPath | None:
         self._consume_cwd_result()
@@ -292,8 +314,8 @@ class LocalExecutionBackend:
             cwd=local_cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
+            text=False,
+            bufsize=0,
             start_new_session=True,
         )
         return LocalProcessHandle(process, self, cwd_path)

@@ -419,6 +419,14 @@ class WrightTUI(App):
                     targets=tuple(payload.get("targets") or ()),
                     choices=tuple(payload.get("choices") or ()),
                     principal=str(payload.get("principal", "")),
+                    operation=str(payload.get("operation", "")),
+                    grant_summary=str(payload.get("grant_summary", "")),
+                    preview=str(payload.get("preview", "")),
+                    cwd=str(payload.get("cwd", "")),
+                    command=str(payload.get("command", "")),
+                    http_method=str(payload.get("http_method", "")),
+                    http_target=str(payload.get("http_target", "")),
+                    shell_note=str(payload.get("shell_note", "")),
                 )
             )
         if request.kind == "ask_user":

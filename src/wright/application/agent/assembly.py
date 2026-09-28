@@ -10,7 +10,8 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from ...domain.model.agent import AgentProfile, CapabilityCatalog, CapabilitySnapshot
-from ...domain.model.session import Session, UsageRecord
+from ...domain.model.llm import UsageRecord
+from ...domain.model.session import Session
 from ...domain.policy import AuthorizationChange, PermissionResolver
 from ...domain.policy.verifier import Verifier
 from ...domain.prompt import build_system_prompt
@@ -185,6 +186,7 @@ def create_agent(
     authorization_commit_factory=None,
     assembly: CapabilityAssembly | None = None,
     role_instruction: str = "",
+    expose_autonomy: bool = False,
 ) -> Agent:
     """Prepare tools, the system prompt, and events, then build an Agent.
 
@@ -193,13 +195,14 @@ def create_agent(
     if events is None:
         events = open_session_events(session_state)
     if assembly is None:
-        resources = runtime_resources or RuntimeResources.for_session(session_state.session_id)
+        resources = runtime_resources or RuntimeResources(session_state.session_id)
         assembly = assemble_tool_capabilities(
             session_state,
             services,
             resources,
             execution_journal_factory=execution_journal_factory,
             authorization_commit_factory=authorization_commit_factory,
+            expose_autonomy=expose_autonomy,
         )
         runtime_resources = assembly.runtime_resources or resources
     if authorization_commit is None and authorization_commit_factory is not None:
@@ -251,6 +254,7 @@ def create_agent(
         on_run_started=on_run_started,
         authorization_commit=authorization_commit,
         authorization_commit_factory=authorization_commit_factory,
+        expose_autonomy=expose_autonomy,
     )
     bind_root_checkpoint(agent)
     return agent

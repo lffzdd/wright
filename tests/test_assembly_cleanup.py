@@ -32,7 +32,7 @@ def test_abort_releases_owned_resources_once_and_spares_a_shared_host() -> None:
     sink: list[object] = []
     session = _Close("session", sink)
     session.control_plane = "plane"  # type: ignore[attr-defined]
-    session.mark_background_tasks_cancel_requested = (  # type: ignore[attr-defined]
+    session.mark_commands_cancel_requested = (  # type: ignore[attr-defined]
         lambda tasks, reason: sink.append(("mark", tuple(tasks), reason))
     )
     opened = _OpenedRuntime(None)

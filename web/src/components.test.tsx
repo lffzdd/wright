@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { marked } from "marked";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { NewSessionDialog, visibleModels } from "./App";
+import { InteractionCard, NewSessionDialog, visibleModels } from "./App";
 import { DiffViewer } from "./DiffViewer";
 import { MarkdownContent, markdownChunks } from "./Markdown";
 
@@ -90,6 +90,46 @@ describe("NewSessionDialog", () => {
       "deepseek-v4-flash",
       "deepseek-chat",
     ]);
+  });
+});
+
+describe("InteractionCard", () => {
+  const interaction = {
+    request_id: "r1",
+    kind: "permission" as const,
+    tool_name: "write_file",
+    subject: "nested/a.txt",
+    reason: "needs approval",
+    operation: "file_write",
+    grant_summary: "Adds file root /tmp/project/nested",
+    preview: "hello <script>alert(1)</script>",
+    shell_note: "",
+    choices: [
+      { id: "allow_once", label: "Allow once", scope: "This invocation only", persistence: "No save" },
+      { id: "deny", label: "Deny", scope: "No execution", persistence: "No save" },
+    ],
+  };
+
+  it("shows the reason, grant and preview as text and ignores a second click", () => {
+    const respond = vi.fn(() => new Promise<boolean>(() => undefined));
+    const { container } = render(<InteractionCard interaction={interaction} respond={respond} />);
+    expect(screen.getByText("Reason: needs approval")).toBeDefined();
+    expect(screen.getByText("Grant: Adds file root /tmp/project/nested")).toBeDefined();
+    expect(screen.getByText("hello <script>alert(1)</script>")).toBeDefined();
+    expect(container.querySelector("script")).toBeNull();
+    const allow = screen.getByRole("button", { name: /Allow once/ });
+    fireEvent.click(allow);
+    fireEvent.click(allow);
+    expect(respond).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Submitting…")).toBeDefined();
+  });
+
+  it("keeps the selected choice when the decision is not accepted", async () => {
+    const respond = vi.fn(async () => false);
+    render(<InteractionCard interaction={interaction} respond={respond} />);
+    fireEvent.click(screen.getByRole("button", { name: /Allow once/ }));
+    expect(await screen.findByText(/Kept choice: allow_once/)).toBeDefined();
+    expect(screen.getByRole("button", { name: /Allow once/ })).toBeDefined();
   });
 });
 

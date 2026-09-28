@@ -1,6 +1,6 @@
 from jsonschema import validators
 
-from wright.application.agent.subagent import _child_base_tools
+from wright.application.composition.roles import tools_for_role
 from wright.application.skills import SkillRegistry
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
@@ -88,10 +88,10 @@ def test_child_keeps_knowledge_search_but_drops_skill_tools(tmp_path):
         description="发布时使用",
         body="先跑测试",
     )
-    tools = _child_base_tools([
+    tools = tools_for_role([
         *build_knowledge_tools(FakeProvider()),
         *build_skill_tools(SkillRegistry(tmp_path)),
-    ])
+    ], "child")
     names = {tool.name for tool in tools}
     assert "knowledge_search" in names
     assert "skill" not in names

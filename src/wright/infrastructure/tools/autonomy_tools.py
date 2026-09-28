@@ -5,27 +5,23 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from ...application.tasks.service import TaskService
-from ...domain.model.autonomy import DurableRunRecord, TriggerSpec
-from ...domain.model.tasks import TaskKindMismatch, TaskNotFoundError, TaskWaitCancelled
+from ...application.execution.identity import (
+    ExecutionKindMismatch,
+    ExecutionNotFound,
+    ExecutionWaitCancelled,
+)
+from ...domain.model.automation import DurableRunRecord, TriggerSpec
 from ...domain.model.tool import ToolAccess, ToolResult
-from ..persistence.autonomy_store import AutonomyNotFoundError, AutonomyStoreError
+from ...infrastructure.persistence.autonomy_store import AutonomyStoreError
 from .base import Tool
 from .runtime import ToolRuntime
 
 
-def _store(runtime: ToolRuntime):
-    store = runtime.capabilities.durable_store if runtime.capabilities else None
-    if store is None:
-        raise RuntimeError("durable task runtime is not configured")
-    return store
-
-
-def _tasks(runtime: ToolRuntime) -> TaskService:
-    service = runtime.capabilities.tasks if runtime.capabilities else None
-    if service is None:
-        raise RuntimeError("schedule run tools require task classification")
-    return service
+def _autonomy(runtime: ToolRuntime):
+    autonomy = runtime.capabilities.autonomy if runtime.capabilities else None
+    if autonomy is None:
+        raise RuntimeError("schedule tools require autonomy operations")
+    return autonomy
 
 
 def _schedule_view(record, *, summary: bool = False) -> dict[str, Any]:
@@ -77,21 +73,15 @@ def _run_view(record: DurableRunRecord, *, summary: bool = False) -> dict[str, A
 
 
 def _run_failure(exc: Exception, *, run_id: str) -> ToolResult:
-    if isinstance(exc, TaskKindMismatch):
+    if isinstance(exc, ExecutionKindMismatch):
         return ToolResult.fail(str(exc))
-    if isinstance(exc, TaskNotFoundError) or isinstance(exc, AutonomyNotFoundError):
+    if isinstance(exc, ExecutionNotFound):
         return ToolResult.fail(f"Unknown run_id: {run_id}")
-    if isinstance(exc, TaskWaitCancelled):
+    if isinstance(exc, ExecutionWaitCancelled):
         return ToolResult.fail(
             "This wait was cancelled. The schedule run was not cancelled."
         )
     return ToolResult.fail(str(exc))
-
-
-def _notify(runtime: ToolRuntime) -> None:
-    scheduler = runtime.capabilities.autonomy_scheduler if runtime.capabilities else None
-    if scheduler is not None:
-        scheduler.notify_changed()
 
 
 def _trigger(arguments: dict[str, Any]) -> TriggerSpec:
@@ -133,7 +123,7 @@ def _trigger(arguments: dict[str, Any]) -> TriggerSpec:
 
 def create_schedule(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
     try:
-        record = _store(runtime).create_automation(
+        record = _autonomy(runtime).create_schedule(
             name=arguments["name"],
             prompt=arguments["prompt"],
             trigger=_trigger(arguments),
@@ -142,93 +132,89 @@ def create_schedule(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResu
             retry_delay_seconds=float(arguments.get("retry_delay_seconds", 30)),
             run_config=arguments.get("run_config"),
         )
-        _notify(runtime)
         return ToolResult.success(_schedule_view(record))
-    except (RuntimeError, ValueError, AutonomyStoreError) as exc:
+    except (RuntimeError, ValueError, AutonomyStoreError, ExecutionKindMismatch, ExecutionNotFound) as exc:
         return ToolResult.fail(str(exc))
 
 
 def get_schedule(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
     try:
         return ToolResult.success(
-            _schedule_view(
-                _store(runtime).get_automation(str(arguments["schedule_id"]))
-            )
+            _schedule_view(_autonomy(runtime).get_schedule(str(arguments["schedule_id"])))
         )
-    except (RuntimeError, AutonomyStoreError) as exc:
+    except (RuntimeError, AutonomyStoreError, ExecutionKindMismatch, ExecutionNotFound) as exc:
         return ToolResult.fail(str(exc))
 
 
 def list_schedules(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
     try:
-        records = _store(runtime).list_automations()
-    except (RuntimeError, AutonomyStoreError) as exc:
+        page = _autonomy(runtime).list_schedules(
+            status=arguments.get("status"),
+            limit=int(arguments.get("limit", 100)),
+            cursor=arguments.get("cursor"),
+        )
+    except (RuntimeError, AutonomyStoreError, ValueError) as exc:
         return ToolResult.fail(str(exc))
-    status = arguments.get("status")
-    if status is not None:
-        records = [record for record in records if record.status == status]
-    bounded = records[:100]
-    summaries = [_schedule_view(record, summary=True) for record in bounded]
     return ToolResult.success({
-        "count": len(bounded),
-        "truncated": len(records) > len(bounded),
-        "schedules": summaries,
+        "count": len(page.records),
+        "next_cursor": page.next_cursor,
+        "schedules": [_schedule_view(record, summary=True) for record in page.records],
     })
 
 
 def pause_schedule(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
     try:
-        record = _store(runtime).pause_automation(str(arguments["schedule_id"]))
-        _notify(runtime)
-        return ToolResult.success(_schedule_view(record))
-    except (RuntimeError, AutonomyStoreError) as exc:
+        change = _autonomy(runtime).pause_schedule(str(arguments["schedule_id"]))
+        data = _schedule_view(change.automation)
+        data["changed"] = change.changed
+        return ToolResult.success(data)
+    except (RuntimeError, AutonomyStoreError, ExecutionKindMismatch, ExecutionNotFound) as exc:
         return ToolResult.fail(str(exc))
 
 
 def resume_schedule(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
     try:
-        record = _store(runtime).resume_automation(str(arguments["schedule_id"]))
-        _notify(runtime)
-        return ToolResult.success(_schedule_view(record))
-    except (RuntimeError, AutonomyStoreError) as exc:
+        change = _autonomy(runtime).resume_schedule(str(arguments["schedule_id"]))
+        data = _schedule_view(change.automation)
+        data["changed"] = change.changed
+        return ToolResult.success(data)
+    except (RuntimeError, AutonomyStoreError, ExecutionKindMismatch, ExecutionNotFound) as exc:
         return ToolResult.fail(str(exc))
 
 
 def cancel_schedule(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
     reason = str(arguments.get("reason") or "schedule cancelled by root Agent")
     try:
-        record = _store(runtime).cancel_automation(
-            str(arguments["schedule_id"]), reason
-        )
-        _notify(runtime)
-        return ToolResult.success(_schedule_view(record))
-    except (RuntimeError, AutonomyStoreError) as exc:
+        change = _autonomy(runtime).cancel_schedule(str(arguments["schedule_id"]), reason)
+        data = _schedule_view(change.automation)
+        data["changed"] = change.changed
+        return ToolResult.success(data)
+    except (RuntimeError, AutonomyStoreError, ExecutionKindMismatch, ExecutionNotFound) as exc:
         return ToolResult.fail(str(exc))
 
 
 def list_schedule_runs(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
     try:
-        records = _store(runtime).list_runs(
-            str(arguments["schedule_id"])
-            if arguments.get("schedule_id") else None
+        page = _autonomy(runtime).list_runs(
+            str(arguments["schedule_id"]) if arguments.get("schedule_id") else None,
+            limit=int(arguments.get("limit", 100)),
+            cursor=arguments.get("cursor"),
         )
-    except (RuntimeError, AutonomyStoreError) as exc:
+    except (RuntimeError, AutonomyStoreError, ExecutionKindMismatch, ExecutionNotFound, ValueError) as exc:
         return ToolResult.fail(str(exc))
-    bounded = records[:100]
     return ToolResult.success({
-        "count": len(bounded),
-        "truncated": len(records) > len(bounded),
-        "runs": [_run_view(record, summary=True) for record in bounded],
+        "count": len(page.records),
+        "next_cursor": page.next_cursor,
+        "runs": [_run_view(record, summary=True) for record in page.records],
     })
 
 
 def get_schedule_run(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
     run_id = str(arguments["run_id"])
     try:
-        _tasks(runtime).require_kind(run_id, "durable")
-        return ToolResult.success(_run_view(_store(runtime).get_run(run_id)))
+        return ToolResult.success(_run_view(_autonomy(runtime).get_run(run_id)))
     except (
-        RuntimeError, TaskKindMismatch, TaskNotFoundError, AutonomyStoreError
+        RuntimeError, ExecutionKindMismatch, ExecutionNotFound, AutonomyStoreError
     ) as exc:
         return _run_failure(exc, run_id=run_id)
 
@@ -237,19 +223,16 @@ def wait_schedule_run(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolRe
     run_id = str(arguments["run_id"])
     timeout = float(arguments.get("timeout", 30))
     try:
-        service = _tasks(runtime)
-        service.wait_kind(
+        run = _autonomy(runtime).wait_run(
             run_id,
-            "durable",
             timeout=timeout,
             cancellation_check=runtime.is_cancelled,
         )
-        run = _store(runtime).get_run(run_id)
     except (
         RuntimeError,
-        TaskKindMismatch,
-        TaskNotFoundError,
-        TaskWaitCancelled,
+        ExecutionKindMismatch,
+        ExecutionNotFound,
+        ExecutionWaitCancelled,
         AutonomyStoreError,
         ValueError,
     ) as exc:
@@ -264,23 +247,17 @@ def cancel_schedule_run(arguments: dict[str, Any], runtime: ToolRuntime) -> Tool
     run_id = str(arguments["run_id"])
     reason = str(arguments.get("reason") or "schedule run cancelled by root Agent")[:1_000]
     try:
-        store = _store(runtime)
-        _tasks(runtime).require_kind(run_id, "durable")
-        before = store.get_run(run_id)
-        schedule_before = store.get_automation(before.automation_id)
-        updated = store.cancel_run(run_id, reason)
-        schedule_after = store.get_automation(before.automation_id)
+        result, schedule_status = _autonomy(runtime).cancel_run(run_id, reason)
     except (
-        RuntimeError, TaskKindMismatch, TaskNotFoundError, AutonomyStoreError
+        RuntimeError, ExecutionKindMismatch, ExecutionNotFound, AutonomyStoreError
     ) as exc:
         return _run_failure(exc, run_id=run_id)
-    data = _run_view(updated)
-    data["already_terminal"] = before.terminal
-    data["schedule_status"] = schedule_after.status
-    data["schedule_changed"] = (
-        schedule_after.status != schedule_before.status
-        or schedule_after.next_run_at != schedule_before.next_run_at
-    )
+    data = _run_view(result.run)
+    data["already_terminal"] = not result.changed and result.run.terminal
+    data["cooperative"] = result.cooperative
+    data["changed"] = result.changed
+    data["schedule_status"] = schedule_status
+    data["schedule_changed"] = False
     data["message"] = (
         "Only this run was affected. Future triggers of the schedule were not changed."
     )
@@ -394,7 +371,7 @@ create_schedule_tool = Tool(
         "additionalProperties": False,
     },
     call=create_schedule,
-    required_capabilities=frozenset({"durable", "autonomy"}),
+    required_capabilities=frozenset({"autonomy"}),
     access_descriptor=_describe_persistent_mutation,
     defer_to_model=True,
 )
@@ -410,7 +387,7 @@ get_schedule_tool = Tool(
         "additionalProperties": False,
     },
     call=get_schedule,
-    required_capabilities=frozenset({"durable"}),
+    required_capabilities=frozenset({"autonomy"}),
     access_descriptor=_describe_schedule_read,
     is_concurrency_safe=lambda args: True,
     defer_to_model=True,
@@ -419,20 +396,25 @@ get_schedule_tool = Tool(
 
 list_schedules_tool = Tool(
     name="list_schedules",
-    description="List durable schedules, optionally filtered by lifecycle status.",
+    description=(
+        "List durable schedules, optionally filtered by lifecycle status. "
+        "Pass cursor from next_cursor to read older pages."
+    ),
     parameters={
         "type": "object",
         "properties": {
             "status": {
                 "type": "string",
                 "enum": ["active", "paused", "completed", "cancelled"],
-            }
+            },
+            "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 100},
+            "cursor": {"type": "string"},
         },
         "required": [],
         "additionalProperties": False,
     },
     call=list_schedules,
-    required_capabilities=frozenset({"durable"}),
+    required_capabilities=frozenset({"autonomy"}),
     access_descriptor=_describe_schedule_read,
     is_concurrency_safe=lambda args: True,
     defer_to_model=True,
@@ -455,7 +437,7 @@ def _schedule_mutation_tool(name: str, description: str, call) -> Tool:
             "additionalProperties": False,
         },
         call=call,
-        required_capabilities=frozenset({"durable", "autonomy"}),
+        required_capabilities=frozenset({"autonomy"}),
         access_descriptor=_describe_persistent_mutation,
         defer_to_model=True,
     )
@@ -510,16 +492,21 @@ list_schedule_runs_tool = Tool(
         "List persisted schedule runs for this session. Optionally restrict the "
         "list to one schedule_id. Each run_id is a schedule run, not an agent "
         "delegation or a shell command. Status values such as queued, dispatched, "
-        "and waiting_retry are returned as stored. Results are capped."
+        "and waiting_retry are returned as stored. Pass cursor from next_cursor "
+        "to read older pages."
     ),
     parameters={
         "type": "object",
-        "properties": {"schedule_id": {"type": "string", "minLength": 1}},
+        "properties": {
+            "schedule_id": {"type": "string", "minLength": 1},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 100},
+            "cursor": {"type": "string"},
+        },
         "required": [],
         "additionalProperties": False,
     },
     call=list_schedule_runs,
-    required_capabilities=frozenset({"durable"}),
+    required_capabilities=frozenset({"autonomy"}),
     access_descriptor=_describe_run_read,
     is_concurrency_safe=lambda args: True,
     defer_to_model=True,
@@ -541,7 +528,7 @@ get_schedule_run_tool = Tool(
         "additionalProperties": False,
     },
     call=get_schedule_run,
-    required_capabilities=frozenset({"durable", "tasks"}),
+    required_capabilities=frozenset({"autonomy"}),
     access_descriptor=_describe_run_read,
     is_concurrency_safe=lambda args: True,
     defer_to_model=True,
@@ -571,7 +558,7 @@ wait_schedule_run_tool = Tool(
         "additionalProperties": False,
     },
     call=wait_schedule_run,
-    required_capabilities=frozenset({"durable", "tasks"}),
+    required_capabilities=frozenset({"autonomy"}),
     access_descriptor=_describe_run_read,
     is_concurrency_safe=lambda args: True,
     timeout_owner="tool",
@@ -597,7 +584,7 @@ cancel_schedule_run_tool = Tool(
         "additionalProperties": False,
     },
     call=cancel_schedule_run,
-    required_capabilities=frozenset({"durable", "tasks"}),
+    required_capabilities=frozenset({"autonomy"}),
     access_descriptor=_describe_run_cancel,
     defer_to_model=True,
 )

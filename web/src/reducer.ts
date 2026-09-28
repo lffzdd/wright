@@ -1,4 +1,4 @@
-import type { Attachment, Interaction, ToolState, UiEvent, ViewState } from "./types";
+import type { AgentView, Attachment, Interaction, ToolState, UiEvent, ViewState } from "./types";
 
 function noticeText(event: UiEvent): string {
   if (event.type === "turn.failed") return `Turn failed: ${String(event.payload.error ?? event.payload.status ?? "unknown error")}`;
@@ -26,30 +26,92 @@ function addNotice(state: ViewState, event: UiEvent): ViewState {
   };
 }
 
+function knownNumber(value: unknown, current: number | null): number | null {
+  if (value === undefined) return current;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  return null;
+}
+
 function upsertTool(tools: ToolState[], payload: Record<string, unknown>): ToolState[] {
   const callId = String(payload.call_id ?? "");
   const index = tools.findIndex((tool) => tool.call_id === callId);
   const previous = index >= 0 ? tools[index] : { call_id: callId, name: String(payload.name ?? "tool") };
+  const output = eventOutput(previous.output, payload);
   const next = {
     ...previous,
     ...payload,
-    output: String(previous.output ?? "") + String(payload.output ?? ""),
+    name: String(payload.name ?? previous.name ?? "tool"),
+    output,
   } as ToolState;
   return index >= 0 ? tools.map((tool, i) => (i === index ? next : tool)) : [...tools, next];
 }
 
+function eventOutput(previous: string | undefined, payload: Record<string, unknown>): string | undefined {
+  if (payload.output === undefined) return previous;
+  return `${previous ?? ""}${String(payload.output ?? "")}`;
+}
+
+function childIdentity(event: UiEvent): { taskId: string; depth: number } | null {
+  const taskId = String(event.payload.agent_task_id ?? "");
+  const depth = Number(event.payload.agent_depth ?? 0);
+  if (depth > 0 || taskId) return { taskId: taskId || "child", depth: depth || 1 };
+  return null;
+}
+
+function applyAgent(state: ViewState, event: UiEvent, identity: { taskId: string; depth: number }): ViewState {
+  const agents = [...(state.agents ?? [])];
+  const index = agents.findIndex((agent) => agent.task_id === identity.taskId);
+  const current: AgentView = index >= 0
+    ? agents[index]
+    : { task_id: identity.taskId, depth: identity.depth, content: "", tools: [], status: "running" };
+  let next = current;
+  if (event.type === "content.delta") next = { ...current, content: current.content + String(event.payload.piece ?? "") };
+  else if (event.type === "content.final") next = { ...current, content: String(event.payload.content ?? ""), status: "finished" };
+  else if (event.type.startsWith("tool.")) {
+    const phase = event.type === "tool.finished"
+      ? (event.payload.ok ? "succeeded" : "failed")
+      : event.type.slice("tool.".length);
+    next = { ...current, tools: upsertTool(current.tools, { ...event.payload, phase }) };
+  } else if (event.type === "usage.request") {
+    next = {
+      ...current,
+      request_usage: {
+        prompt_tokens: knownNumber(event.payload.prompt_tokens, current.request_usage?.prompt_tokens ?? null),
+        completion_tokens: knownNumber(event.payload.completion_tokens, current.request_usage?.completion_tokens ?? null),
+        total_tokens: knownNumber(event.payload.total_tokens, current.request_usage?.total_tokens ?? null),
+      },
+    };
+  }
+  const updated = index >= 0 ? agents.map((agent, i) => (i === index ? next : agent)) : [...agents, next];
+  return { ...state, agents: updated };
+}
+
 export function applyEvent(state: ViewState, event: UiEvent): ViewState {
+  if (state.resync) return state;
+  if (event.version !== 2) return { ...state, resync: true };
+  if (event.stream_id !== state.stream_id) return { ...state, resync: true };
+  if (event.session_id !== state.session.session_id) return state;
+  if (event.seq <= state.last_seq) return state;
+  if (event.seq !== state.last_seq + 1) return { ...state, resync: true };
   if (state.seen.includes(event.event_id)) return state;
   const seen = [...state.seen.slice(-1999), event.event_id];
+  const child = childIdentity(event);
   let next: ViewState = {
     ...state,
+    agents: state.agents ?? [],
     queued_commands: state.queued_commands ?? [],
     seen,
-    last_seq: Math.max(state.last_seq, event.seq),
+    last_seq: event.seq,
+    resync: false,
   };
+  if (child && event.type !== "interaction.requested" && event.type !== "interaction.resolved") {
+    return applyAgent(next, event, child);
+  }
   if (event.type === "turn.started") {
     next.active_turn = {
       turn_id: event.turn_id,
+      run_id: typeof event.payload.run_id === "string" ? event.payload.run_id : undefined,
       prompt: String(event.payload.prompt ?? ""),
       attachments: Array.isArray(event.payload.attachments) ? event.payload.attachments as Attachment[] : [],
       reasoning: "",
@@ -83,10 +145,19 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
     }
   } else if (["turn.completed", "turn.failed", "turn.cancelled"].includes(event.type)) {
     if (next.active_turn) {
+      const status = event.type === "turn.completed" ? "completed" : event.type === "turn.cancelled" ? "cancelled" : "failed";
       const fallback = event.type === "turn.failed"
         ? `Turn failed: ${String(event.payload.error ?? event.payload.status ?? "unknown error")}`
         : event.type === "turn.cancelled" ? "Turn cancelled." : "";
-      next.history = [...next.history, { user: next.active_turn.prompt, assistant: next.active_turn.content || fallback, attachments: next.active_turn.attachments }];
+      next.history = [...next.history, {
+        turn_id: event.turn_id,
+        run_id: String(event.payload.run_id ?? next.active_turn.run_id ?? ""),
+        status,
+        user: next.active_turn.prompt,
+        assistant: next.active_turn.content || fallback,
+        attachments: next.active_turn.attachments,
+        tools: next.active_turn.tools,
+      }];
     }
     next.active_turn = null;
     next.session = { ...next.session, status: "idle", agent_status: event.type.split(".")[1] };
@@ -100,16 +171,18 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
   } else if (event.type === "usage.request") {
     next.usage = {
       ...next.usage,
-      request_prompt_tokens: Number(event.payload.prompt_tokens ?? 0),
-      request_completion_tokens: Number(event.payload.completion_tokens ?? 0),
-      request_total_tokens: Number(event.payload.total_tokens ?? 0),
+      request_prompt_tokens: knownNumber(event.payload.prompt_tokens, next.usage.request_prompt_tokens),
+      request_completion_tokens: knownNumber(event.payload.completion_tokens, next.usage.request_completion_tokens),
+      request_total_tokens: knownNumber(event.payload.total_tokens, next.usage.request_total_tokens),
+      context_tokens: knownNumber(event.payload.context_tokens, next.usage.context_tokens),
+      context_limit: knownNumber(event.payload.context_limit, next.usage.context_limit),
     };
   } else if (event.type === "usage.task") {
     next.usage = {
       ...next.usage,
-      prompt_tokens: Number(event.payload.prompt_tokens ?? 0),
-      completion_tokens: Number(event.payload.completion_tokens ?? 0),
-      total_tokens: Number(event.payload.total_tokens ?? 0),
+      prompt_tokens: knownNumber(event.payload.prompt_tokens, next.usage.prompt_tokens),
+      completion_tokens: knownNumber(event.payload.completion_tokens, next.usage.completion_tokens),
+      total_tokens: knownNumber(event.payload.total_tokens, next.usage.total_tokens),
     };
   } else if (event.type === "command.accepted") {
     if (event.payload.command === "turn.submit" && event.payload.queued && !event.payload.duplicate) {

@@ -11,13 +11,16 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from ...domain.model.events import ContentDone
-from ...domain.model.session import Session, UsageRecord
+from ...domain.model.llm import UsageRecord
+from ...domain.model.llm.events import ContentDone
+from ...domain.model.session import Session
 from ...domain.model.tool import ToolResult
 from ...domain.policy.verifier import Verifier
-from ...domain.protocol import TurnAbort, build_tool_results_messages
+from ...domain.protocol import build_tool_results_messages
+from ...infrastructure.llm.wire import assistant_message
 from ..session.events import SessionEvents
 from ..tool_execution.dispatch import ToolDispatchService
+from .parse import TurnAbort
 
 
 @dataclass
@@ -238,7 +241,7 @@ def handle_invalid_turn(
         response.content,
         f"LLM output could not be parsed or routed: {error}",
         parsed={
-            "response": response.assistant_message(),
+            "response": assistant_message(response),
             "finish_reason": response.finish_reason,
         },
     )

@@ -4,10 +4,7 @@ import threading
 import pytest
 
 from wright.application.autonomy import AutonomyScheduler, probe_public_web_page
-from wright.application.composition.services import RuntimeServices
-from wright.application.tasks.service import TaskService
-from wright.domain.model.autonomy import TriggerSpec
-from wright.domain.model.session import Session
+from wright.domain.model.automation import TriggerSpec
 from wright.infrastructure.persistence.autonomy_store import (
     AutonomyStore,
     AutonomyStoreError,
@@ -332,7 +329,6 @@ def test_failed_run_retries_only_within_explicit_budget(tmp_path):
 
 def test_task_service_projects_and_cancels_durable_runs(tmp_path):
     store = _store(tmp_path)
-    session = Session.create("root", tmp_path / "workspace")
     automation = store.create_automation(
         name="pending",
         prompt="later",
@@ -340,17 +336,14 @@ def test_task_service_projects_and_cancels_durable_runs(tmp_path):
         now=0,
     )
     run_id = store.materialize_due(now=0)[0]
-    service = TaskService.for_session(
-        session, RuntimeServices(durable_store=store)
-    )
-
-    task = service.get(run_id)
-    assert task.kind == "durable"
-    assert task.status == "pending"
-    assert task.details["automation_id"] == automation.id
-    cancelled = service.cancel(run_id, reason="not needed")
-    assert cancelled.status == "cancelled"
-    assert cancelled.cancel_reason == "not needed"
+    run = store.get_run(run_id)
+    assert run.status == "queued"
+    assert run.automation_id == automation.id
+    schedule_before = store.get_automation(automation.id).status
+    cancelled = store.cancel_run(run_id, "not needed")
+    assert cancelled.run.status == "cancelled"
+    assert cancelled.run.cancel_reason == "not needed"
+    assert store.get_automation(automation.id).status == schedule_before
     store.close()
 
 
@@ -479,7 +472,7 @@ def test_event_trigger_coalesces_while_live_and_replays_after(tmp_path):
     store.emit_event("deploy.finished", {"n": 3}, now=4)
     assert store.materialize_due(now=5) == []
     queued = [
-        run for run in store.list_runs(job.id) if run.status == "queued"
+        run for run in store.list_runs(job.id).records if run.status == "queued"
     ]
     assert len(queued) == 1
 

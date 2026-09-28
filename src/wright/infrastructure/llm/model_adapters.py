@@ -6,7 +6,12 @@ from collections.abc import Callable, Sequence
 from os import environ
 from typing import Any
 
-from ...domain.model.events import ContentDelta, ContentDone, LLMEvent, ReasoningDelta
+from ...domain.model.llm.events import (
+    ContentDelta,
+    ContentDone,
+    LLMEvent,
+    ReasoningDelta,
+)
 from ...utils.token_counter import tool_image_references
 
 

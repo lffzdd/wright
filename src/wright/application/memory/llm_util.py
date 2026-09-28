@@ -11,8 +11,9 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from ...domain.model.events import ContentDone, UsageEvent
-from ...domain.model.session import UsageRecord
+from ...domain.model.llm import UsageRecord
+from ...domain.model.llm.events import ContentDone, UsageEvent
+from ...infrastructure.llm.usage import usage_from_provider
 
 if TYPE_CHECKING:
     from ...infrastructure.llm.llm import LLMClient
@@ -118,7 +119,7 @@ def metered_events(events, observer):
     try:
         for event in events:
             if isinstance(event, UsageEvent):
-                usage = UsageRecord.from_usage(event.usage)
+                usage = usage_from_provider(event.usage)
             yield event
     finally:
         if usage is not None and observer is not None:

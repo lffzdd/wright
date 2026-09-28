@@ -65,7 +65,7 @@ def test_real_process_command_crash_windows_are_recovered_honestly(
         import os, queue, sys, threading, time
         from types import SimpleNamespace
         from wright.infrastructure.persistence.autonomy_store import AutonomyStore
-        from wright.domain.model.autonomy import TriggerSpec
+        from wright.domain.model.automation import TriggerSpec
         from wright.interfaces.interaction import InteractionBroker
         from wright.application.session.service import SessionService
         from wright.application.session.publisher import EventPublisher
@@ -178,7 +178,7 @@ def test_real_host_process_lock_is_released_for_takeover_after_crash(tmp_path):
         from pathlib import Path
         from wright.application.composition.host import ApplicationHost
         from wright.infrastructure.persistence.autonomy_store import AutonomyStore
-        from wright.domain.model.autonomy import TriggerSpec
+        from wright.domain.model.automation import TriggerSpec
         from wright.domain.policy import PermissionSettings
         class Fake:
             context_limit = 128000
@@ -236,7 +236,7 @@ def test_real_process_child_agent_side_effect_becomes_unknown_without_replay(tmp
         from pathlib import Path
         from wright.application.composition.host import ApplicationHost
         from wright.infrastructure.persistence.autonomy_store import AutonomyStore
-        from wright.domain.model.autonomy import TriggerSpec
+        from wright.domain.model.automation import TriggerSpec
         from wright.domain.policy import PermissionSettings
         from tests.responses import event, response
         from wright.infrastructure.tools.base import Tool
@@ -315,7 +315,7 @@ def test_real_process_child_agent_side_effect_becomes_unknown_without_replay(tmp
             workspace, db = map(Path, sys.argv[1:])
             store = AutonomyStore(db, session_id="source", workspace_dir=workspace)
             recovered = store.recover_interrupted(now=10)
-            run = store.list_runs()[0]
+            run = store.list_runs().records[0]
             executions = store.list_tool_executions(run.id)
             print(json.dumps({
                 "recovered": [item.id for item in recovered],

@@ -16,6 +16,11 @@ from ...application.composition.runtime import (
     shutdown_runtime,
 )
 from ...application.session.dispatch import process_session_event
+from ...application.session.events import notice_text
+from ...application.session.history_projection import (
+    project_history,
+    seed_ids,
+)
 from ...application.session.publisher import EventPublisher
 from ...application.session.service import (
     SessionService,
@@ -36,6 +41,33 @@ from ...infrastructure.workspace.worktrees import ArchiveResult, WorktreeManager
 from ..interaction import InteractionBroker
 
 
+def _tool_state(item: dict[str, Any]) -> dict[str, Any]:
+    """Map a run tool record onto the frontend ToolState fields."""
+
+    result = item.get("result") if isinstance(item.get("result"), dict) else {}
+    raw = str(item.get("phase") or item.get("status") or "planned")
+    phase = {"pending": "planned", "timeout": "failed"}.get(raw, raw)
+    if phase not in {"planned", "awaiting_approval", "running", "succeeded", "failed"}:
+        phase = "failed"
+    tool: dict[str, Any] = {
+        "call_id": item.get("call_id"),
+        "name": item.get("name") or item.get("tool_name") or "tool",
+        "phase": phase,
+    }
+    if "arguments" in item:
+        tool["arguments"] = item["arguments"]
+    if result:
+        if "ok" in result:
+            tool["ok"] = result["ok"]
+        if result.get("err"):
+            tool["err"] = result["err"]
+        if "data" in result:
+            tool["data"] = result["data"]
+        if result.get("artifacts"):
+            tool["artifacts"] = result["artifacts"]
+    return tool
+
+
 class RuntimeManagerError(RuntimeError):
     def __init__(self, message: str = "", *, status_code: int | None = None) -> None:
         super().__init__(message)
@@ -45,8 +77,8 @@ class RuntimeManagerError(RuntimeError):
 class SessionHandle:
     """Web adapter over the shared session service.
 
-    Attachment transport and HTTP snapshot projection are Web concerns; all
-    session commands themselves are delegated to ``SessionService``.
+    HTTP transfers bytes and projects a snapshot. Attachment validation and
+    session commands are delegated to ``SessionService``.
     """
 
     def __init__(self, runtime: WrightRuntime) -> None:
@@ -58,6 +90,12 @@ class SessionHandle:
             event_processor=process_session_event,
             shutdown=shutdown_runtime,
         )
+        turn_ids, run_ids = seed_ids(runtime.session_state)
+
+        def seed(_seq: int, _stream_id: str) -> None:
+            self.publisher.display.seed(turn_ids, run_ids)
+
+        self.publisher.capture(seed)
         self.service.start()
 
     @property
@@ -81,34 +119,17 @@ class SessionHandle:
             raise RuntimeManagerError(str(exc)) from exc
 
     def upload_attachment(self, filename: str, data: bytes) -> dict[str, object]:
-        if self.closed:
-            raise RuntimeManagerError("session is closed")
         try:
-            record = self.runtime.attachment_store.register_bytes(
-                filename, data, self.runtime.session_state.attachments
-            )
-            self.runtime.session_state.attachments[record.id] = record
-            store = getattr(self.runtime.agent, "checkpoint_store", None)
-            if store is not None:
-                store.save(self.runtime.session_state)
-            return record.to_dict()
-        except AttachmentError as exc:
-            raise RuntimeManagerError(str(exc)) from exc
+            return self.service.add_attachment(self.session_id, filename, data)
+        except SessionServiceError as exc:
+            raise RuntimeManagerError(str(exc), status_code=409) from exc
 
     def remove_attachment(self, attachment_id: str) -> None:
-        record = self.runtime.session_state.attachments.get(attachment_id)
-        if record is None:
-            raise RuntimeManagerError("attachment not found", status_code=404)
-        if any(
-            attachment_id in (message.message.get("attachments") or [])
-            for message in self.runtime.session_state.message_records
-        ):
-            raise RuntimeManagerError("attachment is already part of conversation history")
-        self.runtime.attachment_store.remove(record)
-        del self.runtime.session_state.attachments[attachment_id]
-        store = getattr(self.runtime.agent, "checkpoint_store", None)
-        if store is not None:
-            store.save(self.runtime.session_state)
+        try:
+            self.service.remove_attachment(self.session_id, attachment_id)
+        except SessionServiceError as exc:
+            status = 404 if "not found" in str(exc) else 409
+            raise RuntimeManagerError(str(exc), status_code=status) from exc
 
     def attachment_path(self, attachment_id: str) -> tuple[AttachmentRecord, Path]:
         record = self.runtime.session_state.attachments.get(attachment_id)
@@ -179,125 +200,109 @@ class SessionHandle:
             raise RuntimeManagerError(str(exc), status_code=404) from exc
 
     def snapshot(self) -> dict[str, Any]:
-        state = self.runtime.session_state
-        service_snapshot = self.service.snapshot()
-        authoritative_run = service_snapshot["active_run"]
-        active: dict[str, Any] | None = None
-        if authoritative_run is not None:
-            # This live projection, not the finite UI-event ring, owns stream
-            # accumulation. Reconnection therefore does not require the old
-            # turn.started/content.delta events to still be retained.
-            response = self.runtime.runtime_resources.responses.response_snapshot(
-                authoritative_run["run_id"]
-            ) or {}
-            active = {
-                "run_id": authoritative_run["run_id"],
-                "turn_id": None,
-                "prompt": authoritative_run["goal"],
-                "attachments": [],
-                "reasoning": response.get("reasoning", ""),
-                "content": response.get("content", ""),
-                "tools": response.get("tools") or authoritative_run["tools"],
-            }
-        usage = state.task_usage()
-        queued_commands = [
-            {
-                "command_id": item["command_id"],
-                "prompt": item["prompt"],
-                **({"attachments": item["attachments"]} if item.get("attachments") else {}),
-            }
-            for item in service_snapshot["queued_commands"]
-        ]
-        return {
-            "stream_id": self.publisher.stream_id,
-            "last_seq": self.publisher.latest_seq,
-            "session": self.summary(),
-            "history": self._history(),
-            "active_turn": active,
-            "plan": state.plan_manager.snapshot(),
-            "pending_interactions": service_snapshot["pending_interactions"],
-            "notices": [
-                {"id": event.event_id, "type": event.type, **event.payload}
+        """Project the view at one sequence watermark.
+
+        ``capture`` holds the publisher lock only while copying state. The
+        returned ``last_seq`` is that watermark, not a later read.
+        """
+
+        def build(seq: int, stream_id: str) -> dict[str, Any]:
+            state = self.runtime.session_state
+            service_snapshot = self.service.snapshot()
+            view = self.publisher.display.view()
+            active = view["active_turn"]
+            authoritative_run = service_snapshot["active_run"]
+            if active is None and authoritative_run is not None:
+                active = {
+                    "run_id": authoritative_run["run_id"],
+                    "turn_id": None,
+                    "prompt": authoritative_run["goal"],
+                    "attachments": self._latest_user_attachments(),
+                    "reasoning": "",
+                    "content": "",
+                    "tools": [
+                        _tool_state(item) for item in authoritative_run["tools"]
+                    ],
+                }
+            elif active is not None and not active.get("tools") and authoritative_run is not None:
+                active = {
+                    **active,
+                    "tools": [_tool_state(item) for item in authoritative_run["tools"]],
+                }
+            usage = state.task_usage()
+            request = view["request_usage"]
+            queued_commands = [
+                {
+                    "command_id": item["command_id"],
+                    "prompt": item["prompt"],
+                    **({"attachments": item["attachments"]} if item.get("attachments") else {}),
+                }
+                for item in service_snapshot["queued_commands"]
+            ]
+            notices = [
+                {
+                    "id": event.event_id,
+                    "type": event.type,
+                    "text": notice_text(event.type, event.payload),
+                    **(
+                        {"kind": event.payload["kind"]}
+                        if isinstance(event.payload.get("kind"), str)
+                        else {}
+                    ),
+                }
                 for event in self.publisher.retained_events()
                 if event.type in {"system.notice", "system.checkpoint_error", "command.rejected"}
-            ][-50:],
-            "queued_commands": queued_commands,
-            "queue_depth": len(queued_commands),
-            "usage": {
-                "prompt_tokens": usage.prompt_tokens,
-                "completion_tokens": usage.completion_tokens,
-                "total_tokens": usage.total_tokens,
-                "request_prompt_tokens": 0,
-                "request_completion_tokens": 0,
-                "request_total_tokens": 0,
-                "context_tokens": getattr(
-                    state, "request_context_tokens", state.context_tokens
+            ][-50:]
+            return {
+                "stream_id": stream_id,
+                "last_seq": seq,
+                "session": self.summary(),
+                "history": project_history(
+                    state,
+                    set(self.publisher.display.published_turns),
+                    set(self.publisher.display.published_runs),
                 ),
-                "context_limit": self.runtime.llm.context_limit,
-            },
-        }
+                "active_turn": active,
+                "agents": view["agents"],
+                "plan": state.plan_manager.snapshot(),
+                "pending_interactions": service_snapshot["pending_interactions"],
+                "notices": notices,
+                "queued_commands": queued_commands,
+                "queue_depth": len(queued_commands),
+                "usage": {
+                    "prompt_tokens": usage.prompt_tokens,
+                    "completion_tokens": usage.completion_tokens,
+                    "total_tokens": usage.total_tokens,
+                    "request_prompt_tokens": None if request is None else request.get("prompt_tokens"),
+                    "request_completion_tokens": None if request is None else request.get("completion_tokens"),
+                    "request_total_tokens": None if request is None else request.get("total_tokens"),
+                    "context_tokens": (
+                        view["context_tokens"]
+                        if view["context_tokens"] is not None
+                        else getattr(state, "request_context_tokens", None)
+                    ),
+                    "context_limit": (
+                        view["context_limit"]
+                        if view["context_limit"] is not None
+                        else self.runtime.llm.context_limit
+                    ),
+                },
+            }
 
-    def _history(self) -> list[dict[str, Any]]:
-        """Project final turns with the image references of their user turn."""
+        return self.publisher.capture(build)
+
+    def _latest_user_attachments(self) -> list[dict[str, Any]]:
         records = getattr(self.runtime.session_state, "message_records", None)
         if not isinstance(records, list):
             return []
-        id_to_index = {record.id: index for index, record in enumerate(records)}
-        history: list[dict[str, Any]] = []
-        for turn in self.runtime.session_state.turns:
-            if turn.route != "final":
+        for record in reversed(records):
+            message = record.message
+            if message.get("role") != "user":
                 continue
-            answer = turn.parsed.get("final_answer", "")
-            if not isinstance(answer, str):
-                answer = str(answer)
-            if not answer.strip():
-                continue
-            user: dict[str, Any] | None = None
-            for index in range(id_to_index.get(turn.message_id, 0) - 1, -1, -1):
-                candidate = records[index].message
-                if candidate.get("role") != "user":
-                    continue
-                text = candidate.get("content", "")
-                if not isinstance(text, str) or text.lstrip().startswith("<"):
-                    continue
-                user = candidate
-                break
-            if user is None:
-                continue
-            attachment_ids = user.get("attachments", [])
-            attachments = self._attachment_summaries(attachment_ids) if isinstance(attachment_ids, list) else []
-            item: dict[str, Any] = {
-                "user": str(user.get("content", "")).strip(),
-                "assistant": answer.strip(),
-            }
-            if attachments:
-                item["attachments"] = attachments
-            # The Run owns tool executions.  Include its completed calls in
-            # this history projection so artifact links survive event-cache
-            # eviction and a resumed session can still display them.
-            run = self.runtime.session_state.runs.get(turn.run_id)
-            if run is not None:
-                tools: list[dict[str, Any]] = []
-                for call_id in run.tool_execution_ids:
-                    execution = self.runtime.session_state.tool_executions.get(call_id)
-                    if execution is None:
-                        continue
-                    tool: dict[str, Any] = {
-                        "call_id": execution.call.id,
-                        "name": execution.call.name,
-                        "arguments": dict(execution.call.arguments),
-                        "phase": execution.status,
-                    }
-                    if execution.result is not None:
-                        tool.update(execution.result.to_dict())
-                    tools.append(tool)
-                if tools:
-                    item["tools"] = tools
-            if history and history[-1]["user"] == item["user"]:
-                history[-1] = item
-            else:
-                history.append(item)
-        return history
+            attachment_ids = message.get("attachments") or []
+            if isinstance(attachment_ids, list) and attachment_ids:
+                return self._attachment_summaries([str(item) for item in attachment_ids])
+        return []
 
     def summary(self) -> dict[str, Any]:
         return {**self.service.summary(), "recoverable": True}

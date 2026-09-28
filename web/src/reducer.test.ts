@@ -25,10 +25,12 @@ const state: ViewState = {
   },
   seen: [],
   connection: "connected",
+  agents: [],
+  resync: false,
 };
 
 function event(seq: number, type: string, payload: Record<string, unknown>, turn_id = "abc:1"): UiEvent {
-  return { version: 1, stream_id: "stream", event_id: `event-${seq}`, seq, emitted_at: "now", project_id: "project", session_id: "abc", turn_id, type, payload };
+  return { version: 2, stream_id: "stream", event_id: `event-${seq}`, seq, emitted_at: "now", project_id: "project", session_id: "abc", turn_id, type, payload };
 }
 
 describe("UI event reducer", () => {
@@ -112,5 +114,55 @@ describe("UI event reducer", () => {
     next = applyEvent(next, event(2, "command.accepted", { command: "turn.submit", command_id: "two", prompt: "second", queued: true }));
     next = applyEvent(next, event(3, "command.accepted", { command: "turn.cancel_queued", target_command_id: "one" }));
     expect(next.queued_commands).toEqual([{ command_id: "two", prompt: "second" }]);
+  });
+
+  it("ignores a stale sequence and asks for resync on a gap", () => {
+    const started = applyEvent(state, event(1, "turn.started", { prompt: "keep" }));
+    const stale = applyEvent(started, event(1, "content.final", { content: "old" }));
+    expect(stale).toBe(started);
+    expect(stale.active_turn?.content).toBe("");
+    const gapped = applyEvent(started, event(3, "content.delta", { piece: "skipped" }));
+    expect(gapped.resync).toBe(true);
+    expect(gapped.last_seq).toBe(1);
+    expect(gapped.active_turn?.content).toBe("");
+  });
+
+  it("does not apply another session or an old event version", () => {
+    const other = event(1, "content.final", { content: "nope" });
+    other.session_id = "other";
+    expect(applyEvent({ ...state, active_turn: { prompt: "", attachments: [], reasoning: "", content: "root", tools: [] } }, other).active_turn?.content).toBe("root");
+    const old = event(1, "turn.started", { prompt: "old" });
+    old.version = 1;
+    expect(applyEvent(state, old).resync).toBe(true);
+    expect(applyEvent(state, old).active_turn).toBeNull();
+  });
+
+  it("keeps child content, tools, and usage off the root turn", () => {
+    let next = applyEvent(state, event(1, "turn.started", { prompt: "parent" }));
+    next = applyEvent(next, event(2, "content.final", { content: "root answer" }));
+    next = applyEvent(next, event(3, "content.final", { content: "child answer", agent_depth: 1, agent_task_id: "task-1" }));
+    next = applyEvent(next, event(4, "tool.finished", { call_id: "child-call", name: "read", ok: true, agent_depth: 1, agent_task_id: "task-1" }));
+    next = applyEvent(next, event(5, "usage.request", { prompt_tokens: 9, completion_tokens: 1, total_tokens: 10, agent_depth: 1, agent_task_id: "task-1" }));
+    next = applyEvent(next, event(6, "interaction.requested", { request_id: "perm-1", kind: "permission", tool_name: "read", agent_task_id: "task-1", agent_depth: 1 }));
+    expect(next.active_turn?.content).toBe("root answer");
+    expect(next.active_turn?.tools).toEqual([]);
+    expect(next.usage.request_total_tokens).toBe(0);
+    expect(next.agents?.[0].content).toBe("child answer");
+    expect(next.agents?.[0].tools[0].call_id).toBe("child-call");
+    expect(next.agents?.[0].request_usage?.total_tokens).toBe(10);
+    expect(next.pending_interactions[0].request_id).toBe("perm-1");
+  });
+
+  it("keeps tools and separate turns when the user text repeats", () => {
+    let next = applyEvent(state, event(1, "turn.started", { prompt: "继续" }, "turn-a"));
+    next = applyEvent(next, event(2, "tool.finished", { call_id: "call-a", name: "read", ok: true, artifacts: [{ id: "art-1", name: "a.txt", media_type: "text/plain", size: 1 }] }));
+    next = applyEvent(next, event(3, "turn.completed", { run_id: "run-a" }, "turn-a"));
+    next = applyEvent(next, event(4, "turn.started", { prompt: "继续" }, "turn-b"));
+    next = applyEvent(next, event(5, "turn.cancelled", {}, "turn-b"));
+    expect(next.history).toHaveLength(2);
+    expect(next.history[0].turn_id).toBe("turn-a");
+    expect(next.history[0].tools?.[0].artifacts?.[0].id).toBe("art-1");
+    expect(next.history[1].status).toBe("cancelled");
+    expect(next.history[1].assistant).toBe("Turn cancelled.");
   });
 });

@@ -69,31 +69,30 @@ def test_snapshot_uses_live_response_projection_after_event_ring_eviction(
         project_id="project", session_id=session.session_id, max_events=1
     )
     runtime.interaction_broker = InteractionBroker(runtime.publisher)
-    resources = RuntimeResources.for_session(session.session_id)
-    assert resources is not None
+    resources = RuntimeResources(session.session_id)
     runtime.runtime_resources = resources
     run = session.active_run()
     assert run is not None
-    resources.responses.begin_response(run.run_id)
-    resources.responses.append_reasoning("reasoning survives")
-    resources.responses.append_content("complete streamed response")
-    resources.responses.update_tool("call_1", {"call_id": "call_1", "name": "read_file"})
+    runtime.publisher.publish(
+        "turn.started", {"prompt": "active goal", "run_id": run.run_id}, turn_id="turn-1",
+    )
+    runtime.publisher.publish("reasoning.delta", {"piece": "reasoning survives"})
+    runtime.publisher.publish("content.delta", {"piece": "complete streamed response"})
+    runtime.publisher.publish("tool.planned", {"call_id": "call_1", "name": "read_file"})
     for number in range(3):
-        runtime.publisher.publish("content.delta", {"piece": str(number)})
+        runtime.publisher.publish("system.notice", {"text": str(number)})
 
     handle = SessionHandle(runtime)
     snapshot = handle.snapshot()
 
-    assert snapshot["active_turn"] == {
-        "run_id": run.run_id,
-        "turn_id": None,
-        "prompt": "active goal",
-        "attachments": [],
-        "reasoning": "reasoning survives",
-        "content": "complete streamed response",
-        "tools": [{"call_id": "call_1", "name": "read_file"}],
-    }
-    assert len(runtime.publisher.retained_events()) == 1
+    assert snapshot["active_turn"]["run_id"] == run.run_id
+    assert snapshot["active_turn"]["prompt"] == "active goal"
+    assert snapshot["active_turn"]["reasoning"] == "reasoning survives"
+    assert snapshot["active_turn"]["content"] == "complete streamed response"
+    assert snapshot["active_turn"]["tools"][0]["call_id"] == "call_1"
+    assert snapshot["active_turn"]["tools"][0]["name"] == "read_file"
+    assert runtime.publisher.replay(runtime.publisher.stream_id, 0) is None
+    assert snapshot["last_seq"] == runtime.publisher.latest_seq
     handle.close()
 
 
@@ -132,8 +131,9 @@ def test_history_projects_run_owned_artifacts_after_event_cache_eviction(
     assert history[0]["tools"][0]["artifacts"] == [{
         "id": "artifact-report", "media_type": "text/markdown",
         "name": "report.md", "size": 12, "run_id": "",
-        "call_id": "report-call", "storage_path": "artifact-report",
+        "call_id": "report-call",
     }]
+    assert "storage_path" not in history[0]["tools"][0]["artifacts"][0]
     handle.close()
 
 
@@ -377,7 +377,7 @@ def test_project_exposes_configured_models_not_a_hardcoded_default(monkeypatch, 
 def test_closed_local_session_can_be_replaced_without_losing_its_schedules(monkeypatch, tmp_path):
     from tests.responses import response
     from wright.application.composition import runtime as assembly
-    from wright.domain.model.autonomy import TriggerSpec
+    from wright.domain.model.automation import TriggerSpec
 
     class Model:
         model = "offline"
@@ -410,14 +410,14 @@ def test_closed_local_session_can_be_replaced_without_losing_its_schedules(monke
         second_id = second.runtime.session_state.session_id
         assert second.runtime.application_host is host
         assert second.runtime.autonomy_store.session_id == second_id
-        assert second.runtime.autonomy_store.list_automations() == []
+        assert second.runtime.autonomy_store.list_automations().records == ()
         assert first_store.get_automation(auto.id).session_id == first_id
         second_store = second.runtime.autonomy_store
         manager.close(second_id)
         restored = manager.create(resume_session_id=first_id)
         assert restored.runtime.application_host is host
         assert restored.runtime.autonomy_store is first_store
-        assert restored.runtime.autonomy_store.list_automations()[0].id == auto.id
+        assert restored.runtime.autonomy_store.list_automations().records[0].id == auto.id
         assert len(manager._application_hosts) == 1
     finally:
         manager.shutdown()

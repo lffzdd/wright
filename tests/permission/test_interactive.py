@@ -193,7 +193,12 @@ def test_persistent_rule_choice_is_returned_to_the_commit_adapter(tmp_path):
     )
 
     assert result.ok
-    assert changes[0].persistent_rules == ("write_file(nested/*)",)
+    rule = changes[0].persistent_rules[0]
+    assert rule["kind"] == "file"
+    assert rule["tool_name"] == "write_file"
+    assert rule["pattern"] == "nested/*"
+    assert rule["root"] == str(tmp_path.resolve())
+    assert rule["operations"] == ["file_read", "file_write"]
     assert changes[0].session_directories == ()
 
 

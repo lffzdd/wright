@@ -63,8 +63,8 @@ class AuthorizationChange:
 
     session_directories: tuple[ExecutionPath, ...] = ()
     persistent_directories: tuple[ExecutionPath, ...] = ()
-    session_rules: tuple[str, ...] = ()
-    persistent_rules: tuple[str, ...] = ()
+    session_rules: tuple[dict[str, object], ...] = ()
+    persistent_rules: tuple[dict[str, object], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -95,6 +95,14 @@ class PermissionPrompt:
     targets: tuple[str, ...]
     choices: tuple[PermissionChoice, ...]
     principal: str = ""
+    operation: str = ""
+    grant_summary: str = ""
+    preview: str = ""
+    cwd: str = ""
+    command: str = ""
+    http_method: str = ""
+    http_target: str = ""
+    shell_note: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -106,6 +114,14 @@ class PermissionPrompt:
             "targets": list(self.targets),
             "choices": [choice.to_dict() for choice in self.choices],
             "principal": self.principal,
+            "operation": self.operation,
+            "grant_summary": self.grant_summary,
+            "preview": self.preview,
+            "cwd": self.cwd,
+            "command": self.command,
+            "http_method": self.http_method,
+            "http_target": self.http_target,
+            "shell_note": self.shell_note,
         }
 
 

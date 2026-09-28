@@ -23,8 +23,8 @@ from urllib.parse import urlparse
 from openai import APIConnectionError, APIStatusError, OpenAI, omit
 
 from ...domain.gateway.llm_gateway import ILLMProvider
-from ...domain.model import ModelRequest
-from ...domain.model.events import (
+from ...domain.model.llm import ModelRequest
+from ...domain.model.llm.events import (
     ContentDelta,
     ContentDone,
     LLMEvent,

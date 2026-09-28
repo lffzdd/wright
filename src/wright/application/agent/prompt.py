@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+from ..planning.prompt import plan_prompt_block
 from ..skills import catalog_reminder
 
 if TYPE_CHECKING:
@@ -27,9 +28,9 @@ class AgentPromptManager:
         self.schema_tools = schema_tools
 
     def plan_reminder(self) -> dict | None:
-        block = self.session_state.plan_manager.to_prompt_block()
+        block = plan_prompt_block(self.session_state.plan_manager)
         # 计划字段由模型工具调用产生，最终也可能来自不可信用户文本；保持 user role，
-        # 并由 to_prompt_block 的 JSON 数据边界明确它不具备指令权限。
+        # 并由 plan_prompt_block 的 JSON 数据边界明确它不具备指令权限。
         return {"role": "user", "content": block} if block else None
 
     def ensure_skill_catalog(self, active_deferred_tools: Sequence[str] = ()) -> None:

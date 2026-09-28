@@ -5,12 +5,28 @@ from __future__ import annotations
 import secrets
 import sqlite3
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ....domain.model.autonomy import AutomationRecord, TriggerSpec
+from ....domain.model.automation import AutomationRecord, TriggerSpec
 from ._base import AutonomyNotFoundError, AutonomyStoreError, _StoreBase
-from ._helpers import _bounded, _dump, _load_object, _safe_run_config
+from ._helpers import (
+    StorePage,
+    _bounded,
+    _dump,
+    _load_object,
+    _safe_run_config,
+    decode_page_cursor,
+    encode_page_cursor,
+    page_limit,
+)
+
+
+@dataclass(frozen=True)
+class AutomationChange:
+    automation: AutomationRecord
+    changed: bool
 
 
 class _AutomationsMixin(_StoreBase):
@@ -83,87 +99,136 @@ class _AutomationsMixin(_StoreBase):
             raise AutonomyNotFoundError(f"Unknown schedule_id: {automation_id}")
         return self._automation_from_row(row)
 
-    def list_automations(self) -> list[AutomationRecord]:
+    def list_automations(
+        self, *, limit: int = 100, cursor: str | None = None, status: str | None = None
+    ) -> StorePage:
+        limit = page_limit(limit)
+        predicate = "session_id = ?"
+        parameters: list[Any] = [self.session_id]
+        if status is not None:
+            predicate += " AND status = ?"
+            parameters.append(status)
+        if cursor is not None:
+            created_at, row_id = decode_page_cursor(cursor)
+            predicate += " AND (created_at < ? OR (created_at = ? AND id < ?))"
+            parameters.extend((created_at, created_at, row_id))
         with self._read():
             rows = self._conn.execute(
-                """SELECT * FROM automations WHERE session_id = ?
-                   ORDER BY created_at DESC""",
-                (self.session_id,),
+                f"""SELECT * FROM automations WHERE {predicate}
+                    ORDER BY created_at DESC, id DESC LIMIT ?""",
+                (*parameters, limit + 1),
             ).fetchall()
-        return [self._automation_from_row(row) for row in rows]
+        extra = len(rows) > limit
+        visible = rows[:limit]
+        records = tuple(self._automation_from_row(row) for row in visible)
+        next_cursor = None
+        if extra and records:
+            last = records[-1]
+            next_cursor = encode_page_cursor(last.created_at, last.id)
+        return StorePage(records, next_cursor)
 
-    def pause_automation(self, automation_id: str) -> AutomationRecord:
+    def has_active_automation(self) -> bool:
+        with self._read():
+            row = self._conn.execute(
+                """SELECT 1 FROM automations
+                   WHERE session_id = ? AND status = 'active' LIMIT 1""",
+                (self.session_id,),
+            ).fetchone()
+        return row is not None
+
+    def pause_automation(self, automation_id: str) -> AutomationChange:
         """Stop materializing new runs; already queued runs may still execute.
 
-        Pause only flips the definition to ``paused``, so ``claim_next_run``
-        will still pick up existing queued/dispatched/waiting_retry rows.
-        Use ``cancel_automation`` to abort those as well.
+        The status check and update share one immediate transaction, so a
+        concurrent cancel cannot be overwritten with paused.
         """
-        current = self.get_automation(automation_id)
-        if current.status != "active":
-            return current
         now = time.time()
         with self._write():
-            self._conn.execute(
+            current = self._automation_for_update(automation_id)
+            if current.status != "active":
+                return AutomationChange(current, changed=False)
+            cursor = self._conn.execute(
                 """UPDATE automations SET status = 'paused', updated_at = ?
-                   WHERE id = ? AND session_id = ?""",
+                   WHERE id = ? AND session_id = ? AND status = 'active'""",
                 (now, automation_id, self.session_id),
             )
-        return self.get_automation(automation_id)
+            updated = self._automation_for_update(automation_id)
+            return AutomationChange(updated, changed=cursor.rowcount == 1)
 
     def resume_automation(
         self, automation_id: str, *, now: float | None = None
-    ) -> AutomationRecord:
-        current = self.get_automation(automation_id)
-        if current.status == "active":
-            return current
-        if current.status != "paused":
-            raise AutonomyStoreError(
-                f"schedule {automation_id} cannot resume from {current.status}"
-            )
+    ) -> AutomationChange:
         now = time.time() if now is None else float(now)
-        next_run = self._resume_next_run(current.trigger, now)
-        state = current.trigger_state
-        if current.trigger.type == "file_change":
-            state = self._file_snapshot(current.trigger.path)
-        elif current.trigger.type == "web_change":
-            state = {}
         with self._write():
-            self._conn.execute(
+            current = self._automation_for_update(automation_id)
+            if current.status == "active":
+                return AutomationChange(current, changed=False)
+            if current.status != "paused":
+                raise AutonomyStoreError(
+                    f"schedule {automation_id} cannot resume from {current.status}"
+                )
+            next_run = self._resume_next_run(current.trigger, now)
+            state = current.trigger_state
+            if current.trigger.type == "file_change":
+                state = self._file_snapshot(current.trigger.path)
+            elif current.trigger.type == "web_change":
+                state = {}
+            cursor = self._conn.execute(
                 """UPDATE automations
                    SET status = 'active', updated_at = ?, next_run_at = ?,
                        trigger_state_json = ?
-                   WHERE id = ? AND session_id = ?""",
+                   WHERE id = ? AND session_id = ? AND status = 'paused'""",
                 (now, next_run, _dump(state), automation_id, self.session_id),
             )
-        return self.get_automation(automation_id)
+            if cursor.rowcount != 1:
+                current = self._automation_for_update(automation_id)
+                if current.status == "active":
+                    return AutomationChange(current, changed=False)
+                raise AutonomyStoreError(
+                    f"schedule {automation_id} cannot resume from {current.status}"
+                )
+            return AutomationChange(self._automation_for_update(automation_id), changed=True)
 
-    def cancel_automation(self, automation_id: str, reason: str) -> AutomationRecord:
-        self.get_automation(automation_id)
+    def cancel_automation(self, automation_id: str, reason: str) -> AutomationChange:
         now = time.time()
         reason = str(reason)[:1_000]
         with self._write():
-            self._conn.execute(
+            current = self._automation_for_update(automation_id)
+            cursor = self._conn.execute(
                 """UPDATE automations
                    SET status = 'cancelled', updated_at = ?, next_run_at = NULL
-                   WHERE id = ? AND session_id = ?""",
+                   WHERE id = ? AND session_id = ? AND status != 'cancelled'""",
                 (now, automation_id, self.session_id),
             )
-            self._conn.execute(
-                """UPDATE durable_runs
-                   SET status = 'cancelled', ended_at = ?, cancel_requested = 1,
-                       cancel_reason = ?
-                   WHERE automation_id = ? AND session_id = ?
-                     AND status IN ('queued', 'dispatched', 'waiting_retry')""",
-                (now, reason, automation_id, self.session_id),
-            )
-            self._conn.execute(
-                """UPDATE durable_runs
-                   SET cancel_requested = 1, cancel_reason = ?
-                   WHERE automation_id = ? AND session_id = ? AND status = 'running'""",
-                (reason, automation_id, self.session_id),
-            )
-        return self.get_automation(automation_id)
+            changed = cursor.rowcount == 1
+            if changed:
+                self._conn.execute(
+                    """UPDATE durable_runs
+                       SET status = 'cancelled', ended_at = ?, cancel_requested = 1,
+                           cancel_reason = ?
+                       WHERE automation_id = ? AND session_id = ?
+                         AND status IN ('queued', 'dispatched', 'waiting_retry')""",
+                    (now, reason, automation_id, self.session_id),
+                )
+                self._conn.execute(
+                    """UPDATE durable_runs
+                       SET cancel_requested = 1, cancel_reason = ?
+                       WHERE automation_id = ? AND session_id = ? AND status = 'running'""",
+                    (reason, automation_id, self.session_id),
+                )
+            updated = self._automation_for_update(automation_id)
+            if not changed and current.status == "cancelled":
+                return AutomationChange(updated, changed=False)
+            return AutomationChange(updated, changed=changed)
+
+    def _automation_for_update(self, automation_id: str) -> AutomationRecord:
+        row = self._conn.execute(
+            "SELECT * FROM automations WHERE id = ? AND session_id = ?",
+            (automation_id, self.session_id),
+        ).fetchone()
+        if row is None:
+            raise AutonomyNotFoundError(f"Unknown schedule_id: {automation_id}")
+        return self._automation_from_row(row)
 
     def emit_event(
         self,

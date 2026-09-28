@@ -5,7 +5,7 @@ from pathlib import Path
 
 from tests.responses import event
 from wright.application.memory.memory_service import MemoryService
-from wright.domain.model.events import ContentDelta
+from wright.domain.model.llm.events import ContentDelta
 from wright.infrastructure.llm.context_selector import LlmContextSelector
 from wright.infrastructure.persistence.memory import (
     EpisodeStore,

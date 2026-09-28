@@ -45,20 +45,6 @@ class ContentDone:
     # It is persisted with the assistant record but never rendered to users.
     provider_state: dict[str, Any] = field(default_factory=dict)
 
-    def assistant_message(self) -> dict[str, Any]:
-        message: dict[str, Any] = {
-            "role": "assistant", "content": self.content or None,
-        }
-        if self.tool_calls:
-            message["tool_calls"] = self.tool_calls
-        # Some compatible reasoning providers require this field on tool turns.
-        if self.reasoning:
-            message["reasoning_content"] = self.reasoning
-        if self.provider_state:
-            message["provider_state"] = self.provider_state
-        return message
-
-
 @dataclass
 class UsageEvent:
     """本轮的 token 用量信息（流式时通常在最后一个 chunk 里）。"""

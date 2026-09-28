@@ -15,7 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from ...core.logger import get_logger
+from ....core.logger import get_logger
 
 logger = get_logger(__name__)
 

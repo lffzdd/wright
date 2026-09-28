@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from ....domain.model.autonomy import AutomationRecord
+from ....domain.model.automation import AutomationRecord
 from ._base import AutonomyStoreError, _StoreBase
 from ._helpers import _dump, _hash_payload, _load_object
 

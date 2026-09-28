@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ...core.logger import get_logger
+from ...domain.model.llm import UsageRecord
 from ...domain.model.memory import (
     SEMANTIC_MEMORY_TYPES,
     TYPES_SECTION,
@@ -19,7 +20,6 @@ from ...domain.model.memory import (
     SourceLocator,
     encode_locator,
 )
-from ...domain.model.session import UsageRecord
 from ...domain.policy.memory import (
     ExtractSignal,
     SemanticExtractPolicy,

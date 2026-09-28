@@ -25,6 +25,14 @@ class PermissionModal(ModalScreen[str]):
         targets: list[str] | tuple[str, ...] = (),
         choices: list[dict[str, str]] | tuple[dict[str, str], ...] = (),
         principal: str = "",
+        operation: str = "",
+        grant_summary: str = "",
+        preview: str = "",
+        cwd: str = "",
+        command: str = "",
+        http_method: str = "",
+        http_target: str = "",
+        shell_note: str = "",
     ) -> None:
         super().__init__()
         self.tool_name = tool_name
@@ -34,24 +42,53 @@ class PermissionModal(ModalScreen[str]):
         self.targets = tuple(targets)
         self.choices = tuple(choices)
         self.principal = principal
+        self.operation = operation
+        self.grant_summary = grant_summary
+        self.preview = preview
+        self.cwd = cwd
+        self.command = command
+        self.http_method = http_method
+        self.http_target = http_target
+        self.shell_note = shell_note
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
             yield Static("permission", classes="dialog-kicker")
-            yield Static(self.tool_name, classes="dialog-title")
+            yield Static(self.tool_name, classes="dialog-title", markup=False)
+            if self.operation:
+                yield Static(f"operation  {self.operation}", classes="dialog-meta", markup=False)
             if self.subject:
-                yield Static(self.subject, classes="dialog-subject")
-            yield Static(f"risk  {', '.join(self.risk_flags)}", classes="dialog-meta")
-            yield Static(self.reason, classes="dialog-reason")
+                yield Static(self.subject, classes="dialog-subject", markup=False)
+            yield Static(f"risk  {', '.join(self.risk_flags)}", classes="dialog-meta", markup=False)
+            yield Static(self.reason, classes="dialog-reason", markup=False)
+            if self.grant_summary:
+                yield Static(self.grant_summary, classes="dialog-reason", markup=False)
+            if self.command:
+                yield Static(f"command  {self.command}", classes="dialog-meta", markup=False)
+            if self.cwd:
+                yield Static(f"cwd  {self.cwd}", classes="dialog-meta", markup=False)
+            if self.shell_note:
+                yield Static(self.shell_note, classes="dialog-reason", markup=False)
+            if self.http_method or self.http_target:
+                yield Static(
+                    f"http  {self.http_method} {self.http_target}".strip(),
+                    classes="dialog-meta",
+                    markup=False,
+                )
+            if self.preview:
+                yield Static(self.preview, classes="dialog-reason", markup=False)
             if self.targets:
-                yield Static("targets  " + "; ".join(self.targets), classes="dialog-meta")
+                yield Static("targets  " + "; ".join(self.targets), classes="dialog-meta", markup=False)
             if self.principal:
-                yield Static(f"principal  {self.principal}", classes="dialog-meta")
+                yield Static(f"principal  {self.principal}", classes="dialog-meta", markup=False)
             with Horizontal(classes="dialog-actions"):
                 for choice in self.choices:
                     variant = "error" if choice.get("id") == "deny" else "primary"
+                    label = choice.get("label", choice.get("id", "choice"))
+                    scope = choice.get("scope", "")
+                    persistence = choice.get("persistence", "")
                     yield Button(
-                        f"{choice.get('label', choice.get('id', 'choice'))}",
+                        f"{label} — {scope} — {persistence}",
                         id=f"choice-{choice.get('id', 'deny')}",
                         variant=variant,
                     )

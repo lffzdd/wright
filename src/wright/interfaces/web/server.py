@@ -22,6 +22,12 @@ def _origin_for(request: Request) -> str:
     return f"{request.url.scheme}://{request.headers.get('host', '')}"
 
 
+def default_static_dir() -> Path:
+    """Directory Vite writes and this process serves."""
+
+    return Path(__file__).resolve().parents[2] / "web" / "static"
+
+
 def create_app(
     manager: RuntimeManager,
     auth: BootstrapAuth,
@@ -34,7 +40,7 @@ def create_app(
         manager.shutdown()
 
     app = FastAPI(title="Wright Local Web", docs_url=None, redoc_url=None, lifespan=lifespan)
-    assets = (static_dir or Path(__file__).parent / "static").resolve()
+    assets = (static_dir or default_static_dir()).resolve()
 
     @app.middleware("http")
     async def local_security(request: Request, call_next):

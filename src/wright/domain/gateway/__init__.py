@@ -11,7 +11,6 @@ from .memory import (
     ISemanticMemoryStore,
 )
 from .session_repository import ISessionRepository, IStorageGateway, SessionRepository
-from .task_backend import TaskBackend
 from .tool_executor import IToolExecutor
 from .vector_store import IVectorStore
 
@@ -30,5 +29,4 @@ __all__ = [
     "KnowledgeProvider",
     "LLMProvider",
     "SessionRepository",
-    "TaskBackend",
 ]

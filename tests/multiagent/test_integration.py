@@ -9,8 +9,8 @@ from wright.application.agent import (
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.application.tool_execution.runtime import tool_runtime_for_session
-from wright.domain.model.coordination import AgentControlConfig, AgentControlPlane
-from wright.domain.model.events import UsageEvent
+from wright.domain.model.agent.control import AgentControlConfig, AgentControlPlane
+from wright.domain.model.llm.events import UsageEvent
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall
 from wright.domain.policy import (
@@ -215,4 +215,4 @@ def test_child_runtime_cannot_leave_background_processes(tmp_path):
 
     assert not immediate.ok
     assert not timed.ok
-    assert session.background_tasks == {}
+    assert session.commands == {}

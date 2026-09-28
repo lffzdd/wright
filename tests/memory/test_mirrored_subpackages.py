@@ -4,17 +4,11 @@ from __future__ import annotations
 
 
 def test_domain_model_memory_exports_and_identity():
-    # Canonical subpackage
-    # Top-level domain.model
-    from wright.domain.model import (
-        CoreMemory as TopCoreMemory,
-    )
-    from wright.domain.model import (
-        EpisodeRecord as TopEpisodeRecord,
-    )
-    from wright.domain.model import (
-        SemanticMemoryRecord as TopMemoryRecord,
-    )
+    import wright.domain.model as model_package
+
+    assert not hasattr(model_package, "CoreMemory")
+    assert not hasattr(model_package, "EpisodeRecord")
+    assert not hasattr(model_package, "SemanticMemoryRecord")
     from wright.domain.model.memory import (
         DEFAULT_PERSONA,
     )
@@ -35,9 +29,9 @@ def test_domain_model_memory_exports_and_identity():
         SemanticMemoryRecord as ModMemoryRecord,
     )
 
-    assert CanonicalCoreMemory is ModCoreMemory is TopCoreMemory
-    assert CanonicalMemoryRecord is ModMemoryRecord is TopMemoryRecord
-    assert CanonicalEpisodeRecord is ModEpisodeRecord is TopEpisodeRecord
+    assert CanonicalCoreMemory is ModCoreMemory
+    assert CanonicalMemoryRecord is ModMemoryRecord
+    assert CanonicalEpisodeRecord is ModEpisodeRecord
     assert len(DEFAULT_PERSONA) > 0
 
 

@@ -19,8 +19,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from uuid import uuid4
 
-from ...domain.model.autonomy import DurableRunRecord
-from ...domain.model.coordination import AgentControlPlane
+from ...domain.model.agent.control import AgentControlPlane
+from ...domain.model.automation import DurableRunRecord
 from ...domain.policy import PermissionSettings
 from ...infrastructure.llm.llm import LLMClient
 from ...infrastructure.persistence.autonomy_store import AutonomyStore
@@ -146,9 +146,8 @@ class ApplicationHost:
             if self._state == "closing":
                 return True
             return bool(self._active_runs()) or any(
-                item.status == "active"
+                scheduler.store.has_active_automation()
                 for scheduler in self._schedulers.values()
-                for item in scheduler.store.list_automations()
             )
 
     @property

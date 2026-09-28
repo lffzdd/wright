@@ -2,8 +2,7 @@ import queue
 
 from wright.application.agent import build_agent_tools
 from wright.application.agent.assembly import prepare_model_tools
-from wright.application.session.dispatch import _task_notification_event
-from wright.application.tasks.service import TaskService
+from wright.application.agent.operations import agent_completion_notice
 from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.session import Session
 from wright.infrastructure.tools.agent_tools import (
@@ -54,22 +53,16 @@ def test_service_projects_agent_and_shell_without_copying_ownership(tmp_path):
         runtime=runtime,
     )
 
-    service = TaskService.for_session(session)
-    shell = service.wait(launched.data["command_id"], timeout=2)
-    agent = service.get(agent_record.id)
+    shell = runtime.capabilities.commands.wait(launched.data["command_id"], timeout=2)
+    agent = runtime.capabilities.agents.get(agent_record.id)
 
-    assert agent.kind == "agent"
     assert agent.status == "completed"
     assert agent.result == "agent result"
-    assert agent.details["usage"]["total_tokens"] == 0
-    assert shell.kind == "shell"
-    assert shell.status == "completed"
-    assert shell.returncode == 0
-    assert shell.output == "shell-result\n"
-    assert {task.id for task in service.list()} == {
-        agent_record.id,
-        launched.data["command_id"],
-    }
+    assert agent.total_tokens == 0
+    assert shell["status"] == "completed"
+    assert shell["returncode"] == 0
+    assert shell["output"] == "shell-result\n"
+    assert agent.id != launched.data["command_id"]
 
 
 def test_agent_tools_query_and_wait(tmp_path):
@@ -134,7 +127,7 @@ def test_agent_cancel_and_command_terminate_keep_their_semantics(tmp_path):
     assert agent.data["cancel_requested"] is True
     assert shell.ok and shell.data["status"] == "cancelled"
     assert shell.data["command_id"] == launched.data["command_id"]
-    assert TaskService.for_session(session).get(launched.data["command_id"]).terminal
+    assert runtime.capabilities.commands.get(launched.data["command_id"])["terminal"]
 
 
 def test_agent_and_shell_completion_share_runtime_event_shape(tmp_path):
@@ -152,10 +145,9 @@ def test_agent_and_shell_completion_share_runtime_event_shape(tmp_path):
         runtime=runtime,
     )
     shell_id = notifications.get(timeout=2)
-    service = TaskService.for_session(session)
 
-    agent_event = _task_notification_event(service.get(agent_record.id))
-    shell_event = _task_notification_event(service.get(shell_id))
+    agent_event = agent_completion_notice(session.control_plane, agent_record.id)
+    shell_event = runtime.capabilities.commands.notice(shell_id)
 
     assert shell_id == launched.data["command_id"]
     assert agent_event["type"] == shell_event["type"] == "task_notification"

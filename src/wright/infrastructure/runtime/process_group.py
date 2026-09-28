@@ -1,0 +1,150 @@
+"""Ownership-checked process groups for one shell execution.
+
+The group id is recorded when the process starts. A later signal is sent only
+when that same process is still the leader, or the leader has exited and the
+group still contains its original members. A recycled pid is not signaled.
+"""
+
+from __future__ import annotations
+
+import ctypes
+import ctypes.util
+import os
+import signal
+import subprocess
+import time
+
+_PROC_PIDTBSDINFO = 3
+_MAXCOMLEN = 16
+
+
+class _ProcBsdInfo(ctypes.Structure):
+    _fields_ = [
+        ("pbi_flags", ctypes.c_uint32),
+        ("pbi_status", ctypes.c_uint32),
+        ("pbi_xstatus", ctypes.c_uint32),
+        ("pbi_pid", ctypes.c_uint32),
+        ("pbi_ppid", ctypes.c_uint32),
+        ("pbi_uid", ctypes.c_uint32),
+        ("pbi_gid", ctypes.c_uint32),
+        ("pbi_ruid", ctypes.c_uint32),
+        ("pbi_rgid", ctypes.c_uint32),
+        ("pbi_svuid", ctypes.c_uint32),
+        ("pbi_svgid", ctypes.c_uint32),
+        ("rfu_1", ctypes.c_uint32),
+        ("pbi_comm", ctypes.c_char * _MAXCOMLEN),
+        ("pbi_name", ctypes.c_char * (2 * _MAXCOMLEN)),
+        ("pbi_nfiles", ctypes.c_uint32),
+        ("pbi_pgid", ctypes.c_uint32),
+        ("pbi_pjobc", ctypes.c_uint32),
+        ("e_tdev", ctypes.c_uint32),
+        ("e_tpgid", ctypes.c_uint32),
+        ("pbi_nice", ctypes.c_int32),
+        ("pbi_start_tvsec", ctypes.c_uint64),
+        ("pbi_start_tvusec", ctypes.c_uint64),
+    ]
+
+
+_libproc = ctypes.CDLL(ctypes.util.find_library("proc"), use_errno=True)
+
+
+def process_start(pid: int) -> tuple[int, int] | None:
+    """Return the kernel start time of ``pid``, or None if that pid is gone."""
+    info = _ProcBsdInfo()
+    size = _libproc.proc_pidinfo(
+        ctypes.c_int(pid),
+        ctypes.c_int(_PROC_PIDTBSDINFO),
+        ctypes.c_uint64(0),
+        ctypes.byref(info),
+        ctypes.c_int(ctypes.sizeof(info)),
+    )
+    if int(size) < ctypes.sizeof(info) or int(info.pbi_pid) != pid:
+        return None
+    return int(info.pbi_start_tvsec), int(info.pbi_start_tvusec)
+
+
+def _group_members(pgid: int) -> list[int]:
+    completed = subprocess.run(
+        ["ps", "-ax", "-o", "pid=,pgid="],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        return []
+    members: list[int] = []
+    for line in completed.stdout.splitlines():
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        try:
+            pid, group = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        if group == pgid:
+            members.append(pid)
+    return members
+
+
+class OwnedProcessGroup:
+    """A process group created by one ``start_new_session`` spawn."""
+
+    def __init__(self, leader_pid: int) -> None:
+        self.leader_pid = leader_pid
+        self.pgid = os.getpgid(leader_pid)
+        started = process_start(leader_pid)
+        if started is None:
+            raise RuntimeError("spawned process exited before ownership was recorded")
+        self._start = started
+
+    def leader_reused(self) -> bool:
+        """True when ``leader_pid`` now names a different process."""
+        current = process_start(self.leader_pid)
+        return current is not None and current != self._start
+
+    def members(self) -> list[int]:
+        if self.leader_reused():
+            return []
+        return _group_members(self.pgid)
+
+    def alive(self) -> bool:
+        return bool(self.members())
+
+    def terminate(self, grace_seconds: float = 2.0) -> bool:
+        """Signal this group. Return True only when no owned member remains.
+
+        A recycled leader pid is left untouched. Sending SIGTERM is not
+        reported as success while members are still alive.
+        """
+        if self.leader_reused():
+            return False
+        if not self.members():
+            return True
+        self._signal(signal.SIGTERM)
+        if self._wait_until_clear(grace_seconds):
+            return True
+        if self.leader_reused():
+            return False
+        if self.members():
+            self._signal(signal.SIGKILL)
+        return self._wait_until_clear(grace_seconds)
+
+    def _signal(self, sig: signal.Signals) -> None:
+        if self.leader_reused():
+            return
+        try:
+            os.killpg(self.pgid, sig)
+        except (ProcessLookupError, PermissionError):
+            return
+
+    def _wait_until_clear(self, grace_seconds: float) -> bool:
+        deadline = time.monotonic() + grace_seconds
+        while True:
+            if self.leader_reused() or not self.members():
+                return not self.leader_reused()
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
+
+
+__all__ = ["OwnedProcessGroup", "process_start"]

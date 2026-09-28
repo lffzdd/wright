@@ -29,6 +29,7 @@ export const api = {
   close: (id: string) => json(`/api/v1/sessions/${id}/close`, { method: "POST", body: "{}" }),
   archive: (id: string) => json(`/api/v1/sessions/${id}/archive`, { method: "POST", body: "{}" }),
   setModel: (id: string, model: string) => json(`/api/v1/sessions/${id}/model`, { method: "POST", body: JSON.stringify({ model }) }),
+  commandStatus: (id: string, commandId: string) => json<{ command_id: string; status: string }>(`/api/v1/sessions/${id}/commands/${commandId}`),
   uploadAttachment: async (id: string, file: File) => {
     const body = new FormData();
     body.append("file", file);

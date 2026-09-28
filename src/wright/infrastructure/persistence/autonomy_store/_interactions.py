@@ -30,7 +30,7 @@ class _InteractionsMixin(_StoreBase):
         self, scope: str, request_id: str, *, resolution: dict[str, Any],
         status: str = "resolved", now: float | None = None,
     ) -> bool:
-        if status not in {"resolved", "cancelled"}:
+        if status not in {"resolved", "approved", "denied", "cancelled"}:
             raise AutonomyStoreError("invalid interaction status")
         now = time.time() if now is None else float(now)
         with self._write():

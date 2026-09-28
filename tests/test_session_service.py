@@ -279,3 +279,55 @@ def test_running_command_persists_run_identity_before_processor_returns(tmp_path
     assert service.command_status("cmd")["run_id"] == "run_before_effect"
     assert service.close(wait_timeout=1)
     runtime.autonomy_store.close()
+
+
+def test_attachment_commit_rolls_back_and_blocks_inflight_references(tmp_path):
+    runtime = _runtime()
+    runtime.session_state.attachments = {}
+    runtime.session_state.message_records = []
+    saved = []
+
+    class Checkpoint:
+        def __init__(self):
+            self.fail = False
+
+        def save(self, _session):
+            if self.fail:
+                raise OSError("disk full")
+            saved.append(tuple(runtime.session_state.attachments))
+
+    class Store:
+        def __init__(self):
+            self.removed = []
+
+        def register_bytes(self, filename, data, _existing):
+            return SimpleNamespace(id="att-1", filename=filename, size=len(data), to_dict=lambda: {"id": "att-1", "filename": filename})
+
+        def remove(self, record):
+            self.removed.append(record.id)
+
+    runtime.attachment_store = Store()
+    runtime.agent.checkpoint_store = Checkpoint()
+    service = SessionService(runtime, event_processor=lambda *_args: False, shutdown=lambda _: None)
+    added = service.add_attachment("session", "shot.png", b"png")
+    assert added["id"] == "att-1"
+    assert saved == [("att-1",)]
+    with pytest.raises(SessionServiceError, match="does not match"):
+        service.add_attachment("other", "shot.png", b"png")
+
+    service._queued["cmd"] = {"prompt": "go", "attachments": [{"id": "att-1"}]}
+    with pytest.raises(SessionServiceError, match="queued or running"):
+        service.remove_attachment("session", "att-1")
+    assert "att-1" in runtime.session_state.attachments
+    service._queued.clear()
+
+    runtime.agent.checkpoint_store.fail = True
+    with pytest.raises(SessionServiceError, match="checkpoint failed"):
+        service.remove_attachment("session", "att-1")
+    assert "att-1" in runtime.session_state.attachments
+    assert runtime.attachment_store.removed == []
+
+    runtime.agent.checkpoint_store.fail = False
+    service.remove_attachment("session", "att-1")
+    assert "att-1" not in runtime.session_state.attachments
+    assert runtime.attachment_store.removed == ["att-1"]

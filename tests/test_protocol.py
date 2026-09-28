@@ -1,8 +1,9 @@
 import pytest
 
 from tests.responses import response
-from wright.domain.model.events import ContentDone
-from wright.domain.protocol import TurnAbort, parse_turn
+from wright.application.agent.parse import TurnAbort, parse_turn
+from wright.domain.model.llm.events import ContentDone
+from wright.infrastructure.llm.wire import assistant_message
 
 
 def test_natural_text_and_json_answers_are_not_control_protocols():
@@ -29,7 +30,7 @@ def test_content_and_multiple_calls_preserve_provider_ids_and_arguments():
     assert turn.final_answer is None
     assert [call.id for call in turn.tool_calls] == ["provider_a", "provider_b"]
     assert turn.tool_calls[0].arguments == {"file": "中文.txt"}
-    assert turn.assistant_message == reply.assistant_message()
+    assert turn.assistant_message == assistant_message(reply)
     assert turn.parsed["content"] == "I will inspect both files"
 
 

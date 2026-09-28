@@ -12,18 +12,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ...core.logger import get_logger
-from ...domain.model.tasks import (
-    RuntimeTask,
-    TaskNotFoundError,
-)
 from ...infrastructure.persistence.autonomy_store import (
     AutonomyStore,
     AutonomyStoreError,
 )
 from ...infrastructure.storage.attachments import AttachmentError
+from ..agent.operations import agent_completion_notice
 from ..autonomy import launch_durable_run
 from ..composition.runtime import WrightRuntime
-from ..tasks.service import TaskService
+from .history_projection import current_run_id, latest_turn_history_id
 from .loops import (
     SessionLoopRegistry,
     parse_loop_command,
@@ -44,45 +41,14 @@ class SlashCommand:
     handler: SlashHandler | None = None
 
 
-def _task_notification_event(task: RuntimeTask) -> dict:
-    """Adapt a finished execution into a model event with a usable identifier."""
-    if task.kind == "agent":
-        identity = {"agent_task_id": task.id[:100], "object": "agent"}
-        follow_up = "Use get_agent, wait_agent, or cancel_agent with agent_task_id."
-    elif task.kind == "shell":
-        identity = {"command_id": task.id[:100], "object": "command"}
-        follow_up = (
-            "Use get_command, wait_command, list_commands, or terminate_command "
-            "with command_id."
-        )
-    else:
-        identity = {"run_id": task.id[:100], "object": "schedule_run"}
-        follow_up = (
-            "Use get_schedule_run, wait_schedule_run, or cancel_schedule_run "
-            "with run_id."
-        )
-    body = {
-        **identity,
-        "status": task.status,
-        "root_turn_id": task.root_turn_id[:180],
-        "description": task.description[:500],
-        "result": task.result[:2_000],
-        "output": task.output[-2_000:],
-        "error": task.error[:1_000],
-        "returncode": task.returncode,
-        "cancel_requested": task.cancel_requested,
-        "cancel_reason": task.cancel_reason[:500],
-    }
-    if task.status == "unknown":
-        body["outcome"] = "unconfirmed"
-        body["note"] = (
-            "Status cannot be confirmed. This is not a successful completion."
-        )
-    return {
-        "type": "task_notification",
-        "follow_up": follow_up,
-        "task": body,
-    }
+def _completion_notice(rt: WrightRuntime, identifier: str) -> dict | None:
+    """Ask the command owner, then the agent control plane. No flattened task."""
+    commands = rt.runtime_resources.commands
+    if commands is not None:
+        notice = commands.notice(identifier)
+        if notice is not None:
+            return notice
+    return agent_completion_notice(rt.session_state.control_plane, identifier)
 
 
 def _notice(rt: WrightRuntime, text: str) -> None:
@@ -287,6 +253,35 @@ def _dispatch_attachment_command(text: str, rt: WrightRuntime) -> tuple[bool, st
     return False, None
 
 
+def _publish_turn_terminal(
+    rt: WrightRuntime,
+    command_id: str,
+    started_turn_id: str,
+    error: str | None = None,
+) -> None:
+    """Publish the terminal event after the session record exists.
+
+    The history id is the turn or run that this event makes visible. It is
+    recorded by the publisher in the same lock as the sequence number.
+    """
+
+    session = rt.session_state
+    run_id = current_run_id(session)
+    identity = latest_turn_history_id(session, run_id) or run_id or started_turn_id
+    payload: dict[str, object] = {"command_id": command_id, "run_id": run_id}
+    if error is not None:
+        payload["error"] = error
+        rt.publisher.publish("turn.failed", payload, turn_id=identity)
+        return
+    if rt.cancellation_event.is_set():
+        rt.publisher.publish("turn.cancelled", payload, turn_id=identity)
+    elif session.current_run_status() == "completed":
+        rt.publisher.publish("turn.completed", payload, turn_id=identity)
+    else:
+        payload["status"] = session.current_run_status()
+        rt.publisher.publish("turn.failed", payload, turn_id=identity)
+
+
 def process_session_event(
     rt: WrightRuntime,
     event_type: str,
@@ -356,29 +351,9 @@ def process_session_event(
                 cancellation_check=rt.cancellation_event.is_set,
                 attachment_ids=attachment_ids,
             )
-            if rt.cancellation_event.is_set():
-                rt.publisher.publish(
-                    "turn.cancelled", {"command_id": command_id}, turn_id=turn_id
-                )
-            elif session_state.current_run_status() == "completed":
-                rt.publisher.publish(
-                    "turn.completed", {"command_id": command_id}, turn_id=turn_id
-                )
-            else:
-                rt.publisher.publish(
-                    "turn.failed",
-                    {
-                        "command_id": command_id,
-                        "status": session_state.current_run_status(),
-                    },
-                    turn_id=turn_id,
-                )
+            _publish_turn_terminal(rt, command_id, turn_id)
         except Exception as exc:
-            rt.publisher.publish(
-                "turn.failed",
-                {"command_id": command_id, "error": str(exc)},
-                turn_id=turn_id,
-            )
+            _publish_turn_terminal(rt, command_id, turn_id, error=str(exc))
             raise
         finally:
             agent_idle.set()
@@ -387,22 +362,21 @@ def process_session_event(
     if event_type == "TASK_DONE":
         agent_idle.clear()
         try:
-            try:
-                task = TaskService.for_session(
-                    session_state, services, rt.runtime_resources
-                ).get(str(payload))
-            except TaskNotFoundError:
+            notice = _completion_notice(rt, str(payload))
+            if notice is None:
                 logger.warning("忽略未知后台任务完成事件: %s", payload)
             else:
+                task = notice["task"]
                 active = rt.session_state.active_run_id
-                task_run = task.run_id
+                task_run = task.get("run_id") or ""
+                identifier = task.get("command_id") or task.get("agent_task_id") or payload
                 if task_run and task_run != active:
-                    # A completion from A must not become evidence for B.  The
-                    # event remains observable; a later continuation-run phase
-                    # can elect to reason over it with A's budget/lineage.
-                    _notice(rt, f"background task {task.id} for run {task_run} finished: {task.status}")
+                    _notice(
+                        rt,
+                        f"background task {identifier} for run {task_run} finished: {task.get('status')}",
+                    )
                 else:
-                    rt.agent.run_runtime_event(_task_notification_event(task))
+                    rt.agent.run_runtime_event(notice)
         finally:
             agent_idle.set()
         return False

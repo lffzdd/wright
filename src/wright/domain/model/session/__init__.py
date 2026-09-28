@@ -12,7 +12,6 @@ from .conversation import (
     UserTurnInput,
 )
 from .records import (
-    BackgroundTask,
     CallId,
     SessionLifecycle,
     ToolExecutionRecord,
@@ -20,19 +19,21 @@ from .records import (
     ToolExecutionTerminal,
     TurnRecord,
     TurnRoute,
-    UsageRecord,
     VerificationRecord,
 )
+from .run import TERMINAL_RUN_STATUSES, RunRecord, RunStatus, new_run_id
 from .session import Session
 
 __all__ = [
-    "BackgroundTask",
+    "TERMINAL_RUN_STATUSES",
     "CallId",
     "ConversationMessage",
     "ConversationPart",
     "ImagePart",
     "MessageId",
     "MessageRecord",
+    "RunRecord",
+    "RunStatus",
     "Session",
     "SessionLifecycle",
     "TextPart",
@@ -41,7 +42,7 @@ __all__ = [
     "ToolExecutionTerminal",
     "TurnRecord",
     "TurnRoute",
-    "UsageRecord",
     "UserTurnInput",
     "VerificationRecord",
+    "new_run_id",
 ]

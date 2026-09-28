@@ -6,7 +6,8 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from ...core.logger import get_logger
-from ...domain.model.session import Session, UsageRecord
+from ...domain.model.llm import UsageRecord
+from ...domain.model.session import Session
 from ..session.events import SessionEvents
 
 if TYPE_CHECKING:

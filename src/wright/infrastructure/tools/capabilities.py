@@ -1,23 +1,16 @@
-"""Bounded capability values exposed to one Agent/tool runtime."""
+"""Bounded operations exposed to one tool call.
+
+These objects are the operations a tool may invoke. They are not the session,
+the process registry, the autonomy store, or the scheduler.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from ...domain.policy.permission.types import AuthorizationChange
 from .ports import LoopOperations
-
-if TYPE_CHECKING:
-    from ...application.agent import AgentBackgroundRuntime
-    from ...application.autonomy.scheduler import AutonomyScheduler
-    from ...application.tasks.service import TaskService
-    from ...domain.model.coordination import AgentControlPlane
-    from ...domain.model.planning import PlanManager
-    from ...domain.model.session import BackgroundTask, Session
-    from ..persistence.autonomy_store import AutonomyStore
-    from ..runtime import ExecutionPath
 
 
 @dataclass(frozen=True)
@@ -31,22 +24,55 @@ class RunScope:
 
 
 @dataclass(frozen=True)
-class BackgroundTaskOperations:
-    """The only tool-facing mutation route for persisted shell task records."""
+class CommandOperations:
+    execute: Callable[..., Any]
+    get: Callable[..., dict]
+    wait: Callable[..., dict]
+    terminate: Callable[..., dict]
+    list: Callable[..., dict]
+    notice: Callable[[str], dict | None]
 
-    register: Callable[[BackgroundTask], None]
+
+@dataclass(frozen=True)
+class AgentOperations:
+    get: Callable[..., Any]
+    wait: Callable[..., Any]
+    cancel: Callable[..., tuple]
+    tree: Callable[..., list]
+    limits: Callable[[], dict]
+
+
+@dataclass(frozen=True)
+class AutonomyOperations:
+    create_schedule: Callable[..., Any]
+    get_schedule: Callable[..., Any]
+    list_schedules: Callable[..., Any]
+    pause_schedule: Callable[..., Any]
+    resume_schedule: Callable[..., Any]
+    cancel_schedule: Callable[..., Any]
+    list_runs: Callable[..., Any]
+    get_run: Callable[..., Any]
+    wait_run: Callable[..., Any]
+    cancel_run: Callable[..., Any]
 
 
 @dataclass(frozen=True)
 class DelegationOperations:
-    """Bounded access to the task-tree owner and its background runner."""
+    """Closures over the control plane. The plane itself is not an attribute."""
 
-    control: AgentControlPlane
-    agent_background: AgentBackgroundRuntime | None = None
+    begin_task: Callable[..., Any]
+    finish_task: Callable[..., Any]
+    bind_child_session: Callable[..., None]
+    add_usage: Callable[..., None]
+    request_cancel: Callable[..., None]
+    is_cancelled: Callable[[str], bool]
+    cancellation_reason: Callable[[str], str]
+    share_control_plane: Callable[[Any], None]
+    limits: Callable[[], dict]
+    tree: Callable[..., list]
+    submit_background: Callable[..., None] | None = None
     execution_journal_factory: Callable[[str, str], Any] | None = None
-    authorization_commit_factory: (
-        Callable[[Session], Callable[[AuthorizationChange], None]] | None
-    ) = None
+    authorization_commit_factory: Callable[..., Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -54,30 +80,33 @@ class ToolCapabilities:
     """Explicit capability set for one executor/run assembly."""
 
     scope: RunScope
-    set_cwd: Callable[[ExecutionPath], None] | None = None
-    plan_manager: PlanManager | None = None
-    tasks: TaskService | None = None
-    background_tasks: BackgroundTaskOperations | None = None
+    set_cwd: Callable[..., None] | None = None
+    plan_manager: Any = None
+    commands: CommandOperations | None = None
+    agents: AgentOperations | None = None
+    autonomy: AutonomyOperations | None = None
     delegation: DelegationOperations | None = None
-    durable_store: AutonomyStore | None = None
-    autonomy_scheduler: AutonomyScheduler | None = None
     loop_registry: LoopOperations | None = None
 
     def restricted(self, required: frozenset[str]) -> ToolCapabilities:
         """Return a call-local view containing only declared operations."""
-
         return ToolCapabilities(
             scope=self.scope,
             set_cwd=self.set_cwd if "cwd" in required else None,
             plan_manager=self.plan_manager if "plan" in required else None,
-            tasks=self.tasks if "tasks" in required else None,
-            background_tasks=(
-                self.background_tasks if "background" in required else None
-            ),
+            commands=self.commands if "commands" in required else None,
+            agents=self.agents if "agents" in required else None,
+            autonomy=self.autonomy if "autonomy" in required else None,
             delegation=self.delegation if "delegation" in required else None,
-            durable_store=self.durable_store if "durable" in required else None,
-            autonomy_scheduler=(
-                self.autonomy_scheduler if "autonomy" in required else None
-            ),
             loop_registry=self.loop_registry if "loop" in required else None,
         )
+
+
+__all__ = [
+    "AgentOperations",
+    "AutonomyOperations",
+    "CommandOperations",
+    "DelegationOperations",
+    "RunScope",
+    "ToolCapabilities",
+]

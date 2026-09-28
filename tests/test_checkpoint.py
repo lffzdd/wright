@@ -4,7 +4,8 @@ import pytest
 
 from tests.responses import event, response
 from wright.application.agent import create_agent
-from wright.domain.model.session import Session, UsageRecord
+from wright.domain.model.llm import UsageRecord
+from wright.domain.model.session import Session
 from wright.domain.model.tool import ArtifactRef, ToolCall, ToolResult
 from wright.domain.protocol import build_tool_results_messages
 from wright.infrastructure.persistence.session.errors import CheckpointError

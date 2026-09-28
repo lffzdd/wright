@@ -2,12 +2,10 @@ import threading
 import time
 from pathlib import Path
 
-from wright.application.tasks.service import TaskService
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.session import Session
-from wright.domain.model.tasks import TaskNotFoundError
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.domain.policy import ToolAccess
 from wright.infrastructure.tools.base import Tool
@@ -15,6 +13,7 @@ from wright.infrastructure.tools.command import (
     execute_command,
     is_execute_command_concurrency_safe,
 )
+from wright.infrastructure.tools.command.control import get_command
 from wright.infrastructure.tools.file import read_file, write_file
 from wright.infrastructure.tools.web_tools import http_request_tool
 
@@ -119,13 +118,8 @@ def test_background_tasks_belong_to_their_session(tmp_path):
     )
     task_id = result.data["command_id"]
 
-    assert TaskService.for_session(first).get(task_id).id == task_id
-    try:
-        TaskService.for_session(second).get(task_id)
-    except TaskNotFoundError:
-        pass
-    else:
-        raise AssertionError("background task leaked into another session")
+    assert first.get_command(task_id).command_id == task_id
+    assert second.get_command(task_id) is None
 
 
 def test_explicit_background_command_does_not_update_session_cwd(tmp_path):
@@ -141,14 +135,13 @@ def test_explicit_background_command_does_not_update_session_cwd(tmp_path):
     )
     task_id = result.data["command_id"]
 
+    observed = get_command(task_id, runtime=runtime)
     deadline = time.monotonic() + 2
-    while time.monotonic() < deadline:
-        task = TaskService.for_session(session).get(task_id)
-        if task.terminal:
-            break
+    while time.monotonic() < deadline and not observed.data["terminal"]:
         time.sleep(0.01)
+        observed = get_command(task_id, runtime=runtime)
 
-    assert task.terminal
+    assert observed.data["terminal"]
     assert session.get_cwd() == tmp_path
 
 
@@ -169,14 +162,13 @@ def test_timed_out_background_command_does_not_overwrite_later_cwd(tmp_path):
     session.set_cwd(later_dir)
     task_id = result.data["command_id"]
 
+    observed = get_command(task_id, runtime=runtime)
     deadline = time.monotonic() + 2
-    while time.monotonic() < deadline:
-        task = TaskService.for_session(session).get(task_id)
-        if task.terminal:
-            break
+    while time.monotonic() < deadline and not observed.data["terminal"]:
         time.sleep(0.01)
+        observed = get_command(task_id, runtime=runtime)
 
-    assert task.terminal
+    assert observed.data["terminal"]
     assert session.get_cwd() == later_dir
 
 

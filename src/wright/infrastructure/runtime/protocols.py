@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable
 from typing import Protocol, runtime_checkable
 
 from .types import (
@@ -17,7 +17,7 @@ from .types import (
 class ProcessHandle(Protocol):
     """A backend-owned process handle; no caller may depend on ``Popen``."""
 
-    def iter_output(self) -> Iterator[str]: ...
+    def read_output(self, max_bytes: int) -> bytes | None: ...
 
     def wait(self, timeout: float | None = None) -> int: ...
 
@@ -26,7 +26,9 @@ class ProcessHandle(Protocol):
     @property
     def returncode(self) -> int | None: ...
 
-    def terminate(self) -> None: ...
+    def group_alive(self) -> bool: ...
+
+    def terminate(self, *, grace_seconds: float = 2.0) -> bool: ...
 
     def cwd_result(self) -> ExecutionPath | None: ...
 

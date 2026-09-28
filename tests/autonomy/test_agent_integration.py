@@ -12,7 +12,7 @@ from wright.application.autonomy.scheduler import AutonomyScheduler
 from wright.application.composition.services import RuntimeServices
 from wright.application.skills import SkillRegistry
 from wright.domain.model.agent import AgentProfile
-from wright.domain.model.autonomy import TriggerSpec
+from wright.domain.model.automation import TriggerSpec
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolResult
 from wright.domain.policy import (

@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from wright.domain.model.session import Session, UsageRecord
+from wright.domain.model.llm import UsageRecord
+from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
 
 

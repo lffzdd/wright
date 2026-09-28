@@ -37,7 +37,7 @@ class _MemoryProcess:
     """A ProcessHandle test double with no subprocess implementation behind it."""
 
     def __init__(self, output: tuple[str, ...], cwd, *, complete: bool):
-        self._output = output
+        self._output = list(output)
         self._cwd = cwd
         self._done = threading.Event()
         self._returncode: int | None = None
@@ -45,8 +45,17 @@ class _MemoryProcess:
             self._returncode = 0
             self._done.set()
 
-    def iter_output(self):
-        return iter(self._output)
+    def read_output(self, max_bytes: int) -> bytes | None:
+        if self._output:
+            chunk = self._output[0].encode()
+            self._output = self._output[1:]
+            return chunk[:max_bytes]
+        if self._done.is_set():
+            return None
+        return b""
+
+    def group_alive(self) -> bool:
+        return not self._done.is_set()
 
     def wait(self, timeout: float | None = None) -> int:
         if not self._done.wait(timeout):
@@ -61,9 +70,10 @@ class _MemoryProcess:
     def returncode(self) -> int | None:
         return self.poll()
 
-    def terminate(self) -> None:
+    def terminate(self, *, grace_seconds: float = 2.0) -> bool:
         self._returncode = -15
         self._done.set()
+        return True
 
     def cwd_result(self):
         return self._cwd if self._done.is_set() else None
@@ -252,14 +262,12 @@ def test_independent_backend_covers_files_search_shell_and_cancellation():
 
     background = execute_command("background", run_in_background=True, runtime=runtime)
     assert background.ok
-    task_id = background.data["command_id"]
-    resources = runtime.runtime_resources.process_registry.get(task_id)
-    assert resources is not None and resources.process.poll() is None
-    resources.process.terminate()
-    assert resources.done.wait(1)
-    assert resources.process.wait(1) == -15
+    process = backend.shells[-1][1]
+    assert process.poll() is None
+    assert process.terminate() is True
+    assert process.wait(1) == -15
     assert backend.shells[-1][0] == "background"
-    runtime.runtime_resources.close()
+    runtime.capabilities.commands.terminate(background.data["command_id"])
 
 
 def test_invocation_grant_is_minimal_and_closes_cleanly(tmp_path):

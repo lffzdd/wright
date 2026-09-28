@@ -115,7 +115,6 @@ class ToolDispatchService:
         self.lifecycle = lifecycle
         self.runtime = ToolRuntime(
             capabilities=self.capabilities,
-            runtime_resources=assembly.runtime_resources,
             emit_output=on_command_output,
             emit_progress=on_progress,
             notify_background_done=on_shell_task_done,
@@ -138,7 +137,6 @@ class ToolDispatchService:
         self.runtime = replace(
             self.runtime,
             capabilities=self.capabilities,
-            runtime_resources=assembly.runtime_resources,
         )
 
     def _apply_assembly(self, assembly: CapabilityAssembly) -> None:
@@ -286,6 +284,14 @@ class ToolDispatchService:
             effective_call.id,
             self.capabilities.scope.agent_task_id,
         )
+        session_rules = ()
+        if self.session is not None:
+            from ...domain.policy.permission.settings import PermissionRule
+
+            session_rules = tuple(
+                PermissionRule.from_persistent(item)
+                for item in self.session.permission_rules
+            )
         permission = self.permission_resolver.resolve(
             effective_call,
             PermissionSubject(
@@ -298,6 +304,7 @@ class ToolDispatchService:
             scope=scope,
             identity=identity,
             cwd=fixed_cwd,
+            session_rules=session_rules,
         )
         approval_wait_ms = (time.monotonic() - permission_started) * 1_000
         self._emit_lifecycle("permission_decision", {
@@ -371,20 +378,16 @@ class ToolDispatchService:
             return
         if self._authorization_commit is not None:
             self._authorization_commit(change)
-        else:
-            if change.persistent_directories or change.persistent_rules:
-                raise RuntimeError(
-                    "persistent authorization requires an authorization commit callback"
-                )
-            if self.session is None:
-                raise RuntimeError("no session authorization store is configured")
-            for directory in change.session_directories:
-                self.session.add_working_directory(Path(directory.value))
-        commit_resolver_change = getattr(
-            self.permission_resolver, "commit_authorization_change", None
-        )
-        if callable(commit_resolver_change):
-            commit_resolver_change(change)
+            return
+        if change.persistent_directories or change.persistent_rules:
+            raise RuntimeError(
+                "persistent authorization requires an authorization commit callback"
+            )
+        if self.session is None:
+            raise RuntimeError("no session authorization store is configured")
+        from .commit import commit_authorization
+
+        commit_authorization(change, session=self.session)
 
     def _current_cwd(self) -> Path:
         try:

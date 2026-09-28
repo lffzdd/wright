@@ -1,6 +1,6 @@
 import pytest
 
-from wright.domain.model.coordination import (
+from wright.domain.model.agent.control import (
     AgentControlConfig,
     AgentControlError,
     AgentControlPlane,

@@ -4,7 +4,8 @@ from wright.application.memory.assembly import assemble_memory_manager
 from wright.application.memory.episode import episode_from_session
 from wright.application.memory.memory_service import MemoryService
 from wright.domain.gateway.memory import SelectorChoice
-from wright.domain.model.session import Session, UsageRecord
+from wright.domain.model.llm import UsageRecord
+from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.infrastructure.persistence.memory import (
     EpisodeNotFoundError,

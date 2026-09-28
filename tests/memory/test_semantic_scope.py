@@ -22,12 +22,13 @@ from wright.application.memory.llm_util import SideQueryResult
 from wright.application.memory.memory_service import MemoryService
 from wright.core.paths import project_id
 from wright.domain.gateway.memory import SelectorChoice
+from wright.domain.model.llm import UsageRecord
 from wright.domain.model.memory import (
     SemanticMemoryConflictError,
     SourceLocator,
     encode_locator,
 )
-from wright.domain.model.session import Session, UsageRecord
+from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall
 from wright.infrastructure.persistence.memory import EpisodeStore, SemanticMemoryStore
 from wright.infrastructure.persistence.memory.evidence import SessionEvidenceSource

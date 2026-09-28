@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ...core.logger import get_logger
-from ...domain.model.session import UsageRecord
+from ...domain.model.llm import UsageRecord
 
 logger = get_logger(__name__)
 

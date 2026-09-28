@@ -13,6 +13,32 @@ from .auth import COOKIE_NAME, BootstrapAuth
 from .runtime_manager import RuntimeManager, RuntimeManagerError
 
 
+def opening_frames(
+    handle: Any,
+    stream_id: str | None,
+    last_seq: int | None,
+) -> tuple[list[dict[str, Any]], int]:
+    """Replay from the requested cursor, or one snapshot at its own watermark.
+
+    The cursor is the snapshot's ``last_seq`` or the last replayed event.
+    It is not ``latest_seq`` read after the snapshot has been sent.
+    """
+
+    replay = handle.publisher.replay(stream_id, last_seq)
+    if replay is None:
+        snapshot = handle.snapshot()
+        return [{"type": "snapshot_required", "snapshot": snapshot}], int(snapshot["last_seq"])
+    frames = [event.to_dict() for event in replay]
+    cursor = replay[-1].seq if replay else (last_seq or 0)
+    return frames, cursor
+
+
+async def send_snapshot(websocket: WebSocket, handle: Any) -> int:
+    snapshot = handle.snapshot()
+    await websocket.send_json({"type": "snapshot_required", "snapshot": snapshot})
+    return int(snapshot["last_seq"])
+
+
 async def handle_session_stream(
     websocket: WebSocket,
     session_id: str,
@@ -44,27 +70,24 @@ async def handle_session_stream(
             last_seq = int(last_seq_value) if last_seq_value is not None else None
         except ValueError:
             last_seq = None
-        replay = handle.publisher.replay(stream_id, last_seq)
-        last_sent = last_seq or 0
-        if replay is None:
-            await websocket.send_json({
-                "type": "snapshot_required",
-                "snapshot": handle.snapshot(),
-            })
-            last_sent = handle.publisher.latest_seq
-        else:
-            for event in replay:
-                await websocket.send_json(event.to_dict())
-                last_sent = event.seq
+        opening, last_sent = opening_frames(handle, stream_id, last_seq)
+        for frame in opening:
+            await websocket.send_json(frame)
 
         async def send_events() -> None:
             nonlocal last_sent
             while True:
+                if handle.publisher.take_stale(subscriber_id):
+                    last_sent = await send_snapshot(websocket, handle)
+                    continue
                 try:
                     event = await asyncio.to_thread(inbox.get, True, 0.5)
                 except queue.Empty:
                     continue
                 if event.seq <= last_sent:
+                    continue
+                if event.seq != last_sent + 1:
+                    last_sent = await send_snapshot(websocket, handle)
                     continue
                 await websocket.send_json(event.to_dict())
                 last_sent = event.seq

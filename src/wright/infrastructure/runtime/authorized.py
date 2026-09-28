@@ -215,6 +215,12 @@ class AuthorizedExecution:
                 close()
 
     def start_shell(self, command: str) -> ProcessHandle:
+        """Run the approved command text in a local process.
+
+        The grant checks the command string and cwd. It does not apply file
+        grants or protected-path checks to the process, and it is not an OS
+        sandbox.
+        """
         self._operation("shell")
         if self.grant.command is not None and (
             self.grant.subject != command or self.grant.command != command
