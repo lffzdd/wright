@@ -34,6 +34,9 @@ class ToolRuntime:
     cancellation_check: Callable[[], bool] | None = None
     cancellation_reason: Callable[[], str] | None = None
     allow_background_tasks: bool = True
+    # Optional session change journal. Infrastructure calls it; it does not
+    # import the application package.
+    file_journal: Any = None
 
     def is_cancelled(self) -> bool:
         return bool(self.cancellation_check and self.cancellation_check())

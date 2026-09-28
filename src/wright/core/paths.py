@@ -76,6 +76,11 @@ def user_preferences_path() -> Path:
     return wright_home() / "preferences.json"
 
 
+def workspace_registry_path() -> Path:
+    """Registered project directories. Selection here is not a process cwd."""
+    return wright_home() / "workspaces.json"
+
+
 def user_mcp_config_path() -> Path:
     return wright_home() / "mcp.json"
 

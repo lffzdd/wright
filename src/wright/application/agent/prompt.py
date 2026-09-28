@@ -49,11 +49,15 @@ class AgentPromptManager:
 
     def visible_schema_tools(self) -> list[Tool]:
         """Schema snapshot for this request. Hides the loader when no skills exist."""
+        from ..workspace.modes import tool_visible
+
         if self.skill_loader_exposed() or not any(
             tool.name == SKILL_LOADER_NAME for tool in self.schema_tools
         ):
-            return list(self.schema_tools)
-        return [tool for tool in self.schema_tools if tool.name != SKILL_LOADER_NAME]
+            tools = list(self.schema_tools)
+        else:
+            tools = [tool for tool in self.schema_tools if tool.name != SKILL_LOADER_NAME]
+        return [tool for tool in tools if tool_visible(tool.name, self.session_state)]
 
     def skill_catalog_message(self) -> dict | None:
         if not self.skill_loader_exposed() or self.skills is None:

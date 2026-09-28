@@ -118,6 +118,7 @@ class SessionDirectory:
             ),
             "default_model": base_model,
             "models": list(available_models(base_model)),
+            **_git_fields(self.project_root),
         }
 
     def open(
@@ -204,6 +205,16 @@ class SessionDirectory:
                 self._rollback_worktree(created_worktree, context)
                 raise SessionDirectoryError("runtime did not construct ApplicationHost")
             runtime.owns_application_host = False
+            if getattr(runtime.session_state, "permission_mode", None) is None:
+                settings = getattr(runtime, "permission_settings", None)
+                if settings is not None and getattr(settings, "mode", None):
+                    runtime.session_state.permission_mode = settings.mode
+            try:
+                from ..workspace.journal import SessionChangeJournal
+
+                SessionChangeJournal(runtime.session_state).ensure_baseline()
+            except Exception:
+                logger.exception("change baseline was not captured")
             opened = OpenSession(
                 runtime=runtime,
                 service=SessionService(runtime, shutdown=shutdown_runtime),
@@ -404,6 +415,20 @@ class SessionDirectory:
             self.worktrees.archive(context)
         except Exception:
             logger.exception("failed to roll back worktree %s", context.execution_root)
+
+
+def _git_fields(root: Path) -> dict[str, Any]:
+    try:
+        from ..workspace.git_status import summarize_git
+
+        summary = summarize_git(root)
+    except Exception:
+        logger.exception("git summary failed")
+        return {"branch": None, "uncommitted_count": 0}
+    return {
+        "branch": summary.get("branch"),
+        "uncommitted_count": summary.get("uncommitted_count", 0),
+    }
 
 
 __all__ = ["OpenSession", "SessionDirectory", "SessionDirectoryError"]

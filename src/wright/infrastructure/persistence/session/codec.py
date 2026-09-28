@@ -119,6 +119,12 @@ def _serialize_session(session: Session) -> dict[str, Any]:
             "task_usage_start": _serialize_usage(session.task_usage_start),
             "model_name": session.model_name,
             "llm_transport": session.llm_transport,
+            "interaction_mode": getattr(session, "interaction_mode", "agent"),
+            "permission_mode": getattr(session, "permission_mode", None),
+            "request_context_breakdown": _json_safe(
+                getattr(session, "request_context_breakdown", {}) or {}
+            ),
+            "documents": _json_safe(getattr(session, "documents", {}) or {}),
             "attachments": {
                 attachment_id: record.to_dict()
                 for attachment_id, record in session.attachments.items()
@@ -331,6 +337,12 @@ def _deserialize_session(payload: Any) -> Session:
         or UsageRecord(),
         model_name=_optional_string(data.get("model_name"), "model_name"),
         llm_transport=_optional_string(data.get("llm_transport"), "llm_transport"),
+        interaction_mode=_interaction_mode(data.get("interaction_mode", "agent")),
+        permission_mode=_permission_mode(data.get("permission_mode")),
+        request_context_breakdown=_object(
+            data.get("request_context_breakdown", {}), "request_context_breakdown"
+        ),
+        documents=_documents(data.get("documents", {})),
         attachments=attachments,
         context_tokens=context_tokens,
         request_context_tokens=request_context_tokens,
@@ -707,6 +719,40 @@ def _optional_string(value: Any, field: str) -> str | None:
     if value is None:
         return None
     return _string(value, field, allow_empty=True)
+
+
+_INTERACTION_MODES = frozenset({"agent", "plan", "ask"})
+_PERMISSION_MODES = frozenset({"default", "acceptEdits", "bypass", "plan"})
+
+
+def _interaction_mode(value: Any) -> str:
+    if value in (None, ""):
+        return "agent"
+    text = _string(value, "interaction_mode")
+    if text not in _INTERACTION_MODES:
+        raise CheckpointError(f"非法 interaction_mode: {text}")
+    return text
+
+
+def _permission_mode(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    text = _string(value, "permission_mode")
+    if text not in _PERMISSION_MODES:
+        raise CheckpointError(f"非法 permission_mode: {text}")
+    return text
+
+
+def _documents(value: Any) -> dict[str, dict[str, Any]]:
+    if value in (None, {}):
+        return {}
+    raw = _object(value, "documents")
+    documents: dict[str, dict[str, Any]] = {}
+    for key, item in raw.items():
+        if not isinstance(item, dict):
+            raise CheckpointError("documents 的值必须是对象")
+        documents[str(key)] = dict(item)
+    return documents
 
 
 def _nonnegative_int(value: Any, field: str) -> int:

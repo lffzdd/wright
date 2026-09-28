@@ -127,6 +127,17 @@ class _AutomationsMixin(_StoreBase):
             next_cursor = encode_page_cursor(last.created_at, last.id)
         return StorePage(records, next_cursor)
 
+    def list_project_automations(self, *, limit: int = 100) -> tuple:
+        """Read every schedule in this project database, across session ids."""
+
+        limit = page_limit(limit)
+        with self._read():
+            rows = self._conn.execute(
+                "SELECT * FROM automations ORDER BY created_at DESC, id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return tuple(self._automation_from_row(row) for row in rows)
+
     def has_active_automation(self) -> bool:
         with self._read():
             row = self._conn.execute(
@@ -135,6 +146,84 @@ class _AutomationsMixin(_StoreBase):
                 (self.session_id,),
             ).fetchone()
         return row is not None
+
+    def update_automation(
+        self,
+        automation_id: str,
+        *,
+        name: str | None = None,
+        prompt: str | None = None,
+        trigger: TriggerSpec | None = None,
+        recovery_policy: str | None = None,
+        max_retries: int | None = None,
+        retry_delay_seconds: float | None = None,
+        now: float | None = None,
+    ) -> AutomationChange:
+        now = time.time() if now is None else float(now)
+        with self._write():
+            current = self._automation_for_update(automation_id)
+            if current.status not in {"active", "paused"}:
+                raise AutonomyStoreError(
+                    f"schedule {automation_id} cannot be edited from {current.status}"
+                )
+            next_name = current.name if name is None else _bounded(name, "name", 200)
+            next_prompt = current.prompt if prompt is None else _bounded(prompt, "prompt", 8_000)
+            next_trigger = current.trigger if trigger is None else self._normalize_trigger(trigger)
+            next_policy = current.recovery_policy if recovery_policy is None else recovery_policy
+            if next_policy not in {"manual", "retry"}:
+                raise AutonomyStoreError("recovery_policy must be manual or retry")
+            next_retries = current.max_retries if max_retries is None else max_retries
+            if (
+                isinstance(next_retries, bool)
+                or not isinstance(next_retries, int)
+                or not 0 <= next_retries <= 20
+            ):
+                raise AutonomyStoreError("max_retries must be between 0 and 20")
+            next_delay = (
+                current.retry_delay_seconds
+                if retry_delay_seconds is None
+                else float(retry_delay_seconds)
+            )
+            if next_delay < 0 or next_delay > 86_400:
+                raise AutonomyStoreError("retry_delay_seconds must be between 0 and 86400")
+            next_run = current.next_run_at
+            if trigger is not None and current.status == "active":
+                next_run = self._initial_next_run(next_trigger, now)
+            cursor = self._conn.execute(
+                """UPDATE automations
+                   SET name = ?, prompt = ?, trigger_type = ?, trigger_json = ?,
+                       recovery_policy = ?, max_retries = ?, retry_delay_seconds = ?,
+                       next_run_at = ?, updated_at = ?
+                   WHERE id = ? AND session_id = ? AND status IN ('active', 'paused')""",
+                (
+                    next_name, next_prompt, next_trigger.type, _dump(next_trigger.to_dict()),
+                    next_policy, int(next_retries), float(next_delay), next_run, now,
+                    automation_id, self.session_id,
+                ),
+            )
+            updated = self._automation_for_update(automation_id)
+            return AutomationChange(updated, changed=cursor.rowcount == 1)
+
+    def delete_automation_if_unused(self, automation_id: str) -> bool:
+        """Remove a cancelled schedule that has no runs. History-bearing rows stay."""
+
+        with self._write():
+            current = self._automation_for_update(automation_id)
+            if current.status != "cancelled":
+                return False
+            row = self._conn.execute(
+                """SELECT 1 FROM durable_runs
+                   WHERE automation_id = ? AND session_id = ? LIMIT 1""",
+                (automation_id, self.session_id),
+            ).fetchone()
+            if row is not None:
+                return False
+            cursor = self._conn.execute(
+                """DELETE FROM automations
+                   WHERE id = ? AND session_id = ? AND status = 'cancelled'""",
+                (automation_id, self.session_id),
+            )
+            return cursor.rowcount == 1
 
     def pause_automation(self, automation_id: str) -> AutomationChange:
         """Stop materializing new runs; already queued runs may still execute.

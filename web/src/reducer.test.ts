@@ -188,4 +188,26 @@ describe("UI event reducer", () => {
     expect(next.history[1].status).toBe("cancelled");
     expect(next.history[1].assistant).toBe("Turn cancelled.");
   });
+
+  it("updates a snapshot timeline when the approval resolves and the tool finishes", () => {
+    const waiting: ViewState = {
+      ...state,
+      pending_interactions: [{ request_id: "perm-1", kind: "permission" }],
+      timeline: [
+        { id: "user-1", kind: "text", role: "user", text: "write the note" },
+        { id: "call-1", kind: "edit", name: "write_file", phase: "pending" },
+        { id: "perm-1", kind: "approval", phase: "pending", interaction: { request_id: "perm-1", kind: "permission" } },
+      ],
+    };
+    let next = applyEvent(waiting, event(1, "interaction.resolved", { request_id: "perm-1" }));
+    expect(next.pending_interactions).toEqual([]);
+    expect(next.timeline?.some((item) => item.kind === "approval")).toBe(false);
+    next = applyEvent(next, event(2, "turn.started", { prompt: "write the note" }));
+    next = applyEvent(next, event(3, "tool.finished", { call_id: "call-1", name: "write_file", ok: true, data: { path: "note.txt" } }));
+    next = applyEvent(next, event(4, "content.final", { content: "Preview turn completed." }));
+    next = applyEvent(next, event(5, "turn.completed", { run_id: "run-1" }));
+    expect(next.timeline?.find((item) => item.id === "call-1")?.phase).toBe("succeeded");
+    expect(next.timeline?.some((item) => item.text === "Preview turn completed.")).toBe(true);
+    expect(next.active_turn).toBeNull();
+  });
 });

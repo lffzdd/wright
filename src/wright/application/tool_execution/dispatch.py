@@ -113,14 +113,31 @@ class ToolDispatchService:
         self.cancellation_check = cancellation_check
         self.on_tool_output = on_tool_output
         self.lifecycle = lifecycle
+        def _shell_finished(command_id: str) -> None:
+            journal = getattr(self.runtime, "file_journal", None)
+            if journal is not None:
+                try:
+                    journal.finish_held(command_id)
+                except Exception:
+                    logger.exception("change journal could not close %s", command_id)
+            if on_shell_task_done is not None:
+                on_shell_task_done(command_id)
+
         self.runtime = ToolRuntime(
             capabilities=self.capabilities,
             emit_output=on_command_output,
             emit_progress=on_progress,
-            notify_background_done=on_shell_task_done,
+            notify_background_done=_shell_finished,
             allow_background_tasks=allow_background_tasks,
             lifecycle=lifecycle,
         )
+        if session is not None and getattr(session, "workspace_dir", None):
+            from ..workspace.journal import SessionChangeJournal
+
+            self.runtime = replace(
+                self.runtime,
+                file_journal=SessionChangeJournal(session),
+            )
         self.executor = executor or ConcurrentToolExecutor(journal=execution_journal)
 
     def bind_run(
@@ -177,6 +194,13 @@ class ToolDispatchService:
         tool = self.tool_registry.get(tool_call.name)
         if tool is None:
             return tool_call, ToolResult.fail(err=f"Unknown tool: {tool_call.name}")
+        from ..workspace.modes import tool_visible
+
+        if not tool_visible(tool.name, self.session):
+            return tool_call, ToolResult.fail(
+                f"Interaction mode blocks {tool.name}",
+                data={"reason_code": "permission.ask_denied"},
+            )
         if self.capability_snapshot is not None and tool_call.name not in self.capability_snapshot.names:
             return tool_call, ToolResult.fail(
                 f"Capability is not authorized for this Run: {tool_call.name}"
@@ -305,6 +329,8 @@ class ToolDispatchService:
             identity=identity,
             cwd=fixed_cwd,
             session_rules=session_rules,
+            interaction_mode=getattr(self.session, "interaction_mode", "agent") if self.session is not None else "agent",
+            permission_mode=getattr(self.session, "permission_mode", None) if self.session is not None else None,
         )
         approval_wait_ms = (time.monotonic() - permission_started) * 1_000
         self._emit_lifecycle("permission_decision", {

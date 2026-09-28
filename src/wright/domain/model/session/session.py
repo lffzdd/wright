@@ -96,6 +96,15 @@ class Session:
 
     # The active main-model choice is session state so /model survives resume.
     model_name: str | None = None
+    # Execution ceilings. None permission_mode follows the settings object.
+    # A stored mode is frozen for this session and does not track later edits
+    # of the user defaults while a turn is already authorized.
+    interaction_mode: Literal["agent", "plan", "ask"] = "agent"
+    permission_mode: str | None = None
+    # Tokenizer estimate of the last assembled model request. Not billing usage.
+    request_context_breakdown: dict[str, Any] = field(default_factory=dict)
+    # Non-image uploads. Bytes stay outside the edited workspace.
+    documents: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Resolved once for a session.  A transcript with Responses reasoning items
     # cannot safely change wire protocols midway through a resumed task.
     llm_transport: str | None = None
@@ -183,6 +192,20 @@ class Session:
             self.additional_working_directories.append(resolved)
             return resolved
 
+    def remove_working_directory(self, directory: Path) -> bool:
+        """Drop one extra session root. The execution root is not in this list."""
+
+        from ...policy.permission.scope import resolve_root
+
+        resolved = resolve_root(directory)
+        with self._cwd_lock:
+            remaining = [
+                item for item in self.additional_working_directories if item != resolved
+            ]
+            changed = len(remaining) != len(self.additional_working_directories)
+            self.additional_working_directories = remaining
+            return changed
+
     def working_directories_snapshot(self) -> tuple[Path, ...]:
         """Return the current session roots without exposing mutable state."""
         with self._cwd_lock:
@@ -196,6 +219,19 @@ class Session:
         with self._cwd_lock:
             if record not in self.permission_rules:
                 self.permission_rules.append(record)
+
+    def remove_permission_rule(self, rule: dict) -> bool:
+        """Drop one session allow rule. Returns whether the list changed."""
+        if not isinstance(rule, dict):
+            raise TypeError("permission rule must be a structured record")
+        record = dict(rule)
+        with self._cwd_lock:
+            if record not in self.permission_rules:
+                return False
+            self.permission_rules = [
+                item for item in self.permission_rules if item != record
+            ]
+            return True
 
     def restore_authorization(
         self,

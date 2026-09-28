@@ -108,8 +108,16 @@ async def handle_session_stream(
                             isinstance(item, str) for item in attachment_ids
                         ):
                             raise RuntimeManagerError("attachment_ids must be a string array")
+                        document_ids = command.get("document_ids", [])
+                        if not isinstance(document_ids, list) or not all(
+                            isinstance(item, str) for item in document_ids
+                        ):
+                            raise RuntimeManagerError("document_ids must be a string array")
                         handle.submit(
-                            str(command.get("prompt", "")), command_id, attachment_ids
+                            str(command.get("prompt", "")),
+                            command_id,
+                            attachment_ids,
+                            document_ids,
                         )
                     elif command_type == "turn.cancel":
                         handle.cancel(command_id)

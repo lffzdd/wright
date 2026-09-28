@@ -107,6 +107,17 @@ def revert_persistent_authorization(change: object, path: Path | None = None) ->
     _update_settings(update, path)
 
 
+def remove_allow_rule(rule: dict, path: Path | None = None) -> None:
+    """Remove one persisted allow rule. Other rules stay in place."""
+
+    def update(data: dict) -> None:
+        permissions = data.setdefault("permissions", {})
+        allow = permissions.setdefault("allow", [])
+        permissions["allow"] = [item for item in allow if item != rule]
+
+    _update_settings(update, path)
+
+
 def append_additional_directory(directory: str, path: Path | None = None) -> None:
     """Append an extra working directory to permissions.additionalDirectories."""
     resolved = str(Path(directory).expanduser().resolve())
@@ -115,6 +126,20 @@ def append_additional_directory(directory: str, path: Path | None = None) -> Non
         extra = data.setdefault("permissions", {}).setdefault("additionalDirectories", [])
         if resolved not in extra:
             extra.append(resolved)
+
+    _update_settings(update, path)
+
+
+def remove_additional_directory(directory: str, path: Path | None = None) -> None:
+    """Remove one extra working directory. The file's other rules stay."""
+
+    resolved = str(Path(directory).expanduser().resolve())
+
+    def update(data: dict) -> None:
+        extra = data.setdefault("permissions", {}).setdefault("additionalDirectories", [])
+        data["permissions"]["additionalDirectories"] = [
+            item for item in extra if item != resolved
+        ]
 
     _update_settings(update, path)
 

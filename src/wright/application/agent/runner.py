@@ -278,6 +278,11 @@ class Agent:
         if view.omitted_optional_reminders:
             logger.info("episode_recall omitted reason=context_budget")
         self.session_state.request_context_tokens = view.estimated_tokens
+        from ..workspace.context_usage import classify_context
+
+        breakdown = classify_context(view)
+        breakdown["limit"] = self.context_limit
+        self.session_state.request_context_breakdown = breakdown
         if view.folded_record_ids:
             # The projection folded older tool results. Activated tool schemas
             # belong to the session and stay available on later requests.

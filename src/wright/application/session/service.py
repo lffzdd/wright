@@ -351,11 +351,20 @@ class SessionService:
         prompt: str,
         command_id: str | None = None,
         attachment_ids: list[str] | None = None,
+        document_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         self._require_accepting_input()
         cleaned = prompt.strip()
         attachment_ids = list(attachment_ids or [])
         attachments = self._attachments(attachment_ids)
+        from ..workspace.documents import DocumentError, render_documents
+
+        try:
+            document_text = render_documents(self.runtime.session_state, list(document_ids or []))
+        except DocumentError as exc:
+            raise SessionServiceError(str(exc)) from exc
+        if document_text:
+            cleaned = f"{cleaned}\n\n{document_text}".strip()
         if not cleaned and not attachments:
             raise SessionServiceError("prompt or attachment is required")
         command_id = command_id or uuid4().hex
@@ -486,6 +495,60 @@ class SessionService:
         set_session_model(self.runtime, model)
         return self.summary()
 
+    def set_execution_policy(
+        self,
+        *,
+        interaction_mode: str | None = None,
+        permission_mode: str | None = None,
+    ) -> dict[str, Any]:
+        """Apply mode changes only while this session is idle.
+
+        An in-flight tool keeps the grant it already received. The new ceiling
+        is used the next time permission is resolved.
+        """
+
+        self._require_accepting_input()
+        if not self.runtime.agent_idle.is_set() or self._interaction_snapshot():
+            raise SessionServiceError(
+                "a turn is still executing; change the mode when the session is idle"
+            )
+        state = self.runtime.session_state
+        if interaction_mode is not None:
+            if interaction_mode not in {"agent", "plan", "ask"}:
+                raise SessionServiceError("interaction_mode must be agent, plan, or ask")
+            state.interaction_mode = interaction_mode
+        if permission_mode is not None:
+            if permission_mode not in {"default", "acceptEdits", "bypass", "plan"}:
+                raise SessionServiceError(
+                    "permission_mode must be default, acceptEdits, bypass, or plan"
+                )
+            state.permission_mode = permission_mode
+        self._checkpoint()
+        return {
+            "session_id": state.session_id,
+            "interaction_mode": state.interaction_mode,
+            "permission_mode": state.permission_mode,
+            "effective": "next permission resolution",
+        }
+
+    def add_document(self, session_id: str, filename: str, data: bytes) -> dict[str, Any]:
+        self._require_accepting_input()
+        if session_id != self.runtime.session_state.session_id:
+            raise SessionServiceError("document session does not match")
+        from ..workspace.documents import DocumentError, store_document
+
+        try:
+            record = store_document(self.runtime.session_state, filename, data)
+        except DocumentError as exc:
+            raise SessionServiceError(str(exc)) from exc
+        self.runtime.session_state.documents[str(record["id"])] = record
+        try:
+            self._checkpoint()
+        except SessionServiceError:
+            self.runtime.session_state.documents.pop(str(record["id"]), None)
+            raise
+        return record
+
     def command_status(self, command_id: str) -> dict[str, Any]:
         """Return the durable acceptance record for a client retry/query."""
         if not command_id:
@@ -516,6 +579,8 @@ class SessionService:
             # second writable session-level task field.
             "user_goal": state.current_goal() if hasattr(state, "current_goal") else state.user_goal,
             "model": state.model_name,
+            "interaction_mode": getattr(state, "interaction_mode", "agent"),
+            "permission_mode": getattr(state, "permission_mode", None),
             "transport": getattr(state, "llm_transport", None),
             "environment": state.environment,
             "execution_root": str(state.workspace_dir),

@@ -10,6 +10,8 @@ export type SessionSummary = {
   agent_status?: string;
   user_goal?: string;
   model?: string;
+  interaction_mode?: "agent" | "plan" | "ask";
+  permission_mode?: string | null;
   environment?: "local" | "worktree";
   execution_root?: string;
   branch_name?: string;
@@ -127,6 +129,45 @@ export type Notice = {
   params?: Record<string, string>;
 };
 
+export type TimelineItem = {
+  id: string;
+  kind: "text" | "tool" | "shell" | "edit" | "approval";
+  role?: string;
+  text?: string;
+  name?: string;
+  phase?: string;
+  call_id?: string;
+  arguments?: Record<string, unknown>;
+  result?: Record<string, unknown> | null;
+  duration_ms?: number | null;
+  order?: number;
+  interaction?: Interaction;
+};
+
+export type ContextCategory = { id: string; tokens: number; share: number };
+
+export type ContextBreakdown = {
+  kind?: string;
+  exact?: boolean;
+  total?: number;
+  limit?: number | null;
+  system_prompt_contains_core_memory?: boolean;
+  categories?: ContextCategory[];
+  note?: string;
+};
+
+export type ReviewChange = {
+  path: string;
+  state: string;
+  origin?: string;
+  kind?: string;
+  display_kind?: string;
+  rename_with?: string;
+  review?: string;
+  reversible?: boolean;
+  current_sha256?: string | null;
+};
+
 export type Snapshot = {
   stream_id: string;
   last_seq: number;
@@ -139,6 +180,10 @@ export type Snapshot = {
   notices: Notice[];
   queued_commands: QueuedCommand[];
   queue_depth: number;
+  timeline?: TimelineItem[];
+  subagents?: Array<{ task_id?: string; parent_id?: string; status?: string; task?: string; ended_at?: string | null }>;
+  accessed_files?: Array<{ path: string; access?: string; tool?: string; call_id?: string }>;
+  context_breakdown?: ContextBreakdown;
   usage: {
     prompt_tokens: number | null;
     completion_tokens: number | null;

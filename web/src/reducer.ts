@@ -182,15 +182,19 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
         tools: next.active_turn.tools,
       }];
     }
+    const finished = next.active_turn?.content ?? "";
+    if (finished && next.timeline && !next.timeline.some((item) => item.kind === "text" && item.text === finished)) {
+      next.timeline = [...next.timeline, { id: event.event_id, kind: "text", role: "assistant", text: finished }];
+    }
     next.active_turn = null;
     next.session = { ...next.session, status: "idle", agent_status: event.type.split(".")[1] };
     if (event.type !== "turn.completed") next = addNotice(next, event);
   } else if (event.type === "interaction.requested") {
     next.pending_interactions = [...next.pending_interactions, event.payload as Interaction];
   } else if (event.type === "interaction.resolved") {
-    next.pending_interactions = next.pending_interactions.filter(
-      (item) => item.request_id !== String(event.payload.request_id ?? ""),
-    );
+    const requestId = String(event.payload.request_id ?? "");
+    next.pending_interactions = next.pending_interactions.filter((item) => item.request_id !== requestId);
+    if (next.timeline) next.timeline = next.timeline.filter((item) => item.kind !== "approval" || item.id !== requestId);
   } else if (event.type === "usage.request") {
     next.usage = {
       ...next.usage,
@@ -251,6 +255,27 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
       ...(typeof queueReason === "string" ? { queue_reason: queueReason } : {}),
       ...(knownExecution ? { status: lifecycle === "closing" || lifecycle === "closed" ? lifecycle : execution } : {}),
     };
+  }
+  if (next.timeline && event.type.startsWith("tool.")) {
+    const callId = String(event.payload.call_id ?? "");
+    if (callId) {
+      const phase = event.type === "tool.finished" ? (event.payload.ok ? "succeeded" : "failed") : event.type.slice("tool.".length);
+      const result = event.payload.data && typeof event.payload.data === "object" ? event.payload.data as Record<string, unknown> : undefined;
+      const index = next.timeline.findIndex((item) => item.id === callId);
+      if (index >= 0) {
+        const copy = next.timeline.slice();
+        copy[index] = { ...copy[index], phase, ...(result ? { result } : {}) };
+        next.timeline = copy;
+      } else {
+        next.timeline = [...next.timeline, { id: callId, kind: "tool", name: String(event.payload.name ?? ""), phase, ...(result ? { result } : {}) }];
+      }
+    }
+  }
+  if (next.timeline && event.type === "content.final") {
+    const text = String(event.payload.content ?? "");
+    if (text && !next.timeline.some((item) => item.kind === "text" && item.text === text)) {
+      next.timeline = [...next.timeline, { id: event.event_id, kind: "text", role: "assistant", text }];
+    }
   }
   return next;
 }

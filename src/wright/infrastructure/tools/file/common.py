@@ -60,7 +60,31 @@ def _read_text(path: ExecutionPath, runtime: ToolRuntime, *, replace: bool = Fal
 
 
 def _write_text(path: ExecutionPath, content: str, encoding: str, runtime: ToolRuntime) -> None:
+    journal = getattr(runtime, "file_journal", None)
+    before = None
+    existed = False
+    absolute = Path(path.value)
+    if journal is not None and absolute.is_file():
+        existed = True
+        try:
+            before = absolute.read_text(encoding=encoding)
+        except (OSError, UnicodeError):
+            before = None
     _backend(runtime).write_text(path, content, encoding=encoding)
+    if journal is None:
+        return
+    try:
+        journal.note_text(
+            absolute,
+            before=before,
+            after=content,
+            existed=existed,
+            call_id=getattr(runtime, "tool_call_id", ""),
+            tool_name=getattr(runtime, "tool_name", ""),
+        )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("change journal missed a file write")
 
 
 @dataclass(frozen=True)

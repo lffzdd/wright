@@ -46,6 +46,10 @@ class PermissionPolicy:
 
     _AUTO_DEFAULT = frozenset({"file_read", "internal_read", "plan_update"})
     _EDIT_OPERATIONS = frozenset({"file_read", "file_write"})
+    _ASK_OPERATIONS = frozenset({
+        "file_read", "internal_read", "network_read", "user_interaction",
+    })
+    _PLAN_OPERATIONS = _ASK_OPERATIONS | frozenset({"plan_update"})
 
     def __init__(self, settings: PermissionSettings | None = None):
         self.settings = settings
@@ -59,27 +63,34 @@ class PermissionPolicy:
         in_scope: bool,
         context: MatchContext | None = None,
         session_rules: tuple[PermissionRule, ...] = (),
+        interaction_mode: str = "agent",
+        permission_mode: str | None = None,
     ) -> tuple[PermissionDecision, str, str, str, dict[str, str]]:
         """Return decision, English reason, source, display code, and display params."""
 
         settings = self.settings
-        mode = settings.mode if settings is not None else "default"
+        mode = permission_mode or (settings.mode if settings is not None else "default")
+        if interaction_mode == "ask" and (
+            "unknown" in access.operations
+            or any(operation not in self._ASK_OPERATIONS for operation in access.operations)
+        ):
+            return (
+                "deny",
+                "Ask mode blocks this operation",
+                "mode",
+                "permission.ask_denied",
+                {},
+            )
+        if interaction_mode == "plan":
+            # Plan is a ceiling. Bypass and allow rules cannot widen it.
+            mode = "plan"
 
         # Hard mode restrictions precede configurable rules.  In particular,
         # bypass and an allow rule cannot turn a plan-mode write/MCP/control
         # operation into an executable call.
         if mode == "plan" and (
             "unknown" in access.operations
-            or any(
-                operation not in {
-                    "file_read",
-                    "internal_read",
-                    "plan_update",
-                    "network_read",
-                    "user_interaction",
-                }
-                for operation in access.operations
-            )
+            or any(operation not in self._PLAN_OPERATIONS for operation in access.operations)
         ):
             return "deny", "Plan mode blocks this operation", "mode", "permission.plan_denied", {}
 
@@ -164,6 +175,8 @@ class PermissionPolicy:
         in_scope: bool,
         context: MatchContext | None = None,
         session_rules: tuple[PermissionRule, ...] = (),
+        interaction_mode: str = "agent",
+        permission_mode: str | None = None,
     ) -> tuple[PermissionDecision, str, str, str, dict[str, str]]:
         return self.evaluate(
             access,
@@ -172,6 +185,8 @@ class PermissionPolicy:
             in_scope=in_scope,
             context=context,
             session_rules=session_rules,
+            interaction_mode=interaction_mode,
+            permission_mode=permission_mode,
         )
 
 
@@ -202,6 +217,8 @@ class PermissionResolver:
         identity: InvocationIdentity,
         cwd: ExecutionPath | None = None,
         session_rules: tuple[PermissionRule, ...] = (),
+        interaction_mode: str = "agent",
+        permission_mode: str | None = None,
         _rewrite_depth: int = 0,
     ) -> PermissionResolution:
         arguments = dict(tool_call.arguments)
@@ -269,6 +286,8 @@ class PermissionResolver:
             in_scope=in_scope,
             context=context,
             session_rules=session_rules,
+            interaction_mode=interaction_mode,
+            permission_mode=permission_mode,
         )
 
         remember_rule = _rememberable_rule(
@@ -420,6 +439,8 @@ class PermissionResolver:
                     identity=identity,
                     cwd=fixed_cwd,
                     session_rules=session_rules,
+                    interaction_mode=interaction_mode,
+                    permission_mode=permission_mode,
                     _rewrite_depth=_rewrite_depth + 1,
                 )
 

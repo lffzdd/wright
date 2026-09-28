@@ -42,6 +42,7 @@ describe("session isolation", () => {
   it("does not show a failed changes request as a clean worktree", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ detail: "diff failed" }, false)));
     render(<Inspector state={view("session-a")} sessionId="session-a" open close={() => undefined} />);
+    fireEvent.click(screen.getByRole("tab", { name: /changes/i }));
     expect((await screen.findByRole("alert")).textContent).toContain("diff failed");
     expect(screen.queryByText(/Working tree is clean/)).toBeNull();
   });
@@ -55,6 +56,7 @@ describe("session isolation", () => {
     }));
     const { rerender } = render(<Inspector state={view("session-a")} sessionId="session-a" open close={() => undefined} />);
     rerender(<Inspector state={view("session-b")} sessionId="session-b" open close={() => undefined} />);
+    fireEvent.click(screen.getByRole("tab", { name: /changes/i }));
     expect(await screen.findByText("b.txt")).toBeDefined();
     releaseA(jsonResponse({ local_warning: false, baseline: "head", changes: [{ path: "a.txt", status: "M" }] }));
     await Promise.resolve();

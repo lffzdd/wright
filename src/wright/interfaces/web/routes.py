@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import (
     APIRouter,
@@ -15,12 +15,14 @@ from fastapi import (
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from ...infrastructure.config.preferences import load_preferences, save_preference
 from ...infrastructure.workspace.worktrees import WorktreeError
 from ..i18n import t
 from ..i18n.locale import LOCALE_LABELS, SUPPORTED_LOCALES, get_locale, set_locale
 from .auth import COOKIE_NAME, BootstrapAuth
 from .diff import DiffError, change_patch, list_changes
 from .runtime_manager import RuntimeManager, RuntimeManagerError
+from .workspace_routes import add_workspace_routes
 
 
 class BootstrapRequest(BaseModel):
@@ -39,7 +41,9 @@ class ModelRequest(BaseModel):
 
 
 class PreferenceRequest(BaseModel):
-    interface_language: str
+    interface_language: str | None = None
+    theme: Literal["dark", "light"] | None = None
+    inspector_open: bool | None = None
 
 
 def _require_auth(request: Request, auth: BootstrapAuth) -> None:
@@ -73,20 +77,20 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
     @router.get("/preferences")
     def preferences(request: Request) -> dict[str, Any]:
         _require_auth(request, auth)
-        locale = get_locale()
-        return {
-            "interface_language": locale,
-            "supported": [
-                {"id": item, "label": LOCALE_LABELS[item]} for item in SUPPORTED_LOCALES
-            ],
-            "note": t("web.language_note"),
-        }
+        return _preference_view()
 
     @router.put("/preferences")
-    def update_preferences(body: PreferenceRequest, request: Request) -> dict[str, str]:
+    def update_preferences(body: PreferenceRequest, request: Request) -> dict[str, Any]:
         _require_auth(request, auth)
-        locale = set_locale(body.interface_language, persist=True)
-        return {"interface_language": locale}
+        if body.interface_language is None and body.theme is None and body.inspector_open is None:
+            raise HTTPException(status_code=400, detail="at least one preference is required")
+        if body.interface_language is not None:
+            set_locale(body.interface_language, persist=True)
+        if body.theme is not None:
+            save_preference("theme", body.theme)
+        if body.inspector_open is not None:
+            save_preference("inspector_open", body.inspector_open)
+        return _preference_view()
 
     @router.get("/project")
     def project(request: Request) -> dict[str, Any]:
@@ -252,4 +256,24 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
         except DiffError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    add_workspace_routes(router, manager, auth)
     return router
+
+
+def _preference_view() -> dict[str, Any]:
+    stored = load_preferences()
+    theme = stored.get("theme")
+    if theme not in {"dark", "light"}:
+        theme = "dark"
+    inspector = stored.get("inspector_open")
+    if not isinstance(inspector, bool):
+        inspector = True
+    return {
+        "interface_language": get_locale(),
+        "supported": [
+            {"id": item, "label": LOCALE_LABELS[item]} for item in SUPPORTED_LOCALES
+        ],
+        "note": t("web.language_note"),
+        "theme": theme,
+        "inspector_open": inspector,
+    }

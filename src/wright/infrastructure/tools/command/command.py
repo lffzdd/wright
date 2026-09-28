@@ -25,6 +25,8 @@ def execute_command(
         return ToolResult.fail("command tool requires command execution")
     if runtime.execution is None:
         return ToolResult.fail("command tool requires an invocation authorization")
+    journal = getattr(runtime, "file_journal", None)
+    before = journal.capture() if journal is not None else None
     outcome = commands.execute(
         command=command,
         timeout=timeout,
@@ -38,6 +40,20 @@ def execute_command(
         access_scope=runtime.access_scope,
         set_cwd=capabilities.set_cwd,
     )
+    if journal is not None and before is not None:
+        data = outcome.data or {}
+        if "returncode" in data:
+            try:
+                journal.commit_capture(
+                    before,
+                    call_id=getattr(runtime, "tool_call_id", ""),
+                    tool_name="execute_command",
+                )
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception("change journal missed a command")
+        elif data.get("command_id"):
+            journal.hold(str(data["command_id"]), before, call_id=getattr(runtime, "tool_call_id", ""))
     return _project(outcome)
 
 

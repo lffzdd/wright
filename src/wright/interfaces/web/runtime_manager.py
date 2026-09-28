@@ -174,11 +174,12 @@ class SessionHandle:
 
     def submit(
         self, prompt: str, command_id: str, attachment_ids: list[str] | None = None,
+        document_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         if not command_id:
             raise RuntimeManagerError("command_id is required")
         try:
-            return self.service.submit(prompt, command_id, attachment_ids)
+            return self.service.submit(prompt, command_id, attachment_ids, document_ids)
         except SessionServiceError as exc:
             raise RuntimeManagerError(str(exc)) from exc
 
@@ -240,6 +241,16 @@ class SessionHandle:
                 }
             usage = state.task_usage()
             request = view["request_usage"]
+            from ...application.workspace.context_usage import empty_context
+            from ...application.workspace.timeline import (
+                project_accessed_files,
+                project_subagents,
+                project_timeline,
+            )
+
+            breakdown = getattr(state, "request_context_breakdown", None)
+            if not isinstance(breakdown, dict) or not breakdown:
+                breakdown = empty_context(getattr(self.runtime.llm, "context_limit", None))
             queued_commands = [
                 {
                     "command_id": item["command_id"],
@@ -282,6 +293,7 @@ class SessionHandle:
                 "queued_commands": queued_commands,
                 "queue_depth": len(queued_commands),
                 "usage": {
+                    "kind": "provider_billing",
                     "prompt_tokens": usage.prompt_tokens,
                     "completion_tokens": usage.completion_tokens,
                     "total_tokens": usage.total_tokens,
@@ -299,6 +311,12 @@ class SessionHandle:
                         else self.runtime.llm.context_limit
                     ),
                 },
+                "context_breakdown": breakdown,
+                "timeline": project_timeline(
+                    state, service_snapshot["pending_interactions"],
+                ),
+                "subagents": project_subagents(state),
+                "accessed_files": project_accessed_files(state),
             }
 
         return self.publisher.capture(build)
@@ -327,6 +345,26 @@ class SessionHandle:
         except SessionServiceError as exc:
             raise RuntimeManagerError(str(exc)) from exc
         return self.summary()
+
+    def set_execution_policy(
+        self,
+        *,
+        interaction_mode: str | None = None,
+        permission_mode: str | None = None,
+    ) -> dict[str, Any]:
+        try:
+            return self.service.set_execution_policy(
+                interaction_mode=interaction_mode,
+                permission_mode=permission_mode,
+            )
+        except SessionServiceError as exc:
+            raise RuntimeManagerError(str(exc), status_code=409) from exc
+
+    def upload_document(self, filename: str, data: bytes) -> dict[str, Any]:
+        try:
+            return self.service.add_document(self.session_id, filename, data)
+        except SessionServiceError as exc:
+            raise RuntimeManagerError(str(exc), status_code=409) from exc
 
     def close(self) -> bool:
         return self.service.close(wait_timeout=5)
@@ -370,13 +408,25 @@ class RuntimeManager:
         prompt: str | None = None,
         resume_session_id: str | None = None,
     ) -> SessionHandle:
+        return self._open_on(
+            self.directory, environment, model, prompt, resume_session_id,
+        )
+
+    def _open_on(
+        self,
+        directory: SessionDirectory,
+        environment: str | None,
+        model: str | None,
+        prompt: str | None,
+        resume_session_id: str | None,
+    ) -> SessionHandle:
         session_id = resume_session_id or uuid4().hex[:12]
         publisher = EventPublisher(
-            project_id=project_id(self.project_root), session_id=session_id,
+            project_id=project_id(directory.project_root), session_id=session_id,
         )
         broker = InteractionBroker(publisher)
         try:
-            opened = self.directory.open(
+            opened = directory.open(
                 environment=environment,
                 model=model,
                 resume_session_id=resume_session_id,
@@ -394,6 +444,7 @@ class RuntimeManager:
             publisher.close()
             raise
         handle = SessionHandle(opened=opened)
+        handle.owner = directory
         with self._lock:
             self._handles[handle.session_id] = handle
         publisher.publish("session.snapshot", handle.snapshot())
@@ -421,17 +472,21 @@ class RuntimeManager:
     def close(self, session_id: str) -> dict[str, Any]:
         with self._lock:
             handle = self._handles.get(session_id)
+        directory = getattr(handle, "owner", self.directory) if handle is not None else self.directory
         if handle is None:
-            return self.directory.close(session_id)
-        summary = self.directory.close(session_id)
+            return directory.close(session_id)
+        summary = directory.close(session_id)
         if handle.closed:
             with self._lock:
                 self._handles.pop(session_id, None)
         return summary
 
     def archive(self, session_id: str) -> ArchiveResult:
+        with self._lock:
+            handle = self._handles.get(session_id)
+        directory = getattr(handle, "owner", self.directory) if handle is not None else self.directory
         try:
-            return self.directory.archive(session_id)
+            return directory.archive(session_id)
         except SessionDirectoryError as exc:
             raise RuntimeManagerError(str(exc)) from exc
         finally:
@@ -443,4 +498,83 @@ class RuntimeManager:
     def shutdown(self) -> None:
         with self._lock:
             self._handles.clear()
+            extras = list(getattr(self, "_directories", {}).values())
+            self._directories = {}
+        for directory in extras:
+            directory.shutdown()
         self.directory.shutdown()
+
+    def _catalog(self):
+        from ...application.workspace.catalog import WorkspaceCatalog
+
+        catalog = getattr(self, "_workspace_catalog", None)
+        if catalog is None:
+            catalog = WorkspaceCatalog()
+            self._workspace_catalog = catalog
+        return catalog
+
+    def workspaces(self) -> dict[str, Any]:
+        return self._catalog().bootstrap(self.project_root)
+
+    def register_workspace(self, root: str) -> dict[str, Any]:
+        from ...application.workspace.catalog import WorkspaceCatalogError
+
+        try:
+            return self._catalog().register(Path(root))
+        except WorkspaceCatalogError as exc:
+            raise RuntimeManagerError(str(exc), status_code=400) from exc
+
+    def unregister_workspace(self, project_id: str) -> dict[str, Any]:
+        from ...application.workspace.catalog import WorkspaceCatalogError
+
+        try:
+            return self._catalog().unregister(project_id)
+        except WorkspaceCatalogError as exc:
+            raise RuntimeManagerError(str(exc), status_code=404) from exc
+
+    def select_workspace(self, project_id: str) -> dict[str, Any]:
+        """Record the UI selection. Open sessions keep their execution roots."""
+
+        from ...application.workspace.catalog import WorkspaceCatalogError
+
+        try:
+            selected = self._catalog().select(project_id)
+        except WorkspaceCatalogError as exc:
+            raise RuntimeManagerError(str(exc), status_code=404) from exc
+        return {**selected, "running_sessions_unchanged": True}
+
+    def _directory_for(self, registered_id: str) -> SessionDirectory:
+        from ...application.workspace.catalog import WorkspaceCatalogError
+
+        if registered_id == project_id(self.project_root):
+            return self.directory
+        try:
+            record = self._catalog().get(registered_id)
+        except WorkspaceCatalogError as exc:
+            raise RuntimeManagerError(str(exc), status_code=404) from exc
+        root = Path(str(record["root"]))
+        with self._lock:
+            directories = getattr(self, "_directories", None)
+            if directories is None:
+                directories = {}
+                self._directories = directories
+            found = directories.get(registered_id)
+            if found is None:
+                found = SessionDirectory(root, capacity=self.capacity, base_args=self.base_args)
+                directories[registered_id] = found
+            return found
+
+    def workspace_sessions(self, registered_id: str) -> list[dict[str, Any]]:
+        return self._directory_for(registered_id).list_sessions()
+
+    def create_in_workspace(
+        self,
+        project_id: str,
+        *,
+        environment: str | None = None,
+        model: str | None = None,
+        prompt: str | None = None,
+        resume_session_id: str | None = None,
+    ) -> SessionHandle:
+        directory = self._directory_for(project_id)
+        return self._open_on(directory, environment, model, prompt, resume_session_id)
