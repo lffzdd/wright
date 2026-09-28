@@ -23,6 +23,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { DiffViewer } from "./DiffViewer";
 import { MarkdownContent } from "./Markdown";
 import { api, bootstrap } from "./api";
+import { getLocale, present, setLocale, t, useT } from "./i18n";
 import { commandAfter, parseEvent } from "./protocol";
 import { applyEvent } from "./reducer";
 import type { Attachment, Interaction, SessionSummary, Snapshot, ViewState } from "./types";
@@ -81,6 +82,7 @@ function ModelSelector({
   running: boolean;
   onSelect: (model: string) => void;
 }) {
+  const tr = useT();
   const [open, setOpen] = useState(false);
   const [custom, setCustom] = useState("");
   const [extras, setExtras] = useState<string[]>([]);
@@ -105,7 +107,7 @@ function ModelSelector({
         className="model-selector-btn"
         disabled={running}
         onClick={() => setOpen(!open)}
-        title={running ? "Cannot change model while turn is running" : "Change session model"}
+        title={running ? tr("web.model_running") : tr("web.model_change")}
       >
         <span>{currentModel || "configured model"}</span>
         <CaretDown size={11} className={open ? "rotated" : ""} />
@@ -144,7 +146,7 @@ function ModelSelector({
           >
             <input
               type="text"
-              placeholder="Custom model…"
+              placeholder={tr("web.model_custom")}
               value={custom}
               onChange={(e) => setCustom(e.target.value)}
             />
@@ -173,15 +175,16 @@ function SessionRail({
   open: boolean;
   onClose: () => void;
 }) {
+  const tr = useT();
   const active = sessions.filter((item) => item.active);
   const history = sessions.filter((item) => !item.active);
   return (
     <aside className={`session-rail ${open ? "responsive-open" : ""}`}>
       <div className="rail-heading">
-        <span>SESSIONS</span>
+        <span>{tr("web.sessions")}</span>
         <div className="rail-buttons">
-          <button className="icon-button responsive-only" onClick={onClose} title="Close sessions (Esc)" aria-label="Close sessions"><X size={16} /></button>
-          <button className="icon-button" onClick={onCreate} title="New session (⌘K)" aria-label="New session (⌘K)"><Plus size={16} /></button>
+          <button className="icon-button responsive-only" onClick={onClose} title={tr("web.close_sessions_title")} aria-label={tr("web.close_sessions")}><X size={16} /></button>
+          <button className="icon-button" onClick={onCreate} title={tr("web.new_session")} aria-label={tr("web.new_session")}><Plus size={16} /></button>
         </div>
       </div>
       <div className="session-list">
@@ -189,13 +192,13 @@ function SessionRail({
           <button key={session.session_id} className={`session-item ${selected === session.session_id ? "selected" : ""}`} onClick={() => onSelect(session)}>
             <StatusDot status={session.execution || session.status} />
             <span className="session-copy">
-              <strong>{session.user_goal && session.user_goal !== "(interactive session)" ? session.user_goal : `Session ${session.session_id.slice(0, 6)}`}</strong>
-              <small>{session.execution === "queued" ? (session.queue_reason || "Queued for this directory") : session.execution === "waiting_for_input" ? "Waiting for permission or a reply" : `${session.environment} · ${session.model ?? "configured model"}`}</small>
+              <strong>{session.user_goal && session.user_goal !== "(interactive session)" ? session.user_goal : tr("web.session_label", { id: session.session_id.slice(0, 6) })}</strong>
+              <small>{session.execution === "queued" ? (session.queue_reason || tr("web.queued_directory")) : session.execution === "waiting_for_input" ? tr("web.waiting") : `${session.environment} · ${session.model ?? tr("web.configured_model")}`}</small>
             </span>
             {Boolean(session.pending_interactions) && <Warning size={15} weight="fill" className="warning-icon" />}
           </button>
         ))}
-        {!active.length && <p className="empty-small">No active sessions</p>}
+        {!active.length && <p className="empty-small">{tr("web.no_active")}</p>}
       </div>
       <div className="rail-heading history-heading"><span>HISTORY</span></div>
       <div className="session-list history-list">
@@ -204,7 +207,7 @@ function SessionRail({
             key={session.session_id}
             className="session-item"
             disabled={session.recoverable === false}
-            title={session.recoverable === false ? "Archived worktree was removed; checkpoint is retained for history only" : "Resume session"}
+            title={session.recoverable === false ? tr("web.archived") : tr("web.resume")}
             onClick={() => onSelect(session)}
           >
             <StatusDot status="closed" />
@@ -267,7 +270,27 @@ export function InteractionCard({ interaction, respond }: {
   const [error, setError] = useState("");
   const [kept, setKept] = useState("");
   const sending = useRef(false);
+  const tr = useT();
   const isPermission = interaction.kind === "permission";
+  const reason = present(interaction.reason_code, interaction.reason_params, interaction.reason ?? "");
+  const grant = present(interaction.summary_code, interaction.summary_params, interaction.grant_summary ?? "");
+  const choiceText = (choice: { id: string; label: string; scope: string; persistence: string }) => {
+    const label = present(`permission.choice.${choice.id}`, undefined, choice.label);
+    const scopeKey = choice.id === "allow_once" ? "permission.scope.once" : choice.id === "deny" ? "permission.scope.none" : "";
+    const persistenceKey = {
+      allow_once: "permission.persistence.none",
+      deny: "permission.persistence.none",
+      allow_session_directory: "permission.persistence.session_directory",
+      allow_persistent_directory: "permission.persistence.persistent_directory",
+      allow_session_rule: "permission.persistence.session_rule",
+      allow_persistent_rule: "permission.persistence.persistent_rule",
+    }[choice.id] ?? "";
+    return {
+      label,
+      scope: present(scopeKey, undefined, choice.scope),
+      persistence: present(persistenceKey, undefined, choice.persistence),
+    };
+  };
   const choose = (choiceId: string) => {
     if (sending.current) return;
     sending.current = true;
@@ -278,46 +301,49 @@ export function InteractionCard({ interaction, respond }: {
       if (accepted === false) {
         sending.current = false;
         setSubmitting("");
-        setError("The decision was not accepted. Your choice is still selected; retry when the stream is connected.");
+        setError(t("web.decision_failed"));
       }
     }).catch(() => {
       sending.current = false;
       setSubmitting("");
-      setError("The decision was not accepted. Your choice is still selected; retry when the stream is connected.");
+      setError(t("web.decision_failed"));
     });
   };
   return (
     <section className="interaction-card" role="alert">
-      <div className="interaction-title"><Warning size={18} weight="fill" /><strong>{isPermission ? `Permission · ${interaction.tool_name}` : "Wright needs input"}</strong>{interaction.agent_task_id ? <small>Subagent {interaction.agent_task_id}</small> : null}</div>
+      <div className="interaction-title"><Warning size={18} weight="fill" /><strong>{isPermission ? tr("web.permission_title", { tool: interaction.tool_name ?? "" }) : tr("web.needs_input")}</strong>{interaction.agent_task_id ? <small>{tr("web.subagent", { id: interaction.agent_task_id })}</small> : null}</div>
       {isPermission ? <>
-        {interaction.operation && <p>Operation: {interaction.operation}</p>}
+        {interaction.operation && <p>{tr("web.operation", { value: interaction.operation })}</p>}
         <p>{interaction.subject}</p>
-        {interaction.reason && <p>Reason: {interaction.reason}</p>}
-        {interaction.grant_summary && <p>Grant: {interaction.grant_summary}</p>}
+        {reason && <p>{tr("web.reason", { value: reason })}</p>}
+        {grant && <p>{tr("web.grant", { value: grant })}</p>}
         {(interaction.http_method || interaction.http_target) && <p>HTTP: {interaction.http_method} {interaction.http_target}</p>}
-        {interaction.command && <p>Command: {interaction.command}</p>}
-        {interaction.cwd && <p>Directory: {interaction.cwd}</p>}
-        {interaction.shell_note && <p>{interaction.shell_note}</p>}
+        {interaction.command && <p>{tr("web.command", { value: interaction.command })}</p>}
+        {interaction.cwd && <p>{tr("web.directory", { value: interaction.cwd })}</p>}
+        {interaction.shell_note && <p>{present("permission.shell_note", { cwd: interaction.cwd ?? "" }, interaction.shell_note)}</p>}
         {interaction.preview && <pre className="permission-preview">{interaction.preview}</pre>}
       </> : <p>{interaction.question}</p>}
-      {isPermission && interaction.risk_flags?.length && <small>Risk: {interaction.risk_flags.join(", ")}</small>}
+      {isPermission && interaction.risk_flags?.length && <small>{tr("web.risk", { value: interaction.risk_flags.join(", ") })}</small>}
       {isPermission && interaction.targets?.length && <div className="permission-scope">
-        <small><strong>Targets:</strong> <code>{interaction.targets.join("; ")}</code></small>
-        {interaction.principal && <small><strong>Principal:</strong> {interaction.principal}</small>}
+        <small><strong>{tr("web.targets")}</strong> <code>{interaction.targets.join("; ")}</code></small>
+        {interaction.principal && <small><strong>{tr("web.principal")}</strong> {interaction.principal}</small>}
       </div>}
       {interaction.context && <small>{interaction.context}</small>}
-      {error && <p role="status">{error}{kept ? ` Kept choice: ${kept}.` : ""}</p>}
+      {error && <p role="status">{error}{kept ? tr("web.kept_choice", { choice: kept }) : ""}</p>}
       {isPermission ? <div className="interaction-actions">
-        {interaction.choices?.map((choice) => <button
+        {interaction.choices?.map((choice) => {
+          const text = choiceText(choice);
+          return <button
           key={choice.id}
           className={`button ${choice.id === "deny" ? "secondary" : "primary"}`}
           disabled={Boolean(submitting)}
           onClick={() => choose(choice.id)}
-        >{submitting === choice.id ? "Submitting…" : choice.label}<small>{choice.scope} · {choice.persistence}</small></button>)}
-      </div> : <form className="ask-form" onSubmit={(event) => { event.preventDefault(); if (answer.trim() && !submitting) { setSubmitting("answer"); const sent = respond(interaction.request_id, answer.trim()); Promise.resolve(sent).then((accepted) => { if (accepted === false) { setSubmitting(""); setError("The answer was not sent. It is still in the box."); } }); } }}>
+        >{submitting === choice.id ? tr("web.submitting") : text.label}<small>{text.scope} · {text.persistence}</small></button>;
+        })}
+      </div> : <form className="ask-form" onSubmit={(event) => { event.preventDefault(); if (answer.trim() && !submitting) { setSubmitting("answer"); const sent = respond(interaction.request_id, answer.trim()); Promise.resolve(sent).then((accepted) => { if (accepted === false) { setSubmitting(""); setError(t("web.answer_failed")); } }); } }}>
         {interaction.options?.map((option) => <button type="button" className="option-button" key={option} disabled={Boolean(submitting)} onClick={() => { if (submitting) return; setSubmitting(option); const sent = respond(interaction.request_id, option); Promise.resolve(sent).then((accepted) => { if (accepted === false) setSubmitting(""); }); }}>{option}</button>)}
-        <input aria-label="Answer" value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="Type an answer…" />
-        <button className="icon-button" aria-label="Submit answer" disabled={Boolean(submitting)}><PaperPlaneRight size={16} /></button>
+        <input aria-label={tr("web.answer")} value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder={tr("web.answer_placeholder")} />
+        <button className="icon-button" aria-label={tr("web.submit_answer")} disabled={Boolean(submitting)}><PaperPlaneRight size={16} /></button>
       </form>}
     </section>
   );
@@ -334,6 +360,7 @@ function MessageAttachments({ sessionId, attachments }: { sessionId: string; att
 }
 
 function Timeline({ state, respond, cancelQueued }: { state: ViewState; respond: (requestId: string, answer: unknown) => boolean | Promise<boolean>; cancelQueued: (commandId: string) => void }) {
+  const tr = useT();
   const bottom = useRef<HTMLDivElement>(null);
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
@@ -342,16 +369,16 @@ function Timeline({ state, respond, cancelQueued }: { state: ViewState; respond:
     <div className="timeline">
       {!state.history.length && !state.active_turn && <div className="welcome">
         <Sparkle size={30} weight="duotone" />
-        <h2>Ready in this workspace</h2>
-        <p>Ask Wright to inspect, change, or verify the project. Tools and diffs stay visible while it works.</p>
+        <h2>{tr("web.ready")}</h2>
+        <p>{tr("web.ready_help")}</p>
       </div>}
       {state.history.map((turn, index) => <div className="turn" key={turn.turn_id || `${index}`}>
-        <div className="message user-message"><span>You</span>{turn.user && <p>{turn.user}</p>}<MessageAttachments sessionId={state.session.session_id} attachments={turn.attachments} /></div>
-        <div className="message assistant-message"><span>Wright{turn.status && turn.status !== "completed" ? ` · ${turn.status}` : ""}</span>{turn.assistant ? <MarkdownContent content={turn.assistant} /> : <p>No final answer.</p>}</div>
+        <div className="message user-message"><span>{tr("web.you")}</span>{turn.user && <p>{turn.user}</p>}<MessageAttachments sessionId={state.session.session_id} attachments={turn.attachments} /></div>
+        <div className="message assistant-message"><span>Wright{turn.status && turn.status !== "completed" ? ` · ${turn.status}` : ""}</span>{turn.assistant ? <MarkdownContent content={turn.assistant} /> : <p>{tr("web.no_answer")}</p>}</div>
         {turn.tools?.map((tool) => <ToolCard key={tool.call_id} sessionId={state.session.session_id} tool={tool} />)}
       </div>)}
       {state.active_turn && <div className="turn active-turn">
-        <div className="message user-message"><span>You</span>{state.active_turn.prompt && <p>{state.active_turn.prompt}</p>}<MessageAttachments sessionId={state.session.session_id} attachments={state.active_turn.attachments} /></div>
+        <div className="message user-message"><span>{tr("web.you")}</span>{state.active_turn.prompt && <p>{state.active_turn.prompt}</p>}<MessageAttachments sessionId={state.session.session_id} attachments={state.active_turn.attachments} /></div>
         {state.active_turn.reasoning && <details className="reasoning" open={!state.active_turn.content}>
           <summary><Brain size={16} />Reasoning</summary>
           <div>{state.active_turn.reasoning}</div>
@@ -365,19 +392,19 @@ function Timeline({ state, respond, cancelQueued }: { state: ViewState; respond:
         {agent.tools.map((tool) => <ToolCard key={tool.call_id} sessionId={state.session.session_id} tool={tool} />)}
       </section>)}
       {state.pending_interactions.map((item) => <InteractionCard key={item.request_id} interaction={item} respond={respond} />)}
-      {state.session.execution === "queued" && <section className="queue-list" aria-label="Directory queue">
+      {state.session.execution === "queued" && <section className="queue-list" aria-label={tr("web.directory_queue")}>
         <strong>Queued</strong>
         <p>{state.session.queue_reason || "Waiting for the current task in this directory to finish."}</p>
       </section>}
-      {state.session.execution === "waiting_for_input" && <p className="system-notice" role="status">This session is waiting for a permission decision or a reply.</p>}
-      {state.queued_commands.length > 0 && <section className="queue-list" aria-label="Queued instructions">
+      {state.session.execution === "waiting_for_input" && <p className="system-notice" role="status">{tr("web.waiting_notice")}</p>}
+      {state.queued_commands.length > 0 && <section className="queue-list" aria-label={tr("web.queued_instructions")}>
         <strong>{state.queued_commands.length} queued instruction{state.queued_commands.length === 1 ? "" : "s"}</strong>
         {state.queued_commands.map((item) => <div className="queue-item" key={item.command_id}>
-          <span>{item.prompt || "Attached images"}{item.attachments?.length ? ` · ${item.attachments.length} image${item.attachments.length === 1 ? "" : "s"}` : ""}</span>
-          <button type="button" className="button subtle" onClick={() => cancelQueued(item.command_id)}>Remove</button>
+          <span>{item.prompt || tr("web.attached_images")}{item.attachments?.length ? ` · ${tr(item.attachments.length === 1 ? "web.image_count_one" : "web.image_count_many", { count: item.attachments.length })}` : ""}</span>
+          <button type="button" className="button subtle" onClick={() => cancelQueued(item.command_id)}>{tr("web.remove_queued")}</button>
         </div>)}
       </section>}
-      {state.notices.slice(-5).map((notice) => <div className="system-notice" role="status" key={notice.id}>{notice.text}</div>)}
+      {state.notices.slice(-5).map((notice) => <div className="system-notice" role="status" key={notice.id}>{present(notice.code, notice.params, notice.text)}</div>)}
       <div ref={bottom} />
     </div>
   );
@@ -400,6 +427,7 @@ export function Composer({
   cancel: () => Promise<void>;
   running: boolean;
 }) {
+  const tr = useT();
   const [uploading, setUploading] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const upload = async (files: FileList | File[]) => {
@@ -458,20 +486,21 @@ export function Composer({
     || (offline ? "Offline. The draft stays here until this command is confirmed." : "Drop, paste, or attach images · Enter to send · Shift+Enter for newline");
   return <form className="composer" onSubmit={(event) => { send(event).catch((reason) => updateDraft(sessionId, (item) => ({ ...item, phase: "unknown", reason: String(reason) }))); }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); upload(event.dataTransfer.files); }}>
     <input ref={input} className="file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => { if (event.target.files) upload(event.target.files); event.target.value = ""; }} />
-    {draft.attachments.length > 0 && <div className="composer-attachments">{draft.attachments.map((attachment) => <div className="composer-attachment" key={attachment.id}><img src={api.attachmentThumbnailUrl(sessionId, attachment.id)} alt="" /><span>{attachment.filename}</span><button type="button" onClick={() => remove(attachment)} aria-label={`Remove ${attachment.filename}`}><X size={12} /></button></div>)}</div>}
-    <textarea aria-label="Message Wright" value={draft.prompt} onPaste={(event) => { if (event.clipboardData.files.length) upload(event.clipboardData.files); }} onChange={(event) => updateDraft(sessionId, (item) => ({ ...item, prompt: event.target.value }))} placeholder={running ? "Queue another instruction…" : "Message Wright…"} rows={2} onKeyDown={(event) => {
+    {draft.attachments.length > 0 && <div className="composer-attachments">{draft.attachments.map((attachment) => <div className="composer-attachment" key={attachment.id}><img src={api.attachmentThumbnailUrl(sessionId, attachment.id)} alt="" /><span>{attachment.filename}</span><button type="button" onClick={() => remove(attachment)} aria-label={tr("web.remove", { name: attachment.filename })}><X size={12} /></button></div>)}</div>}
+    <textarea aria-label={tr("web.message")} value={draft.prompt} onPaste={(event) => { if (event.clipboardData.files.length) upload(event.clipboardData.files); }} onChange={(event) => updateDraft(sessionId, (item) => ({ ...item, prompt: event.target.value }))} placeholder={running ? tr("web.queue_placeholder") : tr("web.message_placeholder")} rows={2} onKeyDown={(event) => {
       if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
     }} />
     <div className="composer-actions">
-      <button type="button" className="icon-button" title="Attach images" onClick={() => input.current?.click()}><Paperclip size={16} /></button>
+      <button type="button" className="icon-button" title={tr("web.attach")} onClick={() => input.current?.click()}><Paperclip size={16} /></button>
       <span>{hint}</span>
-      {running && <button type="button" className="button stop" onClick={() => { cancel().catch(() => undefined); }}><Square size={13} weight="fill" />Stop</button>}
-      <button className="button primary" disabled={uploading || draft.phase === "awaiting" || (!draft.prompt.trim() && !draft.attachments.length)}><PaperPlaneRight size={15} />{draft.phase === "unknown" ? "Retry" : "Send"}</button>
+      {running && <button type="button" className="button stop" onClick={() => { cancel().catch(() => undefined); }}><Square size={13} weight="fill" />{tr("web.stop")}</button>}
+      <button className="button primary" disabled={uploading || draft.phase === "awaiting" || (!draft.prompt.trim() && !draft.attachments.length)}><PaperPlaneRight size={15} />{draft.phase === "unknown" ? tr("web.retry") : tr("web.send")}</button>
     </div>
   </form>;
 }
 
 export function Inspector({ state, sessionId, open, close }: { state: ViewState; sessionId: string; open: boolean; close: () => void }) {
+  const tr = useT();
   const [tab, setTab] = useState<InspectorTab>("changes");
   const [changes, setChanges] = useState<Array<{ path: string; status: string }> | null>(null);
   const [changesError, setChangesError] = useState("");
@@ -519,25 +548,25 @@ export function Inspector({ state, sessionId, open, close }: { state: ViewState;
   };
   return <aside className={`inspector ${open ? "responsive-open" : ""}`}>
     <div className="inspector-tabs" role="tablist">
-      {(["changes", "plan", "details"] as InspectorTab[]).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}
-      <button className="icon-button responsive-only inspector-close" onClick={close} aria-label="Close inspector"><X size={16} /></button>
+      {(["changes", "plan", "details"] as InspectorTab[]).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{tr(`web.tab.${item}`)}</button>)}
+      <button className="icon-button responsive-only inspector-close" onClick={close} aria-label={tr("web.close_inspector")}><X size={16} /></button>
     </div>
     {tab === "changes" && <div className="inspector-body">
-      <div className="section-title"><span><FileCode size={16} />{changes ? `${changes.length} file${changes.length === 1 ? "" : "s"} changed` : "Changes unavailable"}</span><button className="icon-button" title="Refresh changes" onClick={refresh}><ArrowClockwise size={15} /></button></div>
-      {warning && <div className="local-warning"><Warning size={15} />Local mode may include changes from before this session.</div>}
+      <div className="section-title"><span><FileCode size={16} />{changes ? tr(changes.length === 1 ? "web.files_changed_one" : "web.files_changed_many", { count: changes.length }) : tr("web.changes_unavailable")}</span><button className="icon-button" title={tr("web.refresh_changes")} onClick={refresh}><ArrowClockwise size={15} /></button></div>
+      {warning && <div className="local-warning"><Warning size={15} />{tr("web.local_warning")}</div>}
       {changesError && <p className="form-error" role="alert">{changesError}</p>}
       <div className="change-list">{(changes ?? []).map((change) => <button key={change.path} className={selected === change.path ? "selected" : ""} onClick={() => openPatch(change.path)}><b>{change.status}</b><span>{change.path}</span></button>)}</div>
-      {selected && <div className="patch">{truncated ? <p className="empty-small">Binary or patch larger than 1 MiB. Metadata only.</p> : <DiffViewer patch={patch} filename={selected} />}</div>}
-      {changes && !changes.length && !changesError && <p className="empty-small">Working tree is clean.</p>}
+      {selected && <div className="patch">{truncated ? <p className="empty-small">{tr("web.binary_patch")}</p> : <DiffViewer patch={patch} filename={selected} />}</div>}
+      {changes && !changes.length && !changesError && <p className="empty-small">{tr("web.tree_clean")}</p>}
     </div>}
     {tab === "plan" && <div className="inspector-body">
-      <div className="section-title"><span>Plan</span><small>{state.plan.status ?? "empty"}</small></div>
+      <div className="section-title"><span>{tr("web.plan")}</span><small>{state.plan.status ?? tr("web.plan_empty")}</small></div>
       {state.plan.objective && <p className="plan-objective">{state.plan.objective}</p>}
       <ol className="plan-list">{state.plan.steps?.map((step) => <li key={step.id} className={`plan-${step.status}`}><span>{step.status === "completed" ? <Check size={13} /> : <i />}</span><div><strong>{step.title}</strong>{step.note && <small>{step.note}</small>}</div></li>)}</ol>
-      {!state.plan.steps?.length && <p className="empty-small">No active plan for this turn.</p>}
+      {!state.plan.steps?.length && <p className="empty-small">{tr("web.no_plan")}</p>}
     </div>}
     {tab === "details" && <div className="inspector-body details-grid">
-      <label>Session</label><code>{state.session.session_id}</code>
+      <label>{tr("web.detail_session")}</label><code>{state.session.session_id}</code>
       <label>Environment</label><span>{state.session.environment}</span>
       <label>Branch</label><code>{state.session.branch_name || "current checkout"}</code>
       <label>Execution root</label><code>{state.session.execution_root}</code>
@@ -556,6 +585,7 @@ export function NewSessionDialog({
   close: () => void;
   create: (environment: string, prompt: string, model?: string) => Promise<void>;
 }) {
+  const tr = useT();
   const dirtyCheckout = Boolean(project.dirty_checkout);
   const defaultEnvironment = dirtyCheckout
     ? "local"
@@ -586,25 +616,26 @@ export function NewSessionDialog({
     return () => { document.removeEventListener("keydown", trap); previous?.focus(); };
   }, [close]);
   return <div className="dialog-backdrop" role="presentation"><section ref={dialogRef} className="dialog" role="dialog" aria-modal="true" aria-labelledby="new-session-title">
-    <div className="dialog-head"><div><span>NEW SESSION</span><h2 id="new-session-title">Choose an execution environment</h2></div><button className="icon-button" onClick={close} title="Close (Esc)" aria-label="Close"><X size={18} /></button></div>
-    <div className="environment-grid" role="group" aria-label="Execution environment">
-      <button aria-pressed={environment === "worktree"} className={environment === "worktree" ? "selected" : ""} disabled={!project.git} onClick={() => setEnvironment("worktree")}><GitBranch size={22} /><strong>Isolated worktree</strong><span>Starts from current HEAD. Uncommitted checkout changes are not copied.</span>{!dirtyCheckout && <em>Recommended</em>}</button>
-      <button aria-pressed={environment === "local"} className={environment === "local" ? "selected" : ""} onClick={() => setEnvironment("local")}><TerminalWindow size={22} /><strong>Current checkout</strong><span>Uses existing files, including current uncommitted changes. Several sessions can stay open; one task runs in this directory at a time.</span>{dirtyCheckout && <em>Recommended for current changes</em>}</button>
+    <div className="dialog-head"><div><span>{tr("web.new_session_kicker")}</span><h2 id="new-session-title">{tr("web.choose_environment")}</h2></div><button className="icon-button" onClick={close} title={tr("web.close_esc")} aria-label={tr("web.close")}><X size={18} /></button></div>
+    <div className="environment-grid" role="group" aria-label={tr("web.environment")}>
+      <button aria-pressed={environment === "worktree"} className={environment === "worktree" ? "selected" : ""} disabled={!project.git} onClick={() => setEnvironment("worktree")}><GitBranch size={22} /><strong>{tr("web.isolated")}</strong><span>{tr("web.isolated_help")}</span>{!dirtyCheckout && <em>{tr("web.recommended")}</em>}</button>
+      <button aria-pressed={environment === "local"} className={environment === "local" ? "selected" : ""} onClick={() => setEnvironment("local")}><TerminalWindow size={22} /><strong>{tr("web.current_checkout")}</strong><span>{tr("web.current_help")}</span>{dirtyCheckout && <em>{tr("web.recommended_dirty")}</em>}</button>
     </div>
     {models.length > 0 && <div className="dialog-field">
-      <label className="field-label" htmlFor="first-model">Model <span>optional</span></label>
+      <label className="field-label" htmlFor="first-model">{tr("web.model_optional")} <span>{tr("web.optional")}</span></label>
       <select id="first-model" className="dialog-select" value={model} onChange={(event) => setModel(event.target.value)}>
         {models.map((m) => <option key={m} value={m}>{m}</option>)}
       </select>
     </div>}
     <label className="field-label" htmlFor="first-prompt">First instruction <span>optional</span></label>
-    <textarea autoFocus id="first-prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="What should Wright work on?" rows={3} />
+    <textarea autoFocus id="first-prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={tr("web.first_prompt")} rows={3} />
     {error && <p className="form-error">{error}</p>}
-    <div className="dialog-actions"><button className="button secondary" onClick={close}>Cancel</button><button className="button primary" disabled={busy} onClick={() => { setBusy(true); setError(""); create(environment, prompt, model).catch((reason) => { setError(String(reason)); setBusy(false); }); }}>{busy ? <CircleNotch className="spin" size={15} /> : <Plus size={15} />}Create session</button></div>
+    <div className="dialog-actions"><button className="button secondary" onClick={close}>{tr("web.cancel")}</button><button className="button primary" disabled={busy} onClick={() => { setBusy(true); setError(""); create(environment, prompt, model).catch((reason) => { setError(String(reason)); setBusy(false); }); }}>{busy ? <CircleNotch className="spin" size={15} /> : <Plus size={15} />}{tr("web.create_session")}</button></div>
   </section></div>;
 }
 
 export default function App() {
+  const tr = useT();
   const [project, setProject] = useState<Record<string, unknown> | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -634,6 +665,10 @@ export default function App() {
     const items = await api.sessions();
     setSessions(items);
     return items;
+  }, []);
+
+  useEffect(() => {
+    api.preferences().then((prefs) => setLocale(prefs.interface_language)).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -842,28 +877,44 @@ export default function App() {
   const contextPercent = contextKnown ? Math.min(100, Math.round((contextTokens / contextLimit) * 100)) : 0;
   const draft = selected ? (drafts[selected] ?? emptyDraft()) : emptyDraft();
 
-  if (fatal && !project) return <main className="fatal"><Warning size={28} /><h1>Wright Web could not start</h1><p>{fatal}</p><button className="button primary" onClick={() => location.reload()}>Reload</button></main>;
+  if (fatal && !project) return <main className="fatal"><Warning size={28} /><h1>{tr("web.fatal_title")}</h1><p>{fatal}</p><button className="button primary" onClick={() => location.reload()}>{tr("web.reload")}</button></main>;
+  const connection = state?.connection ?? "connecting";
   return <div className="app-shell">
     <header className="topbar">
-      <div className="brand"><span className="brand-mark">W</span><div><strong>Wright</strong><small>{String(project?.name ?? "Local Web")}</small></div></div>
+      <div className="brand"><span className="brand-mark">W</span><div><strong>Wright</strong><small>{String(project?.name ?? tr("web.local"))}</small></div></div>
       <div className="top-status">
-        <span className={`connection ${state?.connection ?? "connecting"}`}><StatusDot status={state?.connection ?? "connecting"} />{state?.connection ?? "connecting"}</span>
+        <span className={`connection ${connection}`}><StatusDot status={connection} />{tr(`web.connection.${connection}`)}</span>
         <ModelSelector
-          currentModel={state?.session.model ?? String(project?.default_model ?? "configured model")}
+          currentModel={state?.session.model ?? String(project?.default_model ?? tr("web.configured_model"))}
           models={Array.isArray(project?.models) ? (project.models as string[]) : []}
           running={Boolean(running || directoryQueued)}
           onSelect={changeModel}
         />
-        <span className="context-meter" title={contextKnown ? `${contextTokens} / ${contextLimit} context tokens` : "Context usage is unknown"}><i style={{ width: `${contextPercent}%` }} />{contextKnown ? `Context ${contextPercent}%` : "Context unknown"}</span>
-        <span>{sessions.filter((item) => item.active).length}/{project?.capacity as number ?? 0} active</span>
+        <span className="context-meter" title={contextKnown ? tr("web.context_title", { used: contextTokens, limit: contextLimit }) : tr("web.context_unknown_title")}><i style={{ width: `${contextPercent}%` }} />{contextKnown ? tr("web.context_percent", { percent: contextPercent }) : tr("web.context_unknown")}</span>
+        <span>{tr("web.active", { count: `${sessions.filter((item) => item.active).length}/${project?.capacity as number ?? 0}` })}</span>
+        <label className="language-control">
+          <span>{tr("web.language_label")}</span>
+          <select
+            aria-label={tr("web.language_label")}
+            title={tr("web.language_note")}
+            value={getLocale()}
+            onChange={(event) => {
+              const next = setLocale(event.target.value);
+              api.setPreference(next).catch(() => undefined);
+            }}
+          >
+            <option value="en">English</option>
+            <option value="zh-CN">简体中文</option>
+          </select>
+        </label>
       </div>
-      <button className="icon-button mobile-sessions" onClick={() => setRailOpen(true)} title="Open sessions (⌘B)" aria-label="Open sessions"><SidebarSimple size={18} /></button>
+      <button className="icon-button mobile-sessions" onClick={() => setRailOpen(true)} title={tr("web.open_sessions_title")} aria-label={tr("web.open_sessions")}><SidebarSimple size={18} /></button>
     </header>
     <div className="workspace-grid">
       <SessionRail sessions={sessions} selected={selected} onSelect={(session) => selectSession(session).catch((error) => setFatal(String(error)))} onCreate={() => setDialog(true)} open={railOpen} onClose={() => setRailOpen(false)} />
       <main className="conversation">
         {state ? <>
-          <div className="conversation-head"><div><span className="eyebrow">{state.session.environment === "worktree" ? "ISOLATED WORKTREE" : "CURRENT CHECKOUT"}</span><h1>{state.session.user_goal && state.session.user_goal !== "(interactive session)" ? state.session.user_goal : `Session ${state.session.session_id.slice(0, 6)}`}</h1></div><div className="session-actions"><button className="icon-button inspector-trigger" title="Open inspector (⌘J)" onClick={() => setInspectorOpen(true)}><FileCode size={17} /></button><button className="icon-button" title="Cancel and close this session" aria-label="Cancel and close this session" onClick={() => api.close(state.session.session_id).then(() => { setSelected(null); setState(null); refreshSessions(); }).catch((error) => setFatal(String(error)))}><SidebarSimple size={17} /></button><button className="icon-button" title="Archive session" onClick={() => archiveSession().catch((error) => setFatal(String(error)))}><Archive size={17} /></button></div></div>
+          <div className="conversation-head"><div><span className="eyebrow">{state.session.environment === "worktree" ? tr("web.worktree") : tr("web.checkout")}</span><h1>{state.session.user_goal && state.session.user_goal !== "(interactive session)" ? state.session.user_goal : tr("web.session_label", { id: state.session.session_id.slice(0, 6) })}</h1></div><div className="session-actions"><button className="icon-button inspector-trigger" title={tr("web.open_inspector")} onClick={() => setInspectorOpen(true)}><FileCode size={17} /></button><button className="icon-button" title={tr("web.close_session")} aria-label={tr("web.close_session")} onClick={() => api.close(state.session.session_id).then(() => { setSelected(null); setState(null); refreshSessions(); }).catch((error) => setFatal(String(error)))}><SidebarSimple size={17} /></button><button className="icon-button" title={tr("web.archive")} onClick={() => archiveSession().catch((error) => setFatal(String(error)))}><Archive size={17} /></button></div></div>
           <Timeline
             state={state}
             respond={(requestId, answer) => {
@@ -899,11 +950,11 @@ export default function App() {
               if (outcome === "accepted" || outcome === "rejected") cancelId.current = null;
             }}
           />
-        </> : <div className="no-session"><TerminalWindow size={36} weight="duotone" /><h2>No session selected</h2><p>Create an isolated task or resume a saved checkpoint.</p><button className="button primary" onClick={() => setDialog(true)}><Plus size={15} />New session</button></div>}
+        </> : <div className="no-session"><TerminalWindow size={36} weight="duotone" /><h2>{tr("web.no_session")}</h2><p>{tr("web.no_session_help")}</p><button className="button primary" onClick={() => setDialog(true)}><Plus size={15} />{tr("web.new_session_button")}</button></div>}
       </main>
-      {state && selected ? <Inspector state={state} sessionId={selected} open={inspectorOpen} close={() => setInspectorOpen(false)} /> : <aside className="inspector empty-inspector"><FileCode size={24} /><p>Changes, plan, and details appear here.</p></aside>}
+      {state && selected ? <Inspector state={state} sessionId={selected} open={inspectorOpen} close={() => setInspectorOpen(false)} /> : <aside className="inspector empty-inspector"><FileCode size={24} /><p>{tr("web.inspector_empty")}</p></aside>}
     </div>
-    {fatal && project && <div className="toast" role="alert"><Warning size={16} /><span>{fatal}</span><button className="icon-button" onClick={() => setFatal("")} aria-label="Dismiss"><X size={14} /></button></div>}
+    {fatal && project && <div className="toast" role="alert"><Warning size={16} /><span>{fatal}</span><button className="icon-button" onClick={() => setFatal("")} aria-label={tr("web.dismiss")}><X size={14} /></button></div>}
     {dialog && project && <NewSessionDialog project={project} close={() => setDialog(false)} create={create} />}
   </div>;
 }

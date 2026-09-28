@@ -117,7 +117,7 @@ def create_memory(
     directory = _directory(directory)
     if scope == "project":
         if not project_id or PROJECT_ID_RE.fullmatch(project_id) is None:
-            raise SemanticMemoryStoreError("缺少项目上下文，不能写入项目记忆")
+            raise SemanticMemoryStoreError("No project context, so a project memory cannot be written")
     elif scope == "global":
         project_id = ""
     else:

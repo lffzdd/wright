@@ -15,6 +15,8 @@ from ....domain.model.memory import SEMANTIC_MEMORY_TYPES, SEMANTIC_READ_SCOPES
 from ....domain.model.tool import ToolAccess, ToolResult
 from ..base import Tool
 from ..runtime import ToolRuntime
+from ..system_result import fail_text
+from ....domain.feedback import system_text
 
 _READ_SCOPES = list(SEMANTIC_READ_SCOPES)
 _WRITE_SCOPES = ["project", "global"]
@@ -56,7 +58,7 @@ def create_memory(
         project_id=project_id,
     )
     if error is not None or record is None:
-        return ToolResult.fail(error or "create failed")
+        return fail_text(error or "create failed")
     return ToolResult.success(record.to_dict())
 
 
@@ -72,7 +74,7 @@ def get_memory(
 ) -> ToolResult:
     del runtime
     if scope not in SEMANTIC_READ_SCOPES:
-        return ToolResult.fail("memory scope 非法")
+        return fail_text(system_text("memory.scope_invalid", "The memory scope is invalid"))
     record, reads, error = _service_for(service, directory).get_semantic(
         memory_id,
         project_id=project_id,
@@ -80,7 +82,7 @@ def get_memory(
         include_evidence=include_evidence,
     )
     if error is not None or record is None:
-        return ToolResult.fail(error or "memory not found")
+        return fail_text(error or "memory not found")
     payload = record.to_dict()
     if include_evidence:
         payload["evidence_reads"] = [item.to_dict() for item in reads]
@@ -104,7 +106,7 @@ def update_memory(
 ) -> ToolResult:
     del runtime
     if scope not in SEMANTIC_READ_SCOPES:
-        return ToolResult.fail("memory scope 非法")
+        return fail_text(system_text("memory.scope_invalid", "The memory scope is invalid"))
     record, error = _service_for(service, directory).update_semantic(
         memory_id,
         expected_revision=expected_revision,
@@ -117,7 +119,7 @@ def update_memory(
         status=status,
     )
     if error is not None or record is None:
-        return ToolResult.fail(error or "update failed")
+        return fail_text(error or "update failed")
     return ToolResult.success(record.to_dict())
 
 
@@ -132,14 +134,14 @@ def delete_memory(
 ) -> ToolResult:
     del runtime
     if scope not in SEMANTIC_READ_SCOPES:
-        return ToolResult.fail("memory scope 非法")
+        return fail_text(system_text("memory.scope_invalid", "The memory scope is invalid"))
     deleted, error = _service_for(service, directory).delete_semantic(
         memory_id,
         project_id=project_id,
         read_scope=scope,
     )
     if error is not None or deleted is None:
-        return ToolResult.fail(error or "delete failed")
+        return fail_text(error or "delete failed")
     return ToolResult.success({
         "message": "Memory deleted",
         "id": deleted.id,
@@ -163,7 +165,7 @@ def search_memory(
 ) -> ToolResult:
     del runtime
     if scope not in SEMANTIC_READ_SCOPES:
-        return ToolResult.fail("memory scope 非法")
+        return fail_text(system_text("memory.scope_invalid", "The memory scope is invalid"))
     records, error = _service_for(service, directory).search_semantic(
         query,
         type_=type,  # type: ignore[arg-type]
@@ -173,7 +175,7 @@ def search_memory(
         include_inactive=include_inactive,
     )
     if error is not None:
-        return ToolResult.fail(error)
+        return fail_text(error)
     results = [
         {
             "id": record.id,

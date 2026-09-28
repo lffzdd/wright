@@ -14,10 +14,10 @@ MAX_OPTION_LENGTH = 200
 
 def _clean_text(value: object, field: str, max_length: int) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{field} 必须是非空字符串")
+        raise ValueError(f"{field} must be a non-empty string")
     cleaned = value.strip()
     if len(cleaned) > max_length:
-        raise ValueError(f"{field} 不能超过 {max_length} 个字符")
+        raise ValueError(f"{field} cannot exceed {max_length} characters")
     return cleaned
 
 
@@ -25,16 +25,16 @@ def _clean_options(values: object) -> tuple[str, ...]:
     if values is None:
         return ()
     if not isinstance(values, list):
-        raise TypeError("options 必须是字符串数组")
+        raise TypeError("options must be an array of strings")
     if len(values) > MAX_OPTIONS:
-        raise ValueError(f"options 不能超过 {MAX_OPTIONS} 项")
+        raise ValueError(f"options cannot exceed {MAX_OPTIONS} items")
 
     options = tuple(
         _clean_text(value, f"options[{idx}]", MAX_OPTION_LENGTH)
         for idx, value in enumerate(values)
     )
     if len(set(options)) != len(options):
-        raise ValueError("options 不能包含重复项")
+        raise ValueError("options cannot contain duplicates")
     return options
 
 
@@ -54,10 +54,10 @@ def ask_user(
     try:
         question = _clean_text(question, "question", MAX_QUESTION_LENGTH)
         if not isinstance(context, str):
-            raise TypeError("context 必须是字符串")
+            raise TypeError("context must be a string")
         context = context.strip()
         if len(context) > MAX_CONTEXT_LENGTH:
-            raise ValueError(f"context 不能超过 {MAX_CONTEXT_LENGTH} 个字符")
+            raise ValueError(f"context cannot exceed {MAX_CONTEXT_LENGTH} characters")
         _clean_options(options)
         answer = _clean_text(answer, "answer", MAX_QUESTION_LENGTH)
         return ToolResult.success(
@@ -76,9 +76,9 @@ def describe_ask_user_access(arguments: dict) -> ToolAccess:
         question = _clean_text(arguments.get("question"), "question", MAX_QUESTION_LENGTH)
         context = arguments.get("context", "")
         if not isinstance(context, str):
-            raise TypeError("context 必须是字符串")
+            raise TypeError("context must be a string")
         if len(context.strip()) > MAX_CONTEXT_LENGTH:
-            raise ValueError(f"context 不能超过 {MAX_CONTEXT_LENGTH} 个字符")
+            raise ValueError(f"context cannot exceed {MAX_CONTEXT_LENGTH} characters")
         _clean_options(arguments.get("options"))
     except (TypeError, ValueError) as e:
         raise ValueError(f"ask_user input invalid: {e}") from e

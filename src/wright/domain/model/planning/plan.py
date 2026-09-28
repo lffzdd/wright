@@ -1,13 +1,8 @@
-"""结构化计划状态机。
+"""Structured plan state machine.
 
-PlanManager 不依赖 LLM、Tool 或 Renderer，只负责计划数据和状态转换：
-
-- create_plan：建立一份有序计划；
-- update_step：推进、阻塞、跳过或完成单个步骤；
-- replan：保留历史，把未完成部分替换成新步骤；
-- snapshot：供工具结果使用。提示词投影在应用层。
-
-整体状态由步骤状态派生，避免同时维护两份可能漂移的真值。
+PlanManager does not depend on an LLM, a tool, or a renderer. It stores the
+plan and applies transitions. The prompt projection lives in the application
+layer. Overall status is derived from step status.
 """
 
 from __future__ import annotations
@@ -40,7 +35,12 @@ _VALID_STEP_STATUSES = frozenset(
 
 
 class PlanError(ValueError):
-    """计划操作违反输入约束或状态机约束。"""
+    """A plan operation violated an input or state-machine constraint."""
+
+    def __init__(self, message: str, *, code: str = "", **params: object) -> None:
+        super().__init__(message)
+        self.code = code
+        self.params = {key: "" if value is None else str(value) for key, value in params.items()}
 
 
 @dataclass
@@ -103,7 +103,8 @@ class PlanManager:
         with self._lock:
             if self.steps and self._derive_status() != "completed" and not replace:
                 raise PlanError(
-                    "当前已有未完成计划；请继续更新它，或传 replace=true 明确替换"
+                    "An unfinished plan already exists. Keep updating it, or pass replace=true to replace it.",
+                    code="plan.open_exists",
                 )
 
             self.objective = objective
@@ -125,15 +126,19 @@ class PlanManager:
         step_id = self._clean_text(step_id, "step_id", max_length=64)
         if status not in _VALID_STEP_STATUSES:
             raise PlanError(
-                "非法步骤状态；必须是 pending/in_progress/completed/blocked/skipped"
+                "Invalid step status. It must be pending, in_progress, completed, blocked, or skipped.",
+                code="plan.bad_status",
             )
 
         with self._lock:
             step = self._find_step(step_id)
             if step.status in _TERMINAL_STATUSES and status != step.status:
                 raise PlanError(
-                    f"{step.id} 已是终态 {step.status}，不能改为 {status}；"
-                    "如需改变后续路线请使用 replan"
+                    f"{step.id} is already terminal ({step.status}) and cannot become {status}. Use replan to change the remaining route.",
+                    code="plan.terminal_step",
+                    step_id=step.id,
+                    status=step.status,
+                    next_status=status,
                 )
 
             if status == "in_progress":
@@ -147,7 +152,10 @@ class PlanManager:
                 )
                 if active is not None:
                     raise PlanError(
-                        f"{active.id} 正在进行；完成、阻塞或暂停它后才能启动 {step.id}"
+                        f"{active.id} is in progress. Finish, block, or pause it before starting {step.id}.",
+                        code="plan.step_busy",
+                        active_id=active.id,
+                        step_id=step.id,
                     )
 
             # steps 的 schema 和工具描述都承诺了执行顺序。允许直接完成一个足够小的
@@ -172,13 +180,20 @@ class PlanManager:
 
         with self._lock:
             if not self.steps:
-                raise PlanError("当前没有计划，无法 replan；请先 create_plan")
+                raise PlanError(
+                    "There is no plan to replan. Call create_plan first.",
+                    code="plan.no_plan",
+                )
             if self._derive_status() == "completed":
-                raise PlanError("当前计划已经完成；新目标请使用 create_plan")
+                raise PlanError(
+                    "The current plan is already complete. Use create_plan for a new goal.",
+                    code="plan.already_done",
+                )
             if len(self.steps) + len(titles) > MAX_TOTAL_PLAN_STEPS:
                 raise PlanError(
-                    f"计划历史和新步骤合计不能超过 {MAX_TOTAL_PLAN_STEPS} 项；"
-                    "请创建新计划或缩短新路线"
+                    f"Plan history plus new steps cannot exceed {MAX_TOTAL_PLAN_STEPS}. Create a new plan or shorten the route.",
+                    code="plan.too_long",
+                    limit=MAX_TOTAL_PLAN_STEPS,
                 )
 
             for step in self.steps:
@@ -211,13 +226,14 @@ class PlanManager:
     def restore(self, snapshot: dict) -> dict:
         """Restore a checkpointed plan after validating it transactionally."""
         if not isinstance(snapshot, dict):
-            raise PlanError("plan snapshot 必须是对象")
+            raise PlanError("plan snapshot must be an object", code="plan.snapshot")
         raw_steps = snapshot.get("steps")
         if not isinstance(raw_steps, list):
-            raise PlanError("plan snapshot.steps 必须是数组")
+            raise PlanError("plan snapshot.steps must be an array", code="plan.snapshot")
         if len(raw_steps) > MAX_TOTAL_PLAN_STEPS:
             raise PlanError(
-                f"plan snapshot.steps 不能超过 {MAX_TOTAL_PLAN_STEPS} 项"
+                f"plan snapshot.steps cannot exceed {MAX_TOTAL_PLAN_STEPS} items",
+                code="plan.snapshot",
             )
 
         objective_value = snapshot.get("objective", "")
@@ -238,22 +254,22 @@ class PlanManager:
 
         revision = snapshot.get("revision", 0)
         if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
-            raise PlanError("plan snapshot.revision 必须是非负整数")
+            raise PlanError("plan snapshot.revision must be a non-negative integer", code="plan.snapshot")
 
         restored_steps: list[PlanStep] = []
         seen_ids: set[str] = set()
         highest_step = 0
         for index, item in enumerate(raw_steps):
             if not isinstance(item, dict):
-                raise PlanError(f"plan snapshot.steps[{index}] 必须是对象")
+                raise PlanError(f"plan snapshot.steps[{index}] must be an object", code="plan.snapshot")
             step_id = self._clean_text(
                 item.get("id"), f"steps[{index}].id", max_length=64
             )
             match = re.fullmatch(r"step_(\d+)", step_id)
             if match is None or int(match.group(1)) < 1:
-                raise PlanError(f"非法步骤 id: {step_id}")
+                raise PlanError(f"Invalid step id: {step_id}", code="plan.snapshot")
             if step_id in seen_ids:
-                raise PlanError(f"重复步骤 id: {step_id}")
+                raise PlanError(f"Duplicate step id: {step_id}", code="plan.snapshot")
             seen_ids.add(step_id)
             highest_step = max(highest_step, int(match.group(1)))
 
@@ -264,12 +280,12 @@ class PlanManager:
             )
             status = item.get("status", "pending")
             if status not in _VALID_STEP_STATUSES:
-                raise PlanError(f"steps[{index}].status 非法: {status}")
+                raise PlanError(f"steps[{index}].status is invalid: {status}", code="plan.snapshot")
             note = self._clean_note(item.get("note", ""))
             restored_steps.append(PlanStep(step_id, title, status, note))
 
         if sum(step.status == "in_progress" for step in restored_steps) > 1:
-            raise PlanError("plan snapshot 同时存在多个 in_progress 步骤")
+            raise PlanError("plan snapshot has more than one in_progress step", code="plan.snapshot")
 
         statuses = {step.status for step in restored_steps}
         if not restored_steps:
@@ -285,7 +301,8 @@ class PlanManager:
         saved_status = snapshot.get("status", derived_status)
         if saved_status != derived_status:
             raise PlanError(
-                f"plan snapshot.status={saved_status} 与步骤派生状态 {derived_status} 不一致"
+                f"plan snapshot.status={saved_status} does not match derived status {derived_status}",
+                code="plan.snapshot",
             )
 
         with self._lock:
@@ -303,7 +320,11 @@ class PlanManager:
         for step in self.steps:
             if step.id == step_id:
                 return step
-        raise PlanError(f"未知步骤 id: {step_id}")
+        raise PlanError(
+            f"Unknown step id: {step_id}",
+            code="plan.unknown_step",
+            step_id=step_id,
+        )
 
     def _require_predecessors_terminal(self, step: PlanStep) -> None:
         step_index = self.steps.index(step)
@@ -317,8 +338,10 @@ class PlanManager:
         )
         if predecessor is not None:
             raise PlanError(
-                f"{step.id} 的前置步骤 {predecessor.id} 尚未完成或跳过；"
-                "请按计划顺序推进，或使用 replan 调整路线"
+                f"Predecessor {predecessor.id} of {step.id} is not completed or skipped. Follow the plan order, or use replan.",
+                code="plan.predecessor",
+                step_id=step.id,
+                predecessor_id=predecessor.id,
             )
 
     def _derive_status(self) -> PlanStatus:
@@ -344,29 +367,46 @@ class PlanManager:
     @staticmethod
     def _clean_text(value: object, field: str, *, max_length: int) -> str:
         if not isinstance(value, str) or not value.strip():
-            raise PlanError(f"{field} 必须是非空字符串")
+            raise PlanError(
+                f"{field} must be a non-empty string",
+                code="plan.field_required",
+                field=field,
+            )
         cleaned = value.strip()
         if len(cleaned) > max_length:
-            raise PlanError(f"{field} 不能超过 {max_length} 个字符")
+            raise PlanError(
+                f"{field} cannot exceed {max_length} characters",
+                code="plan.field_too_long",
+                field=field,
+                limit=max_length,
+            )
         return cleaned
 
     @classmethod
     def _clean_note(cls, value: object) -> str:
         if not isinstance(value, str):
-            raise PlanError("note 必须是字符串")
+            raise PlanError("note must be a string", code="plan.note_type")
         cleaned = value.strip()
         if len(cleaned) > MAX_NOTE_LENGTH:
-            raise PlanError(f"note 不能超过 {MAX_NOTE_LENGTH} 个字符")
+            raise PlanError(
+                f"note cannot exceed {MAX_NOTE_LENGTH} characters",
+                code="plan.note_too_long",
+                limit=MAX_NOTE_LENGTH,
+            )
         return cleaned
 
     @classmethod
     def _clean_steps(cls, values: object) -> list[str]:
         if not isinstance(values, list):
-            raise PlanError("steps 必须是字符串数组")
+            raise PlanError("steps must be an array of strings", code="plan.steps_type")
         if not values:
-            raise PlanError("steps 不能为空")
+            raise PlanError("steps cannot be empty", code="plan.steps_empty")
         if len(values) > MAX_PLAN_STEPS:
-            raise PlanError(f"steps 不能超过 {MAX_PLAN_STEPS} 项")
+            raise PlanError(
+                f"steps cannot exceed {MAX_PLAN_STEPS} items",
+                code="plan.steps_limit",
+                limit=MAX_PLAN_STEPS,
+            )
         return [
             cls._clean_text(
                 value, f"steps[{idx}]", max_length=MAX_STEP_TITLE_LENGTH

@@ -274,7 +274,7 @@ def test_budget_failure_reports_that_instructions_were_not_folded(tmp_path: Path
 
     assert agent.run("load it") is None
     assert any("required instruction content" in text for text in notices)
-    assert any("上下文无法在预算内安全构建" in text for text in notices)
+    assert any("could not be built inside the budget" in text for text in notices)
     sent = json.dumps(llm.seen_messages, ensure_ascii=False)
     assert "BUDGET-STEP" not in sent
     assert "[older tool result folded for this request]" not in sent

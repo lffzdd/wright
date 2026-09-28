@@ -11,98 +11,106 @@ import argparse
 from pathlib import Path
 
 from ...application.composition.runtime import RuntimeConfig
+from ..i18n import t
 
 
 def parse_cli_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Wright coding agent")
+    parser = argparse.ArgumentParser(description=t("cli.help.description"))
     resume_group = parser.add_mutually_exclusive_group()
     resume_group.add_argument(
         "--resume",
         nargs="?",
         const="",
         metavar="SESSION_ID",
-        help="从指定 session checkpoint 恢复 (留空则列出历史菜单选择)",
+        help=t("cli.help.resume"),
     )
     resume_group.add_argument(
         "-c",
         "--continue",
         dest="continue_latest",
         action="store_true",
-        help="恢复最近保存的 session checkpoint",
+        help=t("cli.help.continue"),
     )
     parser.add_argument(
         "--no-session-persistence",
         action="store_true",
-        help="本次运行不保存 checkpoint",
+        help=t("cli.help.no_persistence"),
     )
     parser.add_argument(
         "--hooks-config",
         metavar="PATH",
-        help="显式启用指定 lifecycle command hooks 配置（不会自动执行仓库配置）",
+        help=t("cli.help.hooks"),
     )
     parser.add_argument(
         "--workspace",
         type=Path,
         default=None,
         metavar="DIR",
-        help="要编辑的项目目录 (默认: 当前工作目录)",
+        help=t("cli.help.workspace"),
     )
     parser.add_argument(
         "--ui",
         choices=("cli", "tui", "web", "headless"),
         default="tui",
-        help="界面：tui（默认）、cli、本机 Web 控制台或 headless 自动任务宿主",
+        help=t("cli.help.ui"),
     )
     parser.add_argument(
         "--automation-session",
         metavar="SESSION_ID",
-        help="headless 宿主要承载的 Automation 来源 session_id（不会扫描历史项目）",
+        help=t("cli.help.automation_session"),
     )
     parser.add_argument(
         "--model",
         metavar="MODEL",
-        help="覆盖 OPENAI_MODEL；TUI 的 /model 使用同一配置",
+        help=t("cli.help.model"),
     )
     parser.add_argument(
         "--transport",
         choices=("auto", "chat", "responses"),
         default=None,
-        help="主模型协议：auto（默认）、chat 或 responses",
+        help=t("cli.help.transport"),
     )
     parser.add_argument(
         "--web-port",
         type=int,
         default=0,
         metavar="PORT",
-        help="Web 控制台端口（默认 0：自动选择空闲端口）",
+        help=t("cli.help.web_port"),
     )
     parser.add_argument(
         "--web-capacity",
         type=int,
         default=4,
         metavar="N",
-        help="Web 活跃 session 上限（默认 4）",
+        help=t("cli.help.web_capacity"),
     )
     parser.add_argument(
         "--no-open",
         action="store_true",
-        help="启动 Web 控制台时不自动打开浏览器",
+        help=t("cli.help.no_open"),
     )
     parser.add_argument(
         "--trust-project-mcp",
         action="store_true",
-        help="允许启动项目 .wright/mcp.json 中声明的进程或远程连接",
+        help=t("cli.help.trust_mcp"),
     )
     parser.add_argument(
         "--mode",
         choices=("coding", "general"),
         default="coding",
-        help="运行模式：coding（默认，包含写文件与执行命令）或 general（通用助理，安全只读与分析）",
+        help=t("cli.help.mode"),
     )
     parser.add_argument(
         "--with-rag",
         action="store_true",
-        help="显式挂载 RAG 外部知识库检索工具（knowledge_search）",
+        help=t("cli.help.rag"),
+    )
+    parser.add_argument(
+        "--interface-language",
+        choices=("en", "zh-CN"),
+        default=None,
+        metavar="LOCALE",
+        help=t("cli.help.interface_language"),
     )
     return parser.parse_args()
 

@@ -354,7 +354,7 @@ def test_tui_renderer_completion_rejected_is_a_notice():
     renderer.on_content_delta("draft")
     renderer.on_completion_rejected([type("Issue", (), {"message": "计划未完成"})()])
     assert renderer.content == ""
-    assert any("完成检查未通过" in item for item in renderer.notices)
+    assert any("Completion check failed" in item for item in renderer.notices)
     assert any("计划未完成" in item for item in renderer.notices)
 
 
@@ -369,7 +369,7 @@ def test_tui_usage_separates_request_task_and_context():
 
 def test_context_ring_uses_current_session_context():
     assert _context_ring(None, 128_000) == (
-        "○", "等待上下文", "Context window:\nWaiting for a context limit",
+        "○", "Waiting for context", "Context window:\nWaiting for a context limit",
     )
     assert _context_ring(64_000, 128_000) == (
         "◑  50%",
@@ -400,7 +400,7 @@ def test_history_slash_on_non_console_renderer():
         def __init__(self) -> None:
             self.notices: list[str] = []
 
-        def on_system_notice(self, text: str) -> None:
+        def on_system_notice(self, text: str, *, code: str = "", params: dict | None = None) -> None:
             self.notices.append(text)
 
     renderer = Capture()
@@ -409,7 +409,7 @@ def test_history_slash_on_non_console_renderer():
     rt = SimpleNamespace(event_renderer=renderer, publisher=publisher, session_state=None)
     assert dispatch_slash("/history", rt) is True
     assert renderer.notices
-    assert "滚动" in renderer.notices[0]
+    assert "The conversation is above" in renderer.notices[0]
 
 
 def test_slash_command_matches_and_completion_selection():
@@ -519,7 +519,7 @@ def test_help_and_status_slash_commands_render_notices():
         def __init__(self) -> None:
             self.notices: list[str] = []
 
-        def on_system_notice(self, text: str) -> None:
+        def on_system_notice(self, text: str, *, code: str = "", params: dict | None = None) -> None:
             self.notices.append(text)
 
     usage = SimpleNamespace(prompt_tokens=12, completion_tokens=3, total_tokens=15)

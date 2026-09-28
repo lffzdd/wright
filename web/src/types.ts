@@ -93,6 +93,10 @@ export type Interaction = {
   tool_name?: string;
   subject?: string;
   reason?: string;
+  reason_code?: string;
+  reason_params?: Record<string, string>;
+  summary_code?: string;
+  summary_params?: Record<string, string>;
   risk_flags?: string[];
   targets?: string[];
   principal?: string;
@@ -119,6 +123,8 @@ export type Notice = {
   type: string;
   text: string;
   kind?: string;
+  code?: string;
+  params?: Record<string, string>;
 };
 
 export type Snapshot = {

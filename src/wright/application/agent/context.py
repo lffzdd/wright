@@ -27,8 +27,6 @@ def _is_persisted_memory_recall(message: dict[str, Any]) -> bool:
     return (
         "wright-semantic-recall" in content
         or "wright-episode-recall" in content
-        or "历史记忆数据" in content
-        or "历史执行经历" in content
     )
 
 

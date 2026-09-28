@@ -503,7 +503,7 @@ class Agent:
             if prompt_decision is not None and prompt_decision.decision == "deny":
                 self.session_state.mark_failed()
                 self.ui.on_final(
-                    f"用户请求被 lifecycle hook 拒绝：{prompt_decision.reason}"
+                    f"A lifecycle hook rejected the request: {prompt_decision.reason}"
                 )
                 self._checkpoint()
                 self._emit_agent_stop("failed", reason=prompt_decision.reason)
@@ -877,7 +877,7 @@ class Agent:
                 self._terminate(
                     "failed",
                     reason="context budget exceeded",
-                    message=f"上下文无法在预算内安全构建：{exc}",
+                    message=f"The context could not be built inside the budget: {exc}",
                     record_memory=record_memory,
                 )
                 return None
@@ -926,7 +926,7 @@ class Agent:
         self._terminate(
             "max_steps",
             reason="max steps reached",
-            message=f"已达到最大步数上限（{max_steps} 步），任务未完成。",
+            message=f"The step limit ({max_steps}) was reached before the task finished.",
             record_memory=record_memory,
         )
         return None

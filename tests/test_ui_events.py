@@ -140,7 +140,7 @@ def test_child_events_share_the_bus_without_entering_the_root_transcript():
         def on_content_delta(self, piece: str) -> None:
             self.deltas.append(piece)
 
-        def on_system_notice(self, text: str) -> None:
+        def on_system_notice(self, text: str, *, code: str = "", params: dict | None = None) -> None:
             self.notices.append(text)
 
         def on_agent_event(self, event: dict) -> None:
@@ -160,8 +160,8 @@ def test_child_events_share_the_bus_without_entering_the_root_transcript():
     child.on_final("done")
 
     assert sink.deltas == ["root"]
-    assert any("子Agent(d1)" in notice and "read" in notice for notice in sink.notices)
-    assert any("收口: done" in notice for notice in sink.notices)
+    assert any("Sub-agent (d1)" in notice and "read" in notice for notice in sink.notices)
+    assert any("finished: done" in notice for notice in sink.notices)
     child_events = [
         event for event in publisher.retained_events()
         if event.payload.get("agent_task_id") == "task-1"

@@ -104,9 +104,13 @@ class CoreMemory(BaseEntity):
             "updated_at": str(self.updated_at),
         }
         if self.project_anchor_state == ANCHOR_NONE:
-            payload["project_anchor_note"] = "没有当前项目，不存在项目 anchor"
+            payload["project_anchor_note"] = "There is no current project, so there is no project anchor"
+            payload["project_anchor_note_code"] = "memory.no_project_anchor"
         elif self.project_anchor_state == ANCHOR_READ_ERROR:
-            payload["project_anchor_note"] = "当前项目 anchor 读取失败，未使用其他项目的 anchor"
+            payload["project_anchor_note"] = (
+                "The current project's anchor could not be read. Another project's anchor was not used"
+            )
+            payload["project_anchor_note_code"] = "memory.anchor_read_failed"
         return payload
 
 

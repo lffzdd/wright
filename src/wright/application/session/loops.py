@@ -245,7 +245,7 @@ class SessionLoopRegistry:
 
 def parse_loop_command(value: str) -> tuple[LoopCommand, Any]:
     """Parse `/loop ...` into ('list', None) | ('stop', id) | ('create', (interval, prompt))."""
-    usage = "用法: /loop <interval> <prompt>  |  /loop list  |  /loop stop <id>"
+    usage = "Usage: /loop <interval> <prompt>  |  /loop list  |  /loop stop <id>"
     parts = value.strip().split(maxsplit=2)
     if len(parts) < 2:
         raise ValueError(usage)
@@ -256,7 +256,7 @@ def parse_loop_command(value: str) -> tuple[LoopCommand, Any]:
         return "list", None
     if verb == "stop":
         if len(parts) < 3 or not parts[2].strip():
-            raise ValueError("用法: /loop stop <id>")
+            raise ValueError("Usage: /loop stop <id>")
         return "stop", parts[2].strip().split()[0]
     if len(parts) < 3 or not parts[2].strip():
         raise ValueError(usage)

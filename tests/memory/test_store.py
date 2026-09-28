@@ -96,14 +96,14 @@ def test_rebuild_index_lists_each_memory(tmp_path: Path):
 def test_rebuild_index_empty(tmp_path: Path):
     rebuild_index(tmp_path)
     content = (tmp_path / "MEMORY.md").read_text(encoding="utf-8")
-    assert "暂无记忆" in content
+    assert "no memories" in content
 
 
 def test_read_entrypoint_truncates(tmp_path: Path):
     lines = "\n".join(f"- line {i}" for i in range(MAX_INDEX_LINES + 50))
     (tmp_path / "MEMORY.md").write_text(lines, encoding="utf-8")
     out = read_entrypoint(tmp_path)
-    assert "警告" in out
+    assert "Warning:" in out
     # 截断后正文行数不超过上限
     body_lines = [l for l in out.splitlines() if l.startswith("- line")]
     assert len(body_lines) <= MAX_INDEX_LINES

@@ -7,6 +7,7 @@ from typing import Any
 from rich.text import Text
 from textual.widgets import Collapsible, Static
 
+from ..i18n import t
 from .format import _format_assistant_text, _tool_body, _tool_class, _tool_title
 from .view_models import ToolView
 
@@ -38,13 +39,18 @@ class ReasoningBlock(Collapsible):
         self._body = Static(text or "…", classes="reasoning-body")
         super().__init__(
             self._body,
-            title="思考" if text else "思考中",
+            title=t("tool.thinking") if text else t("tool.thinking_now"),
             collapsed=collapsed,
             classes="reasoning",
         )
 
     def update_reasoning(self, text: str) -> None:
         self._body.update(text or "…")
+        self.title = t("tool.thinking") if text else t("tool.thinking_now")
+
+    def refresh_language(self) -> None:
+        body = str(self._body.renderable)
+        self.title = t("tool.thinking") if body and body != "…" else t("tool.thinking_now")
 
 class SubagentBlock(Static):
     def __init__(self, data: dict[str, Any], text: str) -> None:
@@ -93,8 +99,10 @@ class ToolBlock(Collapsible):
             classes=f"tool {_tool_class(tool)}",
         )
         self.tool_key = tool.key
+        self._tool = tool
 
     def apply(self, tool: ToolView) -> None:
+        self._tool = tool
         self.tool_key = tool.key
         self.title = _tool_title(tool)
         self.set_classes(f"tool {_tool_class(tool)}")

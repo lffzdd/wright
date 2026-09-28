@@ -229,7 +229,7 @@ def test_missing_project_reads_global_and_rejects_anchor_writes(tmp_path):
     service.update_core_memory("human_profile", "GLOBAL", "replace")
     updated, error = service.update_core_memory("project_anchor", "NOPE", "replace")
     assert updated is None
-    assert error == "缺少项目上下文，不能更新 project_anchor"
+    assert error == "There is no project context, so project_anchor cannot be updated"
     viewed = service.get_core_memory("")
     assert viewed.human_profile == "GLOBAL"
     assert viewed.project_anchor_state == "none"
@@ -255,7 +255,7 @@ def test_project_read_failure_keeps_global_and_does_not_fall_back(tmp_path, monk
     assert viewed.project_anchor == ""
     assert viewed.project_anchor_state == "read_error"
     assert "beta secret" not in viewed.render_block()
-    assert "读取失败" in viewed.to_dict()["project_anchor_note"]
+    assert "could not be read" in viewed.to_dict()["project_anchor_note"]
     assert broken.read_bytes() == original
     assert (tmp_path / CORE_MEMORY_FILE).read_bytes() == global_bytes
 
@@ -432,7 +432,7 @@ def test_rebind_switches_tool_writes_and_prompt(tmp_path):
 
     failed = _execute(update, {"section": "project_anchor", "content": "too early", "mode": "replace"})
     assert failed.ok is False
-    assert "缺少项目上下文" in failed.err
+    assert "no project context" in failed.err
 
     manager.bind_project(alpha)
     assert manager.current_project_id == project_id(alpha)

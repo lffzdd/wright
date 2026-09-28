@@ -10,6 +10,7 @@ import threading
 from typing import Any
 
 from ...domain.model.tool import ToolCall, ToolResult
+from ..i18n import format_issues, t
 from ..rendering.contracts import Renderer
 from .messages import (
     AgentEventNotice,
@@ -204,7 +205,11 @@ class TUIRenderer(Renderer):
                     block.result = tool_result.get("data")
                     block.error = ""
                 else:
-                    block.error = str(tool_result.get("err", "未知错误"))
+                    data = tool_result.get("data") if isinstance(tool_result.get("data"), dict) else {}
+                    block.display_code = str(data.get("display_code") or "")
+                    params = data.get("display_params") if isinstance(data.get("display_params"), dict) else {}
+                    block.display_params = {str(key): str(value) for key, value in params.items()}
+                    block.error = str(tool_result.get("err") or "Unknown error")
                     block.result = None
             view = block
         self._emit(ToolUpsert(view))
@@ -219,14 +224,7 @@ class TUIRenderer(Renderer):
         self._flush_request_usage()
 
     def on_completion_rejected(self, issues: Any = ()) -> None:
-        parts = []
-        for issue in issues or ():
-            message = getattr(issue, "message", None)
-            if message is None and isinstance(issue, dict):
-                message = issue.get("message")
-            if message:
-                parts.append(str(message))
-        detail = "；".join(parts) if parts else "未说明原因"
+        detail = format_issues(issues)
         freeze = ""
         with self._lock:
             freeze = self.content
@@ -236,7 +234,7 @@ class TUIRenderer(Renderer):
         if freeze:
             self._emit(DraftFreeze(freeze))
         self._flush_request_usage()
-        self.on_system_notice(f"完成检查未通过，继续工作  {detail}")
+        self.on_system_notice(t("verification.rejected", detail=detail))
 
     def on_usage(
         self,
@@ -305,7 +303,8 @@ class TUIRenderer(Renderer):
             self.notices.append(line)
         self._emit(AgentEventNotice(event, line))
 
-    def on_system_notice(self, text: str) -> None:
+    def on_system_notice(self, text: str, *, code: str = "", params: dict | None = None) -> None:
+        del code, params
         with self._lock:
             self.notices.append(text)
         self._emit(SystemNotice(text))

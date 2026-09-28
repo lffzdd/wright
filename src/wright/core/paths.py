@@ -71,6 +71,11 @@ def user_permission_settings_path() -> Path:
     return wright_home() / "permission_settings.json"
 
 
+def user_preferences_path() -> Path:
+    """Application preferences. Not project-scoped and not part of a session."""
+    return wright_home() / "preferences.json"
+
+
 def user_mcp_config_path() -> Path:
     return wright_home() / "mcp.json"
 

@@ -126,7 +126,7 @@ def test_old_terminal_turn_trees_are_pruned_as_whole_groups():
 
     current = _begin(plane, turn="current", task="current")
 
-    with pytest.raises(AgentControlError, match="未知"):
+    with pytest.raises(AgentControlError, match="Unknown agent task"):
         plane.get(old.id)
     assert plane.get(current.id).status == "running"
 

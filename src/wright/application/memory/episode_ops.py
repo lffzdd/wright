@@ -42,9 +42,9 @@ class EpisodeQueries:
         project_id: str = "",
     ) -> tuple[list[EpisodeViewDTO], str | None]:
         if scope not in EPISODE_SEARCH_SCOPES:
-            return [], "episode scope 非法"
+            return [], "The episode scope is invalid"
         if status is not None and status not in EPISODE_STATUSES:
-            return [], "episode status 非法"
+            return [], "The episode status is invalid"
         try:
             hits = self.episode_store.search(
                 query,

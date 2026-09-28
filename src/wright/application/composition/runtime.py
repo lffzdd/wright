@@ -232,7 +232,7 @@ def _open_session(
         if not resume_id:
             recent = checkpoint_store.list_recent_sessions(limit=5)
             if resume_chooser is None:
-                raise CheckpointError("恢复会话需要明确的 session_id")
+                raise CheckpointError("Resuming a session requires an explicit session_id")
             resume_id = resume_chooser(recent)
         return checkpoint_store.load(resume_id), True
     if config.continue_latest:
@@ -306,7 +306,7 @@ def assemble_runtime(
     workspace_dir = project_context.execution_root
     project_root = project_context.project_root
     if not workspace_dir.is_dir():
-        raise SystemExit(f"workspace 不存在: {workspace_dir}")
+        raise SystemExit(f"Workspace does not exist: {workspace_dir}")
     ensure_project_state(project_root)
     logger.info("workspace=%s", workspace_dir)
     logger.info("state=%s", session_dir(project_root).parent)
@@ -325,13 +325,13 @@ def assemble_runtime(
             resume_chooser=resume_chooser,
         )
     except CheckpointError as exc:
-        raise SystemExit(f"无法恢复会话: {exc}") from exc
+        raise SystemExit(f"Could not resume the session: {exc}") from exc
 
     # An explicit --model wins. Otherwise resuming retains the model selected
     # in that session, falling back to OPENAI_MODEL for new/legacy sessions.
     model = requested_model or session_state.model_name or configured_model
     if not model:
-        raise ValueError("OPENAI_MODEL 或 --model 不能为空")
+        raise ValueError("OPENAI_MODEL or --model is required")
     session_state.model_name = model
     attachment_store = AttachmentStore(attachment_dir(project_root), session_state.session_id)
     artifact_store = ArtifactStore(artifact_dir(project_root))
@@ -485,7 +485,7 @@ def assemble_runtime(
         )
     except LifecycleConfigError as exc:
         abort_assembly()
-        raise SystemExit(f"无法加载 lifecycle hooks: {exc}") from exc
+        raise SystemExit(f"Could not load lifecycle hooks: {exc}") from exc
     lifecycle.emit(
         "session_start",
         {"resumed": resumed, "workspace_dir": str(workspace_dir)},
@@ -498,7 +498,7 @@ def assemble_runtime(
     mcp_paths, ignored_project_mcp = _trusted_mcp_config_paths(workspace_dir, config)
     if ignored_project_mcp is not None:
         logger.warning(
-            "忽略未受信任的项目 MCP 配置 %s；需要时使用 --trust-project-mcp",
+            "Ignored untrusted project MCP config %s; pass --trust-project-mcp to load it",
             ignored_project_mcp,
         )
     try:

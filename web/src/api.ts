@@ -22,6 +22,8 @@ export async function bootstrap(): Promise<void> {
 }
 
 export const api = {
+  preferences: () => json<{ interface_language: string; supported: Array<{ id: string; label: string }>; note: string }>("/api/v1/preferences"),
+  setPreference: (interfaceLanguage: string) => json<{ interface_language: string }>("/api/v1/preferences", { method: "PUT", body: JSON.stringify({ interface_language: interfaceLanguage }) }),
   project: () => json<Record<string, unknown>>("/api/v1/project"),
   sessions: () => json<SessionSummary[]>("/api/v1/sessions"),
   snapshot: (id: string) => json<Snapshot>(`/api/v1/sessions/${id}/snapshot`),

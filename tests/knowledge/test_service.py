@@ -153,4 +153,4 @@ def test_api_embedder_missing_key_raises():
     embedder = ApiEmbedder(api_key="", base_url="http://localhost:8000/v1")
     with pytest.raises(Exception) as exc_info:
         embedder.embed_texts(["hello"])
-    assert "缺少 Embedding API Key" in str(exc_info.value)
+    assert "Missing embedding API key" in str(exc_info.value)

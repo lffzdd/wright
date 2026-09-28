@@ -60,8 +60,12 @@ def _completion_notice(rt: WrightRuntime, identifier: str) -> dict | None:
     return agent_completion_notice(rt.session_state.control_plane, identifier)
 
 
-def _notice(rt: WrightRuntime, text: str) -> None:
-    rt.event_renderer.on_system_notice(text)
+def _notice(rt: WrightRuntime, text: str, *, code: str = "", **params: object) -> None:
+    rt.event_renderer.on_system_notice(
+        text,
+        code=code,
+        params={key: "" if value is None else str(value) for key, value in params.items()},
+    )
 
 
 def _publish_execution(rt: WrightRuntime, execution: str, reason: str = "") -> None:
@@ -96,12 +100,12 @@ def _render_durable_run_finished(store: AutonomyStore, run_id: str, rt: WrightRu
 def _parse_external_event_command(value: str) -> tuple[str, dict]:
     parts = value.strip().split(maxsplit=2)
     if len(parts) < 2:
-        raise ValueError("用法: /event <name> [JSON object]")
+        raise ValueError("Usage: /event <name> [JSON object]")
     payload: dict = {}
     if len(parts) == 3:
         parsed = json.loads(parts[2])
         if not isinstance(parsed, dict):
-            raise ValueError("event payload 必须是 JSON object")
+            raise ValueError("event payload must be a JSON object")
         payload = parsed
     return parts[1], payload
 
@@ -111,7 +115,7 @@ def _handle_loop_command(value: str, registry: SessionLoopRegistry, rt: WrightRu
     if action == "list":
         records = registry.list_loops()
         if not records:
-            _notice(rt, "没有运行中的 loop")
+            _notice(rt, "No loop is running", code="notice.no_loops")
             return
         for record in records:
             _notice(
@@ -122,7 +126,13 @@ def _handle_loop_command(value: str, registry: SessionLoopRegistry, rt: WrightRu
         return
     if action == "stop":
         record = registry.stop(str(payload))
-        _notice(rt, f"已停止 loop {record.id} ({record.name})")
+        _notice(
+            rt,
+            f"Stopped loop {record.id} ({record.name})",
+            code="notice.loop_stopped",
+            loop_id=record.id,
+            name=record.name,
+        )
         return
     interval, prompt = payload
     record = registry.create(prompt=prompt, interval_seconds=interval)
@@ -140,7 +150,7 @@ def _cmd_history(text: str, rt: WrightRuntime) -> None:
     elif arg.isdigit():
         payload = {"max_turns": int(arg)}
     elif arg:
-        _notice(rt, "用法: /history [N|all]")
+        _notice(rt, "Usage: /history [N|all]", code="notice.history_usage")
         return
     rt.publisher.publish("session.history_requested", payload)
 
@@ -227,17 +237,20 @@ def dispatch_slash(text: str, rt: WrightRuntime) -> bool:
     return True
 
 
-def _attachment_notice(rt: WrightRuntime) -> str:
+def _attachment_notice(rt: WrightRuntime) -> tuple[str, str, dict[str, str]]:
     drafts = getattr(rt, "draft_attachments", None)
     if drafts is None:
-        return "当前运行时不支持附件"
+        text = "This runtime does not support attachments"
+        return text, "notice.attachments_unsupported", {}
     records = drafts.summaries()
     if not records:
-        return "没有待发送图片"
-    return "待发送图片:\n" + "\n".join(
+        text = "No images are waiting to be sent"
+        return text, "notice.no_pending_images", {}
+    listing = "\n".join(
         f"  [{index}] {record.filename} ({record.width}×{record.height})"
         for index, record in enumerate(records, 1)
     )
+    return f"Images waiting to be sent:\n{listing}", "notice.pending_images", {"listing": listing}
 
 
 def _dispatch_attachment_command(text: str, rt: WrightRuntime) -> tuple[bool, str | None]:
@@ -247,24 +260,27 @@ def _dispatch_attachment_command(text: str, rt: WrightRuntime) -> tuple[bool, st
     drafts = getattr(rt, "draft_attachments", None)
     if head == "/attach":
         if drafts is None:
-            _notice(rt, "当前运行时不支持附件")
+            _notice(rt, "This runtime does not support attachments", code="notice.attachments_unsupported")
             return True, None
         try:
             added = drafts.attach_paths(shlex.split(tail))
-            _notice(rt, "已附加: " + ", ".join(record.filename for record in added))
+            names = ", ".join(record.filename for record in added)
+            _notice(rt, f"Attached: {names}", code="notice.attached", names=names)
         except (AttachmentError, ValueError) as exc:
             _notice(rt, str(exc))
         return True, None
     if head == "/attachments":
-        _notice(rt, _attachment_notice(rt))
+        text, code, params = _attachment_notice(rt)
+        _notice(rt, text, code=code, **params)
         return True, None
     if head == "/detach":
         if drafts is None:
-            _notice(rt, "当前运行时不支持附件")
+            _notice(rt, "This runtime does not support attachments", code="notice.attachments_unsupported")
             return True, None
         try:
             removed = drafts.detach(tail.strip())
-            _notice(rt, "已移除: " + ", ".join(record.filename for record in removed))
+            names = ", ".join(record.filename for record in removed)
+            _notice(rt, f"Removed: {names}", code="notice.removed", names=names)
         except AttachmentError as exc:
             _notice(rt, str(exc))
         return True, None
@@ -349,7 +365,11 @@ def process_session_event(
             if drafts is not None:
                 attachment_ids = drafts.consume()
         if not user_input.strip() and not attachment_ids:
-            _notice(rt, "请输入文字或先用 /attach 添加图片")
+            _notice(
+                rt,
+                "Type a message, or attach an image with /attach first",
+                code="notice.need_input",
+            )
             agent_idle.set()
             return False
         turn_id = f"{session_state.session_id}:{len(session_state.message_records)}"
@@ -410,7 +430,7 @@ def process_session_event(
         try:
             notice = _completion_notice(rt, str(payload))
             if notice is None:
-                logger.warning("忽略未知后台任务完成事件: %s", payload)
+                logger.warning("ignored unknown background completion event: %s", payload)
             else:
                 task = notice["task"]
                 active = rt.session_state.active_run_id

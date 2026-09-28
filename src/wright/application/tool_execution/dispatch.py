@@ -323,9 +323,13 @@ class ToolDispatchService:
                     "permission": {
                         "decision": permission.decision,
                         "reason": permission.reason,
+                        "reason_code": permission.reason_code,
+                        "reason_params": dict(permission.reason_params),
                         "risk_flags": list(permission.risk_flags),
                         "source": permission.source,
-                    }
+                    },
+                    "display_code": permission.reason_code,
+                    "display_params": dict(permission.reason_params),
                 },
             )
         if permission.grant is None:
@@ -335,7 +339,13 @@ class ToolDispatchService:
         try:
             self._commit_authorization_change(permission.changes)
         except Exception as exc:
-            return ToolResult.fail(f"授权保存失败，本次调用未执行: {exc}")
+            return ToolResult.fail(
+                f"Could not save the authorization, so this call was not executed: {exc}",
+                data={
+                    "display_code": "permission.auth_save_failed",
+                    "display_params": {"error": str(exc)},
+                },
+            )
 
         runtime_scope = self._access_scope()
         authorized: AuthorizedExecution | None = None

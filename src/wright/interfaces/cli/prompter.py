@@ -13,6 +13,7 @@ from prompt_toolkit import prompt
 from prompt_toolkit.formatted_text import HTML
 
 from ...domain.policy.permission.types import PermissionPrompt
+from ..i18n import t
 from .console_renderer import ConsoleRenderer
 
 
@@ -55,8 +56,12 @@ class ConsolePrompter:
             http_method=str(payload.get("http_method", "")),
             http_target=str(payload.get("http_target", "")),
             shell_note=str(payload.get("shell_note", "")),
+            reason_code=str(payload.get("reason_code", "")),
+            reason_params=payload.get("reason_params") or {},
+            summary_code=str(payload.get("summary_code", "")),
+            summary_params=payload.get("summary_params") or {},
         )
-        prompt_text = HTML("  <b><ansiyellow>允许执行? </ansiyellow></b>")
+        prompt_text = HTML(f"  <b><ansiyellow>{t('cli.allow_prompt')} </ansiyellow></b>")
         try:
             answer = prompt(prompt_text).strip().lower()
             choice_ids = {str(choice["id"]) for choice in choices}
@@ -89,7 +94,7 @@ class ConsolePrompter:
             context=str(payload.get("context", "")),
             options=options,
         )
-        prompt_text = HTML("<b><ansicyan>你的回答 ❯ </ansicyan></b>")
+        prompt_text = HTML(f"<b><ansicyan>{t('cli.answer_prompt')} ❯ </ansicyan></b>")
         while True:
             try:
                 answer = prompt(prompt_text).strip()
@@ -100,4 +105,4 @@ class ConsolePrompter:
             if answer:
                 self._renderer.resume_display()
                 return answer
-            self._renderer.show_line("回答不能为空，请重新输入。", style="yellow")
+            self._renderer.show_line(t("cli.answer_empty"), style="yellow")

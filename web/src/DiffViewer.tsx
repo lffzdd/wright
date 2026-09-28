@@ -1,5 +1,6 @@
 import { Check, Copy } from "@phosphor-icons/react";
 import { memo, useMemo, useState } from "react";
+import { useT } from "./i18n";
 
 type DiffLine = {
   type: "meta" | "hunk" | "add" | "del" | "context";
@@ -15,6 +16,7 @@ export const DiffViewer = memo(function DiffViewer({
   patch: string;
   filename?: string;
 }) {
+  const tr = useT();
   const [copied, setCopied] = useState(false);
 
   const { lines, additions, deletions } = useMemo(() => {
@@ -68,7 +70,7 @@ export const DiffViewer = memo(function DiffViewer({
   };
 
   if (!patch) {
-    return <p className="empty-small">No textual diff.</p>;
+    return <p className="empty-small">{tr("web.no_diff")}</p>;
   }
 
   return (
@@ -85,11 +87,11 @@ export const DiffViewer = memo(function DiffViewer({
           type="button"
           className="copy-button"
           onClick={handleCopy}
-          title="Copy raw patch"
-          aria-label="Copy raw patch"
+          title={tr("web.copy_patch_title")}
+          aria-label={tr("web.copy_patch_title")}
         >
           {copied ? <Check size={13} /> : <Copy size={13} />}
-          <span>{copied ? "Copied" : "Copy patch"}</span>
+          <span>{copied ? tr("web.copied") : tr("web.copy_patch")}</span>
         </button>
       </div>
       <div className="diff-table-wrap">

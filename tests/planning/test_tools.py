@@ -35,7 +35,7 @@ def test_plan_tool_errors_are_data_not_exceptions(tmp_path):
     result = update_plan("step_404", "completed", runtime=runtime)
 
     assert not result.ok
-    assert "未知步骤 id" in result.err
+    assert "Unknown step id" in result.err
 
 
 def test_replan_tool_keeps_completed_history(tmp_path):

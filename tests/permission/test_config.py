@@ -87,7 +87,7 @@ def test_global_deny_overrides_tool_allow(tmp_path):
         ToolCall("read_file", {"file": "secrets/key"}, "c1"),
     )
     assert not result.ok
-    assert "deny 规则" in result.data["permission"]["reason"]
+    assert "deny rule" in result.data["permission"]["reason"]
 
 
 def test_plan_mode_denies_side_effects_even_with_allow(tmp_path):
@@ -99,7 +99,7 @@ def test_plan_mode_denies_side_effects_even_with_allow(tmp_path):
         ToolCall("write_file", {"file": "a.txt", "content": "hello"}, "c1"),
     )
     assert not result.ok
-    assert "plan" in result.data["permission"]["reason"]
+    assert "Plan mode" in result.data["permission"]["reason"]
 
 
 def test_bypass_allows_shell_but_ask_rule_still_wins(tmp_path):
@@ -143,7 +143,7 @@ def test_bypass_allows_without_rules_and_deny_still_wins(tmp_path):
         ToolCall("execute_command", {"command": "rm file"}, "c2"),
     )
     assert not blocked.ok
-    assert "deny 规则" in blocked.data["permission"]["reason"]
+    assert "deny rule" in blocked.data["permission"]["reason"]
 
 
 def test_accept_edits_does_not_auto_allow_shell(tmp_path):

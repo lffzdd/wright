@@ -73,5 +73,5 @@ class Renderer(ABC):
     def on_agent_event(self, event: dict[str, Any]) -> None:
         """子 Agent 控制面事件。默认不输出。"""
 
-    def on_system_notice(self, text: str) -> None:
+    def on_system_notice(self, text: str, *, code: str = "", params: dict | None = None) -> None:
         """Host-level status line (slash feedback, durable run, autonomy). Default: no-op."""

@@ -29,6 +29,30 @@ UI_EVENT_TYPES = frozenset({
 })
 
 
+def notice_display(event_type: str, payload: dict[str, Any]) -> tuple[str, dict[str, str]]:
+    """Stable display code for a notice. Empty code means the text stays as written."""
+    if event_type == "turn.failed":
+        detail = payload.get("error") or payload.get("status") or "unknown error"
+        return "notice.turn_failed", {"detail": str(detail)}
+    if event_type == "turn.cancelled":
+        return "notice.turn_cancelled", {}
+    if event_type == "system.checkpoint_error":
+        return "notice.checkpoint_failed", {"detail": str(payload.get("error") or "unknown error")}
+    if payload.get("kind") == "completion_rejected":
+        return "notice.completion_another", {}
+    if payload.get("kind") == "context_compact":
+        return "notice.context_compact", {"count": str(int(payload.get("folded_count") or 0))}
+    code = payload.get("code")
+    params = payload.get("params")
+    if isinstance(code, str) and code:
+        clean = {
+            str(key): str(value)
+            for key, value in params.items()
+        } if isinstance(params, dict) else {}
+        return code, clean
+    return "", {}
+
+
 def notice_text(event_type: str, payload: dict[str, Any]) -> str:
     """Text shown for a notice. Snapshots and the web reducer use this wording."""
 
@@ -276,5 +300,12 @@ class SessionEvents:
     def on_agent_event(self, event: dict[str, Any]) -> None:
         self.emit("task.updated", dict(event))
 
-    def on_system_notice(self, text: str) -> None:
-        self.emit("system.notice", {"text": text})
+    def on_system_notice(self, text: str, *, code: str = "", params: dict | None = None) -> None:
+        payload: dict[str, Any] = {"text": text}
+        if code:
+            payload["code"] = code
+            payload["params"] = {
+                key: "" if value is None else str(value)
+                for key, value in (params or {}).items()
+            }
+        self.emit("system.notice", payload)

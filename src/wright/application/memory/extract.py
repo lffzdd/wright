@@ -30,30 +30,30 @@ from .llm_util import SideQueryResult
 logger = get_logger(__name__)
 
 MAX_EXTRACT_CHARS = 8_000
-_TRUNCATED = "…(已截断)"
+_TRUNCATED = "…(truncated)"
 
-EXTRACT_SYSTEM_PROMPT = f"""你在一段 AI Agent 与用户的对话结束后，从标注来源里提取值得【长期、跨会话】保留的记忆。
+EXTRACT_SYSTEM_PROMPT = f"""After a conversation between an AI agent and a user, extract memories worth keeping across sessions.
 
 {TYPES_SECTION}
 
 {WHAT_NOT_TO_SAVE}
 
-每条来源都标了 id 和 kind。kind=user_statement 是用户陈述。kind=tool_observation 是工具观察，不自动等于目标已经达成。kind=assistant_statement 是助手陈述或推断，不能单独当作已验证事实。kind=verification_record 只表示当时的检查记录。
+Every source is labeled with an id and a kind. kind=user_statement is something the user said. kind=tool_observation is a tool observation and does not by itself mean the goal was achieved. kind=assistant_statement is an assistant statement or inference and cannot stand alone as a verified fact. kind=verification_record is only the check recorded at that time.
 
-请只提取明显值得保留的内容。没有就返回空列表。
-source_refs 必须是输入里出现过的 id，不能编造。
-user 或 feedback 必须引用至少一条 user_statement。
-只有助手陈述支持的结论不要保存。
-自动写入只属于当前项目。不要填写 scope，也不要尝试把记忆写成全局。
-update 的 memory_id 只能来自「可更新」清单。只读全局记忆不能 update，也不能改写成项目记忆。
-create 时不要填写 memory_id。同名记忆不会覆盖已有记录。
+Extract only what is clearly worth keeping. If nothing qualifies, return an empty list.
+source_refs must be ids that appear in the input. Do not invent ids.
+A user or feedback memory must cite at least one user_statement.
+Do not save a conclusion supported only by assistant statements.
+Automatic writes belong only to the current project. Do not fill in scope and do not try to make the memory global.
+An update memory_id must come from the updatable list. Read-only global memories cannot be updated and cannot be rewritten as project memories.
+Do not fill in memory_id for a create. A memory with the same name does not overwrite an existing record.
 
-只输出严格 JSON:
+Output strict JSON only:
 {{"memories": [
-  {{"memory_id": "已有-id（仅 update）", "name": "简短主题名", "description": "一句话描述",
+  {{"memory_id": "existing-id (update only)", "name": "short topic", "description": "one sentence",
     "type": "{' | '.join(SEMANTIC_MEMORY_TYPES)}",
-    "content": "记忆正文", "action": "create | update | skip",
-    "source_refs": ["来源 id"]}}
+    "content": "memory body", "action": "create | update | skip",
+    "source_refs": ["source id"]}}
 ]}}"""
 
 
@@ -277,18 +277,18 @@ def _packet(
             continue
         summary = " ".join(str(item.get("summary") or "").split())
         if kind == "assistant_statement":
-            line = f"[{evidence_id} kind=assistant_statement] 助手陈述，不是已验证事实: {summary}"
+            line = f"[{evidence_id} kind=assistant_statement] Assistant statement, not a verified fact: {summary}"
         else:
             line = f"[{evidence_id} kind={kind}] {summary}"
         entries.append((evidence_id, line))
     readonly_text = readonly if len(readonly) <= 1_500 else readonly[:1_500] + _TRUNCATED
-    readonly_block = "只读全局记忆（不能 update，也不能改成项目意见）:\n" + readonly_text + "\n\n"
-    source_header = "来源（只能引用下面出现的 id，不能编造）:\n"
-    omitted = "部分来源因预算未包含。未出现的 id 不能引用。\n"
-    intro = "可更新记忆（只能 update 这些 id，且它们属于当前项目）:\n"
+    readonly_block = "Read-only global memories (cannot update, and cannot rewrite them as project memories):\n" + readonly_text + "\n\n"
+    source_header = "Sources (cite only ids that appear below; do not invent ids):\n"
+    omitted = "Some sources were omitted for budget. Ids that do not appear cannot be cited.\n"
+    intro = "Updatable memories (update only these ids; they belong to the current project):\n"
 
     def pack(update_lines: list[str], source_lines: list[str], dropped: bool) -> str:
-        update_body = "\n".join(update_lines) if update_lines else "(暂无)"
+        update_body = "\n".join(update_lines) if update_lines else "(none)"
         text = intro + update_body + "\n\n" + readonly_block + source_header + "".join(source_lines)
         if dropped:
             text += omitted
@@ -300,13 +300,13 @@ def _packet(
     for evidence_id, line in entries:
         trial_lines = [*source_lines, line + "\n"]
         # Leave room for at least the headers. Updatable lines are added after.
-        skeleton = pack(["(暂无)"], trial_lines, dropped=False)
+        skeleton = pack(["(none)"], trial_lines, dropped=False)
         if len(skeleton) <= MAX_EXTRACT_CHARS:
             chosen_sources.append((evidence_id, line))
             source_lines = trial_lines
             continue
         if not chosen_sources:
-            room = MAX_EXTRACT_CHARS - len(pack(["(暂无)"], [], dropped=False)) - len(_TRUNCATED) - 1
+            room = MAX_EXTRACT_CHARS - len(pack(["(none)"], [], dropped=False)) - len(_TRUNCATED) - 1
             if room > 80:
                 clipped = line[:room] + _TRUNCATED
                 chosen_sources.append((evidence_id, clipped))

@@ -255,7 +255,7 @@ def test_verification_failure_is_not_rendered_as_success(tmp_path: Path):
     rendered = render_episode_for_budget(episode, token_limit=400)
     assert episode.status == "completed"
     assert rendered is not None
-    assert "状态: completed" in rendered
+    assert "status: completed" in rendered
     assert "approved=False" in rendered
     assert "login still fails" in rendered
     assert "测试已通过" not in rendered
@@ -377,8 +377,8 @@ def test_labeled_lexical_candidates_match_expectations(tmp_path: Path):
 
 
 def test_selector_protocol_and_single_usage(tmp_path: Path):
-    assert "失败教训" in SELECT_SYSTEM_PROMPT
-    assert "可以是 0 条" in SELECT_SYSTEM_PROMPT
+    assert "failure lesson" in SELECT_SYSTEM_PROMPT
+    assert "Zero is allowed" in SELECT_SYSTEM_PROMPT
     store = EpisodeStore(tmp_path)
     real = store.save(_record("ep-real-one", "修复登录", outcome="改了 cookie"))
     second = store.save(_record("ep-real-two", "修复登录", outcome="补了测试", created_at="2026-02-01T00:00:00Z"))
@@ -588,7 +588,7 @@ def test_text_budget_and_context_overflow(tmp_path: Path):
     ]
     forced = render_episode_for_budget(episodes[0], token_limit=80)
     assert forced is not None
-    assert "…(已截断)" in forced
+    assert "…(truncated)" in forced
     assert estimate_tokens(forced) <= 80
     rendered = MemoryService(
         _MemorylessSemantic(),
@@ -601,7 +601,7 @@ def test_text_budget_and_context_overflow(tmp_path: Path):
     assert "ep-budget-1" in rendered.episode_text
     assert "ep-budget-2" not in rendered.episode_text
     assert "ep-budget-3" not in rendered.episode_text
-    assert "…(已截断)" in rendered.episode_text
+    assert "…(truncated)" in rendered.episode_text
 
     zero = MemoryService(
         _MemorylessSemantic(),

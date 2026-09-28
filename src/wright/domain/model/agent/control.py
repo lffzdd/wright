@@ -596,7 +596,7 @@ class AgentControlPlane:
     def _require(self, task_id: str) -> AgentTaskRecord:
         record = self._tasks.get(task_id)
         if record is None:
-            raise AgentControlError(f"未知 agent task: {task_id}")
+            raise AgentControlError(f"Unknown agent task: {task_id}")
         return record
 
     def _notify_change(self) -> None:

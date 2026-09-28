@@ -361,7 +361,7 @@ def test_evidence_read_marks_truncation(tmp_path: Path):
     assert view is not None
     user = next(item for item in view.evidence_reads if item.kind == "user_statement")
     assert user.truncated is True
-    assert user.text.endswith("…(已截断)")
+    assert user.text.endswith("…(truncated)")
     assert len(user.text) <= 1500
     assert user.status == "available"
 
@@ -612,7 +612,7 @@ def test_candidate_summary_keeps_tail_and_omits_usage():
     )
     line = candidate_summary(episode, char_budget=700)
     assert "TAILTOKEN_BUN" in line
-    assert "…(首尾截断)" in line
+    assert "head and tail kept" in line
     assert "ECONNREFUSED" in line
     assert "9000001" not in line
     empty = EpisodeRecord(

@@ -15,6 +15,7 @@ from typing import Any
 from prompt_toolkit import PromptSession, prompt
 from prompt_toolkit.formatted_text import HTML
 
+from ..i18n import t
 from ..interaction import PROMPT_INTERRUPTED, InteractionHub, InteractionRequest
 from .console_renderer import ConsoleRenderer
 from .prompter import ConsolePrompter
@@ -78,12 +79,13 @@ class CliInputController:
             return None
         if not queueing:
             renderer.settle_for_prompt()
+            label = t("cli.prompt_idle")
             prompt_text = HTML(
-                "<b><ansicyan>╭─ 💬 你的指令 </ansicyan><ansibrightblack>(输入 /exit 退出)</ansibrightblack></b>\n"
+                f"<b><ansicyan>╭─ {label} </ansicyan></b>\n"
                 "<b><ansicyan>╰─❯ </ansicyan></b>"
             )
         else:
-            prompt_text = HTML("<b><ansibrightblack>排队 ❯ </ansibrightblack></b>")
+            prompt_text = HTML(f"<b><ansibrightblack>{t('cli.prompt_queued')} ❯ </ansibrightblack></b>")
 
         def _abort_if_interaction_pending() -> None:
             hub = self._hub

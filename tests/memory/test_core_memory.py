@@ -207,7 +207,7 @@ def test_core_memory_tools_report_saved_scope(tmp_path: Path):
     assert res.data["human_profile"] == ""
     assert res.data["project_anchor_state"] == "none"
     assert res.data["project_id"] == ""
-    assert "没有当前项目" in res.data["project_anchor_note"]
+    assert "no current project" in res.data["project_anchor_note"]
     assert "unassigned_project_anchor" not in res.data
 
     res = update_core_memory(service, "persona", "I am a rogue AI")
@@ -216,7 +216,7 @@ def test_core_memory_tools_report_saved_scope(tmp_path: Path):
 
     res = update_core_memory(service, "project_anchor", "Clean Root", mode="replace")
     assert res.ok is False
-    assert "缺少项目上下文" in res.err
+    assert "no project context" in res.err
 
     res = update_core_memory(
         service, "human_profile", "Rule 1: Always check types", mode="append",

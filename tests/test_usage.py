@@ -100,8 +100,8 @@ def test_console_labels_and_unknown_usage():
     renderer.on_usage(None, None, None, 1000)
     renderer.on_usage_summary(200, 30, 230)
     text = output.getvalue()
-    assert '本次请求' in text and '输入 ?' in text
-    assert '当前任务累计（已报告）' in text
+    assert "tokens this request" in text and "input ?" in text
+    assert "tokens this task (reported)" in text
     assert '预计占用' not in text
 
 
@@ -162,7 +162,7 @@ def test_console_reports_completion_rejection():
         type("Issue", (), {"message": "计划未完成"})()
     ])
     text = output.getvalue()
-    assert "完成检查未通过" in text
+    assert "Completion check failed" in text
     assert "计划未完成" in text
 
 

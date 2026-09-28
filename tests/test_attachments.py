@@ -66,7 +66,7 @@ def test_terminal_attachment_commands_accept_shell_escaped_paths(tmp_path):
         def __init__(self) -> None:
             self.notices: list[str] = []
 
-        def on_system_notice(self, text: str) -> None:
+        def on_system_notice(self, text: str, *, code: str = "", params: dict | None = None) -> None:
             self.notices.append(text)
 
     records = {}

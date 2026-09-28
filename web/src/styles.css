@@ -33,6 +33,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, summary:focus
 .brand strong { font-size: 14px; letter-spacing: .01em; }
 .brand small { color: var(--muted); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .top-status { display: flex; align-items: center; gap: 18px; color: var(--muted); font-size: 12px; min-width: 0; }
+.language-control { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.language-control select { background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
 .top-status > span { white-space: nowrap; }
 .connection { display: flex; align-items: center; gap: 7px; }
 .status-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: #5f6874; }

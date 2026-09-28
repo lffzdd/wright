@@ -318,12 +318,16 @@ def scope_denial_message(
     """Explain a hidden record without claiming the file was deleted."""
     if status == "inactive":
         return (
-            "这条记忆已停用，默认检索和自动召回不包含它。"
-            "文件仍在。在其所属范围内可以直接读取；恢复需要显式操作。"
+            "This memory is inactive. Default search and automatic recall omit it. "
+            "The file is still there. It can be read directly inside its own scope; "
+            "restoring it takes an explicit action."
         )
     if read_scope == "applicable":
-        return "这条记忆不属于全局或当前项目。跨项目读取或修改需要显式 scope。"
-    return "这条记忆不在本次操作的范围内。"
+        return (
+            "This memory is neither global nor in the current project. "
+            "Cross-project reads or edits need an explicit scope."
+        )
+    return "This memory is outside this operation's scope."
 
 
 def normalize_stored_scope(scope: str | None, project_id: str) -> tuple[str, str] | None:

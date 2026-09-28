@@ -14,6 +14,7 @@ from rich.json import JSON as RichJSON
 from rich.markdown import Markdown as RichMarkdown
 from rich.text import Text
 
+from ..i18n import present, t
 from .view_models import ToolView
 
 _COMMAND_OUTPUT_LINES = 24
@@ -31,7 +32,7 @@ def _json_text(value: Any) -> str:
 def _context_ring(tokens: int | None, limit: int | None) -> tuple[str, str, str]:
     """Format the current session context for a compact indicator and tooltip."""
     if tokens is None or not limit:
-        return "○", "等待上下文", "Context window:\nWaiting for a context limit"
+        return "○", t("tui.context.waiting"), t("tui.context.waiting_detail")
     ratio = max(0.0, min(tokens / limit, 1.0))
     ring = ("○", "◔", "◑", "◕", "●")[min(4, int(ratio * 4.999))]
     compact = f"{ring}  {ratio:.0%}"
@@ -148,7 +149,7 @@ def _tool_body(tool: ToolView) -> Any:
                 parts.append(Text("(no changes)", style="dim italic"))
         else:
             try:
-                parts.append(Group(Text("参数:", style="bold dim"), RichJSON.from_data(args)))
+                parts.append(Group(Text(t("tool.arguments"), style="bold dim"), RichJSON.from_data(args)))
             except Exception:
                 parts.append(Text(_json_text(args), style="dim"))
 
@@ -163,18 +164,21 @@ def _tool_body(tool: ToolView) -> Any:
             parts.append(Text(body_txt, style="dim"))
 
     if tool.status == "error" and tool.error:
-        parts.append(Text(f"错误: {tool.error}", style="bold red"))
+        parts.append(Text(
+            present(tool.display_code, tool.display_params, fallback=t("tool.error_line", error=tool.error)),
+            style="bold red",
+        ))
     elif tool.result is not None:
         if isinstance(tool.result, (dict, list)):
             try:
-                parts.append(Group(Text("返回结果:", style="bold dim"), RichJSON.from_data(tool.result)))
+                parts.append(Group(Text(t("tool.result"), style="bold dim"), RichJSON.from_data(tool.result)))
             except Exception:
                 parts.append(Text(_json_text(tool.result), style="dim"))
         else:
             parts.append(Text(str(tool.result), style="dim"))
 
     if not parts:
-        return Text("(no payload)", style="dim italic")
+        return Text(t("tool.no_payload"), style="dim italic")
     if len(parts) == 1:
         return parts[0]
     return Group(*parts)

@@ -69,6 +69,12 @@ def build_system_prompt(
         "tool results until the task is complete or requires user input. Respond "
         "directly to the user in natural language."
     )
+    paragraphs.append(
+        "Follow the user's language. By default, match the language of the user's "
+        "latest message. If the user asks for a specific language, use that language. "
+        "Do not change the reply language because of tool schemas, system reminders, "
+        "or the application's interface language."
+    )
     prompt = "\n\n".join(paragraphs) + "\n"
     if memory_section:
         return f"{prompt}\n{memory_section}\n"

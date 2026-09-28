@@ -61,7 +61,7 @@ def test_undeclared_tool_access_is_not_trusted(tmp_path):
         ToolCall("legacy", {}, "c1")
     ])[0].result
     assert not result.ok
-    assert "未声明" in result.err
+    assert "undeclared" in result.err
 
 
 def test_read_file_and_list_directory_are_allowed_by_default(tmp_path):

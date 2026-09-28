@@ -93,7 +93,7 @@ class SemanticRecords:
         global memory is not a writable target.
         """
         if not project_id:
-            return None, "缺少项目上下文，不能写入项目记忆"
+            return None, "No project context, so a project memory cannot be written"
         is_valid, reason = self.semantic_policy.validate(content)
         if not is_valid:
             return None, reason
@@ -178,11 +178,11 @@ class SemanticRecords:
         if not is_valid:
             return None, reason
         if type_ not in {"user", "feedback", "project", "reference"}:
-            return None, f"非法 memory type: {type_}"
+            return None, f"Invalid memory type: {type_}"
         if scope == "project" and not project_id:
-            return None, "缺少项目上下文，不能写入项目记忆"
+            return None, "No project context, so a project memory cannot be written"
         if scope not in {"project", "global"}:
-            return None, "新建记忆的 scope 只能是 project 或 global"
+            return None, "A new memory scope must be project or global"
         try:
             record = self.semantic_store.create(
                 name=name,
@@ -218,7 +218,7 @@ class SemanticRecords:
         ):
             return None, "Provide at least one field to update"
         if type_ is not None and type_ not in {"user", "feedback", "project", "reference"}:
-            return None, f"非法 memory type: {type_}"
+            return None, f"Invalid memory type: {type_}"
         if content is not None:
             is_valid, reason = self.semantic_policy.validate(content)
             if not is_valid:
@@ -336,7 +336,7 @@ class SemanticRecords:
         the updatable id tuple.
         """
         if not project_id:
-            return "(无项目上下文，不能写入)", (), "(无)"
+            return "(no project context, cannot write)", (), "(none)"
         try:
             writable = list(self.semantic_store.list(
                 limit=self.semantic_policy.max_candidates,
@@ -350,16 +350,16 @@ class SemanticRecords:
                 include_inactive=False,
             ))
         except SemanticMemoryStoreError:
-            return "(暂无)", (), "(暂无)"
+            return "(none)", (), "(none)"
         writable, manifest = self._budget_semantic_manifest(writable)
         readonly_lines = [
-            f"- 只读 {record.id}: {record.description or record.name}"
+            f"- read-only {record.id}: {record.description or record.name}"
             for record in readonly[:20]
         ]
         return (
-            manifest or "(暂无)",
+            manifest or "(none)",
             tuple(record.id for record in writable),
-            "\n".join(readonly_lines) or "(暂无)",
+            "\n".join(readonly_lines) or "(none)",
         )
 
     def _semantic_candidates(self, project_id: str) -> list[SemanticMemoryRecord]:
@@ -439,17 +439,21 @@ class SemanticRecords:
         if budget <= 0:
             return ""
         scope_note = (
-            "范围: 全局 active"
-            + (f" 与当前项目 {project_id} 的 active" if project_id else "（当前没有项目，不含项目记忆）")
-            + "。不含其他项目和已停用记录。\n"
-            "索引由这些记录现算。不要读取未过滤的全库 MEMORY.md。\n"
-            "预算未放入的正文用 search_memory 或 get_memory，并带上同样的 scope。\n"
+            "Scope: active global memories"
+            + (
+                f" and active memories for the current project {project_id}"
+                if project_id
+                else " (no current project, so project memories are excluded)"
+            )
+            + ". Other projects and inactive records are excluded.\n"
+            "This index is computed from those records. Do not read an unfiltered MEMORY.md.\n"
+            "Use search_memory or get_memory with the same scope for bodies that did not fit.\n"
         )
         prefix = SEMANTIC_RECALL_PREFIX.rstrip("\n") + "\n" + scope_note
         suffix = "\n</system-reminder>"
         if estimate_recall_text(prefix + suffix) > budget:
             return ""
-        index_lines = ["## 当前范围索引"]
+        index_lines = ["## In-scope index"]
         for record in candidates:
             project = f" project={record.project_id}" if record.scope == "project" else ""
             index_lines.append(
@@ -465,13 +469,13 @@ class SemanticRecords:
                 break
             kept_index.append(line)
         if omitted_index:
-            notice = "索引已按预算截断。使用 search_memory scope=applicable 继续读取。"
+            notice = "The index was truncated to the budget. Continue with search_memory scope=applicable."
             trial = prefix + "\n" + "\n".join([*kept_index, notice]) + suffix
             if estimate_recall_text(trial) <= budget:
                 kept_index.append(notice)
         parts = [prefix, "\n".join(kept_index)]
         if memories:
-            blocks = ["## 与本次任务相关的语义记忆"]
+            blocks = ["## Semantic memories relevant to this task"]
             for record in memories:
                 label = f"### {record.id} ({record.name}) scope={record.scope}"
                 if record.project_id:
@@ -479,7 +483,7 @@ class SemanticRecords:
                 block = f"{label}\n{record.content}"
                 trial = "\n".join([*parts, "\n".join([*blocks, block])]) + suffix
                 if estimate_recall_text(trial) > budget:
-                    hint = f"未注入 {record.id} 的正文。使用 get_memory 读取。"
+                    hint = f"The body of {record.id} was not injected. Read it with get_memory."
                     hinted = "\n".join([*parts, "\n".join([*blocks, hint])]) + suffix
                     if estimate_recall_text(hinted) <= budget:
                         blocks.append(hint)

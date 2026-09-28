@@ -164,9 +164,9 @@ def _rebuild_index_unlocked(directory: Path) -> Path:
     lines = [
         "# MEMORY.md",
         "",
-        "给人看的全库导航，不是 Agent 的召回真源。",
-        "自动上下文只使用全局和当前项目里 status=active 的记录。",
-        "不是当前格式的 Markdown 不会出现在这里。",
+        "A human index of the library. This is not the agent's recall source.",
+        "Automatic context uses only global memories and status=active memories in the current project.",
+        "Markdown that is not in the current format does not appear here.",
         "",
     ]
     for header in headers:
@@ -178,7 +178,7 @@ def _rebuild_index_unlocked(directory: Path) -> Path:
             f" scope={header.scope} status={header.status}{project}"
         )
     if not headers:
-        lines.append("_(暂无记忆)_")
+        lines.append("_(no memories)_")
     index_path = directory / MEMORY_INDEX
     _atomic_write(index_path, "\n".join(lines) + "\n")
     return index_path
@@ -203,8 +203,8 @@ def read_entrypoint(directory: Path | None = None) -> str:
         truncated = True
     if truncated:
         out += (
-            f"\n\n> 警告:{MEMORY_INDEX} 超出上限,仅加载了部分。"
-            "请把索引条目压到一行、细节移进各自的记忆文件。"
+            f"\n\n> Warning: {MEMORY_INDEX} exceeded its limit and was only partly loaded. "
+            "Keep each index entry on one line and move detail into the memory files."
         )
     return out
 
@@ -216,6 +216,6 @@ def read_memories_for_surfacing(paths: list[Path]) -> str:
         except OSError:
             continue
         if len(text) > MAX_MEMORY_CHARS:
-            text = text[:MAX_MEMORY_CHARS] + "\n…(已截断)"
+            text = text[:MAX_MEMORY_CHARS] + "\n…(truncated)"
         blocks.append(f"### {path.name}\n{text}")
     return "\n\n".join(blocks)

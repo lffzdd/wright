@@ -5,10 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from ....application.memory.memory_service import MemoryService
+from ....domain.feedback import system_text
 from ....domain.model.memory import EPISODE_STATUSES
 from ....domain.model.tool import ToolAccess, ToolResult
 from ..base import Tool
 from ..runtime import ToolRuntime
+from ..system_result import fail_text
 
 _SCOPES = ("current_project", "all_projects")
 
@@ -25,7 +27,7 @@ def search_episodes(
 ) -> ToolResult:
     del runtime
     if scope not in _SCOPES:
-        return ToolResult.fail("episode scope 非法")
+        return fail_text(system_text("episode.scope_invalid", "The episode scope is invalid"))
     views, error = service.search_episodes(
         query,
         status=status,
@@ -34,7 +36,7 @@ def search_episodes(
         project_id=project_id if scope == "current_project" else "",
     )
     if error is not None:
-        return ToolResult.fail(error)
+        return fail_text(error)
     return ToolResult.success({
         "count": len(views),
         "scope": scope,
@@ -53,7 +55,7 @@ def get_episode(
     del runtime, project_id
     view, error = service.get_episode(episode_id, include_evidence=include_evidence)
     if error is not None or view is None or view.record is None:
-        return ToolResult.fail(error or "episode 不存在")
+        return fail_text(error or system_text("episode.missing", "The episode does not exist"))
     payload = view.record.to_dict()
     payload["project_source"] = view.project_source
     payload["verification_summary"] = view.verification_summary
@@ -75,7 +77,7 @@ def delete_episode(
     del runtime, project_id
     view, error = service.delete_episode(episode_id)
     if error is not None or view is None:
-        return ToolResult.fail(error or "episode 不存在")
+        return fail_text(error or system_text("episode.missing", "The episode does not exist"))
     return ToolResult.success({
         "message": "Episode deleted",
         "id": view.id,

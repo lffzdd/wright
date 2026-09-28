@@ -11,6 +11,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ...application.session.events import UiEventEnvelope
+from ..i18n import format_issues, present, t
 from ...domain.model.tool import ToolCall, ToolResult
 from .contracts import Renderer
 
@@ -96,7 +97,7 @@ class RendererEventSubscriber:
                     float(payload.get("context_watermark", 0)),
                 )
             else:
-                self.renderer.on_system_notice(str(payload.get("text", "")))
+                self.renderer.on_system_notice(_notice_text(payload))
         elif event.type == "system.checkpoint_error":
             self.renderer.on_checkpoint_error(str(payload.get("error", "")))
         elif event.type == "task.updated":
@@ -115,34 +116,41 @@ class RendererEventSubscriber:
                 brief = brief[:77] + "..."
             name = payload.get("name", "tool")
             self.renderer.on_system_notice(
-                f"{prefix}🔧 子Agent(d{depth}) › {name} {brief}"
+                t("agent.child.planned", prefix=prefix, depth=depth, name=name, brief=brief)
             )
         elif event.type == "tool.finished":
             name = payload.get("name", "tool")
             if payload.get("ok"):
                 self.renderer.on_system_notice(
-                    f"{prefix}✅ 子Agent(d{depth}) › {name}"
+                    t("agent.child.ok", prefix=prefix, depth=depth, name=name)
                 )
             else:
                 self.renderer.on_system_notice(
-                    f"{prefix}❌ 子Agent(d{depth}) › {name}: {payload.get('err', '')}"
+                    t(
+                        "agent.child.failed",
+                        prefix=prefix,
+                        depth=depth,
+                        name=name,
+                        error=payload.get("err", ""),
+                    )
                 )
         elif event.type == "content.final":
             text = payload.get("content")
+            if payload.get("display_code"):
+                text = present(
+                    str(payload.get("display_code")),
+                    payload.get("display_params") if isinstance(payload.get("display_params"), dict) else {},
+                    fallback=text if isinstance(text, str) else "",
+                )
             text = text if isinstance(text, str) else json.dumps(text, ensure_ascii=False)
             if len(text) > 200:
                 text = text[:197] + "..."
             self.renderer.on_system_notice(
-                f"{prefix}🎯 子Agent(d{depth}) 收口: {text}"
+                t("agent.child.final", prefix=prefix, depth=depth, text=text)
             )
         elif event.type == "system.notice" and payload.get("kind") == "completion_rejected":
-            issues = payload.get("issues") or ()
-            detail = ""
-            if issues:
-                first = issues[0]
-                detail = first.get("message", "") if isinstance(first, dict) else str(first)
             self.renderer.on_system_notice(
-                f"{prefix}完成检查未通过: {detail or '未说明原因'}"
+                t("agent.child.verification", prefix=prefix, detail=format_issues(payload.get("issues")))
             )
         elif event.type == "task.updated":
             self.renderer.on_agent_event(dict(payload))
@@ -151,7 +159,7 @@ class RendererEventSubscriber:
         render = getattr(self.renderer, "render_session_history", None)
         session = self._session_provider() if self._session_provider is not None else None
         if not callable(render) or session is None:
-            self.renderer.on_system_notice("对话记录就在上方，滚动即可")
+            self.renderer.on_system_notice(t("history.above"))
             return
         max_turns = payload.get("max_turns", 5)
         pager = bool(payload.get("pager"))
@@ -159,6 +167,15 @@ class RendererEventSubscriber:
             render(session, pager=True)
             return
         render(session, max_turns=int(max_turns) if isinstance(max_turns, int) else 5)
+
+
+def _notice_text(payload: dict[str, Any]) -> str:
+    text = str(payload.get("text") or "")
+    code = payload.get("code")
+    params = payload.get("params")
+    if isinstance(code, str) and code:
+        return present(code, params if isinstance(params, dict) else {}, fallback=text)
+    return text
 
 
 def _agent_depth(payload: dict[str, Any]) -> int:

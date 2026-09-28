@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from ....domain.model.tool import AccessTarget, ToolAccess, ToolResult
 from ..base import Tool
 from ..runtime import ToolRuntime
+from ..system_result import fail_text
 
 if TYPE_CHECKING:
     from ....application.memory.memory_service import MemoryService
@@ -75,7 +76,7 @@ def update_core_memory(
         project_id=project_id,
     )
     if updated is None:
-        return ToolResult.fail(err or "Update failed")
+        return fail_text(err or "Update failed")
     return ToolResult.success({
         "status": "updated",
         "section": updated.section,

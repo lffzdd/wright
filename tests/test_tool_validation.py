@@ -99,7 +99,7 @@ def test_permission_rewritten_arguments_are_revalidated(tmp_path):
 
     assert outcome.status == "failed"
     assert outcome.result.data["permission"]["source"] == "updated_arguments_invalid"
-    assert "参数无效" in outcome.result.err
+    assert "arguments are invalid" in outcome.result.err
     assert calls == []
 
 

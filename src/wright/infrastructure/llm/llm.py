@@ -56,7 +56,7 @@ class LLMClient(ILLMProvider):
 
         if base_url is None or api_key is None or model is None:
             raise ValueError(
-                "base_url / api_key / model 不能为空，请指定或在设置环境变量"
+                "base_url, api_key, and model are required. Pass them or set the environment variables."
             )
 
         self.client = OpenAI(base_url=base_url, api_key=api_key)

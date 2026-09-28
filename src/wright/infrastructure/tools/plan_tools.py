@@ -1,10 +1,19 @@
-"""把 Session 内的 PlanManager 暴露成模型可调用工具。"""
+"""Expose the session PlanManager as model-callable tools."""
 
 from __future__ import annotations
 
+from ...domain.feedback import system_text
+from ...domain.model.planning.plan import PlanError
 from ...domain.model.tool import ToolAccess, ToolResult
 from .base import Tool
 from .runtime import ToolRuntime
+from .system_result import fail_text
+
+
+def _plan_failure(exc: Exception) -> ToolResult:
+    if isinstance(exc, PlanError) and exc.code:
+        return fail_text(system_text(exc.code, str(exc), **exc.params))
+    return ToolResult.fail(str(exc))
 
 
 def _describe_plan_update(arguments: dict) -> ToolAccess:
@@ -38,7 +47,7 @@ def create_plan(
             _manager(runtime).create_plan(objective, steps, replace=replace)
         )
     except Exception as e:
-        return ToolResult.fail(str(e))
+        return _plan_failure(e)
 
 
 def update_plan(
@@ -52,14 +61,14 @@ def update_plan(
             _manager(runtime).update_step(step_id, status, note=note)
         )
     except Exception as e:
-        return ToolResult.fail(str(e))
+        return _plan_failure(e)
 
 
 def get_plan(runtime: ToolRuntime | None = None) -> ToolResult:
     try:
         return ToolResult.success(_manager(runtime).snapshot())
     except Exception as e:
-        return ToolResult.fail(str(e))
+        return _plan_failure(e)
 
 
 def replan(
@@ -70,7 +79,7 @@ def replan(
     try:
         return ToolResult.success(_manager(runtime).replan(steps, reason=reason))
     except Exception as e:
-        return ToolResult.fail(str(e))
+        return _plan_failure(e)
 
 
 create_plan_tool = Tool(

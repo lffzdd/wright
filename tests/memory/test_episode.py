@@ -135,8 +135,8 @@ def test_episode_recall_is_marked_as_historical_not_current_evidence(tmp_path):
     )
 
     assert episode.id in context.episode_text
-    assert "历史执行经历" in context.episode_text
-    assert "不表示测试已经通过" in context.episode_text
+    assert "historical execution experience" in context.episode_text
+    assert "does not mean tests passed" in context.episode_text
     assert "测试已通过" not in context.episode_text
 
 

@@ -167,7 +167,7 @@ def test_create_requires_project_and_same_name_does_not_overwrite(tmp_path: Path
         type_="user",
     )
     assert missing is None
-    assert error and "项目" in error
+    assert error and "project" in error
     assert list((tmp_path / "memory").glob("mem-*.md")) == []
 
     _root, project_a = _project(tmp_path, "alpha")

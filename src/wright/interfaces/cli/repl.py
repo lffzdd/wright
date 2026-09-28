@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ...application.composition.runtime import WrightRuntime
+from ..i18n import t
 from ...application.session.service import SessionService
 from .console_renderer import ConsoleRenderer
 from .input import CliInputController
@@ -37,10 +38,11 @@ class Repl:
         #   输入线程空闲才画「你的指令」，忙碌只响应 InteractionHub。
         #   loop 只在 set()（空闲）时投递 LOOP_DUE。
         if rt.resumed:
-            print(
-                f"已恢复 session {session_state.session_id} "
-                f"(run_status={session_state.current_run_status()})"
-            )
+            print(t(
+                "cli.resumed",
+                session_id=session_state.session_id,
+                status=session_state.current_run_status(),
+            ))
             self.renderer.render_session_history(session_state)
         self.service.start()
         CliInputController(

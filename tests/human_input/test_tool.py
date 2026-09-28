@@ -43,7 +43,7 @@ def test_ask_user_validation_failure():
     )
 
     assert not result.ok
-    assert "重复" in result.err
+    assert "duplicates" in result.err
 
 
 def test_ask_user_is_not_a_child_base_tool():

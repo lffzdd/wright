@@ -80,9 +80,9 @@ class CoreMemoryOps:
         if scope == "current_project":
             bound = project_id.strip()
             if not bound:
-                return None, "缺少项目上下文，不能更新 project_anchor"
+                return None, "There is no project context, so project_anchor cannot be updated"
             if PROJECT_ID_RE.fullmatch(bound) is None:
-                return None, "非法 project_id"
+                return None, "The project_id is invalid"
             try:
                 saved = self._update_project_anchor(bound, content, mode)
             except (CoreMemoryUpdateError, CoreMemoryStoreError) as exc:

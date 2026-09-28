@@ -52,3 +52,5 @@ class ToolView:
     result: Any = None
     error: str = ""
     output: str = ""
+    display_code: str = ""
+    display_params: dict[str, str] | None = None

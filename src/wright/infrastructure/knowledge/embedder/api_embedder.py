@@ -51,7 +51,7 @@ class ApiEmbedder(IEmbedder):
             return []
         if not self.api_key:
             raise KnowledgeUnavailable(
-                "缺少 Embedding API Key。请设置 SILICONFLOW_API_KEY 或 OPENAI_API_KEY。"
+                "Missing embedding API key. Set SILICONFLOW_API_KEY or OPENAI_API_KEY."
             )
 
         url = f"{self.base_url}/embeddings"
@@ -69,13 +69,13 @@ class ApiEmbedder(IEmbedder):
                 resp = client.post(url, json=payload, headers=headers)
                 if resp.status_code != 200:
                     raise KnowledgeUnavailable(
-                        f"Embedding API 请求失败 (HTTP {resp.status_code}): {resp.text[:300]}"
+                        f"Embedding API request failed (HTTP {resp.status_code}): {resp.text[:300]}"
                     )
                 data = resp.json()
         except KnowledgeUnavailable:
             raise
         except Exception as exc:
-            raise KnowledgeUnavailable(f"Embedding API 网络请求异常: {type(exc).__name__}: {exc}") from exc
+            raise KnowledgeUnavailable(f"Embedding API request failed: {type(exc).__name__}: {exc}") from exc
 
         items = data.get("data", [])
         # Sort by index to maintain original order
@@ -86,7 +86,7 @@ class ApiEmbedder(IEmbedder):
         """Compute embedding for a single query."""
         results = self.embed_texts([text])
         if not results:
-            raise KnowledgeUnavailable("Embedding API 未返回向量数据")
+            raise KnowledgeUnavailable("Embedding API returned no vectors")
         return results[0]
 
 

@@ -483,7 +483,7 @@ class PermissionSettings:
         mode = data.get("mode", "default")
         if mode not in _VALID_MODES:
             raise ValueError(
-                f"未知权限模式 {mode!r},可选: {', '.join(_VALID_MODES)}"
+                f"Unknown permission mode {mode!r}; choices: {', '.join(_VALID_MODES)}"
             )
         perms = data.get("permissions", {}) or {}
         return cls(

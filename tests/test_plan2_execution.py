@@ -490,7 +490,7 @@ def test_authorization_commit_failure_prevents_tool_execution(tmp_path):
 
     assert called == [True]
     assert not outcome.result.ok
-    assert "授权保存失败" in outcome.result.err
+    assert "Could not save the authorization" in outcome.result.err
     assert not outside.exists()
 
 

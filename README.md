@@ -138,6 +138,27 @@ facts. This history remains queryable after the source chat session closes and
 is exposed to authenticated Web clients at `/api/v1/runs/<run-id>`. It is not a
 checkpoint and contains no live threads, processes, or unredacted credentials.
 
+## Interface language
+
+The application interface language is an app-wide preference, not a project or
+session setting. It covers buttons, menus, settings, help, status, and permission
+prompts in the Web console, TUI, and CLI. It does not control the assistant's
+reply language. Replies follow the user's language, and internal instructions
+sent to the model stay in English.
+
+The preference is stored in `~/.wright/preferences.json` as `interface_language`.
+Supported values are `en` (English, the default) and `zh-CN` (简体中文). An
+invalid value falls back to English.
+
+- CLI: `wright --interface-language zh-CN` saves the preference and uses it for
+  that process. A later start reads the saved value. `--help` uses the saved
+  language. A running CLI does not switch language in place.
+- TUI: `/language` shows the current language. `/language en` or
+  `/language zh-CN` updates the current screen and saves the preference without
+  rebuilding the agent, clearing the session, or stopping a running task.
+- Web: the Interface language control in the top bar applies immediately and
+  saves the same preference. The open session and any running task stay in place.
+
 ## Tests
 
 ```bash

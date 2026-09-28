@@ -17,7 +17,7 @@ from ...application.session.directory import (
     SessionDirectoryError,
 )
 from ...application.session.dispatch import process_session_event
-from ...application.session.events import notice_text
+from ...application.session.events import notice_display, notice_text
 from ...application.session.history_projection import (
     project_history,
     public_attachment,
@@ -248,20 +248,23 @@ class SessionHandle:
                 }
                 for item in service_snapshot["queued_commands"]
             ]
-            notices = [
-                {
+            notices = []
+            for event in self.publisher.retained_events():
+                if event.type not in {"system.notice", "system.checkpoint_error", "command.rejected"}:
+                    continue
+                code, params = notice_display(event.type, event.payload)
+                item = {
                     "id": event.event_id,
                     "type": event.type,
                     "text": notice_text(event.type, event.payload),
-                    **(
-                        {"kind": event.payload["kind"]}
-                        if isinstance(event.payload.get("kind"), str)
-                        else {}
-                    ),
                 }
-                for event in self.publisher.retained_events()
-                if event.type in {"system.notice", "system.checkpoint_error", "command.rejected"}
-            ][-50:]
+                if isinstance(event.payload.get("kind"), str):
+                    item["kind"] = event.payload["kind"]
+                if code:
+                    item["code"] = code
+                    item["params"] = params
+                notices.append(item)
+            notices = notices[-50:]
             return {
                 "stream_id": stream_id,
                 "last_seq": seq,

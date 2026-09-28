@@ -59,8 +59,8 @@ class PermissionPolicy:
         in_scope: bool,
         context: MatchContext | None = None,
         session_rules: tuple[PermissionRule, ...] = (),
-    ) -> tuple[PermissionDecision, str, str]:
-        """Return decision/source before an approval adapter is consulted."""
+    ) -> tuple[PermissionDecision, str, str, str, dict[str, str]]:
+        """Return decision, English reason, source, display code, and display params."""
 
         settings = self.settings
         mode = settings.mode if settings is not None else "default"
@@ -81,37 +81,79 @@ class PermissionPolicy:
                 for operation in access.operations
             )
         ):
-            return "deny", "plan 模式禁止该操作", "mode"
+            return "deny", "Plan mode blocks this operation", "mode", "permission.plan_denied", {}
 
         if settings is not None and _matches(settings.deny, tool_name, subject, effect="deny", context=context):
-            return "deny", f"命中 deny 规则: {tool_name}({subject})", "rule_config"
+            return (
+                "deny",
+                f"Matched a deny rule: {tool_name}({subject})",
+                "rule_config",
+                "permission.deny_rule",
+                {"tool_name": tool_name, "subject": subject},
+            )
         if settings is not None and _matches(settings.ask, tool_name, subject, effect="ask", context=context):
-            return "ask", f"命中 ask 规则,需确认: {tool_name}({subject})", "rule_config"
+            return (
+                "ask",
+                f"Matched an ask rule and needs confirmation: {tool_name}({subject})",
+                "rule_config",
+                "permission.ask_rule",
+                {"tool_name": tool_name, "subject": subject},
+            )
 
         if mode == "bypass":
-            return "allow", "bypass 模式放行", "mode"
+            return "allow", "Bypass mode allows this operation", "mode", "permission.bypass_allow", {}
         if mode == "acceptEdits" and access.operations <= self._EDIT_OPERATIONS:
             if in_scope:
-                return "allow", "acceptEdits 模式放行范围内文件编辑", "mode"
+                return (
+                    "allow",
+                    "acceptEdits mode allows this in-scope file edit",
+                    "mode",
+                    "permission.accept_edits",
+                    {},
+                )
 
         if (
             settings is not None and _matches(
                 settings.allow, tool_name, subject, effect="allow", context=context
             )
         ) or _matches(session_rules, tool_name, subject, effect="allow", context=context):
-            return "allow", f"命中 allow 规则: {tool_name}({subject})", "rule_config"
+            return (
+                "allow",
+                f"Matched an allow rule: {tool_name}({subject})",
+                "rule_config",
+                "permission.allow_rule",
+                {"tool_name": tool_name, "subject": subject},
+            )
 
         if "unknown" in access.operations:
-            return "ask", "未声明的工具操作需要明确审批", "policy"
+            return (
+                "ask",
+                "An undeclared tool operation needs explicit approval",
+                "policy",
+                "permission.unknown_operation",
+                {},
+            )
         if not in_scope and any(
             operation in {"file_read", "file_write"}
             for operation in access.operations
         ):
-            return "ask", "目标不在当前会话 AccessScope 内", "scope"
+            return (
+                "ask",
+                "The target is outside this session's access scope",
+                "scope",
+                "permission.outside_scope",
+                {},
+            )
 
         if access.operations <= self._AUTO_DEFAULT and in_scope:
-            return "allow", "默认策略允许范围内读取/内部查询", "default"
-        return "ask", "该操作需要审批", "policy"
+            return (
+                "allow",
+                "The default policy allows in-scope reads and internal queries",
+                "default",
+                "permission.default_allow",
+                {},
+            )
+        return "ask", "This operation needs approval", "policy", "permission.needs_approval", {}
 
     def apply(
         self,
@@ -122,7 +164,7 @@ class PermissionPolicy:
         in_scope: bool,
         context: MatchContext | None = None,
         session_rules: tuple[PermissionRule, ...] = (),
-    ) -> tuple[PermissionDecision, str, str]:
+    ) -> tuple[PermissionDecision, str, str, str, dict[str, str]]:
         return self.evaluate(
             access,
             tool_name=tool_name,
@@ -168,7 +210,12 @@ class PermissionResolver:
         elif cwd is not None:
             fixed_cwd = cwd
         else:
-            return self._deny(arguments, "没有可用的固定执行环境", source="resolver")
+            return self._deny(
+                arguments,
+                "No fixed execution environment is available",
+                source="resolver",
+                reason_code="permission.no_environment",
+            )
 
         try:
             access = subject.describe_access(arguments)
@@ -183,7 +230,12 @@ class PermissionResolver:
 
         resolved = self._resolve_targets(access.targets, backend, fixed_cwd, scope)
         if resolved is None:
-            return self._deny(arguments, "无法解析工具资源", source="resolver")
+            return self._deny(
+                arguments,
+                "The tool resource could not be resolved",
+                source="resolver",
+                reason_code="permission.unresolved_target",
+            )
         forbidden = next(
             (item for item in resolved if item.classification == PathClass.FORBIDDEN),
             None,
@@ -191,7 +243,8 @@ class PermissionResolver:
         if forbidden is not None:
             return self._deny(
                 arguments,
-                "目标属于受保护权限配置，禁止直接访问",
+                "The target is a protected permission file and cannot be accessed directly",
+                reason_code="permission.protected_path",
                 risk_flags=(*access.risk_flags, "protected_path"),
                 source="protected_path",
             )
@@ -209,7 +262,7 @@ class PermissionResolver:
         if effective_access.subject != access_subject:
             effective_access = replace(effective_access, subject=access_subject)
         context = _match_context(arguments, resolved, scope)
-        decision, reason, source = self.policy.apply(
+        decision, reason, source, reason_code, reason_params = self.policy.apply(
             effective_access,
             tool_name=subject.name,
             subject=access_subject,
@@ -224,7 +277,10 @@ class PermissionResolver:
 
         if subject.requires_user_interaction and decision != "deny":
             decision = "ask"
-            reason = reason or "需要用户交互"
+            if not reason:
+                reason = "This action needs the user"
+                reason_code = "permission.user_interaction"
+                reason_params = {}
             source = "user_interaction"
 
         prompt = self._prompt(
@@ -237,6 +293,8 @@ class PermissionResolver:
             remember_rule=remember_rule,
             subject=access_subject,
             cwd=fixed_cwd,
+            reason_code=reason_code,
+            reason_params=reason_params,
         )
         request = PermissionRequest(
             tool_call,
@@ -251,7 +309,8 @@ class PermissionResolver:
 
         if decision == "deny":
             return PermissionResolution(
-                arguments, "deny", reason, effective_access.risk_flags, source, prompt=prompt
+                arguments, "deny", reason, effective_access.risk_flags, source,
+                prompt=prompt, reason_code=reason_code, reason_params=_pairs(reason_params),
             )
         if decision == "allow":
             return self._allowed(
@@ -264,6 +323,8 @@ class PermissionResolver:
                 source,
                 backend=backend,
                 remember_rule=remember_rule,
+                reason_code=reason_code,
+                reason_params=reason_params,
             )
 
         handler = (
@@ -275,10 +336,12 @@ class PermissionResolver:
             return PermissionResolution(
                 arguments,
                 "deny",
-                f"{reason}; 没有可用交互适配器",
+                f"{reason}; no interaction adapter is available",
                 effective_access.risk_flags,
                 "no_interaction",
                 prompt=prompt,
+                reason_code="permission.no_adapter",
+                reason_params=_pairs({"reason": reason}),
             )
         try:
             response = normalize_response(handler(request))
@@ -286,28 +349,34 @@ class PermissionResolver:
             return PermissionResolution(
                 arguments,
                 "deny",
-                f"权限审批适配器失败: {type(exc).__name__}: {exc}",
+                f"The permission adapter failed: {type(exc).__name__}: {exc}",
                 effective_access.risk_flags,
                 "approval_error",
                 prompt=prompt,
+                reason_code="permission.adapter_failed",
+                reason_params=_pairs({"error_type": type(exc).__name__, "error": str(exc)}),
             )
         if response.choice in {"ask", "abstain", "deny", ""}:
             return PermissionResolution(
                 arguments,
                 "deny",
-                f"审批拒绝: {response.choice or 'empty choice'}",
+                f"Approval denied: {response.choice or 'empty choice'}",
                 effective_access.risk_flags,
                 "approval",
                 prompt=prompt,
+                reason_code="permission.approval_denied",
+                reason_params=_pairs({"choice": response.choice or "empty choice"}),
             )
         if response.choice not in {choice.id for choice in prompt.choices}:
             return PermissionResolution(
                 arguments,
                 "deny",
-                f"审批返回了本次请求未提供的选择: {response.choice}",
+                f"Approval returned a choice this request did not offer: {response.choice}",
                 effective_access.risk_flags,
                 "invalid_choice",
                 prompt=prompt,
+                reason_code="permission.invalid_choice",
+                reason_params=_pairs({"choice": response.choice}),
             )
 
         final_arguments = dict(response.updated_arguments or arguments)
@@ -317,14 +386,18 @@ class PermissionResolver:
             except Exception as exc:
                 return self._deny(
                     final_arguments,
-                    f"审批改写后的访问描述失败: {exc}",
+                    f"The rewritten access description failed: {exc}",
+                    reason_code="permission.updated_access_failed",
+                    reason_params={"error": str(exc)},
                     source="updated_access_description_error",
                 )
             validation_error = subject.validate(final_arguments)
             if validation_error is not None:
                 return self._deny(
                     final_arguments,
-                    f"审批改写后的参数无效: {validation_error.err}",
+                    f"The rewritten arguments are invalid: {validation_error.err}",
+                    reason_code="permission.updated_arguments_invalid",
+                    reason_params={"error": validation_error.err},
                     source="updated_arguments_invalid",
                 )
             if _permission_shape(updated_access) != _permission_shape(access):
@@ -335,7 +408,8 @@ class PermissionResolver:
                 if _rewrite_depth >= 1:
                     return self._deny(
                         final_arguments,
-                        "审批器第二次改写了权限相关参数，已拒绝本次调用",
+                        "The approver rewrote permission-related arguments a second time, so this call was denied",
+                        reason_code="permission.rewrite_loop",
                         source="rewrite_loop",
                     )
                 return self._resolve_updated(
@@ -402,6 +476,8 @@ class PermissionResolver:
         remember_rule: PermissionRule | None,
         subject: str,
         cwd: ExecutionPath,
+        reason_code: str = "",
+        reason_params: dict[str, str] | None = None,
     ) -> PermissionPrompt:
         outside = any(item.classification == PathClass.OUTSIDE for item in targets)
         directories = _outside_directories(targets)
@@ -425,6 +501,8 @@ class PermissionResolver:
                 PermissionChoice("deny", "Deny", "No execution", "No save"),
             )
             grant_summary = directory_scope
+            summary_code = "permission.scope.directory"
+            summary_params = {"directories": "; ".join(directories) or "(no directory)"}
         elif remember_rule is not None:
             choices = (
                 PermissionChoice("allow_once", "Allow once", "This invocation only", "No save"),
@@ -443,12 +521,16 @@ class PermissionResolver:
                 PermissionChoice("deny", "Deny", "No execution", "No save"),
             )
             grant_summary = rule_scope
+            summary_code = ""
+            summary_params = {}
         else:
             choices = (
                 PermissionChoice("allow_once", "Allow once", "This invocation only", "No save"),
                 PermissionChoice("deny", "Deny", "No execution", "No save"),
             )
             grant_summary = "This invocation only. No additional rule or directory is saved."
+            summary_code = "permission.scope.invocation_only"
+            summary_params = {}
         preview, http_method, http_target, command, shell_note = _display_details(
             tool_name, tool_call.arguments, cwd.value
         )
@@ -473,6 +555,10 @@ class PermissionResolver:
             http_method=http_method,
             http_target=http_target,
             shell_note=shell_note,
+            reason_code=reason_code,
+            reason_params=_pairs(reason_params or {}),
+            summary_code=summary_code,
+            summary_params=_pairs(summary_params),
         )
 
     def _allowed(
@@ -488,6 +574,8 @@ class PermissionResolver:
         backend: PathResolver | None,
         remember_rule: PermissionRule | None = None,
         choice: str = "allow_once",
+        reason_code: str = "",
+        reason_params: dict[str, str] | None = None,
     ) -> PermissionResolution:
         session_dirs: list[ExecutionPath] = []
         persistent_dirs: list[ExecutionPath] = []
@@ -537,6 +625,8 @@ class PermissionResolver:
                 tuple(session_rules),
                 tuple(persistent_rules),
             ),
+            reason_code=reason_code,
+            reason_params=_pairs(reason_params or {}),
         )
 
     @staticmethod
@@ -546,8 +636,18 @@ class PermissionResolver:
         *,
         risk_flags: tuple[str, ...] = (),
         source: str,
+        reason_code: str = "",
+        reason_params: dict[str, str] | None = None,
     ) -> PermissionResolution:
-        return PermissionResolution(arguments, "deny", reason, risk_flags, source)
+        return PermissionResolution(
+            arguments, "deny", reason, risk_flags, source,
+            reason_code=reason_code,
+            reason_params=_pairs(reason_params or {}),
+        )
+
+
+def _pairs(params: dict[str, str]) -> tuple[tuple[str, str], ...]:
+    return tuple((key, str(value)) for key, value in params.items())
 
 
 def _matches(rules, tool_name: str, subject: str, *, effect: str, context: MatchContext | None) -> bool:

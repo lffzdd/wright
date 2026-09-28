@@ -12,19 +12,28 @@ agent's job to substantiate with tool results.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
 
 from ..model.session import Session
+
+_RETRY_INSTRUCTION = (
+    "Do not repeat the same final answer. Use the available tools to supply "
+    "the missing evidence or work, update the plan, and then answer again."
+)
 
 
 @dataclass(frozen=True)
 class VerificationIssue:
     code: str
     message: str
+    params: Mapping[str, str] = field(default_factory=dict)
 
-    def to_dict(self) -> dict[str, str]:
-        return {"code": self.code, "message": self.message}
+    def to_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {"code": self.code, "message": self.message}
+        if self.params:
+            payload["params"] = dict(self.params)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -43,7 +52,7 @@ class VerificationResult:
         normalized = tuple(issues)
         if not normalized:
             normalized = (
-                VerificationIssue("incomplete", "验证器未说明拒绝原因"),
+                VerificationIssue("incomplete", "The verifier did not explain the rejection"),
             )
         return cls(False, normalized)
 
@@ -55,10 +64,7 @@ class VerificationResult:
                     "verification_feedback": {
                         "approved": self.approved,
                         "issues": [issue.to_dict() for issue in self.issues],
-                        "instruction": (
-                            "不要重复同一个最终答案。请使用现有工具补齐证据或工作，"
-                            "更新计划后再给出最终回答。"
-                        ),
+                        "instruction": _RETRY_INSTRUCTION,
                     }
                 },
                 ensure_ascii=False,
@@ -85,7 +91,11 @@ class Verifier:
         if plan.has_plan and plan.status != "completed":
             issues.append(VerificationIssue(
                 "plan_incomplete",
-                f"当前计划状态是 {plan.status}，请先完成、跳过或重新规划未收口步骤",
+                (
+                    f"The plan status is {plan.status}. Finish, skip, or replan "
+                    "the remaining steps before the final answer"
+                ),
+                {"status": str(plan.status)},
             ))
 
         unfinished = [
@@ -97,7 +107,8 @@ class Verifier:
         if unfinished:
             issues.append(VerificationIssue(
                 "tool_execution_unfinished",
-                f"仍有未完成的工具调用: {', '.join(unfinished)}",
+                f"Tool calls are still unfinished: {', '.join(unfinished)}",
+                {"call_ids": ", ".join(unfinished)},
             ))
         issues.extend(Verifier._artifact_issues(session))
         return issues
@@ -121,6 +132,7 @@ class Verifier:
             if not path.is_relative_to(workspace) or not path.is_file():
                 issues.append(VerificationIssue(
                     "artifact_missing",
-                    f"工具曾报告写入成功，但文件当前不存在: {raw_path}",
+                    f"A tool reported a successful write, but the file is not on disk: {raw_path}",
+                    {"path": raw_path},
                 ))
         return issues

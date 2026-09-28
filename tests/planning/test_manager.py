@@ -24,9 +24,9 @@ def test_create_plan_builds_stable_ordered_steps():
     ("objective", "steps", "error"),
     [
         ("", ["a"], "objective"),
-        ("goal", [], "steps 不能为空"),
+        ("goal", [], "steps cannot be empty"),
         ("goal", ["  "], "steps"),
-        ("goal", "not-a-list", "字符串数组"),
+        ("goal", "not-a-list", "array of strings"),
     ],
 )
 def test_create_plan_rejects_invalid_input(objective, steps, error):
@@ -38,7 +38,7 @@ def test_active_plan_requires_explicit_replace():
     manager = PlanManager()
     manager.create_plan("first", ["a"])
 
-    with pytest.raises(PlanError, match="已有未完成计划"):
+    with pytest.raises(PlanError, match="unfinished plan already exists"):
         manager.create_plan("second", ["b"])
 
     replaced = manager.create_plan("second", ["b"], replace=True)
@@ -51,7 +51,7 @@ def test_only_one_step_can_be_in_progress():
     manager.create_plan("goal", ["a", "b"])
     manager.update_step("step_1", "in_progress")
 
-    with pytest.raises(PlanError, match="step_1 正在进行"):
+    with pytest.raises(PlanError, match="step_1 is in progress"):
         manager.update_step("step_2", "in_progress")
 
     manager.update_step("step_1", "completed")
@@ -63,9 +63,9 @@ def test_steps_cannot_start_or_finish_before_open_predecessors():
     manager = PlanManager()
     manager.create_plan("goal", ["first", "second"])
 
-    with pytest.raises(PlanError, match="前置步骤 step_1"):
+    with pytest.raises(PlanError, match="Predecessor step_1"):
         manager.update_step("step_2", "in_progress")
-    with pytest.raises(PlanError, match="前置步骤 step_1"):
+    with pytest.raises(PlanError, match="Predecessor step_1"):
         manager.update_step("step_2", "completed")
 
     manager.update_step("step_1", "skipped")
@@ -79,7 +79,7 @@ def test_completed_and_skipped_steps_are_terminal():
     plan = manager.update_step("step_2", "skipped")
 
     assert plan["status"] == "completed"
-    with pytest.raises(PlanError, match="已是终态 completed"):
+    with pytest.raises(PlanError, match="already terminal"):
         manager.update_step("step_1", "pending")
 
 
@@ -148,7 +148,7 @@ def test_restore_rejects_inconsistent_derived_status():
     snapshot = manager.create_plan("goal", ["pending"])
     snapshot["status"] = "completed"
 
-    with pytest.raises(PlanError, match="派生状态"):
+    with pytest.raises(PlanError, match="derived status"):
         PlanManager.from_snapshot(snapshot)
 
 
@@ -172,9 +172,9 @@ def test_prompt_block_is_empty_and_serializes_plan_as_data():
 @pytest.mark.parametrize(
     ("objective", "steps", "error"),
     [
-        ("x" * 241, ["a"], "objective 不能超过"),
-        ("goal", ["x" * 161], r"steps\[0\] 不能超过"),
-        ("goal", [str(index) for index in range(13)], "steps 不能超过"),
+        ("x" * 241, ["a"], "objective cannot exceed"),
+        ("goal", ["x" * 161], r"steps\[0\] cannot exceed"),
+        ("goal", [str(index) for index in range(13)], "steps cannot exceed"),
     ],
 )
 def test_plan_size_is_bounded(objective, steps, error):
@@ -186,7 +186,7 @@ def test_note_size_is_bounded():
     manager = PlanManager()
     manager.create_plan("goal", ["a"])
 
-    with pytest.raises(PlanError, match="note 不能超过"):
+    with pytest.raises(PlanError, match="note cannot exceed"):
         manager.update_step("step_1", "in_progress", note="x" * 241)
 
 
@@ -196,5 +196,5 @@ def test_replan_has_a_bounded_total_history():
 
     manager.replan([str(index) for index in range(12)], reason="new route")
 
-    with pytest.raises(PlanError, match="合计不能超过"):
+    with pytest.raises(PlanError, match="cannot exceed 24"):
         manager.replan(["one more"], reason="another route")

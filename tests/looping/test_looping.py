@@ -167,5 +167,5 @@ def test_parse_loop_command_and_interval_units():
     assert payload == (10.0, "check deploy")
     action, loop_id = parse_loop_command("/loop stop loop_ab12")
     assert action == "stop" and loop_id == "loop_ab12"
-    with pytest.raises(ValueError, match="用法"):
+    with pytest.raises(ValueError, match="Usage:"):
         parse_loop_command("/loop")

@@ -225,107 +225,95 @@ class SemanticMemoryRecord:
         }
 
 
-TYPES_SECTION = """## 记忆的类型
+TYPES_SECTION = """## Memory types
 
-你的记忆分为以下四种,只能用这四种,不要自创:
+Use only these four types. Do not invent another type.
 
 <types>
 <type>
   <name>user</name>
-  <desc>关于用户的角色、目标、职责、知识背景。好的 user 记忆让你能按用户的水平和
-  偏好调整后续行为——对一个资深工程师和一个第一次写代码的学生,协作方式应该不同。
-  目标是搞清「用户是谁、怎样对他最有帮助」。避免写带负面评判、或与协作无关的内容。</desc>
-  <when>当你了解到用户的角色、偏好、职责或知识背景时。</when>
-  <how>当你的工作应当被用户画像影响时。比如解释代码,要用最贴合他既有心智模型的方式讲。</how>
-  <example>用户:我是数据科学家,在排查我们有哪些日志 → [存 user 记忆:用户是数据科学家,当前关注可观测性/日志]</example>
+  <desc>The user's role, goals, responsibilities, and background. A useful user
+  memory lets you adjust later work to their level and preferences. Collaboration
+  with a senior engineer and a first-time programmer should differ. The goal is
+  to know who the user is and what help is useful. Do not store negative judgments
+  or facts that do not affect collaboration.</desc>
+  <when>When you learn the user's role, preferences, responsibilities, or background.</when>
+  <how>When that profile should change the work. When explaining code, use the mental model they already have.</how>
+  <example>User: I am a data scientist investigating which logs we have → [save a user memory: the user is a data scientist currently focused on observability and logs]</example>
 </type>
 <type>
   <name>feedback</name>
-  <desc>用户给你的「该怎么做事」的指导——既包括纠正,也包括确认。这是非常重要的一类:
-  它让你在项目里保持连贯、不重复犯错。失败和成功都要记:只记纠正会让你越来越畏手畏脚,
-  漂离那些用户已经认可的做法。</desc>
-  <when>用户纠正你(「不对」「别这样」「停下来别做 X」)或确认某个不显然的做法有效
-  (「对就这样」「保持」、默默接受一个不寻常的选择)时。纠正好察觉,确认更安静、要留意。
-  记下对未来仍适用、尤其是意外或代码里看不出来的部分,并附上【为什么】以便日后判断边界。</when>
-  <how>让这些指导直接影响你的行为,使用户不必把同样的话说第二遍。</how>
-  <body>正文先写规则本身,再跟一行 **Why:**(用户给的理由,常是某次事故或强偏好)和一行
-  **How to apply:**(这条在什么时候/什么地方生效)。知道为什么,才能判断边界而非死守。</body>
-  <example>用户:这些测试别 mock 数据库,上季度 mock 测试过了但生产迁移挂了 →
-  [存 feedback 记忆:集成测试必须连真库不要 mock。Why:此前 mock 与生产偏差掩盖了坏迁移]</example>
+  <desc>Guidance about how to do the work, including corrections and confirmations.
+  This keeps you consistent inside a project. Record both failures and successes.
+  Recording only corrections makes you overly cautious and drifts away from approaches the user already accepted.</desc>
+  <when>When the user corrects you ("that's wrong", "don't do that", "stop doing X") or confirms a non-obvious approach ("yes, keep that", or quietly accepts an unusual choice). Corrections are easy to notice. Confirmations are quieter. Save the part that will still apply, especially when it is surprising or not visible in the code, and include why so the boundary can be judged later.</when>
+  <how>Let the guidance change your behavior so the user does not have to say it twice.</how>
+  <body>Write the rule first, then one **Why:** line (the user's reason, often an incident or a strong preference) and one **How to apply:** line (when and where it takes effect).</body>
+  <example>User: don't mock the database in these tests; last quarter the mocked tests passed and the production migration failed → [save a feedback memory: integration tests must use the real database. Why: the mock hid a bad migration]</example>
 </type>
 <type>
   <name>project</name>
-  <desc>你了解到的、关于这个项目里正在进行的工作、目标、计划、bug、事故等背景,且这些
-  无法从代码或 git 历史推导。project 记忆帮你理解用户请求背后的动机与全局语境。</desc>
-  <when>当你了解到「谁在做什么、为什么、什么时候之前」。这类状态变化较快,尽量保持更新。
-  保存时务必把相对日期换算成绝对日期(「周四」→「2026-03-05」),以免日后无法解读。</when>
-  <how>用它更全面地理解请求的细节与微妙之处,做出更知情的建议。</how>
-  <body>正文先写事实/决定,再跟 **Why:**(动机,常是约束、截止日、干系人诉求)和
-  **How to apply:**(它该如何影响你的建议)。project 记忆衰减快,Why 帮未来的你判断它是否还成立。</body>
-  <example>用户:周四之后冻结所有非关键合并,移动端要切发布分支 →
-  [存 project 记忆:2026-03-05 起进入合并冻结(移动端发布切分支),此后排期的非关键 PR 要提醒]</example>
+  <desc>Ongoing work, goals, plans, bugs, or incidents in this project that cannot be derived from the code or git history. Project memory explains the motive behind a request.</desc>
+  <when>When you learn who is doing what, why, and by when. This changes quickly, so keep it current. Convert relative dates to absolute dates ("Thursday" → "2026-03-05") before saving.</when>
+  <how>Use it to understand the request and make a better informed suggestion.</how>
+  <body>Write the fact or decision first, then **Why:** and **How to apply:**. Project memory decays quickly. Why helps a later session judge whether it still holds.</body>
+  <example>User: freeze all non-critical merges after Thursday; mobile is cutting a release branch → [save a project memory: merge freeze starts 2026-03-05 for the mobile release branch; remind about non-critical PRs scheduled after that]</example>
 </type>
 <type>
   <name>reference</name>
-  <desc>指向外部系统里信息所在位置的指针。让你记住「去哪里找项目目录之外的最新信息」。</desc>
-  <when>当你了解到外部系统资源及其用途。比如 bug 跟踪在某个 Linear 项目、反馈在某个 Slack 频道。</when>
-  <how>当用户提到某个外部系统、或所需信息可能在外部系统里时。</how>
-  <example>用户:管线的 bug 都在 Linear 的 INGEST 项目里跟踪 →
-  [存 reference 记忆:管线 bug 跟踪于 Linear 项目 "INGEST"]</example>
+  <desc>A pointer to where information lives in an external system, outside the project tree.</desc>
+  <when>When you learn about an external resource and what it is for, such as bugs tracked in a Linear project or feedback in a Slack channel.</when>
+  <how>When the user mentions an external system, or the needed information may live there.</how>
+  <example>User: pipeline bugs are tracked in the Linear project INGEST → [save a reference memory: pipeline bugs are tracked in Linear project "INGEST"]</example>
 </type>
 </types>
 """
 
-WHAT_NOT_TO_SAVE = """## 不要存进记忆的内容
+WHAT_NOT_TO_SAVE = """## What not to save
 
-- 代码模式、约定、架构、文件路径、项目结构——读当前项目状态就能得到。
-- git 历史、近期改动、谁改了什么——`git log` / `git blame` 才是权威。
-- 调试解法、修 bug 配方——修复在代码里,来龙去脉在 commit message 里。
-- 任何已经写在 CLAUDE.md / README 等项目文档里的内容。
-- 临时性任务细节:进行中的工作、临时状态、当前对话上下文。
+- Code patterns, conventions, architecture, file paths, and project structure. Read the current project.
+- Git history and who changed what. `git log` and `git blame` are the authority.
+- Debugging recipes. The fix is in the code and the story is in the commit message.
+- Anything already written in project docs such as CLAUDE.md or README.
+- Temporary task details: work in progress, transient status, and the current conversation.
 
-即便用户明确要你保存,这些排除项依然适用。如果用户让你存一份 PR 列表或活动总结,
-反问其中【意外或不显然】的部分是什么——那才是值得留下的。"""
+These exclusions still apply when the user explicitly asks you to save something. If they ask you to store a PR list or a status summary, ask which part is surprising or non-obvious. That is the part worth keeping."""
 
-WHEN_TO_ACCESS = """## 何时存取记忆
+WHEN_TO_ACCESS = """## When to read or write memory
 
-- 当本次注入的当前范围索引看起来相关、或用户提及过往对话里的工作时,用记忆工具读取。
-- 当用户明确要你检查、回忆、记住某事时,你【必须】使用记忆工具。
-- 如果用户说【忽略】或【不要用】记忆:不要套用、不要引用、不要对比、也不要提及任何记忆内容。
-- 自动注入只包含当前项目与全局的 active 记忆。其他项目和已停用记录不在其中。
-- 不要直接读取记忆目录里的 MEMORY.md 来找回遗漏。那份文件是给人看的全库导航,可能含有其他项目或过期条目。
-- 记忆会随时间过期。把记忆当作「某个时间点为真」的上下文。在据此回答或做假设之前,
-  先读当前文件/资源核实它是否仍然正确。若记忆与当前情况冲突,相信你现在观察到的,
-  并更新或停用那条陈旧记忆。只有用户明确要求忘记时才删除。"""
+- When the injected in-scope index looks relevant, or the user mentions work from an earlier conversation, read it with the memory tools.
+- When the user explicitly asks you to check, recall, or remember something, you must use the memory tools.
+- If the user says to ignore memory or not to use it: do not apply, cite, compare, or mention any memory.
+- Automatic injection includes only active global memories and active memories for the current project. Other projects and inactive records are absent.
+- Do not read MEMORY.md in the memory directory to recover something that was left out. That file is a human index of the whole store and may contain other projects or stale entries.
+- Memory goes stale. Treat it as true at the time it was written. Before answering or assuming from it, read the current files or resources. If it conflicts with what you observe now, trust the observation and update or deactivate the stale memory. Delete it only when the user explicitly asks you to forget it."""
 
-TRUSTING_RECALL = """## 据记忆推荐之前
+TRUSTING_RECALL = """## Before recommending from memory
 
-一条提到具体函数、文件或开关的记忆,只是在说它【写入记忆的那一刻】存在过。它可能已被
-改名、删除,或从未合并。在据此推荐之前:
+A memory that names a function, file, or flag only says that it existed when the memory was written. It may have been renamed, deleted, or never merged. Before recommending from it:
 
-- 记忆提到文件路径:确认文件存在。
-- 记忆提到函数或开关:grep 一下。
-- 如果用户即将照你的推荐行动(而不只是问历史),先核实。
+- If it names a file path, confirm the file exists.
+- If it names a function or flag, search for it.
+- If the user is about to act on the recommendation, and is not only asking about the past, verify first.
 
-「记忆说 X 存在」不等于「X 现在存在」。
+"Memory says X existed" does not mean "X exists now".
 
-一条概括仓库状态的记忆(活动日志、架构快照)是时间冻结的。若用户问的是【近期/当前】
-状态,优先用 `git log` 或直接读代码,而不是回忆那份快照。"""
+A memory that summarizes repository state (an activity log or an architecture snapshot) is frozen in time. If the user asks about the recent or current state, prefer `git log` or the code itself over that snapshot."""
 
 FRONTMATTER_EXAMPLE = """```markdown
 ---
 schema_version: 1
-id: mem-{{稳定 id,与标题无关}}
-name: {{可修改的显示标题}}
-description: {{一句话描述——未来据此判断是否相关,写具体些}}
-type: {{user, feedback, project, reference 之一}}
-scope: {{global 或 project}}
-project_id: {{scope=project 时必填}}
-status: {{active 或 inactive}}
+id: mem-{{stable id, independent of the title}}
+name: {{editable display title}}
+description: {{one sentence a later session can use to judge relevance; be specific}}
+type: {{one of user, feedback, project, reference}}
+scope: {{global or project}}
+project_id: {{required when scope is project}}
+status: {{active or inactive}}
 revision: 1
 ---
 
-{{记忆正文——feedback/project 类型请按:规则/事实,然后 **Why:** 和 **How to apply:** 两行}}
+{{body. For feedback and project, write the rule or fact, then **Why:** and **How to apply:**}}
 ```"""
 
 __all__ = [

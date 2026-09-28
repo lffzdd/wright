@@ -98,7 +98,7 @@ def test_agent_recall_injection_and_extraction(tmp_path: Path):
     # 1) system prompt 含静态记忆指令段
     sys_msg = session.message_records[0].message
     assert sys_msg["role"] == "system"
-    assert "长期记忆" in sys_msg["content"]
+    assert "Long-term memory" in sys_msg["content"]
 
     # 2) 召回块只出现在本次请求投影，不写入历史 transcript
     projected = [
@@ -147,7 +147,7 @@ def test_agent_without_memory_unaffected(tmp_path: Path):
     answer = agent.run("hi")
     assert answer == "done"
     wire = [r.message for r in session.message_records]
-    assert "长期记忆" not in wire[0]["content"]
+    assert "Long-term memory" not in wire[0]["content"]
     assert not any("<system-reminder>" in str(m.get("content", "")) for m in wire)
 
 

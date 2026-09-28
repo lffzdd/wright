@@ -37,7 +37,7 @@ class AgentBackgroundRuntime:
     ) -> None:
         with self._lock:
             if self._closed:
-                raise RuntimeError("后台 Agent runtime 已关闭")
+                raise RuntimeError("The background agent runtime is closed")
             future = self._executor.submit(run)
             self._futures[task_id] = future
         event_name = done_event

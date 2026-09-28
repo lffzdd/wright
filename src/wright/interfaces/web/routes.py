@@ -16,6 +16,8 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from ...infrastructure.workspace.worktrees import WorktreeError
+from ..i18n import t
+from ..i18n.locale import LOCALE_LABELS, SUPPORTED_LOCALES, get_locale, set_locale
 from .auth import COOKIE_NAME, BootstrapAuth
 from .diff import DiffError, change_patch, list_changes
 from .runtime_manager import RuntimeManager, RuntimeManagerError
@@ -34,6 +36,10 @@ class SessionRequest(BaseModel):
 
 class ModelRequest(BaseModel):
     model: str
+
+
+class PreferenceRequest(BaseModel):
+    interface_language: str
 
 
 def _require_auth(request: Request, auth: BootstrapAuth) -> None:
@@ -63,6 +69,24 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
             path="/",
         )
         return {"ok": True}
+
+    @router.get("/preferences")
+    def preferences(request: Request) -> dict[str, Any]:
+        _require_auth(request, auth)
+        locale = get_locale()
+        return {
+            "interface_language": locale,
+            "supported": [
+                {"id": item, "label": LOCALE_LABELS[item]} for item in SUPPORTED_LOCALES
+            ],
+            "note": t("web.language_note"),
+        }
+
+    @router.put("/preferences")
+    def update_preferences(body: PreferenceRequest, request: Request) -> dict[str, str]:
+        _require_auth(request, auth)
+        locale = set_locale(body.interface_language, persist=True)
+        return {"interface_language": locale}
 
     @router.get("/project")
     def project(request: Request) -> dict[str, Any]:

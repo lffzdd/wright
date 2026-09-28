@@ -110,7 +110,7 @@ class RagKnowledgeProvider:
         except Exception as exc:
             # 查询期网络抖动不永久禁用；只有初始化失败才缓存。
             raise KnowledgeUnavailable(
-                f"知识库检索失败: {type(exc).__name__}: {exc}"
+                f"Knowledge search failed: {type(exc).__name__}: {exc}"
             ) from exc
         return [knowledge_hit_from_search_result(item) for item in raw_results]
 
@@ -128,7 +128,7 @@ class RagKnowledgeProvider:
                 return self._init_error
             except Exception as exc:
                 self._init_error = (
-                    f"知识库初始化失败: {type(exc).__name__}: {exc}"
+                    f"Knowledge base initialization failed: {type(exc).__name__}: {exc}"
                 )
                 return self._init_error
             return None
@@ -137,15 +137,15 @@ class RagKnowledgeProvider:
         api_key = self._resolved_api_key()
         if not api_key:
             raise KnowledgeUnavailable(
-                "缺少 SILICONFLOW_API_KEY。knowledge_search 使用 SiliconFlow "
-                "embedding API，请设置该环境变量后重开会话；"
-                "也可以设置 LLM_API_KEY 作为后备。"
+                "Missing SILICONFLOW_API_KEY. knowledge_search uses the SiliconFlow "
+                "embedding API. Set that variable and start a new session, "
+                "or set LLM_API_KEY as a fallback."
             )
         if not self.index_path.is_file():
             raise KnowledgeUnavailable(
-                f"知识库索引不存在: {self.index_path}。"
-                "请先在 RAG 项目中构建索引，或用 WRIGHT_KNOWLEDGE_INDEX "
-                "指向已有的 simple_index.json。"
+                f"Knowledge index does not exist: {self.index_path}. "
+                "Build the index in the RAG project, or point WRIGHT_KNOWLEDGE_INDEX "
+                "at an existing simple_index.json."
             )
         rag_chain_cls = self._import_rag_chain()
         chain = rag_chain_cls(
@@ -163,8 +163,8 @@ class RagKnowledgeProvider:
         loaded = chain.load_index(self.index_path)
         if not loaded:
             raise KnowledgeUnavailable(
-                f"无法加载知识库索引: {self.index_path}。"
-                "文件可能损坏或为空，请重新构建索引。"
+                f"Could not load the knowledge index: {self.index_path}. "
+                "The file may be corrupt or empty. Rebuild the index."
             )
         return chain
 
@@ -204,8 +204,8 @@ class RagKnowledgeProvider:
     def _import_rag_chain(self):
         if self._rag_dir is None:
             raise KnowledgeUnavailable(
-                "无法导入 RAG 模块。设置 WRIGHT_RAG_DIR 指向含 rag_chain.py "
-                "的目录后再启用 knowledge_search。"
+                "Could not import the RAG module. Set WRIGHT_RAG_DIR to a directory "
+                "that contains rag_chain.py before enabling knowledge_search."
             )
         rag_dir = str(self._rag_dir)
         if rag_dir not in sys.path:
@@ -214,8 +214,8 @@ class RagKnowledgeProvider:
             from rag_chain import RAGChain
         except Exception as exc:
             raise KnowledgeUnavailable(
-                "无法导入 RAG 模块。确认 WRIGHT_RAG_DIR 指向含 rag_chain.py "
-                f"的目录且依赖已安装，原始错误: {type(exc).__name__}: {exc}"
+                "Could not import the RAG module. Check that WRIGHT_RAG_DIR points "
+                f"at a directory containing rag_chain.py and that its dependencies are installed. Original error: {type(exc).__name__}: {exc}"
             ) from exc
         return RAGChain
 
@@ -226,7 +226,7 @@ class RagKnowledgeProvider:
         else:
             dense = getattr(chain, "dense_retriever", None)
             if dense is None:
-                raise KnowledgeUnavailable("RAGChain 没有可用的检索器")
+                raise KnowledgeUnavailable("RAGChain has no retriever")
             results = dense.search(query, top_k=top_k)
         reranker = getattr(chain, "reranker", None)
         if reranker is not None:

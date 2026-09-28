@@ -18,8 +18,39 @@ from rich.panel import Panel
 from rich.rule import Rule
 from rich.text import Text
 
+from ..i18n import format_issues, present, t
 from ..rendering.contracts import Renderer
 from ..rendering.history import collect_history_entries
+
+
+def _tool_error(result: dict) -> str:
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    code = str(data.get("display_code") or "")
+    params = data.get("display_params") if isinstance(data.get("display_params"), dict) else {}
+    return present(code, params, fallback=str(result.get("err") or t("error.unknown")))
+
+
+def _choice_text(choice: dict) -> tuple[str, str, str]:
+    choice_id = str(choice.get("id") or "")
+    label = present(f"permission.choice.{choice_id}", fallback=str(choice.get("label") or ""))
+    scope_keys = {
+        "allow_once": "permission.scope.once",
+        "deny": "permission.scope.none",
+    }
+    persistence_keys = {
+        "allow_once": "permission.persistence.none",
+        "deny": "permission.persistence.none",
+        "allow_session_directory": "permission.persistence.session_directory",
+        "allow_persistent_directory": "permission.persistence.persistent_directory",
+        "allow_session_rule": "permission.persistence.session_rule",
+        "allow_persistent_rule": "permission.persistence.persistent_rule",
+    }
+    scope = present(scope_keys.get(choice_id, ""), fallback=str(choice.get("scope") or ""))
+    persistence = present(
+        persistence_keys.get(choice_id, ""),
+        fallback=str(choice.get("persistence") or ""),
+    )
+    return label, scope, persistence
 
 _COMMAND_OUTPUT_LINES = 24
 
@@ -88,7 +119,7 @@ class ConsoleRenderer(Renderer):
             content = self._json_body(answer)
         return Panel(
             content,
-            title="[bold]💬 回答[/bold]",
+            title=f"[bold]{t('tool.answer')}[/bold]",
             title_align="left",
             border_style="green",
             padding=(1, 1),
@@ -107,7 +138,7 @@ class ConsoleRenderer(Renderer):
             if arguments is None and isinstance(block.call, dict):
                 arguments = block.call.get("arguments")
             body: Any = (
-                Text("(无参数)", style="dim italic")
+                Text(t("tool.no_arguments"), style="dim italic")
                 if not arguments
                 else self._json_body(arguments)
             )
@@ -133,7 +164,7 @@ class ConsoleRenderer(Renderer):
                 padding=(0, 1),
             )
         return Panel(
-            Text(str(block.result.get("err", "未知错误")), style="red"),
+            Text(_tool_error(block.result), style="red"),
             title=f"[bold]❌ {name}[/bold]",
             title_align="left",
             border_style="red",
@@ -143,12 +174,12 @@ class ConsoleRenderer(Renderer):
     def _current_renderable(self, *, settled: bool) -> Any:
         parts: list[Any] = []
         if self._reasoning:
-            parts.append(Text("💭 思考过程", style="bold dim bright_black"))
+            parts.append(Text(t("tool.thinking"), style="bold dim bright_black"))
             parts.append(Text(self._reasoning, style="dim"))
         if self._final_answer is not None and settled:
             parts.append(self._answer_panel(self._final_answer))
         elif self._content:
-            parts.append(Text("💬 回答", style="bold dim white"))
+            parts.append(Text(t("tool.answer"), style="bold dim white"))
             parts.append(self._draft_text(self._content))
         for block in self._tools:
             parts.append(self._tool_panel(block))
@@ -320,7 +351,7 @@ class ConsoleRenderer(Renderer):
             self._console.print(
                 Panel(
                     Text(error, style="red"),
-                    title="[bold]⚠ checkpoint 保存失败[/bold]",
+                    title=f"[bold]{t('checkpoint.failed_title')}[/bold]",
                     border_style="red",
                     padding=(0, 1),
                 )
@@ -371,10 +402,7 @@ class ConsoleRenderer(Renderer):
         inp = prompt_tokens if prompt_tokens is not None else "?"
         out = completion_tokens if completion_tokens is not None else "?"
         tot = total_tokens if total_tokens is not None else "?"
-        line = (
-            f"[dark_orange bold]tokens 本次请求[/] "
-            f"[dark_orange]输入 {inp} · 输出 {out} · 合计 {tot}[/]"
-        )
+        line = "[dark_orange]" + t("usage.request", input=inp, output=out, total=tot) + "[/]"
         with self._prompt_lock:
             attached = self._has_preview()
             self._usage_line = line
@@ -391,9 +419,14 @@ class ConsoleRenderer(Renderer):
         with self._prompt_lock:
             self._commit(settled=True)
             self._console.print(
-                f"[dark_orange bold]tokens 当前任务累计（已报告）[/] "
-                f"[dark_orange]输入 {prompt_tokens:,} · 输出 {completion_tokens:,} "
-                f"· 合计 {total_tokens:,}[/]"
+                "[dark_orange]"
+                + t(
+                    "usage.task",
+                    input=f"{prompt_tokens:,}",
+                    output=f"{completion_tokens:,}",
+                    total=f"{total_tokens:,}",
+                )
+                + "[/]"
             )
 
     def on_context_compact(
@@ -413,38 +446,33 @@ class ConsoleRenderer(Renderer):
                 ctx_pct = ""
             watermark = f"{context_watermark:.0%}"
             if folded_count > 0:
-                msg = f"已折叠 {folded_count} 条旧工具结果"
+                msg = t("context.compacted", count=folded_count)
                 style = "dark_orange"
             else:
-                msg = "上下文已超水位,但暂无可折叠旧工具结果"
+                msg = t("context.no_fold")
                 style = "yellow"
             self._console.print()
             self._console.print(
-                f"[{style} bold]context compact[/] "
-                f"[{style}]{msg} · 预计占用 {ctx_usage}{ctx_pct} · 阈值 {watermark}[/]"
+                f"[{style}]"
+                + t("context.usage", message=msg, usage=ctx_usage, percent=ctx_pct, watermark=watermark)
+                + "[/]"
             )
             self._ensure_live()
 
     def on_completion_rejected(self, issues: Any = ()) -> None:
-        parts = []
-        for issue in issues or ():
-            message = getattr(issue, "message", None)
-            if message is None and isinstance(issue, dict):
-                message = issue.get("message")
-            if message:
-                parts.append(str(message))
-        detail = "；".join(parts) if parts else "未说明原因"
+        detail = format_issues(issues)
         with self._prompt_lock:
             self._commit(settled=False)
             self._console.print()
-            self._console.print(f"[yellow]完成检查未通过，继续工作[/] [dim]{detail}[/]")
+            self._console.print(f"[yellow]{t('verification.rejected', detail=detail)}[/]")
 
     def on_final(self, answer) -> None:
         with self._prompt_lock:
             self._final_answer = answer
             self._commit(settled=True)
 
-    def on_system_notice(self, text: str) -> None:
+    def on_system_notice(self, text: str, *, code: str = "", params: dict | None = None) -> None:
+        del code, params
         with self._prompt_lock:
             self._suspend_live()
             self._console.print(text)
@@ -493,64 +521,73 @@ class ConsoleRenderer(Renderer):
         http_method: str = "",
         http_target: str = "",
         shell_note: str = "",
+        reason_code: str = "",
+        reason_params: dict | None = None,
+        summary_code: str = "",
+        summary_params: dict | None = None,
     ) -> None:
+        reason_text = present(reason_code, reason_params or {}, fallback=reason)
+        summary_text = present(summary_code, summary_params or {}, fallback=grant_summary)
+        shell_text = (
+            present("permission.shell_note", {"cwd": cwd}, fallback=shell_note)
+            if shell_note
+            else ""
+        )
         with self._prompt_lock:
             self._suspend_live()
             info = Text()
-            info.append("工具: ", style="bold")
+            info.append(t("permission.field.tool"), style="bold")
             info.append(f"{tool_name}\n")
             if operation:
-                info.append("操作: ", style="bold")
+                info.append(t("permission.field.operation"), style="bold")
                 info.append(f"{operation}\n")
             if subject:
-                info.append("目标: ", style="bold")
+                info.append(t("permission.field.target"), style="bold")
                 info.append(f"{subject}\n")
-            info.append("原因: ", style="bold")
-            info.append(f"{reason}\n")
-            info.append("风险: ", style="bold")
+            info.append(t("permission.field.reason"), style="bold")
+            info.append(f"{reason_text}\n")
+            info.append(t("permission.field.risk"), style="bold")
             info.append(", ".join(risk_flags))
-            if grant_summary:
-                info.append("\n授权: ", style="bold")
-                info.append(grant_summary)
+            if summary_text:
+                info.append("\n" + t("permission.field.grant"), style="bold")
+                info.append(summary_text)
             if command:
-                info.append("\n命令: ", style="bold")
+                info.append("\n" + t("permission.field.command"), style="bold")
                 info.append(command)
             if cwd:
-                info.append("\n目录: ", style="bold")
+                info.append("\n" + t("permission.field.directory"), style="bold")
                 info.append(cwd)
-            if shell_note:
-                info.append("\n边界: ", style="bold")
-                info.append(shell_note)
+            if shell_text:
+                info.append("\n" + t("permission.field.boundary"), style="bold")
+                info.append(shell_text)
             if http_method or http_target:
                 info.append("\nHTTP: ", style="bold")
                 info.append(f"{http_method} {http_target}".strip())
             if preview:
-                info.append("\n预览:\n", style="bold")
+                info.append("\n" + t("permission.field.preview"), style="bold")
                 info.append(preview)
             if targets:
-                info.append("\n资源: ", style="bold")
+                info.append("\n" + t("permission.field.resources"), style="bold")
                 info.append("; ".join(targets))
             if principal:
-                info.append("\n主体: ", style="bold")
+                info.append("\n" + t("permission.field.principal"), style="bold")
                 info.append(principal)
             for choice in choices:
-                info.append(
-                    f"\n- {choice.get('id', '')}: {choice.get('label', '')} | "
-                    f"{choice.get('scope', '')} | {choice.get('persistence', '')}"
-                )
+                label, scope, persistence = _choice_text(choice)
+                info.append(f"\n- {choice.get('id', '')}: {label} | {scope} | {persistence}")
             self._console.print()
             self._console.print(
                 Panel(
                     info,
-                    title="[bold]⚠️  需要权限确认[/bold]",
+                    title=f"[bold]{t('permission.title')}[/bold]",
                     border_style="yellow",
                     padding=(0, 1),
                 )
             )
             for choice in choices:
+                label, scope, persistence = _choice_text(choice)
                 self._console.print(
-                    f"  [bold]{choice['id']}[/] {choice['label']} "
-                    f"— {choice['scope']} ({choice['persistence']})"
+                    f"  [bold]{choice['id']}[/] {label} — {scope} ({persistence})"
                 )
 
     def present_question(
@@ -574,7 +611,7 @@ class ConsoleRenderer(Renderer):
             self._console.print(
                 Panel(
                     body,
-                    title="[bold]❓ 需要你的回答[/bold]",
+                    title=f"[bold]{t('cli.answer_needed')}[/bold]",
                     border_style="cyan",
                     padding=(1, 2),
                 )
@@ -586,14 +623,14 @@ class ConsoleRenderer(Renderer):
                 preview = text.replace("\n", " ")
                 if len(preview) > 80:
                     preview = preview[:77] + "..."
-                self._console.print(f"[dim]已排队：{preview}[/]")
+                self._console.print(f"[dim]{t('cli.queued_preview', preview=preview)}[/]")
                 return
             sys.stdout.write("\033[A\033[2K\033[A\033[2K\r")
             sys.stdout.flush()
             self._console.print(
                 Panel(
                     Markdown(text),
-                    title="[bold]🧑 你的提问[/bold]",
+                    title=f"[bold]{t('cli.your_question')}[/bold]",
                     title_align="left",
                     border_style="cyan",
                     padding=(1, 2),
@@ -622,11 +659,15 @@ class ConsoleRenderer(Renderer):
         total_final = len(final_turns)
         shown = len(entries)
         if pager:
-            suffix = f"共 {shown} 轮（完整）"
-            title_label = "📜 历史完整记录"
+            suffix = t("history.full_count", count=shown)
+            title_label = t("history.full_title")
         else:
-            suffix = f"最近 {shown} 轮" if total_final > shown else f"共 {shown} 轮"
-            title_label = "📜 历史对话摘要"
+            suffix = (
+                t("history.recent", count=shown)
+                if total_final > shown
+                else t("history.total", count=shown)
+            )
+            title_label = t("history.summary_title")
         sid = getattr(session_state, "session_id", "?")
 
         def _render_to(con: Console) -> None:
@@ -671,18 +712,18 @@ class ConsoleRenderer(Renderer):
                 con.print(
                     Panel(
                         answer_renderable,
-                        title="[dim]🤖 回答[/dim]",
+                        title=f"[dim]{t('history.answer')}[/dim]",
                         title_align="left",
                         border_style="dim",
                         padding=(0, 1),
-                        subtitle="[dim italic]（已截断）[/dim italic]" if truncated else None,
+                        subtitle=f"[dim italic]{t('history.truncated')}[/dim italic]" if truncated else None,
                     )
                 )
 
             con.print()
             if not pager:
                 con.print(
-                    Rule("[dim]↑ 历史  ·  以下为本次对话[/dim]", style="dim")
+                    Rule(f"[dim]{t('history.divider')}[/dim]", style="dim")
                 )
                 con.print()
 

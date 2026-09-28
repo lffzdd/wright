@@ -103,9 +103,13 @@ class PermissionPrompt:
     http_method: str = ""
     http_target: str = ""
     shell_note: str = ""
+    reason_code: str = ""
+    reason_params: tuple[tuple[str, str], ...] = ()
+    summary_code: str = ""
+    summary_params: tuple[tuple[str, str], ...] = ()
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload = {
             "request_id": self.request_id,
             "tool_name": self.tool_name,
             "subject": self.subject,
@@ -123,6 +127,13 @@ class PermissionPrompt:
             "http_target": self.http_target,
             "shell_note": self.shell_note,
         }
+        if self.reason_code:
+            payload["reason_code"] = self.reason_code
+            payload["reason_params"] = dict(self.reason_params)
+        if self.summary_code:
+            payload["summary_code"] = self.summary_code
+            payload["summary_params"] = dict(self.summary_params)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -153,6 +164,8 @@ class PermissionResolution:
     grant: InvocationGrant | None = None
     changes: AuthorizationChange = AuthorizationChange()
     prompt: PermissionPrompt | None = None
+    reason_code: str = ""
+    reason_params: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "final_arguments", MappingProxyType(dict(self.final_arguments)))

@@ -2,6 +2,7 @@ import { Check, Copy } from "@phosphor-icons/react";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { memo, useMemo, useState } from "react";
+import { useT } from "./i18n";
 
 type MarkdownChunk =
   | { type: "code"; lang?: string; text: string }
@@ -49,6 +50,7 @@ export function markdownChunks(content: string): MarkdownChunk[] {
 }
 
 function CodeBlock({ code, lang }: { code: string; lang?: string }) {
+  const tr = useT();
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -69,11 +71,11 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
           type="button"
           className="copy-button"
           onClick={handleCopy}
-          title="Copy code"
-          aria-label="Copy code"
+          title={tr("web.copy_code")}
+          aria-label={tr("web.copy_code")}
         >
           {copied ? <Check size={13} /> : <Copy size={13} />}
-          <span>{copied ? "Copied" : "Copy"}</span>
+          <span>{copied ? tr("web.copied") : tr("web.copy")}</span>
         </button>
       </div>
       <pre><code>{code}</code></pre>

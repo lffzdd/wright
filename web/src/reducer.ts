@@ -1,5 +1,27 @@
 import type { AgentView, Attachment, Interaction, ToolState, UiEvent, ViewState } from "./types";
 
+function noticeMeta(event: UiEvent): { code?: string; params?: Record<string, string> } {
+  if (event.type === "turn.failed") {
+    return { code: "notice.turn_failed", params: { detail: String(event.payload.error ?? event.payload.status ?? "unknown error") } };
+  }
+  if (event.type === "turn.cancelled") return { code: "notice.turn_cancelled" };
+  if (event.type === "system.checkpoint_error") {
+    return { code: "notice.checkpoint_failed", params: { detail: String(event.payload.error ?? "unknown error") } };
+  }
+  if (event.payload.kind === "completion_rejected") return { code: "notice.completion_another" };
+  if (event.payload.kind === "context_compact") {
+    return { code: "notice.context_compact", params: { count: String(Number(event.payload.folded_count ?? 0)) } };
+  }
+  if (typeof event.payload.code === "string" && event.payload.code) {
+    const raw = event.payload.params;
+    const params = raw && typeof raw === "object"
+      ? Object.fromEntries(Object.entries(raw as Record<string, unknown>).map(([key, value]) => [key, String(value)]))
+      : undefined;
+    return { code: event.payload.code, params };
+  }
+  return {};
+}
+
 function noticeText(event: UiEvent): string {
   if (event.type === "turn.failed") return `Turn failed: ${String(event.payload.error ?? event.payload.status ?? "unknown error")}`;
   if (event.type === "turn.cancelled") return "Turn cancelled.";
@@ -22,6 +44,7 @@ function addNotice(state: ViewState, event: UiEvent): ViewState {
       type: event.type,
       kind: typeof event.payload.kind === "string" ? event.payload.kind : undefined,
       text: noticeText(event),
+      ...noticeMeta(event),
     }].slice(-50),
   };
 }

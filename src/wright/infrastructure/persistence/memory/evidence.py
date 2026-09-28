@@ -17,7 +17,7 @@ from ....domain.policy.memory import bounded_safe_text, is_safe_memory
 _SESSION_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 _MAX_READ_CHARS = 1_500
 _MAX_READ_TOTAL = 6_000
-_TRUNCATED = "…(已截断)"
+_TRUNCATED = "…(truncated)"
 
 
 class SessionEvidenceSource(IEpisodeEvidenceSource):

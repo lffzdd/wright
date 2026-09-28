@@ -1,14 +1,11 @@
-"""
-Wright 主入口：终端里的 coding agent。
-
-通过原生工具调用驱动主循环，一轮可执行多个工具并回传各自结果。
-"""
+"""Wright entry point: a coding agent in the terminal."""
 
 import os
 import sys
 
 from .application.composition.runtime import assemble_runtime, load_env
 from .interfaces.cli.args import parse_cli_args, runtime_config_from_args
+from .interfaces.i18n import activate_saved_locale, set_locale, t
 from .interfaces.cli.console_renderer import ConsoleRenderer
 from .interfaces.cli.prompter import ConsolePrompter
 from .interfaces.cli.repl import Repl
@@ -19,16 +16,16 @@ from .interfaces.tui.terminal import configure_terminal
 
 
 def main() -> None:
+    activate_saved_locale()
     args = parse_cli_args()
+    if getattr(args, "interface_language", None):
+        set_locale(args.interface_language, persist=True)
     load_env()
     if args.ui == "web":
         try:
             from .interfaces.web.server import run_web
         except ImportError as exc:
-            raise SystemExit(
-                "Web UI 依赖未安装；请运行 `uv sync --extra web` "
-                "或 `pip install 'wright[web]'`。"
-            ) from exc
+            raise SystemExit(t("cli.web_missing")) from exc
         run_web(args)
         return
     if args.ui == "headless":
@@ -66,7 +63,7 @@ def main() -> None:
     finally:
         repl.service.close(wait_timeout=5)
     if rt.agent.checkpoint_store:
-        print(f"💾 会话已保存 (session_id: {rt.session_state.session_id})")
+        print(t("cli.session_saved", session_id=rt.session_state.session_id))
 
 
 if __name__ == "__main__":

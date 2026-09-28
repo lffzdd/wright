@@ -20,6 +20,7 @@ from ...application.session.service import (
     set_session_model,
 )
 from ...core.logger import get_logger
+from ..i18n import language_label, set_locale, t
 from ..cli.args import runtime_config_from_args
 from ..cli.resume_select import choose_resume_session
 from ..interaction import InteractionRequest
@@ -64,7 +65,7 @@ logger = get_logger(__name__)
 
 def require_interactive_tty() -> None:
     if not sys.stdin.isatty() or not sys.stdout.isatty():
-        raise SystemExit("TUI 需要交互式终端（stdin 与 stdout 均为 TTY）")
+        raise SystemExit(t("cli.tui_tty_required"))
 
 
 
@@ -146,10 +147,7 @@ class WrightTUI(App):
                 placeholder="Message Wright…",
                 id="composer",
             )
-            yield Static(
-                "enter send  ·  shift+enter newline  ·  ctrl+x stop  ·  / commands",
-                id="composer-hint",
-            )
+            yield Static(t("tui.hint"), id="composer-hint")
 
     def on_mount(self) -> None:
         self.renderer.attach(self)
@@ -514,6 +512,9 @@ class WrightTUI(App):
         if value.startswith("/model "):
             self._set_model(value.removeprefix("/model ").strip())
             return
+        if value == "/language" or value.startswith("/language "):
+            self._set_language(value.removeprefix("/language").strip())
+            return
         if value == "/clear":
             self._transcript().remove_children()
             return
@@ -526,6 +527,34 @@ class WrightTUI(App):
             self.renderer.on_system_notice(str(exc))
         self._refresh_status()
 
+    def _set_language(self, raw: str) -> None:
+        """Change interface copy without rebuilding the agent or clearing the session."""
+        if not raw:
+            self.renderer.on_system_notice(
+                t("tui.language.current", language=language_label())
+            )
+            self._refresh_status()
+            return
+        if raw not in {"en", "zh-CN"}:
+            self.renderer.on_system_notice(t("tui.language.invalid"))
+            return
+        set_locale(raw, persist=True)
+        self.renderer.on_system_notice(
+            t("tui.language.updated", language=language_label(raw))
+        )
+        self._refresh_status()
+        try:
+            for block in self.query(ToolBlock):
+                tool = getattr(block, "_tool", None)
+                if tool is not None:
+                    block.apply(tool)
+            for block in self.query(ReasoningBlock):
+                refresh = getattr(block, "refresh_language", None)
+                if callable(refresh):
+                    refresh()
+        except Exception:
+            pass
+
     def _control_available(self) -> bool:
         if self.service is not None:
             idle = self.service.summary().get("execution") == "idle"
@@ -534,7 +563,7 @@ class WrightTUI(App):
             idle = idle_event is None or idle_event.is_set()
         if idle:
             return True
-        self.renderer.on_system_notice("session controls are available when Wright is idle")
+        self.renderer.on_system_notice(t("tui.controls_idle"))
         return False
 
     def _transition(self, request: SessionControlRequest) -> None:
@@ -553,11 +582,11 @@ class WrightTUI(App):
         if not self._control_available():
             return
         if self.service is None:
-            self.renderer.on_system_notice("no saved sessions")
+            self.renderer.on_system_notice(t("tui.no_sessions"))
             return
         sessions = self.service.list_saved_sessions(limit=12)
         if not sessions:
-            self.renderer.on_system_notice("no saved sessions")
+            self.renderer.on_system_notice(t("tui.no_sessions"))
             return
         session_id = await self.push_screen_wait(ResumeModal(sessions))
         if session_id:
@@ -587,7 +616,7 @@ class WrightTUI(App):
             self.renderer.on_system_notice(str(exc))
             return
         if model != current:
-            self.renderer.on_system_notice(f"model  {current}  →  {model}")
+            self.renderer.on_system_notice(t("tui.model_changed", current=current, model=model))
         self._refresh_status()
 
     def on_multiline_composer_slash_changed(
@@ -630,7 +659,7 @@ class WrightTUI(App):
         for index, command in enumerate(matches):
             marker = "❯" if index == self._slash_completion.selected_index else " "
             lines.append(f"{marker} {command.name:<10} {command.description}")
-        suggestions.update("\n".join(lines) + "\n  ↑↓ navigate  ·  tab complete  ·  esc close")
+        suggestions.update("\n".join(lines) + "\n  " + t("tui.slash_hint"))
 
     def _request_quit(self) -> None:
         if self.service is not None:
@@ -642,7 +671,7 @@ class WrightTUI(App):
 
     def action_stop_turn(self) -> None:
         if self.rt.agent_idle.is_set():
-            self.renderer.on_system_notice("no running task to stop")
+            self.renderer.on_system_notice(t("tui.nothing_to_stop"))
             return
         assert self.service is not None
         self.service.cancel_current()
@@ -651,7 +680,7 @@ class WrightTUI(App):
             screen.dismiss("deny")
         elif isinstance(screen, AskUserModal):
             screen.dismiss(None)
-        self.renderer.on_system_notice("stopping current task…")
+        self.renderer.on_system_notice(t("tui.stopping"))
         self._refresh_status()
 
     def action_toggle_tools(self) -> None:
@@ -702,7 +731,8 @@ class WrightTUI(App):
                 pending = drafts.summaries() if drafts is not None else []
                 queue_reason = ""
             composer = self.query_one("#composer", MultilineComposer)
-            composer.placeholder = "Message Wright…" if idle else "Queue a follow-up…"
+            composer.placeholder = t("tui.placeholder_idle") if idle else t("tui.placeholder_busy")
+            self.query_one("#composer-hint", Static).update(t("tui.hint"))
             context, tooltip, context_class = _context_ring(context_tokens, context_limit)
             meta_parts = []
             if plan:
@@ -710,18 +740,18 @@ class WrightTUI(App):
             if execution == "queued" and queue_reason:
                 meta_parts.append(queue_reason)
             elif execution == "waiting_for_input":
-                meta_parts.append("waiting for permission or a reply")
+                meta_parts.append(t("tui.status.waiting"))
             if model:
                 self.query_one("#status-model", Static).update(f"🤖 {model}")
             ws_name = Path(ws_dir).name if ws_dir else Path.cwd().name
             self.query_one("#status-workspace", Static).update(f"📁 {ws_name}")
             labels = {
-                "idle": "● idle",
-                "running": "⏳ running",
-                "queued": "⏳ queued",
-                "waiting_for_input": "⏳ waiting for input",
-                "closing": "○ closing",
-                "closed": "○ closed",
+                "idle": "● " + t("tui.status.idle"),
+                "running": "⏳ " + t("tui.status.running"),
+                "queued": "⏳ " + t("tui.status.queued"),
+                "waiting_for_input": "⏳ " + t("tui.status.waiting_input"),
+                "closing": "○ " + t("tui.status.closing"),
+                "closed": "○ " + t("tui.status.closed"),
             }
             status_state = self.query_one("#status-state", Static)
             status_state.update(labels.get(execution, f"⏳ {execution}"))
@@ -734,11 +764,12 @@ class WrightTUI(App):
                         return record.get("filename"), record.get("width"), record.get("height")
                     return record.filename, record.width, record.height
 
-                attachment_bar.update("Attached: " + "  ".join(
+                listing = "  ".join(
                     f"[{index}] {filename} ({width}×{height})"
                     for index, record in enumerate(pending, 1)
                     for filename, width, height in [_attached(record)]
-                ))
+                )
+                attachment_bar.update(t("tui.attached", listing=listing))
                 attachment_bar.display = True
             else:
                 attachment_bar.display = False
@@ -801,13 +832,13 @@ def run_tui(args: Any) -> None:
                 if isinstance(result, SessionControlRequest):
                     transition = result
                 elif opened.runtime.agent.checkpoint_store:
-                    print(f"💾 会话已保存 (session_id: {opened.session_id})")
+                    print(t("cli.session_saved", session_id=opened.session_id))
             finally:
                 stopped = directory.close(opened.session_id).get("lifecycle") == "closed" or (
                     app.service.closed if app.service is not None else True
                 )
             if transition is not None and not stopped:
-                print("会话仍在关闭中；尚未安全退出，无法切换会话。")
+                print(t("cli.session_closing"))
                 return
             if transition is None:
                 return

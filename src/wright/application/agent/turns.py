@@ -104,7 +104,7 @@ def handle_final_turn(
                 control.terminate(
                     "failed",
                     reason="completion verification retry limit",
-                    message="最终答案连续未通过完成验证，任务终止。",
+                    message="The final answer failed the completion check repeatedly, so the task stopped.",
                 )
                 return None, "terminated"
             return None, "retry"
@@ -137,7 +137,7 @@ def handle_final_turn(
             control.terminate(
                 "failed",
                 reason="agent_stop hook retry limit",
-                message="最终答案连续未通过 lifecycle hook，任务终止。",
+                message="The final answer failed the lifecycle hook repeatedly, so the task stopped.",
             )
             return None, "terminated"
         return None, "retry"
@@ -223,7 +223,7 @@ def handle_tool_calls_turn(
         control.terminate(
             "failed",
             reason="tool execution outcome unknown",
-            message="工具已执行但结果未能可靠持久化；不会自动重试副作用。",
+            message="The tool ran, but the result could not be saved reliably. Side effects will not be retried automatically.",
         )
         return False
     return True
@@ -268,7 +268,7 @@ def handle_invalid_turn(
         control.terminate(
             "failed",
             reason="invalid output retry limit",
-            message=f"连续 {counters.invalid} 轮输出无法解析，任务终止。",
+            message=f"{counters.invalid} outputs in a row could not be parsed, so the task stopped.",
         )
         return "terminated"
 
