@@ -6,6 +6,8 @@ import hmac
 import secrets
 import threading
 
+COOKIE_NAME = "wright_web_session"
+
 
 class BootstrapAuth:
     def __init__(self, bootstrap_token: str | None = None) -> None:

@@ -11,22 +11,27 @@ from typing import Any
 from ...domain.model.agent import AgentProfile
 from ...domain.model.coordination import AgentControlError, AgentTaskRecord
 from ...domain.model.session import Session, UsageRecord
-from ...infrastructure.llm.llm import LLMClient
-from ...domain.policy import PermissionResolver
-from ..tool_capabilities import assemble_tool_capabilities
 from ...domain.model.tool import ToolAccess, ToolResult
+from ...domain.policy import PermissionResolver
+from ...infrastructure.llm.llm import LLMClient
+from ...infrastructure.tools.agent_tools import (
+    agent_execution_view,
+    agent_tools,
+    public_agent_tree,
+)
 from ...infrastructure.tools.autonomy_tools import autonomy_tools
 from ...infrastructure.tools.base import Tool
+from ...infrastructure.tools.command.control import command_tools
 from ...infrastructure.tools.runtime import ToolRuntime
-from ...infrastructure.tools.task_tools import task_tools
-from ...interfaces.ui_events import EventPublisher, EventScope, SessionEvents
-from .runner import (
-    Agent,
+from ..session.events import EventScope, SessionEvents
+from ..session.publisher import EventPublisher, open_session_events
+from ..tool_execution.capabilities import assemble_tool_capabilities
+from .assembly import (
     assemble_agent_components,
     ensure_system_prompt,
-    events_from_renderer,
     prepare_model_tools,
 )
+from .runner import Agent
 
 DEFAULT_CHILD_MAX_STEPS = 20
 # Interactive default: root spawns leaves only. Nested spawn stays available
@@ -51,7 +56,11 @@ SPAWN_AGENT_PARAMETERS = {
         "run_in_background": {
             "type": "boolean",
             "default": False,
-            "description": "If true, launch the isolated agent and return its task_id immediately.",
+            "description": (
+                "If true, launch the isolated agent and return its agent_task_id "
+                "immediately. agent_task_id identifies this delegation, not a "
+                "reusable Agent instance."
+            ),
         },
     },
     "required": ["task"],
@@ -61,7 +70,9 @@ SPAWN_AGENT_PARAMETERS = {
 SPAWN_AGENT_DESCRIPTION = (
     "Hand a self-contained subtask to a child subagent with an isolated context. "
     "Consecutive spawn_agent calls may run concurrently; the control plane "
-    "records task_id, parent/child links, status, budget, and usage. "
+    "records agent_task_id, parent/child links, status, budget, and usage. "
+    "agent_task_id identifies this delegation, not a reusable Agent. "
+    "Use get_agent, wait_agent, or cancel_agent with that id. "
     "Child Agents share the workspace and permission boundary, but not parent "
     "history, long-term memory, or ask_user. "
     "run_in_background=true is root-only; completion notifies the parent session."
@@ -87,10 +98,12 @@ def _child_base_tools(base_tools: Sequence[Tool]) -> list[Tool]:
     child_tools: list[Tool] = []
     for tool in base_tools:
         if tool.name in {
-            "get_task", "wait_task", "cancel_task", "list_tasks",
-            "schedule_task", "get_schedule", "list_schedules",
+            "get_agent", "wait_agent", "cancel_agent",
+            "get_command", "wait_command", "terminate_command", "list_commands",
+            "create_schedule", "get_schedule", "list_schedules",
             "pause_schedule", "resume_schedule", "cancel_schedule",
-            "list_task_runs",
+            "list_schedule_runs", "get_schedule_run", "wait_schedule_run",
+            "cancel_schedule_run",
             "load_skill",
         }:
             continue
@@ -192,14 +205,7 @@ def make_spawn_agent_tool(
 
         _emit(runtime, record)
         if record.status != "running":
-            return ToolResult.fail(
-                record.error,
-                data={
-                    "task_id": record.id,
-                    "status": record.status,
-                    "reason": record.error,
-                },
-            )
+            return ToolResult.fail(record.error, data=agent_execution_view(record))
 
         child_base_tools = _child_base_tools(base_tools)
         child_tools = build_agent_tools(
@@ -240,7 +246,7 @@ def make_spawn_agent_tool(
                 error=f"could not set child cwd: {type(exc).__name__}: {exc}",
             )
             _emit(runtime, finished)
-            return ToolResult.fail(finished.error, data={"task_id": finished.id})
+            return ToolResult.fail(finished.error, data=agent_execution_view(finished))
         control.bind_child_session(record.id, child_session.session_id)
 
         child_journal = None
@@ -256,7 +262,7 @@ def make_spawn_agent_tool(
                     error=f"could not create child execution journal: {exc}",
                 )
                 _emit(runtime, finished)
-                return ToolResult.fail(finished.error, data={"task_id": finished.id})
+                return ToolResult.fail(finished.error, data=agent_execution_view(finished))
 
         child_events = (
             SessionEvents(
@@ -302,11 +308,7 @@ def make_spawn_agent_tool(
         )
         child_prepared = prepare_model_tools(child_session, child_tools, child_profile)
         ensure_system_prompt(child_session, child_prepared, None)
-        child_events_for_agent = (
-            child_events
-            if child_events is not None
-            else events_from_renderer(child_session, None)
-        )
+        child_events_for_agent = child_events or open_session_events(child_session)
         child_components = assemble_agent_components(
             session_state=child_session,
             events=child_events_for_agent,
@@ -356,25 +358,15 @@ def make_spawn_agent_tool(
                 final_answer = None
                 task_status, error = "failed", f"Child Agent error: {type(exc).__name__}: {exc}"
 
-            usage = {
-                "prompt_tokens": child_session.total_usage.prompt_tokens,
-                "completion_tokens": child_session.total_usage.completion_tokens,
-                "total_tokens": child_session.total_usage.total_tokens,
-            }
             finished = control.finish_task(
                 record.id, status=task_status, steps_used=child_session.step_count,
                 result=final_answer or "", error=error,
             )
             _emit(runtime, finished)
-            common = {
-                "task_id": finished.id, "parent_id": finished.parent_id,
-                "task_status": finished.status, "status": child_session.current_run_status(),
-                "steps": child_session.step_count, "step_budget": finished.step_budget,
-                "usage": usage, "children": list(finished.children),
-            }
+            view = agent_execution_view(finished)
             if finished.status != "completed":
-                return ToolResult.fail(error or finished.error, data=common)
-            return ToolResult.success({**common, "result": finished.result})
+                return ToolResult.fail(error or finished.error, data=view)
+            return ToolResult.success(view)
 
         if run_in_background:
             background_runtime = delegation.agent_background
@@ -384,7 +376,7 @@ def make_spawn_agent_tool(
                     error="Current session has no background Agent runtime",
                 )
                 _emit(runtime, finished)
-                return ToolResult.fail(finished.error, data={"task_id": finished.id})
+                return ToolResult.fail(finished.error, data=agent_execution_view(finished))
             try:
                 background_runtime.submit(record.id, run_child, control)
             except Exception as exc:
@@ -392,12 +384,13 @@ def make_spawn_agent_tool(
                     record.id, status="failed", steps_used=0, error=str(exc)
                 )
                 _emit(runtime, finished)
-                return ToolResult.fail(finished.error, data={"task_id": finished.id})
-            return ToolResult.success({
-                "task_id": record.id, "parent_id": record.parent_id,
-                "task_status": "async_launched", "status": "running",
-                "step_budget": record.step_budget,
-            })
+                return ToolResult.fail(finished.error, data=agent_execution_view(finished))
+            launched = agent_execution_view(record)
+            launched["message"] = (
+                "Delegation is running in the background. Use get_agent, "
+                "wait_agent, or cancel_agent with this agent_task_id."
+            )
+            return ToolResult.success(launched)
         return run_child()
 
     return Tool(
@@ -426,9 +419,9 @@ def _get_agent_tree(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResu
     return ToolResult.success({
         "root_turn_id": capabilities.scope.root_turn_id,
         "limits": delegation.control.config.to_dict(),
-        "tasks": delegation.control.tree_summary(
+        "tasks": public_agent_tree(delegation.control.tree_summary(
             None if include_all else capabilities.scope.root_turn_id
-        ),
+        )),
     })
 
 
@@ -487,7 +480,8 @@ def build_agent_tools(
         )
     # 只有 root 读取全树；子 Agent 只通过自己的 spawn 结果观察直接孩子。
     if depth == 0:
-        tools.extend(task_tools)
+        tools.extend(agent_tools)
+        tools.extend(command_tools)
         if enable_autonomy:
             tools.extend(replace(tool, defer_to_model=True) for tool in autonomy_tools)
         tools.append(get_agent_tree_tool)

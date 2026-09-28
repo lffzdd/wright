@@ -18,8 +18,6 @@ from ...domain.policy.memory import (
     SemanticExtractPolicy,
     is_delivered_answer,
 )
-from ...infrastructure.persistence.memory import EpisodeStore, memory_dir
-from ...infrastructure.persistence.memory.selector import LlmContextSelector
 from .dto import MemoryContextDTO
 from .episode import snapshot_from_session
 from .extract import extract_from_snapshot
@@ -45,9 +43,10 @@ class MemoryManager:
     def __init__(
         self,
         llm: LLMClient,
-        selector_llm: LLMClient | None = None,
-        directory: Path | None = None,
+        service: MemoryService,
+        directory: Path,
         *,
+        selector_llm: LLMClient | None = None,
         episode_policy: EpisodePolicy | None = None,
         semantic_policy: SemanticExtractPolicy | None = None,
         session_repository: Any = None,
@@ -60,13 +59,14 @@ class MemoryManager:
         self.session_repository = session_repository
         self.meter = MemoryMeter()
         self._side_call: dict[str, Any] | None = None
-        self.directory = (directory or memory_dir()).expanduser().resolve()
-        self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.episode_store = EpisodeStore(self.directory)
+        self.directory = directory
+        self._service = service
         self._project_root: Path | None = None
-        self._service: MemoryService | None = None
-        self._selector: LlmContextSelector | None = None
         self._recall_by_turn: dict[str, MemoryContextDTO] = {}
+
+    @property
+    def episode_store(self):
+        return self._service.episode_store
 
     @property
     def current_project_id(self) -> str:
@@ -80,37 +80,11 @@ class MemoryManager:
         A new project cannot keep the previous project's recall cache.
         """
         self._project_root = Path(project_root).expanduser().resolve()
-        self._service = None
         self._recall_by_turn.clear()
 
     @property
     def service(self) -> MemoryService:
-        if self._service is None:
-            from ...infrastructure.persistence.memory import (
-                FileCoreMemoryStore,
-                SemanticMemoryStore,
-            )
-            from .memory_service import MemoryService
-            evidence_source = None
-            if self.session_repository is not None:
-                from ...infrastructure.persistence.memory.evidence import (
-                    SessionEvidenceSource,
-                )
-                evidence_source = SessionEvidenceSource(self.session_repository)
-            self._service = MemoryService(
-                semantic_store=SemanticMemoryStore(self.directory),
-                episode_store=self.episode_store,
-                core_memory_store=FileCoreMemoryStore(self.directory),
-                episode_policy=self.episode_policy,
-                selector=self._context_selector(),
-                evidence_source=evidence_source,
-            )
         return self._service
-
-    def _context_selector(self) -> LlmContextSelector:
-        if self._selector is None:
-            self._selector = LlmContextSelector(self._query)
-        return self._selector
 
     def _query(self, messages, **kwargs):
         started = time.monotonic()
@@ -308,26 +282,6 @@ class MemoryManager:
             saved = self._persist_snapshot(session_state, snapshot)
             if saved is not None and snapshot.get("extract_requested"):
                 self._extract_snapshot(session_state, snapshot)
-
-    def tools(self):
-        """Build memory tools bound to this manager's directory and project."""
-        from ...infrastructure.tools.memory import (
-            build_core_memory_tools,
-            build_episode_tools,
-            build_memory_tools,
-        )
-
-        return [
-            *build_core_memory_tools(
-                service_reader=lambda: self.service,
-                project_id_reader=lambda: self.current_project_id,
-            ),
-            *build_memory_tools(
-                service_reader=lambda: self.service,
-                project_id_reader=lambda: self.current_project_id,
-            ),
-            *build_episode_tools(self.service, project_id=self.current_project_id),
-        ]
 
     def _prepare_context(self, task: str, *, project_id: str) -> MemoryContextDTO:
         self._side_call = None

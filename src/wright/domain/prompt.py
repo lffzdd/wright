@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from ..infrastructure.tools.base import Tool, split_tool_catalog
+from .model.tool import ModelVisibleTool, split_tool_catalog
 
 DEFAULT_CODING_ROLE = "You are a coding assistant. Use the tools provided this turn."
 DEFAULT_GENERAL_ROLE = (
@@ -21,7 +21,7 @@ def get_role_instruction(mode: str = "coding") -> str:
 
 
 def build_system_prompt(
-    tools: Sequence[Tool],
+    tools: Sequence[ModelVisibleTool],
     memory_section: str = "",
     role_instruction: str = "",
 ) -> str:
@@ -48,10 +48,16 @@ def build_system_prompt(
             )
         paragraphs.append(edit_advice)
     if "execute_command" in names:
-        paragraphs.append(
+        shell = (
             "execute_command keeps a working directory across calls and returns cwd "
             "in every result. Do not cd into the directory you are already in."
         )
+        if "get_command" in names:
+            shell += (
+                " Background commands return command_id. Use get_command, "
+                "wait_command, list_commands, or terminate_command for that execution."
+            )
+        paragraphs.append(shell)
     if deferred:
         paragraphs.append(
             "If a specialized capability is missing this turn, call tool_search "

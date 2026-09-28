@@ -19,7 +19,8 @@ from tests.responses import event, response
 from wright.application.agent import create_agent
 from wright.application.agent.context import ContextBuilder, ContextCompactor
 from wright.application.agent.subagent import make_spawn_agent_tool
-from wright.application.memory import MemoryManager
+from wright.application.memory.assembly import assemble_memory_manager
+from wright.application.memory.manager import MemoryManager
 from wright.application.memory.memory_service import MemoryService
 from wright.application.memory.projection import render_episode_for_budget
 from wright.core.paths import project_id
@@ -28,20 +29,19 @@ from wright.domain.model.events import ContentDelta, ContentDone, UsageEvent
 from wright.domain.model.memory import EpisodeRecord
 from wright.domain.model.session import MessageRecord, Session, UsageRecord
 from wright.domain.model.tool import ToolCall, ToolResult
-from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
+from wright.infrastructure.llm.context_selector import (
+    SELECT_SYSTEM_PROMPT,
+    LlmContextSelector,
+)
 from wright.infrastructure.persistence.memory import (
     EpisodeStore,
     EpisodeStoreError,
     SemanticMemoryStore,
 )
-from wright.infrastructure.persistence.memory.selector import (
-    SELECT_SYSTEM_PROMPT,
-    LlmContextSelector,
-)
+from wright.infrastructure.persistence.session.repository import FileSessionRepository
 from wright.infrastructure.tools.executor import ConcurrentToolExecutor
 from wright.infrastructure.tools.memory import build_episode_tools
 from wright.infrastructure.tools.runtime import ToolRuntime
-from wright.interfaces.renderer import SilentRenderer
 from wright.utils.token_counter import estimate_tokens
 
 
@@ -52,7 +52,7 @@ class _QuietLLM:
 
 
 def _manager(tmp_path: Path) -> MemoryManager:
-    return MemoryManager(_QuietLLM(), directory=tmp_path / "memory")
+    return assemble_memory_manager(_QuietLLM(), directory=tmp_path / "memory")
 
 
 def _record(
@@ -395,7 +395,7 @@ def test_selector_protocol_and_single_usage(tmp_path: Path):
             yield UsageEvent(UsageRecord(4, 5, 9))
 
     observed: list[UsageRecord] = []
-    manager = MemoryManager(Streaming(), selector_llm=Streaming(), directory=tmp_path / "mem")
+    manager = assemble_memory_manager(Streaming(), selector_llm=Streaming(), directory=tmp_path / "mem")
     manager.usage_observer = observed.append
     context = MemoryService(
         SemanticMemoryStore(tmp_path / "semantic"),
@@ -846,8 +846,8 @@ def test_agent_injects_episode_without_writing_transcript(tmp_path: Path):
 
     main = Main()
     selector = Selector()
-    manager = MemoryManager(main, selector_llm=selector, directory=memory_dir)
-    agent = create_agent(main, [], session, SilentRenderer(), memory=manager)
+    manager = assemble_memory_manager(main, selector_llm=selector, directory=memory_dir)
+    agent = create_agent(main, [], session, memory=manager)
 
     assert agent.run("登录又失败了") == "done"
     projected = [

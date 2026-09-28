@@ -1,15 +1,15 @@
-from wright.application.services import RuntimeServices
-from wright.application.tool_runtime import tool_runtime_for_session
+from wright.application.composition.services import RuntimeServices
+from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.session import Session
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 from wright.infrastructure.tools.autonomy_tools import (
     cancel_schedule_tool,
+    create_schedule_tool,
     get_schedule_tool,
+    list_schedule_runs_tool,
     list_schedules_tool,
-    list_task_runs_tool,
     pause_schedule_tool,
     resume_schedule_tool,
-    schedule_task_tool,
 )
 
 
@@ -32,7 +32,7 @@ def _runtime(tmp_path):
 
 def test_schedule_tools_cover_definition_lifecycle_and_history(tmp_path):
     store, runtime = _runtime(tmp_path)
-    created = schedule_task_tool.call(
+    created = create_schedule_tool.call(
         {
             "name": "later",
             "prompt": "inspect later",
@@ -41,7 +41,8 @@ def test_schedule_tools_cover_definition_lifecycle_and_history(tmp_path):
         runtime,
     )
     assert created.ok
-    schedule_id = created.data["id"]
+    schedule_id = created.data["schedule_id"]
+    assert "id" not in created.data
     assert get_schedule_tool.call({"schedule_id": schedule_id}, runtime).ok
     assert list_schedules_tool.call({}, runtime).data["count"] == 1
 
@@ -53,20 +54,21 @@ def test_schedule_tools_cover_definition_lifecycle_and_history(tmp_path):
         {"schedule_id": schedule_id, "reason": "changed mind"}, runtime
     )
     assert cancelled.ok and cancelled.data["status"] == "cancelled"
-    assert list_task_runs_tool.call(
+    assert list_schedule_runs_tool.call(
         {"schedule_id": schedule_id}, runtime
     ).data["count"] == 0
     store.close()
 
 
-def test_schedule_task_is_model_visible():
-    assert schedule_task_tool.name == "schedule_task"
-    assert schedule_task_tool.expose_to_model is True
+def test_create_schedule_is_model_visible():
+    assert create_schedule_tool.name == "create_schedule"
+    assert create_schedule_tool.expose_to_model is True
+    assert create_schedule_tool.defer_to_model is True
 
 
-def test_schedule_task_reports_trigger_shape_error_cleanly(tmp_path):
+def test_create_schedule_reports_trigger_shape_error_cleanly(tmp_path):
     store, runtime = _runtime(tmp_path)
-    result = schedule_task_tool.call(
+    result = create_schedule_tool.call(
         {
             "name": "broken",
             "prompt": "broken",
@@ -81,7 +83,7 @@ def test_schedule_task_reports_trigger_shape_error_cleanly(tmp_path):
 
 def test_durable_mutations_require_explicit_permission(tmp_path):
     store, _runtime_context = _runtime(tmp_path)
-    decision = schedule_task_tool.describe_access({})
+    decision = create_schedule_tool.describe_access({})
     assert decision.operations == frozenset({"persistent_write"})
     assert "persistent_automation" in decision.risk_flags
     store.close()

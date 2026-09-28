@@ -1,6 +1,10 @@
 """Tests for base abstractions, common primitives, DTOs, event bus, and utilities."""
 
+from dataclasses import FrozenInstanceError, dataclass
+
 import pytest
+
+from wright.application.dto import RunAgentRequest, StreamEventDTO
 from wright.base import BaseEntity, ValueObject
 from wright.common import (
     CHARS_PER_TOKEN,
@@ -9,13 +13,9 @@ from wright.common import (
     EntityNotFoundError,
     WrightError,
 )
-from wright.application.dto import RunAgentRequest, StreamEventDTO
 from wright.core.event_bus import EventBus
 from wright.utils.string_diff import compute_unified_diff, render_colored_diff
 from wright.utils.token_counter import estimate_tokens
-
-
-from dataclasses import dataclass
 
 
 def test_base_entity_and_value_object():
@@ -39,7 +39,7 @@ def test_base_entity_and_value_object():
     p1 = PositionVO(x=10, y=20)
     p2 = PositionVO(x=10, y=20)
     assert p1 == p2
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         p1.x = 30  # Immutable
 
 
@@ -99,7 +99,7 @@ def test_json_repair_and_text_splitter():
 
     # 1. Unclosed JSON object
     truncated = '{"name": "Alice", "skills": ["python", "ddd"'
-    repaired = repair_json(truncated)
+    assert isinstance(repair_json(truncated), str)
     parsed = loads_repaired_json(truncated)
     assert parsed["name"] == "Alice"
     assert parsed["skills"] == ["python", "ddd"]

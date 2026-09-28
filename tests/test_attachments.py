@@ -4,8 +4,12 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from wright.application.event_dispatch import _dispatch_attachment_command
-from wright.infrastructure.storage.attachments import AttachmentError, AttachmentStore, DraftAttachments
+from wright.application.session.dispatch import _dispatch_attachment_command
+from wright.infrastructure.storage.attachments import (
+    AttachmentError,
+    AttachmentStore,
+    DraftAttachments,
+)
 
 
 def _png_bytes(*, size: tuple[int, int] = (24, 12)) -> bytes:

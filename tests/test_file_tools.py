@@ -3,9 +3,9 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 
-from wright.application.tool_capabilities import assemble_tool_capabilities
-from wright.application.tool_dispatch_service import ToolDispatchService
-from wright.application.tool_runtime import tool_runtime_for_session
+from wright.application.tool_execution.capabilities import assemble_tool_capabilities
+from wright.application.tool_execution.dispatch import ToolDispatchService
+from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall
 from wright.domain.policy import (

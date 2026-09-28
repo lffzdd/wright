@@ -6,13 +6,16 @@ from rich.console import Console
 from tests.responses import response
 from wright.application.agent import create_agent
 from wright.application.memory.llm_util import metered_events
+from wright.application.session.publisher import open_session_events
 from wright.domain.model.events import UsageEvent
 from wright.domain.model.session import Session, UsageRecord
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.domain.policy.verifier import Verifier
-from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
+from wright.infrastructure.persistence.session.repository import FileSessionRepository
 from wright.infrastructure.tools.base import Tool
-from wright.interfaces.renderer import ConsoleRenderer, SilentRenderer
+from wright.interfaces.cli.console_renderer import ConsoleRenderer
+from wright.interfaces.rendering.silent import SilentRenderer
+from wright.interfaces.rendering.subscriber import RendererEventSubscriber
 from wright.utils.token_counter import estimate_message_tokens
 
 
@@ -41,8 +44,10 @@ def test_usage_after_tool_results_and_verifier(tmp_path):
 
     session = Session.create('test', tmp_path)
     renderer = Capture()
+    events = open_session_events(session)
+    events.publisher.add_listener(RendererEventSubscriber(renderer))
     tool = Tool('read', 'read', {'type': 'object', 'properties': {}}, lambda args, runtime: ToolResult.success('x' * 400))
-    agent = create_agent(LLM(), [tool], session, renderer, verifier=Verifier())
+    agent = create_agent(LLM(), [tool], session, events, verifier=Verifier())
     assert agent.run('test') == 'done'
     assert len(renderer.requests) == 2  # Intermediate snapshots do not print twice.
     assert renderer.summaries == [(200, 40, 240)]
@@ -178,7 +183,7 @@ def test_console_live_takes_a_snapshot_not_a_callback(monkeypatch):
         def stop(self):
             captured["stopped"] = True
 
-    monkeypatch.setattr("wright.interfaces.renderer.Live", FakeLive)
+    monkeypatch.setattr("wright.interfaces.cli.console_renderer.Live", FakeLive)
     renderer = ConsoleRenderer()
     renderer._can_live = lambda: True
     renderer.on_content_delta("hello")
@@ -190,7 +195,7 @@ def test_console_live_takes_a_snapshot_not_a_callback(monkeypatch):
 
 
 def test_legacy_checkpoint_derives_task_boundary(tmp_path):
-    from wright.infrastructure.persistence.file_session_repo import (
+    from wright.infrastructure.persistence.session.codec import (
         _deserialize_session,
         _serialize_session,
     )
@@ -228,7 +233,9 @@ def test_runtime_event_summary_waits_for_memory_finalization(tmp_path):
     session = Session.create('task', tmp_path)
     session.begin_user_turn('task')
     renderer = Capture()
-    agent = create_agent(LLM(), [], session, renderer, memory=Memory())
+    events = open_session_events(session)
+    events.publisher.add_listener(RendererEventSubscriber(renderer))
+    agent = create_agent(LLM(), [], session, events, memory=Memory())
     assert agent.run_runtime_event({
         'type': 'agent_completed',
         'task': {'root_turn_id': session.agent_root_turn_id},

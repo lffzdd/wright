@@ -11,12 +11,13 @@ import hashlib
 import os
 import tempfile
 import warnings
-from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import BinaryIO
 from uuid import uuid4
 
 from PIL import Image, UnidentifiedImageError
+
+from ...domain.model.attachment import AttachmentError, AttachmentRecord
 
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 MAX_ATTACHMENTS_PER_TURN = 10
@@ -27,10 +28,6 @@ _FORMATS = {
     "PNG": ("image/png", ".png"),
     "WEBP": ("image/webp", ".webp"),
 }
-
-
-class AttachmentError(ValueError):
-    """A submitted attachment is unsafe, unsupported, or unavailable."""
 
 
 def inspect_image(path: Path | BinaryIO) -> tuple[str, str, int, int]:
@@ -56,48 +53,6 @@ def inspect_image(path: Path | BinaryIO) -> tuple[str, str, int, int]:
         raise AttachmentError("file is not a valid image") from exc
     except OSError as exc:
         raise AttachmentError("image cannot be decoded") from exc
-
-
-@dataclass(frozen=True)
-class AttachmentRecord:
-    id: str
-    filename: str
-    media_type: str
-    size: int
-    sha256: str
-    width: int
-    height: int
-    storage_path: str
-
-    def to_dict(self) -> dict[str, object]:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, value: dict[str, object]) -> AttachmentRecord:
-        try:
-            record = cls(
-                id=str(value["id"]),
-                filename=str(value["filename"]),
-                media_type=str(value["media_type"]),
-                size=int(value["size"]),
-                sha256=str(value["sha256"]),
-                width=int(value["width"]),
-                height=int(value["height"]),
-                storage_path=str(value["storage_path"]),
-            )
-        except (KeyError, TypeError, ValueError) as exc:
-            raise AttachmentError("attachment metadata is invalid") from exc
-        if (
-            not record.id
-            or record.media_type not in {item[0] for item in _FORMATS.values()}
-            or record.size < 1
-            or record.width < 1
-            or record.height < 1
-            or Path(record.storage_path).is_absolute()
-            or ".." in Path(record.storage_path).parts
-        ):
-            raise AttachmentError("attachment metadata is invalid")
-        return record
 
 
 class AttachmentStore:

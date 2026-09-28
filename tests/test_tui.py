@@ -4,18 +4,29 @@ from types import SimpleNamespace
 
 import pytest
 
-from wright.application.event_dispatch import (
+from wright.application.composition.runtime import _trusted_mcp_config_paths
+from wright.application.session.dispatch import (
     dispatch_slash,
     process_session_event,
     slash_command_matches,
 )
-from wright.application.runtime import _trusted_mcp_config_paths, parse_cli_args
-from wright.interfaces.interaction import InteractionHub
-from wright.domain.policy import PermissionChoice, PermissionPrompt
-from wright.interfaces.renderer import SilentRenderer, collect_history_pairs
+from wright.application.session.interaction import RoutedPrompter
 from wright.domain.model.tool import ToolCall, ToolResult
+from wright.domain.policy import PermissionChoice, PermissionPrompt
+from wright.interfaces.cli.args import parse_cli_args
+from wright.interfaces.interaction import InteractionHub
+from wright.interfaces.rendering.history import collect_history_pairs
+from wright.interfaces.rendering.silent import SilentRenderer
 from wright.interfaces.tui import app as tui_app_module
-from wright.interfaces.tui.app import WrightTUI, _context_ring, require_interactive_tty
+from wright.interfaces.tui.app import WrightTUI, require_interactive_tty
+from wright.interfaces.tui.blocks import AssistantBlock
+from wright.interfaces.tui.composer import MultilineComposer
+from wright.interfaces.tui.format import (
+    _context_ring,
+    _format_assistant_text,
+    _tool_body,
+    _tool_title,
+)
 from wright.interfaces.tui.renderer import TUIRenderer
 from wright.interfaces.tui.session_control import SessionControlRequest
 
@@ -50,7 +61,7 @@ def test_tui_keeps_application_host_alive_across_session_resume(tmp_path, monkey
     transitions = [SessionControlRequest.resume("saved"), None]
     assembled_hosts = []
 
-    def assemble(_config, *, renderer, application_host=None):
+    def assemble(_config, *, renderer, application_host=None, resume_chooser=None, **_kwargs):
         assembled_hosts.append(application_host)
         return SimpleNamespace(
             application_host=host,
@@ -197,20 +208,19 @@ def test_tui_renderer_tracks_tools_without_app():
     assert renderer.tools[0].result == {"files": ["a.py"]}
 
 
-def test_tui_renderer_permission_fail_closed_without_app():
-    renderer = TUIRenderer()
+def test_tui_prompter_fail_closed_without_a_hub():
+    prompter = RoutedPrompter(None)
     prompt = PermissionPrompt(
         "request", "write_file", "a.txt", "ask", (), targets=(),
         choices=(PermissionChoice("allow_once", "Allow once", "call", "none"),),
     )
-    assert renderer.prompt_permission(prompt) == "deny"
-    assert renderer.prompt_user("q") is None
+    assert prompter.prompt_permission(prompt) == "deny"
+    assert prompter.prompt_user("q") is None
 
 
-def test_tui_renderer_permission_uses_hub_off_collector_thread():
+def test_tui_prompter_uses_hub_off_collector_thread():
     hub = InteractionHub()
-    renderer = TUIRenderer()
-    renderer.bind_interaction(hub)
+    prompter = RoutedPrompter(hub)
     answers: list[str] = []
     permission_prompt = PermissionPrompt(
         "request", "write_file", "file=a.txt", "ask", (), targets=(),
@@ -219,7 +229,7 @@ def test_tui_renderer_permission_uses_hub_off_collector_thread():
     )
 
     def agent() -> None:
-        answers.append(renderer.prompt_permission(permission_prompt))
+        answers.append(prompter.prompt_permission(permission_prompt))
 
     import threading
     import time
@@ -368,7 +378,7 @@ def test_tui_model_switch_updates_the_active_llm_client():
 
 @pytest.mark.anyio
 async def test_tui_slash_menu_navigates_and_completes():
-    from wright.interfaces.tui.app import MultilineComposer, WrightTUI
+    from wright.interfaces.tui.app import WrightTUI
 
     class SlashTestApp(WrightTUI):
         def _seed_history(self) -> None:
@@ -429,8 +439,7 @@ def test_collect_history_pairs_empty():
 
 
 def test_tool_title_formats_icons_and_arguments():
-    from wright.interfaces.tui.app import _tool_title
-    from wright.interfaces.tui.renderer import ToolView
+    from wright.interfaces.tui.view_models import ToolView
 
     running = ToolView(key="1", name="execute_command", arguments={"command": "pytest -v"}, status="running")
     assert _tool_title(running) == "⏳ execute_command · $ pytest -v"
@@ -445,8 +454,7 @@ def test_tool_title_formats_icons_and_arguments():
 def test_tool_body_renders_edit_file_replacement():
     from rich.console import Group
 
-    from wright.interfaces.tui.app import _tool_body
-    from wright.interfaces.tui.renderer import ToolView
+    from wright.interfaces.tui.view_models import ToolView
 
     tool = ToolView(
         key="1",
@@ -465,8 +473,6 @@ def test_tool_body_renders_edit_file_replacement():
 def test_assistant_block_markdown_and_draft():
     from rich.markdown import Markdown as RichMarkdown
 
-    from wright.interfaces.tui.app import _format_assistant_text
-
     assert _format_assistant_text("streaming text", draft=True) == "streaming text"
     rendered = _format_assistant_text("# Title\n```python\nprint(1)\n```", draft=False)
     assert isinstance(rendered, RichMarkdown)
@@ -475,8 +481,6 @@ def test_assistant_block_markdown_and_draft():
 @pytest.mark.anyio
 async def test_assistant_block_mount_and_render():
     from textual.app import App, ComposeResult
-
-    from wright.interfaces.tui.app import AssistantBlock
 
     class DummyApp(App):
         def compose(self) -> ComposeResult:
@@ -491,8 +495,6 @@ async def test_assistant_block_mount_and_render():
 @pytest.mark.anyio
 async def test_multiline_composer_submits_on_enter_and_accepts_newline_shortcuts():
     from textual.app import App, ComposeResult
-
-    from wright.interfaces.tui.app import MultilineComposer
 
     class DummyApp(App):
         def __init__(self) -> None:

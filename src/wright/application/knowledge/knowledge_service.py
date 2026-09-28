@@ -52,7 +52,7 @@ class KnowledgeService(IKnowledgeProvider):
         total_chunks = len(chunks_text)
 
         document_chunks: list[DocumentChunk] = []
-        for idx, (chunk_str, emb) in enumerate(zip(chunks_text, embeddings)):
+        for idx, (chunk_str, emb) in enumerate(zip(chunks_text, embeddings, strict=False)):
             chunk_meta = dict(request.metadata)
             chunk_meta.update({
                 "source": request.source or doc_id,

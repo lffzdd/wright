@@ -16,9 +16,9 @@ from types import SimpleNamespace
 import pytest
 
 from tests.responses import event
+from wright.application.memory.assembly import assemble_memory_manager, memory_tools
 from wright.application.memory.extract import extract_from_snapshot
 from wright.application.memory.llm_util import SideQueryResult
-from wright.application.memory.manager import MemoryManager
 from wright.application.memory.memory_service import MemoryService
 from wright.core.paths import project_id
 from wright.domain.gateway.memory import SelectorChoice
@@ -29,7 +29,6 @@ from wright.domain.model.memory import (
 )
 from wright.domain.model.session import Session, UsageRecord
 from wright.domain.model.tool import ToolCall
-from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
 from wright.infrastructure.persistence.memory import EpisodeStore, SemanticMemoryStore
 from wright.infrastructure.persistence.memory.evidence import SessionEvidenceSource
 from wright.infrastructure.persistence.memory.semantic import (
@@ -37,6 +36,7 @@ from wright.infrastructure.persistence.memory.semantic import (
     get_memory,
     update_memory,
 )
+from wright.infrastructure.persistence.session.repository import FileSessionRepository
 from wright.infrastructure.tools.executor import ConcurrentToolExecutor
 from wright.infrastructure.tools.memory import build_memory_tools
 from wright.infrastructure.tools.runtime import ToolRuntime
@@ -80,7 +80,7 @@ class _EchoSelector:
         for line in semantic_manifest.splitlines():
             if line.startswith("- "):
                 ids.append(line[2:].split("|", 1)[0].strip())
-        return SelectorChoice(memory_ids=tuple([*ids, *self.extra]), episode_ids=())
+        return SelectorChoice(memory_ids=(*ids, *self.extra), episode_ids=())
 
 
 class _FailedSelector:
@@ -257,7 +257,7 @@ def test_same_turn_deactivation_drops_cached_recall(tmp_path: Path):
             yield event(content=json.dumps(payload), reasoning="")
 
     selector = _SelectorLLM()
-    manager = MemoryManager(_QuietLLM(), selector_llm=selector, directory=tmp_path / "memory")
+    manager = assemble_memory_manager(_QuietLLM(), selector_llm=selector, directory=tmp_path / "memory")
     manager.bind_project(root)
     created, error = manager.service.create_semantic(
         name="rule", content="回合内必须使用 bun", type_="project", project_id=project_a
@@ -282,7 +282,7 @@ def test_same_turn_deactivation_drops_cached_recall(tmp_path: Path):
     assert "回合内必须使用 bun" in first.semantic_text
     assert selector.calls == 1
 
-    tools = {tool.name: tool for tool in manager.tools()}
+    tools = {tool.name: tool for tool in memory_tools(manager)}
     result = _execute(tools["update_memory"], {
         "memory_id": created.id,
         "expected_revision": created.revision,
@@ -561,7 +561,7 @@ def test_evidence_survives_reload_and_missing_session(tmp_path: Path):
 
 
 def test_memory_tools_use_the_executor(tmp_path: Path):
-    root, project_a = _project(tmp_path, "alpha")
+    _root, project_a = _project(tmp_path, "alpha")
     _other, project_b = _project(tmp_path, "beta")
     service = _service(tmp_path)
     tools = {

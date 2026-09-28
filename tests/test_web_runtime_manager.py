@@ -6,12 +6,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from wright.core.processes import RuntimeResources
+from wright.application.session.live_resources import RuntimeResources
+from wright.application.session.publisher import EventPublisher
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ArtifactRef, ToolCall, ToolResult
 from wright.infrastructure.workspace.project import ProjectContext
 from wright.interfaces.interaction import InteractionBroker
-from wright.interfaces.ui_events import EventPublisher
 from wright.interfaces.web import runtime_manager as runtime_module
 from wright.interfaces.web.runtime_manager import (
     RuntimeManager,
@@ -74,10 +74,10 @@ def test_snapshot_uses_live_response_projection_after_event_ring_eviction(
     runtime.runtime_resources = resources
     run = session.active_run()
     assert run is not None
-    resources.begin_response(run.run_id)
-    resources.append_reasoning("reasoning survives")
-    resources.append_content("complete streamed response")
-    resources.update_tool("call_1", {"call_id": "call_1", "name": "read_file"})
+    resources.responses.begin_response(run.run_id)
+    resources.responses.append_reasoning("reasoning survives")
+    resources.responses.append_content("complete streamed response")
+    resources.responses.update_tool("call_1", {"call_id": "call_1", "name": "read_file"})
     for number in range(3):
         runtime.publisher.publish("content.delta", {"piece": str(number)})
 
@@ -376,7 +376,7 @@ def test_project_exposes_configured_models_not_a_hardcoded_default(monkeypatch, 
 
 def test_closed_local_session_can_be_replaced_without_losing_its_schedules(monkeypatch, tmp_path):
     from tests.responses import response
-    from wright.application import runtime as assembly
+    from wright.application.composition import runtime as assembly
     from wright.domain.model.autonomy import TriggerSpec
 
     class Model:

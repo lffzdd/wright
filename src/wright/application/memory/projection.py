@@ -7,7 +7,11 @@ is not an input.
 
 from __future__ import annotations
 
-from ...domain.model.memory import EpisodeRecord, SemanticMemoryRecord, episode_fact_pieces
+from ...domain.model.memory import (
+    EpisodeRecord,
+    SemanticMemoryRecord,
+    episode_fact_pieces,
+)
 from ...utils.token_counter import estimate_tokens
 
 _TRUNCATED = "…(已截断)"

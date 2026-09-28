@@ -23,13 +23,15 @@ _TMP = tempfile.TemporaryDirectory(prefix="wright-test-", ignore_cleanup_errors=
 _WORKSPACE = Path(_TMP.name)
 
 from wright.application.agent import Agent, create_agent
+from wright.application.session.publisher import open_session_events
 from wright.domain.model.events import ContentDelta, ContentDone, UsageEvent
-from wright.infrastructure.llm.llm import LLMClient
-from wright.interfaces.renderer import SilentRenderer
 from wright.domain.model.session import Session, UsageRecord
 from wright.domain.model.tool import ToolCall, ToolResult
+from wright.infrastructure.llm.llm import LLMClient
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.runtime import ToolRuntime
+from wright.interfaces.rendering.silent import SilentRenderer
+from wright.interfaces.rendering.subscriber import RendererEventSubscriber
 
 
 class RecordingRenderer(SilentRenderer):
@@ -70,7 +72,6 @@ def _make_agent(
         llm,
         tools,
         _make_session(),
-        SilentRenderer(),
         tool_timeout=tool_timeout,
         keep_recent_tool_results=keep_recent_tool_results,
     )
@@ -82,8 +83,8 @@ def test_agent_does_not_duplicate_system_prompt_for_existing_session():
     )
     session = _make_session()
 
-    first_agent = create_agent(llm, [], session, SilentRenderer(), tool_timeout=5)
-    second_agent = create_agent(llm, [], session, SilentRenderer(), tool_timeout=5)
+    first_agent = create_agent(llm, [], session, tool_timeout=5)
+    second_agent = create_agent(llm, [], session, tool_timeout=5)
 
     system_messages = [msg for msg in session.messages if msg.get("role") == "system"]
     assert tuple(first_agent.messages) == tuple(second_agent.messages)
@@ -279,7 +280,7 @@ def test_run_turn_records_usage():
                 )
             )
 
-    agent = create_agent(FakeLLM(), [], _make_session(), SilentRenderer(), tool_timeout=5)
+    agent = create_agent(FakeLLM(), [], _make_session(), tool_timeout=5)
 
     content, usage = agent._run_turn()
     assert content.content == "content 1"
@@ -314,7 +315,7 @@ def test_run_turn_records_dict_usage():
                 }
             )
 
-    agent = create_agent(FakeLLM(), [], _make_session(), SilentRenderer(), tool_timeout=5)
+    agent = create_agent(FakeLLM(), [], _make_session(), tool_timeout=5)
 
     content, usage = agent._run_turn()
     assert content.content == "ok"
@@ -481,7 +482,7 @@ def test_run_defaults_to_session_max_steps():
 
     session = _make_session()
     session.max_steps = 2
-    agent = create_agent(InvalidLLM(), [], session, SilentRenderer(), tool_timeout=5)
+    agent = create_agent(InvalidLLM(), [], session, tool_timeout=5)
 
     assert agent.run("keep failing") is None
     assert session.current_run_status() == "failed"
@@ -504,7 +505,6 @@ def test_run_aborts_after_consecutive_invalid():
         InvalidLLM(),
         [],
         session,
-        SilentRenderer(),
         tool_timeout=5,
         max_consecutive_invalid=3,
     )
@@ -543,7 +543,6 @@ def test_consecutive_invalid_resets_on_success():
         ScriptedLLM(),
         [Tool("noop", "", {}, lambda args, runtime: noop())],
         session,
-        SilentRenderer(),
         tool_timeout=5,
         max_consecutive_invalid=2,
     )
@@ -657,11 +656,14 @@ def _make_compactor_agent(renderer, keep_recent_tool_results, watermark=0.75):
     llm = LLMClient(
         base_url="http://x", api_key="sk-x", model="m", context_limit=100
     )
+    session = _make_session()
+    events = open_session_events(session)
+    events.publisher.add_listener(RendererEventSubscriber(renderer))
     return create_agent(
         llm,
         [],
-        _make_session(),
-        renderer,
+        session,
+        events,
         tool_timeout=5,
         context_watermark=watermark,
         keep_recent_tool_results=keep_recent_tool_results,

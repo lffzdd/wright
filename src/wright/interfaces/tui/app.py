@@ -2,29 +2,40 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Any, ClassVar
 from uuid import uuid4
 
-from rich.console import Group
-from rich.json import JSON as RichJSON
-from rich.markdown import Markdown as RichMarkdown
-from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Key
-from textual.message import Message
-from textual.screen import ModalScreen
-from textual.widgets import Button, Collapsible, Input, Static, TextArea
+from textual.widgets import Static
 
-from ...application.runtime import WrightRuntime, assemble_runtime, runtime_config_from_args
-from ...application.session_service import SessionService, SessionServiceError, set_session_model
-from ..interaction import InteractionRequest
+from ...application.composition.runtime import WrightRuntime, assemble_runtime
+from ...application.session.service import (
+    SessionService,
+    SessionServiceError,
+    set_session_model,
+)
 from ...core.logger import get_logger
-from .renderer import (
+from ..cli.args import runtime_config_from_args
+from ..cli.resume_select import choose_resume_session
+from ..interaction import InteractionRequest
+from .blocks import (
+    AssistantBlock,
+    ReasoningBlock,
+    SubagentBlock,
+    SystemBlock,
+    TaskUsageBlock,
+    ToolBlock,
+    UsageBlock,
+    UserBlock,
+)
+from .composer import MultilineComposer
+from .format import _context_ring, _json_text, _short_tokens, _task_usage_detail
+from .messages import (
     AgentEventNotice,
     DraftFreeze,
     FinalAnswer,
@@ -35,20 +46,20 @@ from .renderer import (
     SystemNotice,
     TaskUsage,
     ToolUpsert,
-    ToolView,
-    TUIRenderer,
     TurnBegin,
 )
+from .modals import AskUserModal, ModelModal, PermissionModal, ResumeModal
+from .renderer import TUIRenderer
 from .session_control import (
     SessionControlRequest,
     available_models,
     runtime_args_for_transition,
 )
 from .slash import SlashCompletion, tui_help_text
+from .styles import APP_CSS
+from .view_models import ToolView
 
 logger = get_logger(__name__)
-
-_COMMAND_OUTPUT_LINES = 24
 
 
 def require_interactive_tty() -> None:
@@ -56,537 +67,27 @@ def require_interactive_tty() -> None:
         raise SystemExit("TUI 需要交互式终端（stdin 与 stdout 均为 TTY）")
 
 
-def _json_text(value: Any) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value
-    try:
-        return json.dumps(value, ensure_ascii=False, indent=2)
-    except Exception:
-        return str(value)
 
 
-def _context_ring(tokens: int | None, limit: int | None) -> tuple[str, str, str]:
-    """Format the current session context for a compact indicator and tooltip."""
-    if tokens is None or not limit:
-        return "○", "等待上下文", "Context window:\nWaiting for a context limit"
-    ratio = max(0.0, min(tokens / limit, 1.0))
-    ring = ("○", "◔", "◑", "◕", "●")[min(4, int(ratio * 4.999))]
-    compact = f"{ring}  {ratio:.0%}"
-    detail = (
-        f"Context window:\n{ratio:.0%} full\n"
-        f"{tokens:,} / {limit:,} tokens used\n\n"
-        "Current session context"
-    )
-    return compact, detail, "warning" if ratio >= 0.75 else "normal"
 
 
-def _short_tokens(tokens: int) -> str:
-    return f"{tokens / 1_000:.1f}k" if tokens >= 1_000 else str(tokens)
 
 
-def _task_usage_detail(prompt: int, completion: int, total: int) -> str:
-    return (
-        "Task usage:\n"
-        f"{prompt:,} in\n"
-        f"{completion:,} out\n"
-        f"{total:,} total"
-    )
 
 
-class UserBlock(Static):
-    def __init__(self, text: str) -> None:
-        content = Text()
-        content.append("❯ ", style="bold cyan")
-        content.append(text)
-        super().__init__(content, classes="msg user")
 
 
-def _format_assistant_text(text: str, *, draft: bool) -> Any:
-    if not text:
-        return "…" if draft else ""
-    if draft:
-        return text
-    try:
-        return RichMarkdown(text)
-    except Exception:
-        return text
 
 
-class AssistantBlock(Static):
-    def __init__(self, text: str = "", *, draft: bool = False) -> None:
-        classes = "msg assistant draft" if draft else "msg assistant"
-        super().__init__(_format_assistant_text(text, draft=draft), classes=classes)
 
-    def set_draft(self, text: str) -> None:
-        self.set_classes("msg assistant draft")
-        self.update(_format_assistant_text(text, draft=True))
 
-    def set_final(self, text: str) -> None:
-        self.set_classes("msg assistant")
-        self.update(_format_assistant_text(text, draft=False))
 
 
-class ReasoningBlock(Collapsible):
-    """A visible, in-place view of the model's streamed reasoning."""
 
-    def __init__(self, text: str = "", *, collapsed: bool = False) -> None:
-        self._body = Static(text or "…", classes="reasoning-body")
-        super().__init__(
-            self._body,
-            title="思考" if text else "思考中",
-            collapsed=collapsed,
-            classes="reasoning",
-        )
 
-    def update_reasoning(self, text: str) -> None:
-        self._body.update(text or "…")
 
 
-class SubagentBlock(Static):
-    def __init__(self, data: dict[str, Any], text: str) -> None:
-        status = str(data.get("status", "unknown"))
-        depth = data.get("depth", "?")
-        task_id = str(data.get("task_id", "?"))[:8]
-        task = str(data.get("task", ""))
-        if len(task) > 80:
-            task = task[:77] + "…"
 
-        line = Text()
-        line.append("🤖 SubAgent ", style="bold magenta")
-        line.append(f"[{task_id}] ", style="bold white")
-        line.append(f"d{depth} ", style="dim")
-        status_style = {
-            "running": "cyan bold",
-            "completed": "green bold",
-            "failed": "red bold",
-        }.get(status, "yellow")
-        line.append(f"· {status}", style=status_style)
-        if task:
-            line.append(f"  {task}", style="dim")
-        super().__init__(line, classes=f"subagent {status}")
-
-
-class SystemBlock(Static):
-    def __init__(self, text: str) -> None:
-        super().__init__(text, classes="msg system")
-
-
-class UsageBlock(Static):
-    def __init__(self, text: str, *, total: bool = False) -> None:
-        classes = "usage total" if total else "usage"
-        super().__init__(text, classes=classes)
-
-
-class TaskUsageBlock(UsageBlock):
-    def __init__(self, summary: str, detail: str) -> None:
-        super().__init__(summary, total=True)
-        self.tooltip = detail
-
-
-class ToolBlock(Collapsible):
-    def __init__(self, tool: ToolView) -> None:
-        self._body = Static(_tool_body(tool), classes="tool-body")
-        super().__init__(
-            self._body,
-            title=_tool_title(tool),
-            collapsed=True,
-            classes=f"tool {_tool_class(tool)}",
-        )
-        self.tool_key = tool.key
-
-    def apply(self, tool: ToolView) -> None:
-        self.tool_key = tool.key
-        self.title = _tool_title(tool)
-        self.set_classes(f"tool {_tool_class(tool)}")
-        self._body.update(_tool_body(tool))
-
-
-def _tool_class(tool: ToolView) -> str:
-    if tool.status == "error":
-        return "error"
-    if tool.status == "done":
-        return "done"
-    if tool.status == "awaiting_approval":
-        return "awaiting"
-    return "running"
-
-
-def _tool_arg_summary(name: str, args: Any) -> str:
-    if not isinstance(args, dict):
-        if isinstance(args, str) and args.strip():
-            return args.strip()[:36]
-        return ""
-    if "command" in args and isinstance(args["command"], str):
-        cmd = args["command"].strip().replace("\n", " ")
-        return f"$ {cmd[:36]}…" if len(cmd) > 36 else f"$ {cmd}"
-    if name == "edit_file" and isinstance(args.get("file"), str):
-        return args["file"]
-    for key in ("path", "file_path", "file", "TargetFile", "AbsolutePath", "SearchDirectory"):
-        if key in args and isinstance(args[key], str):
-            p = args[key].strip()
-            parts = p.split("/")
-            return "/".join(parts[-2:]) if len(parts) > 2 else p
-    for key in ("query", "Query", "pattern", "Pattern"):
-        if key in args and isinstance(args[key], str):
-            q = args[key].strip()
-            return f'"{q[:30]}…"' if len(q) > 30 else f'"{q}"'
-    for key in ("task", "instruction", "Instruction", "prompt"):
-        if key in args and isinstance(args[key], str):
-            s = args[key].strip().replace("\n", " ")
-            return s[:36] + "…" if len(s) > 36 else s
-    for v in args.values():
-        if isinstance(v, str) and v.strip():
-            s = v.strip().replace("\n", " ")
-            return s[:32] + "…" if len(s) > 32 else s
-    return ""
-
-
-def _tool_title(tool: ToolView) -> str:
-    icon = {
-        "planned": "○",
-        "awaiting_approval": "⚠",
-        "running": "⏳",
-        "done": "✓",
-        "error": "✗",
-    }.get(tool.status, "○")
-    summary = _tool_arg_summary(tool.name, tool.arguments)
-    if summary:
-        return f"{icon} {tool.name} · {summary}"
-    return f"{icon} {tool.name} · {tool.status}"
-
-
-def _format_diff(diff_text: str) -> Text:
-    t = Text()
-    for line in diff_text.splitlines():
-        if line.startswith("+") and not line.startswith("+++"):
-            t.append(line + "\n", style="green")
-        elif line.startswith("-") and not line.startswith("---"):
-            t.append(line + "\n", style="red")
-        elif line.startswith("@@"):
-            t.append(line + "\n", style="cyan")
-        else:
-            t.append(line + "\n", style="dim")
-    return t
-
-
-def _tool_body(tool: ToolView) -> Any:
-    parts: list[Any] = []
-    args = tool.arguments
-    if args:
-        if isinstance(args, dict) and "command" in args and isinstance(args["command"], str):
-            parts.append(Text(f"$ {args['command']}", style="bold cyan"))
-        elif isinstance(args, dict) and tool.name == "edit_file":
-            old_text = str(args.get("old_text") or "")
-            new_text = str(args.get("new_text") or "")
-            diff = "\n".join(
-                [
-                    *(f"-{line}" for line in old_text.splitlines() or [""]),
-                    *(f"+{line}" for line in new_text.splitlines() or [""]),
-                ]
-            )
-            if old_text or new_text:
-                parts.append(_format_diff(diff))
-            else:
-                parts.append(Text("(no changes)", style="dim italic"))
-        else:
-            try:
-                parts.append(Group(Text("参数:", style="bold dim"), RichJSON.from_data(args)))
-            except Exception:
-                parts.append(Text(_json_text(args), style="dim"))
-
-    if tool.output:
-        lines = tool.output.splitlines()
-        clipped = lines[-_COMMAND_OUTPUT_LINES:]
-        prefix = "" if len(lines) <= _COMMAND_OUTPUT_LINES else "…\n"
-        body_txt = prefix + "\n".join(clipped)
-        if any(l.startswith("@@") or (l.startswith("+") and not l.startswith("+++")) or (l.startswith("-") and not l.startswith("---")) for l in clipped):
-            parts.append(_format_diff(body_txt))
-        else:
-            parts.append(Text(body_txt, style="dim"))
-
-    if tool.status == "error" and tool.error:
-        parts.append(Text(f"错误: {tool.error}", style="bold red"))
-    elif tool.result is not None:
-        if isinstance(tool.result, (dict, list)):
-            try:
-                parts.append(Group(Text("返回结果:", style="bold dim"), RichJSON.from_data(tool.result)))
-            except Exception:
-                parts.append(Text(_json_text(tool.result), style="dim"))
-        else:
-            parts.append(Text(str(tool.result), style="dim"))
-
-    if not parts:
-        return Text("(no payload)", style="dim italic")
-    if len(parts) == 1:
-        return parts[0]
-    return Group(*parts)
-
-
-class PermissionModal(ModalScreen[str]):
-    BINDINGS: ClassVar[list[Binding]] = [
-        Binding("escape", "deny", "Deny", show=False),
-    ]
-
-    def __init__(
-        self,
-        tool_name: str,
-        subject: str,
-        risk_flags: list[str] | tuple[str, ...],
-        reason: str,
-        targets: list[str] | tuple[str, ...] = (),
-        choices: list[dict[str, str]] | tuple[dict[str, str], ...] = (),
-        principal: str = "",
-    ) -> None:
-        super().__init__()
-        self.tool_name = tool_name
-        self.subject = subject
-        self.risk_flags = tuple(risk_flags)
-        self.reason = reason
-        self.targets = tuple(targets)
-        self.choices = tuple(choices)
-        self.principal = principal
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="dialog"):
-            yield Static("permission", classes="dialog-kicker")
-            yield Static(self.tool_name, classes="dialog-title")
-            if self.subject:
-                yield Static(self.subject, classes="dialog-subject")
-            yield Static(f"risk  {', '.join(self.risk_flags)}", classes="dialog-meta")
-            yield Static(self.reason, classes="dialog-reason")
-            if self.targets:
-                yield Static("targets  " + "; ".join(self.targets), classes="dialog-meta")
-            if self.principal:
-                yield Static(f"principal  {self.principal}", classes="dialog-meta")
-            with Horizontal(classes="dialog-actions"):
-                for choice in self.choices:
-                    variant = "error" if choice.get("id") == "deny" else "primary"
-                    yield Button(
-                        f"{choice.get('label', choice.get('id', 'choice'))}",
-                        id=f"choice-{choice.get('id', 'deny')}",
-                        variant=variant,
-                    )
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        ident = event.button.id or ""
-        if ident.startswith("choice-"):
-            self.dismiss(ident.removeprefix("choice-") or "deny")
-
-    def action_deny(self) -> None:
-        self.dismiss("deny")
-
-
-class AskUserModal(ModalScreen[str | None]):
-    BINDINGS: ClassVar[list[Binding]] = [
-        Binding("escape", "cancel", "Cancel", show=False),
-    ]
-
-    def __init__(
-        self,
-        question: str,
-        context: str = "",
-        options: tuple[str, ...] = (),
-    ) -> None:
-        super().__init__()
-        self.question = question
-        self.context = context
-        self.options = options
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="dialog"):
-            yield Static("question", classes="dialog-kicker")
-            yield Static(self.question, classes="dialog-title")
-            if self.context:
-                yield Static(self.context, classes="dialog-reason")
-            if self.options:
-                with Vertical(classes="dialog-options"):
-                    for idx, option in enumerate(self.options, start=1):
-                        yield Button(f"{idx}. {option}", id=f"opt-{idx}", variant="primary")
-            yield Input(placeholder="type an answer", id="answer")
-
-    def on_mount(self) -> None:
-        self.query_one("#answer", Input).focus()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        ident = event.button.id or ""
-        if ident.startswith("opt-"):
-            try:
-                idx = int(ident.split("-", 1)[1]) - 1
-            except ValueError:
-                return
-            if 0 <= idx < len(self.options):
-                self.dismiss(self.options[idx])
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        value = event.value.strip()
-        if value:
-            self.dismiss(value)
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-
-class ResumeModal(ModalScreen[str | None]):
-    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "Cancel", show=False)]
-
-    def __init__(self, sessions: list[dict[str, Any]]) -> None:
-        super().__init__()
-        self.sessions = sessions
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="dialog"):
-            yield Static("resume", classes="dialog-kicker")
-            yield Static("Saved sessions", classes="dialog-title")
-            with Vertical(classes="dialog-options"):
-                for index, session in enumerate(self.sessions):
-                    goal = str(session.get("user_goal") or "(no goal)").replace("\n", " ")
-                    label = f"{session['session_id']}  ·  {goal[:52]}"
-                    yield Button(label, id=f"session-{index}", variant="primary")
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        ident = event.button.id or ""
-        if not ident.startswith("session-"):
-            return
-        try:
-            session = self.sessions[int(ident.removeprefix("session-"))]
-        except (ValueError, IndexError):
-            return
-        self.dismiss(str(session["session_id"]))
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-
-class ModelModal(ModalScreen[str | None]):
-    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "Cancel", show=False)]
-
-    def __init__(self, models: tuple[str, ...], current: str) -> None:
-        super().__init__()
-        self.models = models
-        self.current = current
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="dialog"):
-            yield Static("model", classes="dialog-kicker")
-            yield Static(f"Current: {self.current}", classes="dialog-title")
-            if self.models:
-                with Vertical(classes="dialog-options"):
-                    for index, model in enumerate(self.models):
-                        yield Button(model, id=f"model-{index}", variant="primary")
-            yield Input(placeholder="type a model ID", id="model-input")
-
-    def on_mount(self) -> None:
-        self.query_one("#model-input", Input).focus()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        ident = event.button.id or ""
-        if not ident.startswith("model-"):
-            return
-        try:
-            self.dismiss(self.models[int(ident.removeprefix("model-"))])
-        except (ValueError, IndexError):
-            return
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        value = event.value.strip()
-        if value:
-            self.dismiss(value)
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-
-class MultilineComposer(TextArea):
-    """A chat composer that grows with its content and submits on Enter."""
-
-    _MIN_VISIBLE_ROWS = 3
-    _MAX_VISIBLE_ROWS = 6
-    _FRAME_ROWS = 2
-
-    class Submitted(Message):
-        def __init__(self, value: str) -> None:
-            super().__init__()
-            self.value = value
-
-    class SlashChanged(Message):
-        def __init__(self, text: str) -> None:
-            super().__init__()
-            self.text = text
-
-    class SlashNavigate(Message):
-        def __init__(self, offset: int) -> None:
-            super().__init__()
-            self.offset = offset
-
-    class SlashComplete(Message):
-        pass
-
-    class SlashDismissed(Message):
-        pass
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(show_line_numbers=False, **kwargs)
-        self._slash_menu_open = False
-
-    def set_slash_menu_open(self, value: bool) -> None:
-        self._slash_menu_open = value
-
-    def on_mount(self) -> None:
-        self._fit_height()
-
-    def on_text_area_changed(self, event: TextArea.Changed) -> None:
-        if event.text_area is self:
-            self._fit_height()
-            self.post_message(self.SlashChanged(self.text))
-
-    def _fit_height(self) -> None:
-        rows = min(
-            self._MAX_VISIBLE_ROWS,
-            max(self._MIN_VISIBLE_ROWS, self.wrapped_document.height),
-        )
-        self.styles.height = rows + self._FRAME_ROWS
-
-    def on_key(self, event: Key) -> None:
-        # iTerm2's xterm modifyOtherKeys protocol represents Shift+Enter as
-        # ``shift+\\r``; Textual's Kitty protocol calls it ``shift+enter``.
-        if event.key in {"shift+enter", "shift+\r", "ctrl+j"}:
-            event.prevent_default()
-            event.stop()
-            start, end = self.selection
-            self.replace("\n", start, end, maintain_selection_offset=False)
-            return
-        if self._slash_menu_open:
-            if event.key == "up":
-                event.prevent_default()
-                event.stop()
-                self.post_message(self.SlashNavigate(-1))
-                return
-            if event.key == "down":
-                event.prevent_default()
-                event.stop()
-                self.post_message(self.SlashNavigate(1))
-                return
-            if event.key == "tab":
-                event.prevent_default()
-                event.stop()
-                self.post_message(self.SlashComplete())
-                return
-            if event.key == "escape":
-                event.prevent_default()
-                event.stop()
-                self.post_message(self.SlashDismissed())
-                return
-        if event.key != "enter":
-            return
-        event.prevent_default()
-        event.stop()
-        value = self.text.strip()
-        if not value:
-            return
-        self.clear()
-        self.post_message(self.Submitted(value))
 
 
 class WrightTUI(App):
@@ -594,288 +95,7 @@ class WrightTUI(App):
 
     TITLE = "wright"
     ENABLE_COMMAND_PALETTE = False
-    CSS = """
-    Screen {
-        background: #14181d;
-        color: #dce3eb;
-    }
-
-    #status {
-        dock: top;
-        height: 3;
-        background: #191f27;
-        color: #9aa9ba;
-        padding: 1 2;
-    }
-
-    #brand {
-        width: auto;
-        color: #a9c7ee;
-        text-style: bold;
-    }
-
-    #status-model {
-        width: auto;
-        padding: 0 1;
-        color: #bfa8e6;
-    }
-
-    #status-workspace {
-        width: auto;
-        padding: 0 1;
-        color: #8da4be;
-    }
-
-    #status-state {
-        width: auto;
-        padding: 0 1;
-        color: #94b9ae;
-    }
-
-    #status-state.running {
-        color: #d7bb82;
-        text-style: bold;
-    }
-
-    #status-meta {
-        width: 1fr;
-        color: #9aa9ba;
-        text-align: right;
-    }
-
-    #context {
-        width: auto;
-        padding-left: 2;
-        color: #94c9b2;
-    }
-
-    #context.warning {
-        color: #c4a35a;
-    }
-
-    #transcript {
-        height: 1fr;
-        padding: 1 3;
-        scrollbar-size: 1 1;
-        scrollbar-background: #14181d;
-        scrollbar-color: #354456;
-        scrollbar-color-hover: #6682a1;
-    }
-
-    #composer-wrap {
-        dock: bottom;
-        height: auto;
-        background: #14181d;
-        padding: 0 2 1 2;
-    }
-
-    #attachments {
-        display: none;
-        height: auto;
-        margin: 0 1;
-        padding: 0 1;
-        color: #b9c8d8;
-        background: #202a35;
-        border-left: solid #52718f;
-    }
-
-    #composer {
-        height: 5;
-        min-height: 5;
-        max-height: 8;
-        background: #191f27;
-        border: round #354456;
-        padding: 0 1;
-    }
-
-    #composer:focus {
-        border: round #83a9d4;
-    }
-
-    #composer-hint {
-        height: 1;
-        padding: 0 2;
-        color: #8091a5;
-    }
-
-    #slash-suggestions {
-        display: none;
-        height: auto;
-        max-height: 8;
-        margin: 0 1;
-        padding: 0 1;
-        background: #202a35;
-        border: round #52718f;
-        color: #b9c8d8;
-    }
-
-    .msg {
-        height: auto;
-        margin: 0 0 1 0;
-        padding: 0 0 0 1;
-    }
-
-    .user {
-        color: #c3d8f2;
-        background: #1c2734;
-        border-left: thick #83a9d4;
-        padding: 1 2;
-    }
-
-    .assistant {
-        color: #dce3eb;
-        border-left: solid #527767;
-        padding: 0 2;
-    }
-
-    .assistant.draft {
-        color: #bdcbdc;
-        border-left: solid #6682a1;
-    }
-
-    .reasoning {
-        height: auto;
-        margin: 0 0 1 1;
-        color: #a4afc2;
-        background: #191f27;
-        border: none;
-        border-left: solid #696b88;
-        padding: 0;
-    }
-
-    .reasoning-body {
-        color: #a4afc2;
-        padding: 0 1 1 1;
-    }
-
-    .subagent {
-        height: auto;
-        margin: 0 0 1 1;
-        background: #171d26;
-        border-left: solid #7c6f9e;
-        padding: 0 1;
-    }
-
-    .subagent.running {
-        border-left: solid #68a0cf;
-    }
-
-    .subagent.completed {
-        border-left: solid #5da984;
-    }
-
-    .subagent.failed {
-        border-left: solid #cf6868;
-    }
-
-    .system {
-        color: #94a2b3;
-        border-left: solid #354456;
-        text-style: italic;
-    }
-
-    .usage {
-        height: auto;
-        margin: 0 0 1 2;
-        color: #8999ad;
-    }
-
-    .usage.total {
-        color: #a1bbd8;
-        width: auto;
-        padding: 0 1;
-        background: #202c39;
-        margin: 0 0 1 2;
-    }
-
-    .usage.total:hover {
-        background: #2b3c4e;
-        color: #dce3eb;
-    }
-
-    .tool {
-        height: auto;
-        margin: 0 0 1 1;
-        background: #191f27;
-        border: none;
-        border-left: solid #354456;
-        padding: 0;
-    }
-
-    .tool.running {
-        color: #d7bb82;
-    }
-
-    .tool.done {
-        color: #94c9b2;
-    }
-
-    .tool.error {
-        color: #e49b9b;
-    }
-
-    .tool-body {
-        color: #b0bdcc;
-        padding: 0 1 1 1;
-    }
-
-    ModalScreen {
-        align: center middle;
-    }
-
-    #dialog {
-        width: 72;
-        max-width: 95%;
-        height: auto;
-        max-height: 80%;
-        background: #191f27;
-        border: round #83a9d4;
-        padding: 1 2;
-    }
-
-    .dialog-kicker {
-        color: #8aa0b8;
-        text-style: italic;
-    }
-
-    .dialog-title {
-        text-style: bold;
-        color: #f0f0f0;
-        margin: 1 0;
-    }
-
-    .dialog-subject {
-        color: #c8c8c8;
-        margin-bottom: 1;
-    }
-
-    .dialog-meta {
-        color: #c4a35a;
-    }
-
-    .dialog-reason {
-        color: #9a9a9a;
-        margin: 1 0;
-    }
-
-    .dialog-actions {
-        height: auto;
-        margin-top: 1;
-    }
-
-    .dialog-options {
-        height: auto;
-        margin: 1 0;
-    }
-
-    Tooltip {
-        background: #253241;
-        color: #e0e8f2;
-        border: round #6682a1;
-        padding: 1 2;
-        max-width: 60;
-    }
-    """
+    CSS = APP_CSS
     BINDINGS: ClassVar[list[Binding]] = [
         Binding("ctrl+q", "quit", "Quit"),
         Binding("ctrl+c", "quit", "Quit", show=False),
@@ -925,9 +145,9 @@ class WrightTUI(App):
 
     def on_mount(self) -> None:
         self.renderer.attach(self)
-        hub = self.renderer._hub
-        if hub is not None:
-            hub.bind_collector(interrupt=self.renderer.interrupt_main_prompt)
+        hub = getattr(self.rt, "interaction_broker", None)
+        if hub is not None and hasattr(hub, "bind_collector"):
+            hub.bind_collector(interrupt=self._interrupt_for_interaction)
         self._seed_history()
         self._refresh_status()
         self.set_interval(0.25, self._refresh_status)
@@ -1135,6 +355,9 @@ class WrightTUI(App):
     def on_status_changed(self, _event: StatusChanged) -> None:
         self._refresh_status()
 
+    def _interrupt_for_interaction(self) -> None:
+        self.post_message(InteractionNeeded())
+
     def on_interaction_needed(self, _event: InteractionNeeded) -> None:
         if self._draining:
             return
@@ -1146,8 +369,8 @@ class WrightTUI(App):
         )
 
     async def _drain_interactions(self) -> None:
-        hub = self.renderer._hub
-        if hub is None:
+        hub = getattr(self.rt, "interaction_broker", None)
+        if hub is None or not hasattr(hub, "poll"):
             return
         self._draining = True
         try:
@@ -1459,7 +682,7 @@ def run_tui(args: Any) -> None:
     from ..interaction import InteractionHub
 
     renderer = TUIRenderer()
-    renderer.bind_interaction(InteractionHub())
+    hub = InteractionHub()
     active_args = args
     # A TUI session is only a conversation owner.  Persisted automations use
     # an ApplicationHost which must outlive close/new/resume transitions in
@@ -1474,7 +697,11 @@ def run_tui(args: Any) -> None:
             if host is None and config.workspace is not None:
                 host = hosts_by_workspace.get(str(config.workspace.resolve()))
             rt = assemble_runtime(
-                config, renderer=renderer, application_host=host,
+                config,
+                renderer=renderer,
+                interaction_broker=hub,
+                application_host=host,
+                resume_chooser=choose_resume_session,
             )
             if rt.application_host is not None:
                 # The enclosing TUI is the application owner.  Closing this

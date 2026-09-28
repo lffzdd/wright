@@ -90,8 +90,8 @@ running ──成功──→ completed
 - 同一模型回合内多个 `spawn_agent` 可并发运行，`ToolExecutor` 按原 tool-call 顺序聚合
   结果，不按完成顺序打乱。
 - Renderer 接收结构化 `agent_task` 事件，可观察 running/terminal 转换。
-- Root 可调用 `get_agent_tree` 查看 Agent 树；单任务读取、等待与取消统一走
-  `get_task`、`wait_task`、`cancel_task`。旧 Agent 专用工具只作为隐藏兼容别名保留。
+- Root 可调用 `get_agent_tree` 查看当前 user turn 的 Agent 树。单次委派的读取、等待与
+  协作取消走 `get_agent`、`wait_agent`、`cancel_agent`，标识是 `agent_task_id`。
 - 树视图是有硬截断的摘要，避免把整棵树的完整输出重新灌入上下文。
 - 完整单任务结果只通过对应 `spawn_agent` 返回，并受 `max_result_chars` 限制。
 - Episodic Memory 会保存紧凑的子 Agent 执行摘要，供以后回忆执行经验。
@@ -99,12 +99,11 @@ running ──成功──→ completed
 ## 后台 Agent
 
 - Root 可以在 `spawn_agent` 中设置 `run_in_background=true`，调用会立即返回
-  `task_id`，不占住当前 ReAct 轮。
+  `agent_task_id`，不占住当前 ReAct 轮。这个 id 标识一次委派，不是可复用的 Agent 实例。
 - 后台 worker 只运行隔离的子 Session；只有 REPL 主线程能重新调用 root
   `Agent.run`，因此不会并发改写 root transcript。
-- 任务进入终态后，worker 只投递 `TASK_DONE(task_id)`；REPL 主线程通过
-  `TaskService` 读取统一 `RuntimeTask`，再生成有界 runtime event。Agent 与 Shell
-  后台任务共用这条通知链路。
+- 任务进入终态后，worker 只投递内部 `TASK_DONE`；REPL 主线程通过 `TaskService`
+  读取真实状态，再生成带 `agent_task_id` 或 `command_id` 的 runtime event。
 - 通知走 `Agent.run_runtime_event`，不会伪装成新用户输入：原 user goal、Plan、Verifier
   证据边界和 root turn id 都保持不变，也不会额外召回记忆。
 - 若 root 收口时仍有后台 Agent，Episodic/Semantic Memory 会延迟到当前 turn 的最后一个

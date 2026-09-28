@@ -7,8 +7,8 @@ import unicodedata
 from collections.abc import Sequence
 from typing import Any
 
-from ...domain.model.tool import ToolAccess, ToolResult
-from .base import Tool, split_tool_catalog
+from ...domain.model.tool import ToolAccess, ToolResult, split_tool_catalog
+from .base import Tool
 from .runtime import ToolRuntime
 
 MAX_ACTIVE_DEFERRED_TOOLS = 12
@@ -37,6 +37,9 @@ _TOKEN_ALIASES = {
     "recall": ("memory",),
     "remember": ("memory",),
     "recurring": ("schedule",),
+    "shell": ("command",),
+    "automation": ("schedule",),
+    "cron": ("schedule",),
 }
 _QUERY_ALIASES = {
     "文件": ("file",),
@@ -57,6 +60,8 @@ _QUERY_ALIASES = {
     "记忆": ("memory",),
     "历史": ("episode", "history"),
     "定时": ("schedule",),
+    "命令": ("command",),
+    "后台": ("command",),
     "周期": ("recurring", "schedule"),
     "循环": ("loop",),
     "技能": ("skill",),

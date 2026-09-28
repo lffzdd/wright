@@ -7,11 +7,8 @@ from wright.application.agent import create_agent
 from wright.domain.model.session import Session, UsageRecord
 from wright.domain.model.tool import ArtifactRef, ToolCall, ToolResult
 from wright.domain.protocol import build_tool_results_messages
-from wright.infrastructure.persistence.file_session_repo import (
-    CheckpointError,
-    FileSessionRepository,
-)
-from wright.interfaces.renderer import SilentRenderer
+from wright.infrastructure.persistence.session.errors import CheckpointError
+from wright.infrastructure.persistence.session.repository import FileSessionRepository
 
 
 def _populated_session(tmp_path):
@@ -126,7 +123,7 @@ def test_committed_turn_marker_prevents_stale_running_checkpoint_replay(tmp_path
         def __call__(self, messages, *, tools):
             raise AssertionError("committed turn must not be replayed")
 
-    agent = create_agent(NoReplayLLM(), [], restored, SilentRenderer(), checkpoint_store=store)
+    agent = create_agent(NoReplayLLM(), [], restored, checkpoint_store=store)
 
     assert agent.continue_run() == "done"
     assert restored.current_run_status() == "completed"
@@ -214,7 +211,7 @@ def test_unknown_checkpoint_version_is_rejected(tmp_path):
 
 
 def test_phase_two_v5_checkpoint_loads_without_request_context_estimate(tmp_path):
-    from wright.infrastructure.persistence.file_session_repo import (
+    from wright.infrastructure.persistence.session.codec import (
         _deserialize_session,
         _serialize_session,
     )
@@ -278,7 +275,7 @@ def test_agent_continues_running_checkpoint_without_new_user_message(tmp_path):
     store = FileSessionRepository(tmp_path / "checkpoints")
     first_session = Session.create("placeholder", workspace)
     first_agent = create_agent(
-        CrashLLM(), [], first_session, SilentRenderer(), checkpoint_store=store
+        CrashLLM(), [], first_session, checkpoint_store=store
     )
 
     with pytest.raises(RuntimeError, match="simulated process crash"):
@@ -292,7 +289,7 @@ def test_agent_continues_running_checkpoint_without_new_user_message(tmp_path):
 
     llm = FinalLLM()
     second_agent = create_agent(
-        llm, [], restored, SilentRenderer(), checkpoint_store=store
+        llm, [], restored, checkpoint_store=store
     )
     assert second_agent.continue_run() == "resumed"
     assert restored.current_run_status() == "completed"

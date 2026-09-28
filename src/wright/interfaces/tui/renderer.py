@@ -1,135 +1,35 @@
 """Fullscreen TUI renderer: Agent events → Textual messages, tests without an App.
 
-Does not reuse ConsoleRenderer Live / freeze / prompt_toolkit. The Textual
-App is the collector for InteractionHub; this class only marshals.
+Does not reuse ConsoleRenderer Live / freeze / prompt_toolkit. Input and
+permission collection belong to the Textual app, not this class.
 """
 
 from __future__ import annotations
 
-import json
 import threading
-from dataclasses import dataclass
 from typing import Any
 
-from textual.message import Message
-
-from ..interaction import InteractionHub, InteractionKind, InteractionRequest
-from ...domain.policy.types import PermissionPrompt, PermissionResponse
-from ..renderer import Renderer
 from ...domain.model.tool import ToolCall, ToolResult
-
-
-def _tool_call_name(tool_call: Any) -> str:
-    name = getattr(tool_call, "name", None)
-    if not name and isinstance(tool_call, dict):
-        name = tool_call.get("name")
-    return str(name or "tool")
-
-
-def _tool_call_id(tool_call: Any) -> str | None:
-    call_id = getattr(tool_call, "id", None)
-    if not call_id and isinstance(tool_call, dict):
-        call_id = tool_call.get("id")
-    return str(call_id) if call_id else None
-
-
-def _tool_call_args(tool_call: Any) -> Any:
-    arguments = getattr(tool_call, "arguments", None)
-    if arguments is None and isinstance(tool_call, dict):
-        arguments = tool_call.get("arguments")
-    return arguments
-
-
-def stringify_answer(answer: Any) -> str:
-    if answer is None:
-        return ""
-    if isinstance(answer, str):
-        return answer
-    try:
-        return json.dumps(answer, ensure_ascii=False, indent=2)
-    except Exception:
-        return str(answer)
-
-
-@dataclass
-class ToolView:
-    key: str
-    name: str
-    arguments: Any = None
-    status: str = "planned"  # planned | awaiting_approval | running | done | error
-    result: Any = None
-    error: str = ""
-    output: str = ""
-
-
-class StreamRefresh(Message):
-    """Coalesced stream update; App reads renderer.content / reasoning."""
-
-
-class DraftFreeze(Message):
-    """Current assistant draft should stop accepting deltas."""
-
-    def __init__(self, text: str) -> None:
-        super().__init__()
-        self.text = text
-
-
-class ToolUpsert(Message):
-    def __init__(self, tool: ToolView) -> None:
-        super().__init__()
-        self.tool = ToolView(
-            key=tool.key,
-            name=tool.name,
-            arguments=tool.arguments,
-            status=tool.status,
-            result=tool.result,
-            error=tool.error,
-            output=tool.output,
-        )
-
-
-class FinalAnswer(Message):
-    def __init__(self, text: str) -> None:
-        super().__init__()
-        self.text = text
-
-
-class RequestUsage(Message):
-    def __init__(self, text: str) -> None:
-        super().__init__()
-        self.text = text
-
-
-class TaskUsage(Message):
-    def __init__(self, summary: str, detail: str) -> None:
-        super().__init__()
-        self.summary = summary
-        self.detail = detail
-
-
-class TurnBegin(Message):
-    pass
-
-
-class SystemNotice(Message):
-    def __init__(self, text: str) -> None:
-        super().__init__()
-        self.text = text
-
-
-class InteractionNeeded(Message):
-    pass
-
-
-class StatusChanged(Message):
-    pass
-
-
-class AgentEventNotice(Message):
-    def __init__(self, data: dict[str, Any], text: str) -> None:
-        super().__init__()
-        self.data = data
-        self.text = text
+from ..rendering.contracts import Renderer
+from .messages import (
+    AgentEventNotice,
+    DraftFreeze,
+    FinalAnswer,
+    RequestUsage,
+    StatusChanged,
+    StreamRefresh,
+    SystemNotice,
+    TaskUsage,
+    ToolUpsert,
+    TurnBegin,
+)
+from .view_models import (
+    ToolView,
+    stringify_answer,
+    tool_call_args,
+    tool_call_id,
+    tool_call_name,
+)
 
 
 class TUIRenderer(Renderer):
@@ -141,7 +41,6 @@ class TUIRenderer(Renderer):
     _attached = 0
 
     def __init__(self) -> None:
-        self._hub: InteractionHub | None = None
         self._target: Any | None = None
         self._closed = False
         self._lock = threading.Lock()
@@ -176,10 +75,7 @@ class TUIRenderer(Renderer):
     def is_active(cls) -> bool:
         return cls._attached > 0
 
-    def bind_interaction(self, hub: InteractionHub) -> None:
-        self._hub = hub
-
-    def _emit(self, message: Message) -> None:
+    def _emit(self, message: Any) -> None:
         target = self._target
         if self._closed or target is None:
             return
@@ -199,42 +95,6 @@ class TUIRenderer(Renderer):
         with self._lock:
             self._refresh_posted = False
             return self.reasoning, self.content
-
-    def interrupt_main_prompt(self) -> None:
-        self._emit(InteractionNeeded())
-
-    def fulfill_interaction(self, request: InteractionRequest) -> None:
-        # Collection is the App's job (modals). Fail-closed if someone calls us.
-        if request.kind == "ask_user":
-            request.reply.put(None)
-        else:
-            request.reply.put("deny")
-
-    def _route_prompt(self, kind: InteractionKind, payload: dict[str, Any], closed):
-        hub = self._hub
-        if hub is not None and not hub.is_collector_thread():
-            return hub.request(kind, payload)
-        return closed()
-
-    def prompt_permission(
-        self, permission_prompt: PermissionPrompt,
-    ) -> str | PermissionResponse:
-        return self._route_prompt(
-            "permission", permission_prompt.to_dict(), lambda: "deny"
-        )
-
-    def prompt_user(
-        self,
-        question: str,
-        context: str = "",
-        options: tuple[str, ...] = (),
-    ) -> str | None:
-        payload = {
-            "question": question,
-            "context": context,
-            "options": options,
-        }
-        return self._route_prompt("ask_user", payload, lambda: None)
 
     def on_turn_begin(self) -> None:
         with self._lock:
@@ -274,11 +134,11 @@ class TUIRenderer(Renderer):
             self.content = ""
             self._refresh_posted = False
             self._tool_seq += 1
-            key = _tool_call_id(tool_call) or f"tool-{self._tool_seq}"
+            key = tool_call_id(tool_call) or f"tool-{self._tool_seq}"
             view = ToolView(
                 key=key,
-                name=_tool_call_name(tool_call),
-                arguments=_tool_call_args(tool_call),
+                name=tool_call_name(tool_call),
+                arguments=tool_call_args(tool_call),
             )
             self.tools.append(view)
         if freeze:
@@ -287,7 +147,7 @@ class TUIRenderer(Renderer):
         self._emit(ToolUpsert(view))
 
     def on_tool_phase(self, tool_call: ToolCall | dict, phase: str) -> None:
-        call_id = _tool_call_id(tool_call)
+        call_id = tool_call_id(tool_call)
         with self._lock:
             view = next((item for item in self.tools if item.key == call_id), None)
             if view is None:
@@ -313,8 +173,8 @@ class TUIRenderer(Renderer):
     ) -> None:
         if hasattr(tool_result, "to_dict"):
             tool_result = tool_result.to_dict()
-        call_id = _tool_call_id(tool_call)
-        name = _tool_call_name(tool_call)
+        call_id = tool_call_id(tool_call)
+        name = tool_call_name(tool_call)
         with self._lock:
             block = None
             if call_id:
@@ -333,7 +193,7 @@ class TUIRenderer(Renderer):
                 block = ToolView(
                     key=call_id or f"tool-{self._tool_seq}",
                     name=name,
-                    arguments=_tool_call_args(tool_call),
+                    arguments=tool_call_args(tool_call),
                     status="running",
                 )
                 self.tools.append(block)

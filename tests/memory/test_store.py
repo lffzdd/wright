@@ -6,26 +6,29 @@ import pytest
 
 from wright.domain.model.memory import (
     SEMANTIC_SCHEMA_VERSION,
-    SemanticMemoryAlreadyExistsError,
     SemanticMemoryNotFoundError,
     SemanticMemoryRecord,
 )
 from wright.infrastructure.persistence.memory.semantic import (
-    MAX_INDEX_LINES,
     create_memory,
     delete_memory,
-    dump_frontmatter,
-    format_manifest,
     get_memory,
-    parse_frontmatter,
-    read_entrypoint,
-    read_memories_for_surfacing,
     rebuild_index,
-    scan_memory_files,
     search_memories,
-    slugify,
     update_memory,
     write_memory_file,
+)
+from wright.infrastructure.persistence.memory.semantic_document import (
+    MAX_INDEX_LINES,
+    dump_frontmatter,
+    parse_frontmatter,
+    slugify,
+)
+from wright.infrastructure.persistence.memory.semantic_index import (
+    format_manifest,
+    read_entrypoint,
+    read_memories_for_surfacing,
+    scan_memory_files,
 )
 
 

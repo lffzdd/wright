@@ -1,4 +1,4 @@
-from wright.application.tool_runtime import tool_runtime_for_session
+from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.session import Session
 from wright.infrastructure.tools.plan_tools import (
     create_plan,

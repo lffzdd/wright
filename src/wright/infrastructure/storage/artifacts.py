@@ -9,8 +9,8 @@ from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
-from .attachments import MAX_ATTACHMENT_BYTES, inspect_image
 from ...domain.model.tool import ArtifactRef
+from .attachments import MAX_ATTACHMENT_BYTES, inspect_image
 
 
 class ArtifactStore:

@@ -15,7 +15,12 @@ from typing import Any
 
 from ...core.logger import get_logger
 from ...domain.gateway.tool_executor import IToolExecutor
-from ...domain.model.tool import ToolCall, ToolExecutionOutcome, ToolExecutionStatus, ToolResult
+from ...domain.model.tool import (
+    ToolCall,
+    ToolExecutionOutcome,
+    ToolExecutionStatus,
+    ToolResult,
+)
 from .runtime import ToolCancelledError
 
 logger = get_logger(__name__)

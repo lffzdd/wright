@@ -1,14 +1,14 @@
 from pathlib import Path
 
-from wright.application.tool_dispatch_service import ToolDispatchService
+from wright.application.tool_execution.capabilities import assemble_tool_capabilities
+from wright.application.tool_execution.dispatch import ToolDispatchService
+from wright.domain.model.tool import ToolCall, ToolResult
 from wright.domain.policy import (
     AccessTarget,
     PermissionPolicy,
     PermissionResponse,
     ToolAccess,
 )
-from wright.application.tool_capabilities import assemble_tool_capabilities
-from wright.domain.model.tool import ToolCall, ToolResult
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.command import execute_command_tool
 from wright.infrastructure.tools.file import (

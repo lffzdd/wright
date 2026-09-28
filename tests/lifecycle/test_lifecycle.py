@@ -7,13 +7,12 @@ from wright.application.lifecycle import (
     HookDecision,
     HookRegistration,
     LifecycleManager,
-    TraceRecorder,
-    load_lifecycle_manager,
 )
-from wright.application.tool_dispatch_service import ToolDispatchService
-from wright.domain.policy import ToolAccess
-from wright.application.tool_capabilities import assemble_tool_capabilities
+from wright.application.tool_execution.capabilities import assemble_tool_capabilities
+from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.tool import ToolCall, ToolResult
+from wright.domain.policy import ToolAccess
+from wright.infrastructure.lifecycle import TraceRecorder, load_lifecycle_manager
 from wright.infrastructure.tools.base import Tool
 
 

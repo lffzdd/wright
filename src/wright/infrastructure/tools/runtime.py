@@ -5,12 +5,18 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from threading import RLock
-from typing import Any
+from typing import Any, Protocol
 
+from ...domain.policy.permission.scope import AccessScope
 from ..runtime import AuthorizedExecution
-from ...domain.policy.scope import AccessScope
-from ...core.processes import RuntimeResources
+from ..runtime.process_registry import ProcessRegistry, SessionProcesses
 from .capabilities import ToolCapabilities
+
+
+class ProcessOwner(Protocol):
+    """Anything a tool may use to reach live shell handles."""
+
+    process_registry: ProcessRegistry
 
 
 class ToolCancelledError(RuntimeError):
@@ -26,7 +32,7 @@ class ToolRuntime:
     capabilities: ToolCapabilities | None = None
     execution: AuthorizedExecution | None = None
     access_scope: AccessScope | None = None
-    runtime_resources: RuntimeResources | None = None
+    runtime_resources: ProcessOwner | None = None
     lifecycle: Any = None
     scratch_lock: RLock = field(default_factory=RLock, repr=False)
     scratch: dict[str, Any] = field(default_factory=dict)
@@ -41,7 +47,7 @@ class ToolRuntime:
         if self.runtime_resources is None and self.capabilities is not None:
             session_id = self.capabilities.scope.session_id
             if session_id:
-                self.runtime_resources = RuntimeResources.for_session(session_id)
+                self.runtime_resources = SessionProcesses.for_session(session_id)
 
     def is_cancelled(self) -> bool:
         return bool(self.cancellation_check and self.cancellation_check())

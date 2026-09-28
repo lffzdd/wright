@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+
 from ..common.constants import CHARS_PER_TOKEN
 
 

@@ -11,7 +11,10 @@ from typing import Any
 from uuid import uuid4
 
 from ...domain.model.autonomy import AutomationRecord, DurableRunRecord
-from ...infrastructure.persistence.autonomy_store import AutonomyStore, AutonomyStoreError
+from ...infrastructure.persistence.autonomy_store import (
+    AutonomyStore,
+    AutonomyStoreError,
+)
 from .triggers import probe_public_web_page
 
 

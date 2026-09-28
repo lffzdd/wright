@@ -7,7 +7,8 @@ def test_core_records_context_and_execution_do_not_import_chat_sdk_types():
     root = PACKAGE_ROOT
     for relative in (
         "domain/model/session/session.py", "domain/model/runs.py", "application/agent/context.py",
-        "application/agent/runner.py", "application/tool_dispatch_service.py",
+        "application/agent/runner.py",
+        "application/tool_execution/dispatch.py",
         "infrastructure/tools/executor.py",
         "domain/model/session/conversation.py", "domain/protocol.py", "domain/policy/verifier.py",
     ):

@@ -125,14 +125,14 @@ def test_tool_protocol_does_not_depend_on_runtime_assembly() -> None:
     proto_mod = "domain.model.tool" if "domain.model.tool" in graph else "domain.tool_protocol"
 
     assert not graph[base_mod] & {
-        "application.tool_capabilities",
+        "application.tool_execution.capabilities",
         "tool_capabilities",
         "infrastructure.runtime",
         "execution",
         "core.processes",
         "processes",
     }
-    assert not any(t.endswith("tool_capabilities") for t in graph[runtime_mod])
+    assert not any(t.endswith("tool_execution.capabilities") for t in graph[runtime_mod])
     assert not any(
         "tools" in target for target in graph[proto_mod]
     )
@@ -150,7 +150,7 @@ def test_loop_tool_depends_on_a_port_not_the_engine() -> None:
 
     assert ports_mod in graph[loop_mod]
     assert not any(
-        target == "engine" or target.startswith("engine.") or target.startswith("application")
+        target == "engine" or target.startswith(("engine.", "application"))
         for target in graph[loop_mod]
     )
 
@@ -162,8 +162,8 @@ def test_permission_resolver_does_not_depend_on_tools() -> None:
         name: _runtime_edges(name, path, known) for name, path in modules.items()
     }
 
-    resolver_mod = "domain.policy.resolver" if "domain.policy.resolver" in graph else "permission.resolver"
-    approval_mod = "domain.policy.approval" if "domain.policy.approval" in graph else "permission.approval"
+    resolver_mod = "domain.policy.permission.resolver"
+    approval_mod = "domain.policy.permission.approval"
 
     assert not any("tools" in target for target in graph[resolver_mod])
     assert not any("tools" in target for target in graph[approval_mod])

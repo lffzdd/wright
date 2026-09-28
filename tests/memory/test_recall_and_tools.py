@@ -6,12 +6,12 @@ from pathlib import Path
 from tests.responses import event
 from wright.application.memory.memory_service import MemoryService
 from wright.domain.model.events import ContentDelta
+from wright.infrastructure.llm.context_selector import LlmContextSelector
 from wright.infrastructure.persistence.memory import (
     EpisodeStore,
     SemanticMemoryStore,
     write_memory_file,
 )
-from wright.infrastructure.persistence.memory.selector import LlmContextSelector
 from wright.infrastructure.tools.memory import (
     build_memory_tools,
     create_memory,

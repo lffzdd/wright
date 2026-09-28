@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 
+from ...domain.model.autonomy import DurableRunRecord
 from ...domain.model.tasks import (
     RuntimeTask,
     TaskKind,
@@ -12,8 +13,10 @@ from ...domain.model.tasks import (
     TaskStatus,
     TaskWaitCancelled,
 )
-from ...domain.model.autonomy import DurableRunRecord
-from ...infrastructure.persistence.autonomy_store import AutonomyNotFoundError, AutonomyStore
+from ...infrastructure.persistence.autonomy_store import (
+    AutonomyNotFoundError,
+    AutonomyStore,
+)
 
 
 class DurableTaskBackend:
@@ -45,7 +48,7 @@ class DurableTaskBackend:
             if task.terminal:
                 return task
             if cancellation_check is not None and cancellation_check():
-                raise TaskWaitCancelled(f"wait_task cancelled: {task_id}")
+                raise TaskWaitCancelled(f"wait cancelled: {task_id}")
             if deadline is not None:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:

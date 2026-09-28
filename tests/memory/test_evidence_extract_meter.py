@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from wright.application.memory.assembly import assemble_memory_manager
 from wright.application.memory.episode import episode_from_session
 from wright.application.memory.extract import extract_from_snapshot
 from wright.application.memory.llm_util import SideQueryResult
@@ -34,10 +35,10 @@ from wright.domain.policy.memory import (
     ExtractSignal,
     SemanticExtractPolicy,
 )
-from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
 from wright.infrastructure.persistence.memory import EpisodeStore, SemanticMemoryStore
 from wright.infrastructure.persistence.memory.evidence import SessionEvidenceSource
 from wright.infrastructure.persistence.memory.semantic import get_memory, update_memory
+from wright.infrastructure.persistence.session.repository import FileSessionRepository
 from wright.infrastructure.tools.memory.episode_tools import get_episode
 
 
@@ -101,7 +102,7 @@ def _two_tools(session: Session) -> None:
 
 
 def _manager(tmp_path: Path, llm=None, *, repo=None) -> MemoryManager:
-    return MemoryManager(llm or _QuietLLM(), directory=tmp_path / "memory", session_repository=repo)
+    return assemble_memory_manager(llm or _QuietLLM(), directory=tmp_path / "memory", session_repository=repo)
 
 
 def _service(tmp_path: Path, session: Session | None = None) -> MemoryService:
@@ -719,8 +720,8 @@ def test_one_selector_per_user_turn(tmp_path: Path):
             return SelectorChoice(episode_ids=())
 
     counter = _Count()
-    manager._selector = counter
     manager.bind_project(session.project_root)
+    manager.service.selector = counter
     manager.recall_for_turn(session)
     manager.recall_for_turn(session)
     assert counter.calls == 1

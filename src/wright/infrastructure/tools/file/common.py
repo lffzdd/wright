@@ -5,10 +5,10 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
-from ...runtime import AuthorizedExecution, ExecutionPath
 from ....domain.model.tool import AccessTarget, ToolAccess, ToolResult
+from ...runtime import AuthorizedExecution, ExecutionPath
 from ..runtime import ToolRuntime
 
 MAX_READ_CHARS = 1_000_000

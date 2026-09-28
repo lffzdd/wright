@@ -1,4 +1,3 @@
-from wright.infrastructure.persistence.memory import memory_dir
 from wright.core.paths import (
     ensure_project_state,
     mcp_config_paths,
@@ -13,6 +12,7 @@ from wright.core.paths import (
     user_skills_dir,
     wright_home,
 )
+from wright.infrastructure.persistence.memory import memory_dir
 
 
 def test_wright_home_respects_env(tmp_path, monkeypatch):

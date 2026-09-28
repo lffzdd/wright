@@ -4,10 +4,9 @@ from tests.responses import event, response
 from wright.application.agent import create_agent
 from wright.application.skills import SkillRegistry
 from wright.domain.model.session import Session
-from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
+from wright.infrastructure.persistence.session.repository import FileSessionRepository
 from wright.infrastructure.storage.skills import write_skill
 from wright.infrastructure.tools.skill_tools import build_skill_tools
-from wright.interfaces.renderer import SilentRenderer
 
 
 class ScriptLLM:
@@ -61,7 +60,7 @@ def test_parent_and_child_sessions_isolate_catalog_flag(tmp_path: Path):
 def test_empty_skills_directory_injects_nothing(tmp_path: Path):
     llm = ScriptLLM([_final("done")])
     session = Session.create("task", tmp_path)
-    create_agent(llm, [], session, SilentRenderer(), skills=SkillRegistry(tmp_path)).run("hi")
+    create_agent(llm, [], session, skills=SkillRegistry(tmp_path)).run("hi")
     assert not any(
         "<skill-catalog>" in str(message.get("content", ""))
         for batch in llm.seen_messages
@@ -83,7 +82,7 @@ def test_catalog_is_written_once_into_transcript(tmp_path: Path):
     session = Session.create("task", tmp_path)
     tools = build_skill_tools(registry)
     answer = create_agent(
-        llm, tools, session, SilentRenderer(), skills=registry
+        llm, tools, session, skills=registry
     ).run("准备发布")
 
     assert answer == "已按流程检查"
@@ -117,7 +116,6 @@ def test_second_user_turn_does_not_resend_catalog(tmp_path: Path):
         llm,
         build_skill_tools(registry),
         session,
-        SilentRenderer(),
         skills=registry,
     )
     assert agent.run("发布") == "第一轮完成"
@@ -149,7 +147,7 @@ def test_continue_run_keeps_catalog_and_does_not_resend(tmp_path: Path):
     assert restored.skill_catalog_sent is True
     llm = ScriptLLM([_final("继续")])
     answer = create_agent(
-        llm, [], restored, SilentRenderer(), skills=registry
+        llm, [], restored, skills=registry
     ).continue_run()
     assert answer == "继续"
     transcript = [

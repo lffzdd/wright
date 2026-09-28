@@ -45,7 +45,7 @@ dev = ["pytest>=8", "ruff>=0.15"]
 packages = ["src/wright"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"src/wright/domain/policy/permission_settings.json" = "wright/domain/policy/permission_settings.json"
+"src/wright/infrastructure/config/permission_settings.json" = "wright/infrastructure/config/permission_settings.json"
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "."]

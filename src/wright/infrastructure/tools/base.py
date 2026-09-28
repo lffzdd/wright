@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -53,18 +53,3 @@ class Tool:
         return self.access_descriptor(dict(arguments))
 
 
-def split_tool_catalog(tools: Sequence[Tool]) -> tuple[list[str], list[str]]:
-    """Baseline vs deferred names, in assembly order."""
-
-    baseline: list[str] = []
-    deferred: list[str] = []
-    seen: set[str] = set()
-    for tool in tools:
-        if not tool.expose_to_model or tool.name in seen:
-            continue
-        seen.add(tool.name)
-        if tool.defer_to_model:
-            deferred.append(tool.name)
-        else:
-            baseline.append(tool.name)
-    return baseline, deferred

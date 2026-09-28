@@ -56,7 +56,7 @@ def _live() -> dict:
     from wright.application.memory.llm_util import metered_events
     from wright.application.memory.projection import candidate_summary
     from wright.infrastructure.llm.llm import LLMClient
-    from wright.infrastructure.persistence.memory.selector import LlmContextSelector
+    from wright.infrastructure.llm.context_selector import LlmContextSelector
 
     client = LLMClient(base_url=base_url, api_key=api_key, model=model, stream=False)
     usages = []

@@ -7,7 +7,6 @@ from pathlib import Path
 from wright.application.agent import ContextBuilder, ContextCompactor, create_agent
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
-from wright.interfaces.renderer import SilentRenderer
 from wright.utils import estimate_message_tokens
 
 
@@ -49,7 +48,7 @@ def test_context_projection_folds_without_rewriting_complete_history(tmp_path: P
     session.append_message(_tool_result("call_b", "y" * 8_000))
     original = deepcopy([record.message for record in session.message_records])
     builder = ContextBuilder(
-        ContextCompactor(SilentRenderer(), context_watermark=0.1, keep_recent_tool_results=1)
+        ContextCompactor(context_watermark=0.1, keep_recent_tool_results=1)
     )
 
     view = builder.build(
@@ -73,7 +72,7 @@ def test_context_view_has_no_mutable_alias_and_rebuild_is_stable(tmp_path: Path)
         "parts": [{"type": "text", "text": "inspect"}],
         "provider_state": {"responses_output": [{"id": "opaque"}]},
     })
-    builder = ContextBuilder(ContextCompactor(SilentRenderer()))
+    builder = ContextBuilder(ContextCompactor())
 
     first = builder.build(session.message_records, tools=[{"type": "function", "function": {"name": "x"}}])
     first.messages[0]["parts"][0]["text"] = "mutated"
@@ -110,7 +109,7 @@ def test_context_keeps_tool_call_result_order_when_folding(tmp_path: Path):
     for result in session.tool_executions.values():
         session.append_message(_tool_result(result.call.id, "x" * 8_000))
     builder = ContextBuilder(
-        ContextCompactor(SilentRenderer(), context_watermark=0.1, keep_recent_tool_results=0)
+        ContextCompactor(context_watermark=0.1, keep_recent_tool_results=0)
     )
 
     view = builder.build(session.message_records, tools=[], context_limit=1_000, output_reserve_tokens=0)
@@ -136,7 +135,7 @@ def test_agent_fails_explicitly_when_safe_projection_cannot_fit(tmp_path: Path):
 
     llm = NeverCalled()
     session = Session.create("context", tmp_path)
-    agent = create_agent(llm, [], session, SilentRenderer())
+    agent = create_agent(llm, [], session)
 
     assert agent.run("too small") is None
     assert session.current_run_status() == "failed"

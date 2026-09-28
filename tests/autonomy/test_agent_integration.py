@@ -9,7 +9,7 @@ from wright.application.agent import (
 )
 from wright.application.autonomy.runner import _DurableToolJournal, launch_durable_run
 from wright.application.autonomy.scheduler import AutonomyScheduler
-from wright.application.services import RuntimeServices
+from wright.application.composition.services import RuntimeServices
 from wright.application.skills import SkillRegistry
 from wright.domain.model.agent import AgentProfile
 from wright.domain.model.autonomy import TriggerSpec
@@ -28,7 +28,6 @@ from wright.infrastructure.tools.human_input import ask_user_tool
 from wright.infrastructure.tools.knowledge import build_knowledge_tools
 from wright.infrastructure.tools.memory import build_memory_tools
 from wright.infrastructure.tools.skill_tools import build_skill_tools
-from wright.interfaces.renderer import SilentRenderer
 
 
 def _final(answer):
@@ -99,7 +98,6 @@ def test_durable_run_leaves_root_session_untouched(tmp_path):
         ScriptLLM(["interactive result"]),
         [],
         session,
-        SilentRenderer(),
     )
     assert root_agent.run("interactive turn") == "interactive result"
     session.plan_manager.create_plan("old", ["old step"])
@@ -170,7 +168,6 @@ def test_durable_run_does_not_block_root_user_input(tmp_path):
         ScriptLLM(["user heard"]),
         [],
         session,
-        SilentRenderer(),
     )
     assert root_agent.run("please keep chatting") == "user heard"
     assert session.current_goal() == "please keep chatting"
@@ -219,13 +216,17 @@ def test_durable_session_omits_ask_user_and_autonomy_tools(tmp_path):
     names = set(launch.tool_names)
     assert "ask_user" not in names
     assert "create_task" not in names
-    assert "schedule_task" not in names
+    assert "create_schedule" not in names
     assert "pause_schedule" not in names
     assert "resume_schedule" not in names
     assert "cancel_schedule" not in names
     assert "get_schedule" not in names
     assert "list_schedules" not in names
-    assert "list_task_runs" not in names
+    assert "list_schedule_runs" not in names
+    assert "get_schedule_run" not in names
+    assert "cancel_schedule_run" not in names
+    assert "get_agent" not in names
+    assert "list_commands" not in names
     assert "create_memory" not in names
     assert "search_memory" not in names
     assert "knowledge_search" not in names
@@ -306,7 +307,6 @@ def test_durable_run_persists_history_and_child_side_effect_identity(tmp_path):
         llm,
         tools,
         session,
-        SilentRenderer(),
         services=services,
         permission_resolver=permission_resolver,
         execution_journal=root_journal,

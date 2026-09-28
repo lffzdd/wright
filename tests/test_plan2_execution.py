@@ -3,9 +3,9 @@ from pathlib import Path
 
 from tests.responses import event, response
 from wright.application.agent import make_spawn_agent_tool
-from wright.application.tool_capabilities import assemble_tool_capabilities
-from wright.application.tool_dispatch_service import ToolDispatchService
-from wright.application.tool_runtime import tool_runtime_for_session
+from wright.application.tool_execution.capabilities import assemble_tool_capabilities
+from wright.application.tool_execution.dispatch import ToolDispatchService
+from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.domain.policy import (
@@ -15,11 +15,13 @@ from wright.domain.policy import (
     PermissionResponse,
     PermissionSettings,
     ToolAccess,
+)
+from wright.infrastructure.config import (
     append_additional_directory,
     append_allow_rule,
     load_permission_settings,
 )
-from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
+from wright.infrastructure.persistence.session.repository import FileSessionRepository
 from wright.infrastructure.runtime import LocalExecutionBackend
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.command import execute_command_tool

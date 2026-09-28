@@ -2,61 +2,24 @@
 
 from __future__ import annotations
 
-import asyncio
-import json
-import queue
 import socket
 import webbrowser
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import (
-    FastAPI,
-    File,
-    HTTPException,
-    Request,
-    Response,
-    UploadFile,
-    WebSocket,
-    WebSocketDisconnect,
-)
+from fastapi import FastAPI, Request, Response, WebSocket
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 
-from ...infrastructure.workspace.worktrees import WorktreeError
-from ..api import create_api_router
-from ..websocket import handle_session_stream
 from .auth import BootstrapAuth
-from .diff import DiffError, change_patch, list_changes
-from .runtime_manager import RuntimeManager, RuntimeManagerError
-
-COOKIE_NAME = "wright_web_session"
-
-
-class BootstrapRequest(BaseModel):
-    token: str
-
-
-class SessionRequest(BaseModel):
-    environment: str | None = None
-    model: str | None = None
-    prompt: str | None = None
-    resume_session_id: str | None = None
-
-
-class ModelRequest(BaseModel):
-    model: str
+from .routes import create_api_router
+from .runtime_manager import RuntimeManager
+from .websocket import handle_session_stream
 
 
 def _origin_for(request: Request) -> str:
     return f"{request.url.scheme}://{request.headers.get('host', '')}"
-
-
-def _require_auth(request: Request, auth: BootstrapAuth) -> None:
-    if not auth.valid(request.cookies.get(COOKIE_NAME)):
-        raise HTTPException(status_code=401, detail="authentication required")
 
 
 def create_app(
@@ -128,7 +91,7 @@ def _available_port(requested: int) -> int:
 def run_web(args: Any) -> None:
     import uvicorn
 
-    from ...application.runtime import load_env
+    from ...application.composition.runtime import load_env
 
     load_env()
     project_root = (args.workspace or Path.cwd()).expanduser().resolve()

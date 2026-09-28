@@ -12,11 +12,10 @@ from wright.application.agent import create_agent
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolResult
 from wright.domain.policy import ToolAccess
-from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
+from wright.infrastructure.persistence.session.repository import FileSessionRepository
 from wright.infrastructure.storage.artifacts import ArtifactStore
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.mcp_client import _to_tool_result
-from wright.interfaces.renderer import SilentRenderer
 
 
 @pytest.mark.parametrize("data,media_type", [
@@ -112,7 +111,7 @@ def test_agent_tool_images_reach_provider_and_survive_checkpoint(tmp_path, trans
                     reason="artifact transport test"
                 ),
             ),
-        ], session, SilentRenderer())
+        ], session)
         assert agent.run("make and inspect the report") == "seen"
         history = deepcopy(session.wire_messages())
 

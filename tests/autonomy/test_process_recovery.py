@@ -16,7 +16,7 @@ import pytest
 
 from tests.autonomy.test_host_persistence import ScriptLLM
 from tests.paths import REPO_ROOT, SRC_ROOT
-from wright.application.application_host import ApplicationHost
+from wright.application.composition.host import ApplicationHost
 from wright.domain.policy import PermissionSettings
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 
@@ -67,8 +67,8 @@ def test_real_process_command_crash_windows_are_recovered_honestly(
         from wright.infrastructure.persistence.autonomy_store import AutonomyStore
         from wright.domain.model.autonomy import TriggerSpec
         from wright.interfaces.interaction import InteractionBroker
-        from wright.application.session_service import SessionService
-        from wright.interfaces.ui_events import EventPublisher
+        from wright.application.session.service import SessionService
+        from wright.application.session.publisher import EventPublisher
 
         from pathlib import Path
         workspace, db, point = sys.argv[1:]
@@ -133,7 +133,7 @@ def test_real_process_command_crash_windows_are_recovered_honestly(
         seen.set()
         return False
 
-    from wright.application.session_service import SessionService
+    from wright.application.session.service import SessionService
 
     service = SessionService(runtime, event_processor=consume, shutdown=lambda _rt: None)
     service.start()
@@ -152,8 +152,8 @@ def _minimal_runtime(store, workspace):
     import threading
     from types import SimpleNamespace
 
+    from wright.application.session.publisher import EventPublisher
     from wright.interfaces.interaction import InteractionBroker
-    from wright.interfaces.ui_events import EventPublisher
 
     publisher = EventPublisher(project_id="project", session_id="session")
     return SimpleNamespace(
@@ -176,7 +176,7 @@ def test_real_host_process_lock_is_released_for_takeover_after_crash(tmp_path):
     child = r'''
         import sys
         from pathlib import Path
-        from wright.application.application_host import ApplicationHost
+        from wright.application.composition.host import ApplicationHost
         from wright.infrastructure.persistence.autonomy_store import AutonomyStore
         from wright.domain.model.autonomy import TriggerSpec
         from wright.domain.policy import PermissionSettings
@@ -234,7 +234,7 @@ def test_real_process_child_agent_side_effect_becomes_unknown_without_replay(tmp
     child = r'''
         import sys, time
         from pathlib import Path
-        from wright.application.application_host import ApplicationHost
+        from wright.application.composition.host import ApplicationHost
         from wright.infrastructure.persistence.autonomy_store import AutonomyStore
         from wright.domain.model.autonomy import TriggerSpec
         from wright.domain.policy import PermissionSettings

@@ -4,10 +4,8 @@ from pathlib import Path
 import pytest
 
 from wright.domain.model.session import Session
-from wright.infrastructure.persistence.file_session_repo import (
-    CheckpointError,
-    FileSessionRepository,
-)
+from wright.infrastructure.persistence.session.errors import CheckpointError
+from wright.infrastructure.persistence.session.repository import FileSessionRepository
 from wright.infrastructure.storage.skills import write_skill
 
 

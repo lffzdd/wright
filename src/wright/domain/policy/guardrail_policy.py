@@ -1,41 +1,13 @@
-"""Guardrail and security policy rules for command and resource validation."""
+"""Guardrail rules for commands and resource operations.
+
+Permission resolution lives in :mod:`wright.domain.policy.permission`. This
+module does not load or save settings files.
+"""
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-
-from .approval import (
-    FallbackApprovalHandler,
-    PermissionRequest,
-    ResolvedTarget,
-)
-from .config import (
-    PermissionMode,
-    PermissionRule,
-    PermissionSettings,
-    append_additional_directory,
-    append_allow_rule,
-    default_settings_path,
-    load_permission_settings,
-)
-from .resolver import (
-    PermissionPolicy,
-    PermissionResolver,
-)
-from .types import (
-    AuthorizationChange,
-    GrantTarget,
-    InvocationGrant,
-    InvocationIdentity,
-    PermissionChoice,
-    PermissionDecision,
-    PermissionPrompt,
-    PermissionResolution,
-    PermissionResponse,
-    PermissionSubject,
-    ToolAccess,
-)
 
 COMMAND_DENY_PATTERNS: tuple[str, ...] = (
     r"rm\s+-rf\s+(?:/|~|\$HOME)",
@@ -45,9 +17,6 @@ COMMAND_DENY_PATTERNS: tuple[str, ...] = (
     r"dd\s+if=.*of=/dev/",
     r"chmod\s+-R\s+777\s+/",
 )
-
-PermissionConfig = PermissionSettings
-SecurityPolicy = PermissionResolver
 
 
 @dataclass(frozen=True)
@@ -76,32 +45,4 @@ class GuardrailPolicy:
         return True, None
 
 
-__all__ = [
-    "COMMAND_DENY_PATTERNS",
-    "AuthorizationChange",
-    "FallbackApprovalHandler",
-    "GrantTarget",
-    "GuardrailPolicy",
-    "InvocationGrant",
-    "InvocationIdentity",
-    "PermissionChoice",
-    "PermissionConfig",
-    "PermissionDecision",
-    "PermissionMode",
-    "PermissionPolicy",
-    "PermissionPrompt",
-    "PermissionRequest",
-    "PermissionResolution",
-    "PermissionResolver",
-    "PermissionResponse",
-    "PermissionRule",
-    "PermissionSettings",
-    "PermissionSubject",
-    "ResolvedTarget",
-    "SecurityPolicy",
-    "ToolAccess",
-    "append_additional_directory",
-    "append_allow_rule",
-    "default_settings_path",
-    "load_permission_settings",
-]
+__all__ = ["COMMAND_DENY_PATTERNS", "GuardrailPolicy"]

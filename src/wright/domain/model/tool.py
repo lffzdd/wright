@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from ...base.value_object import ValueObject
 
@@ -148,9 +149,37 @@ class ToolExecutionOutcome:
     status: ToolExecutionStatus
 
 
+class ModelVisibleTool(Protocol):
+    """Fields the prompt and schema encoder may read. Callables stay outside."""
+
+    name: str
+    expose_to_model: bool
+    defer_to_model: bool
+
+    def to_dict(self) -> dict[str, Any]: ...
+
+
+def split_tool_catalog(tools: Sequence[ModelVisibleTool]) -> tuple[list[str], list[str]]:
+    """Baseline vs deferred names, in assembly order."""
+
+    baseline: list[str] = []
+    deferred: list[str] = []
+    seen: set[str] = set()
+    for tool in tools:
+        if not tool.expose_to_model or tool.name in seen:
+            continue
+        seen.add(tool.name)
+        if tool.defer_to_model:
+            deferred.append(tool.name)
+        else:
+            baseline.append(tool.name)
+    return baseline, deferred
+
+
 __all__ = [
     "AccessTarget",
     "ArtifactRef",
+    "ModelVisibleTool",
     "PermissionOperation",
     "ToolAccess",
     "ToolCall",
@@ -158,4 +187,5 @@ __all__ = [
     "ToolExecutionOutcome",
     "ToolExecutionStatus",
     "ToolResult",
+    "split_tool_catalog",
 ]

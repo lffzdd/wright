@@ -5,28 +5,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from ...domain.gateway.execution import ExecutionPath
+
 FileKind = Literal["file", "directory", "symlink", "other", "missing"]
 
-
-@dataclass(frozen=True)
-class ExecutionPath:
-    """A canonical absolute path belonging to one execution environment."""
-
-    environment_id: str
-    value: str
-
-    def __str__(self) -> str:
-        return self.value
-
-    @property
-    def name(self) -> str:
-        return self.value.rstrip("/").rsplit("/", 1)[-1]
-
-    @property
-    def parent(self) -> ExecutionPath:
-        value = self.value.rstrip("/")
-        parent = value.rsplit("/", 1)[0] or "/"
-        return ExecutionPath(self.environment_id, parent)
+__all__ = [
+    "CompletedProcess",
+    "DirectoryEntry",
+    "ExecutionPath",
+    "FileKind",
+    "FileMetadata",
+    "SearchMatch",
+]
 
 
 @dataclass(frozen=True)

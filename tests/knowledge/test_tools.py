@@ -1,16 +1,16 @@
 from jsonschema import validators
 
-from wright.application.tool_dispatch_service import ToolDispatchService
 from wright.application.agent.subagent import _child_base_tools
+from wright.application.skills import SkillRegistry
+from wright.application.tool_execution.capabilities import assemble_tool_capabilities
+from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.knowledge import MAX_HIT_CONTENT_CHARS, KnowledgeHit
 from wright.domain.model.tool import ToolCall
-from wright.application.skills import SkillRegistry
-from wright.application.tool_capabilities import assemble_tool_capabilities
+from wright.infrastructure.storage.skills import write_skill
 from wright.infrastructure.tools.knowledge import (
     build_knowledge_tools,
     optional_knowledge_tools,
 )
-from wright.infrastructure.storage.skills import write_skill
 from wright.infrastructure.tools.skill_tools import build_skill_tools
 
 

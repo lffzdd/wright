@@ -5,7 +5,11 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Iterable
 
-from ...domain.policy.types import GrantTarget, InvocationGrant, PermissionOperation
+from ...domain.policy.permission.types import (
+    GrantTarget,
+    InvocationGrant,
+    PermissionOperation,
+)
 from .protocols import ExecutionBackend, ProcessHandle
 from .types import DirectoryEntry, ExecutionPath, FileMetadata, SearchMatch
 

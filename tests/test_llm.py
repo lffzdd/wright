@@ -16,7 +16,6 @@ from wright.domain.protocol import TurnAbort, parse_turn
 from wright.infrastructure.llm.llm import LLMClient
 from wright.infrastructure.storage.attachments import AttachmentStore
 from wright.infrastructure.tools.base import Tool
-from wright.interfaces.renderer import SilentRenderer
 
 
 def _client(handler, *, stream):
@@ -230,7 +229,7 @@ def test_real_sdk_round_trip_sends_each_result_with_original_id(tmp_path, stream
     )
     session = Session.create("test", tmp_path)
     try:
-        assert create_agent(llm, [tool], session, SilentRenderer()).run("test") == "done"
+        assert create_agent(llm, [tool], session).run("test") == "done"
         assert len(requests) == 2
         assert session.turns[0].parsed["content"] == "Checking"
     finally:
@@ -445,7 +444,7 @@ def test_responses_truncation_cannot_become_agent_final(tmp_path):
             yield ContentDone("partial answer", finish_reason="incomplete:max_output_tokens")
 
     session = Session.create("goal", tmp_path)
-    assert create_agent(Model(), [], session, SilentRenderer()).run("goal") is None
+    assert create_agent(Model(), [], session).run("goal") is None
     assert session.current_run_status() == "failed"
 
 
@@ -509,7 +508,7 @@ def test_mcp_alias_executes_original_tool_and_preserves_wire_name(tmp_path):
                 yield ContentDone("done")
 
     session = Session.create("test", tmp_path)
-    assert create_agent(Model(), [tool], session, SilentRenderer()).run("test") == "done"
+    assert create_agent(Model(), [tool], session).run("test") == "done"
     assert observed == [original]
     assert session.tool_executions["external_call"].call.name == original
 
@@ -536,7 +535,7 @@ def test_invalid_batch_is_traced_without_executing_or_leaving_orphan_calls(tmp_p
     session = Session.create("test", tmp_path)
     assert (
         create_agent(
-            Model(), [Tool("write", "write", {}, write)], session, SilentRenderer()
+            Model(), [Tool("write", "write", {}, write)], session
         ).run("test")
         == "unable to proceed"
     )
@@ -566,7 +565,6 @@ def test_cancellation_after_model_response_closes_calls_for_resume(tmp_path):
         Model(),
         [Tool("write", "write", {}, write)],
         session,
-        SilentRenderer(),
         cancellation_check=lambda: cancelled,
     )
     assert agent.run("test") is None

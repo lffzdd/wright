@@ -1,16 +1,20 @@
 import queue
 
 from wright.application.agent import build_agent_tools
-from wright.application.event_dispatch import _task_notification_event
-from wright.application.task_service import TaskService
-from wright.application.tool_runtime import tool_runtime_for_session
+from wright.application.agent.assembly import prepare_model_tools
+from wright.application.session.dispatch import _task_notification_event
+from wright.application.tasks.service import TaskService
+from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.session import Session
+from wright.infrastructure.tools.agent_tools import (
+    cancel_agent_tool,
+    get_agent_tool,
+    wait_agent_tool,
+)
 from wright.infrastructure.tools.command import execute_command
-from wright.infrastructure.tools.task_tools import (
-    cancel_task_tool,
-    get_task_tool,
-    list_tasks_tool,
-    wait_task_tool,
+from wright.infrastructure.tools.command.control import (
+    terminate_command_tool,
+    wait_command_tool,
 )
 
 
@@ -51,7 +55,7 @@ def test_service_projects_agent_and_shell_without_copying_ownership(tmp_path):
     )
 
     service = TaskService.for_session(session)
-    shell = service.wait(launched.data["task_id"], timeout=2)
+    shell = service.wait(launched.data["command_id"], timeout=2)
     agent = service.get(agent_record.id)
 
     assert agent.kind == "agent"
@@ -64,22 +68,23 @@ def test_service_projects_agent_and_shell_without_copying_ownership(tmp_path):
     assert shell.output == "shell-result\n"
     assert {task.id for task in service.list()} == {
         agent_record.id,
-        launched.data["task_id"],
+        launched.data["command_id"],
     }
 
 
-def test_unified_tools_query_wait_and_list(tmp_path):
+def test_agent_tools_query_and_wait(tmp_path):
     session = _session(tmp_path)
     record = _agent_task(session, status="completed")
     runtime = tool_runtime_for_session(session, workspace_dir=tmp_path)
 
-    queried = get_task_tool.call({"task_id": record.id}, runtime)
-    waited = wait_task_tool.call({"task_id": record.id, "timeout": 0}, runtime)
-    listed = list_tasks_tool.call({}, runtime)
+    queried = get_agent_tool.call({"agent_task_id": record.id}, runtime)
+    waited = wait_agent_tool.call({"agent_task_id": record.id, "timeout": 0}, runtime)
 
-    assert queried.ok and queried.data["kind"] == "agent"
+    assert queried.ok and queried.data["agent_task_id"] == record.id
+    assert queried.data["status"] == "completed"
+    assert "id" not in queried.data
     assert waited.ok and waited.data["wait_completed"] is True
-    assert listed.ok and listed.data["tasks"][0]["id"] == record.id
+    assert waited.data["usage"]["total_tokens"] == 0
 
 
 def test_wait_timeout_observes_without_cancelling_shell_task(tmp_path):
@@ -90,22 +95,24 @@ def test_wait_timeout_observes_without_cancelling_shell_task(tmp_path):
         run_in_background=True,
         runtime=runtime,
     )
-    task_id = launched.data["task_id"]
+    command_id = launched.data["command_id"]
 
-    observed = wait_task_tool.call({"task_id": task_id, "timeout": 0}, runtime)
+    observed = wait_command_tool.call(
+        {"command_id": command_id, "timeout": 0}, runtime
+    )
 
     assert observed.ok
     assert observed.data["status"] == "running"
     assert observed.data["wait_timed_out"] is True
     assert observed.data["cancel_requested"] is False
-    cancelled = cancel_task_tool.call(
-        {"task_id": task_id, "reason": "test cleanup"}, runtime
+    cancelled = terminate_command_tool.call(
+        {"command_id": command_id, "reason": "test cleanup"}, runtime
     )
     assert cancelled.ok
     assert cancelled.data["status"] == "cancelled"
 
 
-def test_unified_cancel_routes_agent_and_shell(tmp_path):
+def test_agent_cancel_and_command_terminate_keep_their_semantics(tmp_path):
     session = _session(tmp_path)
     agent_record = _agent_task(session)
     runtime = tool_runtime_for_session(session, workspace_dir=tmp_path)
@@ -115,18 +122,19 @@ def test_unified_cancel_routes_agent_and_shell(tmp_path):
         runtime=runtime,
     )
 
-    agent = cancel_task_tool.call(
-        {"task_id": agent_record.id, "reason": "stop agent"}, runtime
+    agent = cancel_agent_tool.call(
+        {"agent_task_id": agent_record.id, "reason": "stop agent"}, runtime
     )
-    shell = cancel_task_tool.call(
-        {"task_id": launched.data["task_id"], "reason": "stop shell"}, runtime
+    shell = terminate_command_tool.call(
+        {"command_id": launched.data["command_id"], "reason": "stop shell"}, runtime
     )
 
-    assert agent.ok and agent.data["kind"] == "agent"
-    assert agent.data["status"] == "running"  # cooperative cancellation
+    assert agent.ok
+    assert agent.data["status"] == "running"
     assert agent.data["cancel_requested"] is True
     assert shell.ok and shell.data["status"] == "cancelled"
-    assert TaskService.for_session(session).get(launched.data["task_id"]).terminal
+    assert shell.data["command_id"] == launched.data["command_id"]
+    assert TaskService.for_session(session).get(launched.data["command_id"]).terminal
 
 
 def test_agent_and_shell_completion_share_runtime_event_shape(tmp_path):
@@ -149,14 +157,17 @@ def test_agent_and_shell_completion_share_runtime_event_shape(tmp_path):
     agent_event = _task_notification_event(service.get(agent_record.id))
     shell_event = _task_notification_event(service.get(shell_id))
 
-    assert shell_id == launched.data["task_id"]
+    assert shell_id == launched.data["command_id"]
     assert agent_event["type"] == shell_event["type"] == "task_notification"
-    assert set(agent_event["task"]) == set(shell_event["task"])
-    assert agent_event["task"]["kind"] == "agent"
-    assert shell_event["task"]["kind"] == "shell"
+    assert agent_event["task"]["agent_task_id"] == agent_record.id
+    assert "get_agent" in agent_event["follow_up"]
+    assert shell_event["task"]["command_id"] == shell_id
+    assert "get_command" in shell_event["follow_up"]
+    assert "id" not in agent_event["task"]
+    assert "id" not in shell_event["task"]
 
 
-def test_unified_task_control_is_root_only():
+def test_execution_controls_are_root_only_and_history_does_not_restore_retired_names(tmp_path):
     class UnusedLLM:
         context_limit = 128_000
 
@@ -171,12 +182,38 @@ def test_unified_task_control_is_root_only():
         for tool in build_agent_tools(UnusedLLM(), [], depth=1, max_depth=1)
     }
 
-    unified = {"get_task", "wait_task", "cancel_task", "list_tasks"}
-    autonomy = {
-        "schedule_task", "get_schedule", "list_schedules", "pause_schedule",
-        "resume_schedule", "cancel_schedule", "list_task_runs",
+    agent_controls = {"get_agent", "wait_agent", "cancel_agent"}
+    command_controls = {
+        "get_command", "wait_command", "terminate_command", "list_commands",
     }
-    assert unified <= root_names
-    assert unified.isdisjoint(child_names)
+    autonomy = {
+        "create_schedule", "get_schedule", "list_schedules", "pause_schedule",
+        "resume_schedule", "cancel_schedule", "list_schedule_runs",
+        "get_schedule_run", "wait_schedule_run", "cancel_schedule_run",
+    }
+    retired = {
+        "get_task", "wait_task", "cancel_task", "list_tasks",
+        "schedule_task", "list_task_runs",
+    }
+    assert agent_controls <= root_names
+    assert command_controls <= root_names
+    assert agent_controls.isdisjoint(child_names)
+    assert command_controls.isdisjoint(child_names)
     assert autonomy <= root_names
     assert autonomy.isdisjoint(child_names)
+    assert retired.isdisjoint(root_names)
+    assert retired.isdisjoint(child_names)
+
+    restored = Session.create("history", tmp_path)
+    restored.active_deferred_tools = ["schedule_task", "get_task", "create_schedule"]
+    prepared = prepare_model_tools(
+        restored,
+        build_agent_tools(
+            UnusedLLM(), [], depth=0, max_depth=1, enable_autonomy=True
+        ),
+    )
+    schema_names = {item["name"] for item in prepared.schemas}
+    assert "schedule_task" not in schema_names
+    assert "get_task" not in schema_names
+    assert "create_schedule" in schema_names
+    assert restored.active_deferred_tools == ["create_schedule"]

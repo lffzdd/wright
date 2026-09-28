@@ -3,7 +3,7 @@ from pathlib import Path
 from jsonschema import validators
 
 from wright.application.skills import SkillRegistry
-from wright.application.tool_runtime import tool_runtime_for_session
+from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.session import Session
 from wright.infrastructure.storage.skills import write_skill
 from wright.infrastructure.tools.skill_tools import build_skill_tools

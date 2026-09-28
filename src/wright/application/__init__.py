@@ -2,21 +2,20 @@
 
 from __future__ import annotations
 
-from .task_service import (
-    AgentTaskBackend,
-    ShellTaskBackend,
-    TaskService,
-)
-from .skills import SkillRegistry, catalog_reminder
-from .memory import MemoryManager
-
-from .dto import RunAgentRequest, StreamEventDTO
-from .tool_dispatch_service import ToolDispatchService
 from .autonomy import (
     AutonomyScheduler,
     DurableTaskBackend,
     launch_durable_run,
 )
+from .dto import RunAgentRequest, StreamEventDTO
+from .memory import MemoryManager
+from .skills import SkillRegistry, catalog_reminder
+from .tasks.service import (
+    AgentTaskBackend,
+    ShellTaskBackend,
+    TaskService,
+)
+from .tool_execution.dispatch import ToolDispatchService
 
 __all__ = [
     "AgentTaskBackend",

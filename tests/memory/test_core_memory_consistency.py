@@ -17,7 +17,8 @@ from tests.memory.test_agent_integration import EmptySelectorLLM
 from tests.memory.test_core_memory import DummyEpisodeStore, DummySemanticStore
 from tests.responses import response
 from wright.application.agent import create_agent
-from wright.application.memory import MemoryManager, MemoryService
+from wright.application.memory.assembly import assemble_memory_manager, memory_tools
+from wright.application.memory.memory_service import MemoryService
 from wright.core.paths import project_id
 from wright.domain.model.memory import CoreMemoryStoreError
 from wright.domain.model.session import Session
@@ -30,7 +31,6 @@ from wright.infrastructure.persistence.memory import (
 )
 from wright.infrastructure.tools.executor import ConcurrentToolExecutor
 from wright.infrastructure.tools.runtime import ToolRuntime
-from wright.interfaces.renderer import SilentRenderer
 
 
 def _service(directory: Path, policy: CoreMemoryPolicy | None = None) -> MemoryService:
@@ -263,7 +263,7 @@ def test_project_read_failure_keeps_global_and_does_not_fall_back(tmp_path, monk
         raise CoreMemoryStoreError("unavailable")
 
     monkeypatch.setattr(FileCoreMemoryStore, "load_project", boom)
-    manager = MemoryManager(EmptySelectorLLM(), directory=tmp_path)
+    manager = assemble_memory_manager(EmptySelectorLLM(), directory=tmp_path)
     manager.bind_project(tmp_path / "alpha")
     prompt = manager.project_system_prompt("Role stays.")
     assert "GLOBAL" in prompt
@@ -425,8 +425,8 @@ def test_rebind_switches_tool_writes_and_prompt(tmp_path):
     beta = tmp_path / "beta"
     alpha.mkdir()
     beta.mkdir()
-    manager = MemoryManager(EmptySelectorLLM(), directory=memory)
-    tools = manager.tools()
+    manager = assemble_memory_manager(EmptySelectorLLM(), directory=memory)
+    tools = memory_tools(manager)
     update = next(tool for tool in tools if tool.name == "update_core_memory")
     read = next(tool for tool in tools if tool.name == "get_core_memory")
 
@@ -467,7 +467,7 @@ def test_rebind_switches_tool_writes_and_prompt(tmp_path):
     assert "SHARED" in prompt_b
     assert prompt_b.count("<CORE_MEMORY>") == 1
 
-    other = MemoryManager(EmptySelectorLLM(), directory=memory)
+    other = assemble_memory_manager(EmptySelectorLLM(), directory=memory)
     other.bind_project(alpha)
     prompt_a = other.project_system_prompt("Role.")
     assert "ANCHOR_A" in prompt_a
@@ -484,19 +484,18 @@ def test_worktree_uses_stable_project_root_not_cwd(tmp_path, monkeypatch):
     for path in (stable, worktree, elsewhere):
         path.mkdir()
     monkeypatch.chdir(elsewhere)
-    manager = MemoryManager(EmptySelectorLLM(), directory=memory)
+    manager = assemble_memory_manager(EmptySelectorLLM(), directory=memory)
     session = Session.create("task", worktree, project_root=stable)
     agent = create_agent(
         _DoneLLM(),
-        manager.tools(),
+        memory_tools(manager),
         session,
-        SilentRenderer(),
         memory=manager,
     )
     assert manager.current_project_id == project_id(stable)
     assert manager.current_project_id != project_id(worktree)
     assert agent.run("hello") == "done"
-    tool = next(tool for tool in manager.tools() if tool.name == "update_core_memory")
+    tool = next(tool for tool in memory_tools(manager) if tool.name == "update_core_memory")
     result = _execute(tool, {"section": "project_anchor", "content": "STABLE", "mode": "replace"})
     assert result.ok and result.data["project_id"] == project_id(stable)
     assert not FileCoreMemoryStore(memory).project_path(project_id(worktree)).exists()
@@ -557,7 +556,7 @@ def test_tool_update_refreshes_next_request_and_preserves_history(tmp_path, lega
                 yield response(content="done")
 
     llm = UpdatingLLM()
-    manager = MemoryManager(llm, selector_llm=EmptySelectorLLM(), directory=tmp_path)
+    manager = assemble_memory_manager(llm, selector_llm=EmptySelectorLLM(), directory=tmp_path)
     manager.service.update_core_memory("human_profile", "OLD_PROFILE", "replace")
     session = Session.create("memory update", tmp_path)
     session.active_deferred_tools = ["update_core_memory"]
@@ -567,7 +566,7 @@ def test_tool_update_refreshes_next_request_and_preserves_history(tmp_path, lega
             "content": manager.service.get_core_memory().render_block() + "\n\nPreserve this role.",
         })
     agent = create_agent(
-        llm, manager.tools(), session, SilentRenderer(), memory=manager,
+        llm, memory_tools(manager), session, memory=manager,
         permission_resolver=PermissionResolver(
             approval_handler=lambda _: PermissionResponse("allow_once"),
         ),
@@ -600,7 +599,7 @@ def test_anchor_update_is_on_the_next_request_and_not_another_project(tmp_path):
     alpha.mkdir()
     beta.mkdir()
     llm = _UpdatingLLM()
-    manager = MemoryManager(llm, selector_llm=EmptySelectorLLM(), directory=memory)
+    manager = assemble_memory_manager(llm, selector_llm=EmptySelectorLLM(), directory=memory)
     session = Session.create("anchor", alpha)
     session.active_deferred_tools = ["update_core_memory"]
     session.append_message({
@@ -611,9 +610,8 @@ def test_anchor_update_is_on_the_next_request_and_not_another_project(tmp_path):
     })
     agent = create_agent(
         llm,
-        manager.tools(),
+        memory_tools(manager),
         session,
-        SilentRenderer(),
         memory=manager,
         permission_resolver=PermissionResolver(
             approval_handler=lambda _: PermissionResponse("allow_once"),
@@ -632,7 +630,7 @@ def test_anchor_update_is_on_the_next_request_and_not_another_project(tmp_path):
     assert second.count("<CORE_MEMORY>") == 1
     assert session.message_records[0].message == original_system
 
-    other = MemoryManager(EmptySelectorLLM(), directory=memory)
+    other = assemble_memory_manager(EmptySelectorLLM(), directory=memory)
     other.bind_project(beta)
     prompt = other.project_system_prompt("Other role.")
     assert "ANCHOR_A" not in prompt
@@ -641,7 +639,7 @@ def test_anchor_update_is_on_the_next_request_and_not_another_project(tmp_path):
 
 
 def test_core_read_failure_does_not_block_delivery(tmp_path, monkeypatch):
-    manager = MemoryManager(EmptySelectorLLM(), directory=tmp_path)
+    manager = assemble_memory_manager(EmptySelectorLLM(), directory=tmp_path)
     session = Session.create("deliver", tmp_path / "proj")
 
     def boom(self):
@@ -649,7 +647,7 @@ def test_core_read_failure_does_not_block_delivery(tmp_path, monkeypatch):
 
     monkeypatch.setattr(FileCoreMemoryStore, "load_global", boom)
     llm = _DoneLLM()
-    agent = create_agent(llm, manager.tools(), session, SilentRenderer(), memory=manager)
+    agent = create_agent(llm, memory_tools(manager), session, memory=manager)
     assert agent.run("ship it") == "done"
     assert llm.requests
     assert "<CORE_MEMORY>" not in llm.requests[0][0]["content"]

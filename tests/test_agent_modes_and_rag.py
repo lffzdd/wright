@@ -1,31 +1,25 @@
 from __future__ import annotations
 
-import argparse
 import sys
-from pathlib import Path
-
-import pytest
 
 from wright.application.agent import create_agent
-from wright.application.runtime import (
+from wright.application.composition.runtime import (
     RuntimeConfig,
     assemble_runtime,
-    parse_cli_args,
-    runtime_config_from_args,
     shutdown_runtime,
 )
 from wright.domain.model.agent import AgentProfile
+from wright.domain.model.session import Session
+from wright.domain.model.tool import ToolResult
 from wright.domain.prompt import (
     DEFAULT_CODING_ROLE,
     DEFAULT_GENERAL_ROLE,
     build_system_prompt,
     get_role_instruction,
 )
-from wright.domain.model.session import Session
-from wright.domain.model.tool import ToolResult
-from wright.infrastructure.tools.knowledge import optional_knowledge_tools
 from wright.infrastructure.tools.base import Tool
-from wright.interfaces.renderer import SilentRenderer
+from wright.infrastructure.tools.knowledge import optional_knowledge_tools
+from wright.interfaces.cli.args import parse_cli_args, runtime_config_from_args
 
 
 def _dummy_tool(name: str) -> Tool:
@@ -94,11 +88,10 @@ def test_build_system_prompt_role_and_tool_advice():
 
 def test_create_agent_respects_role_instruction(tmp_path):
     session = Session.create("test", tmp_path)
-    agent = create_agent(
+    create_agent(
         DummyLLM(),
         [_dummy_tool("read_file")],
         session,
-        SilentRenderer(),
         role_instruction="You are a specialized math solver.",
     )
     system_content = session.message_records[0].message["content"]
@@ -117,7 +110,6 @@ def test_create_agent_respects_profile_role_instruction(tmp_path):
         DummyLLM(),
         [_dummy_tool("read_file")],
         session,
-        SilentRenderer(),
         profile=profile,
     )
     system_content = session.message_records[0].message["content"]

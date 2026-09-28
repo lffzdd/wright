@@ -3,7 +3,6 @@ from tests.responses import event, response
 from wright.application.agent import create_agent
 from wright.domain.model.session import Session
 from wright.infrastructure.tools.plan_tools import create_plan_tool
-from wright.interfaces.renderer import SilentRenderer
 
 
 class PlanningLLM:
@@ -38,7 +37,6 @@ def test_agent_injects_latest_plan_as_ephemeral_reminder(tmp_path):
         llm,
         [create_plan_tool],
         session,
-        SilentRenderer(),
     )
 
     answer = agent.run("处理这个复杂任务")

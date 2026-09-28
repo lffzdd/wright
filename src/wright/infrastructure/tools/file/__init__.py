@@ -6,9 +6,6 @@ from .common import (
     FILE_UNCHANGED,
     MAX_READ_CHARS,
     FileView,
-    _describe_file_edit,
-    _describe_file_read,
-    _describe_file_write,
     _remembered_file_view,
 )
 from .edit import edit_file, edit_file_tool
@@ -36,6 +33,7 @@ __all__ = [
     "FILE_UNCHANGED",
     "MAX_READ_CHARS",
     "FileView",
+    "_remembered_file_view",
     "edit_file",
     "edit_file_tool",
     "file_tools",

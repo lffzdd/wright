@@ -8,26 +8,32 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from ...application.application_host import ApplicationHost
-from ...application.event_dispatch import process_session_event
-from ...application.runtime import (
+from ...application.composition.host import ApplicationHost
+from ...application.composition.runtime import (
+    RuntimeConfig,
     WrightRuntime,
     assemble_runtime,
-    runtime_config_from_args,
     shutdown_runtime,
 )
-from ...application.session_service import SessionService, SessionServiceError
-from ...infrastructure.storage.attachments import AttachmentError, AttachmentRecord
-from ...infrastructure.persistence.autonomy_store import AutonomyNotFoundError, AutonomyStore
-from ...infrastructure.persistence.file_session_repo import CheckpointError, FileSessionRepository
-from ...infrastructure.llm.model_adapters import available_models, process_model_name
-from ..interaction import InteractionBroker
+from ...application.session.dispatch import process_session_event
+from ...application.session.publisher import EventPublisher
+from ...application.session.service import (
+    SessionService,
+    SessionServiceError,
+)
 from ...core.paths import project_id, session_dir, task_db_path
-from ...infrastructure.workspace.project import ProjectContext
-from ..renderer import SilentRenderer
 from ...domain.model.tool import ArtifactRef
-from ..ui_events import EventPublisher
+from ...infrastructure.llm.model_adapters import available_models, process_model_name
+from ...infrastructure.persistence.autonomy_store import (
+    AutonomyNotFoundError,
+    AutonomyStore,
+)
+from ...infrastructure.persistence.session.errors import CheckpointError
+from ...infrastructure.persistence.session.repository import FileSessionRepository
+from ...infrastructure.storage.attachments import AttachmentError, AttachmentRecord
+from ...infrastructure.workspace.project import ProjectContext
 from ...infrastructure.workspace.worktrees import ArchiveResult, WorktreeManager
+from ..interaction import InteractionBroker
 
 
 class RuntimeManagerError(RuntimeError):
@@ -181,7 +187,7 @@ class SessionHandle:
             # This live projection, not the finite UI-event ring, owns stream
             # accumulation. Reconnection therefore does not require the old
             # turn.started/content.delta events to still be retained.
-            response = self.runtime.runtime_resources.response_snapshot(
+            response = self.runtime.runtime_resources.responses.response_snapshot(
                 authoritative_run["run_id"]
             ) or {}
             active = {
@@ -354,16 +360,23 @@ class RuntimeManager:
                 )
             return handle.set_model(model)
 
-    def _args(self, *, context: ProjectContext, model: str | None, resume: str | None) -> argparse.Namespace:
-        values = vars(self.base_args).copy()
-        values.update({
-            "workspace": context.execution_root,
-            "model": model,
-            "resume": resume,
-            "continue_latest": False,
-            "ui": "web",
-        })
-        return argparse.Namespace(**values)
+    def _runtime_config(
+        self, *, context: ProjectContext, model: str | None, resume: str | None,
+    ) -> RuntimeConfig:
+        base = self.base_args
+        hooks = getattr(base, "hooks_config", None)
+        return RuntimeConfig(
+            workspace=context.execution_root,
+            resume=resume,
+            continue_latest=False,
+            no_session_persistence=bool(getattr(base, "no_session_persistence", False)),
+            hooks_config=Path(hooks) if hooks else None,
+            model=model,
+            transport=getattr(base, "transport", None),
+            trust_project_mcp=bool(getattr(base, "trust_project_mcp", False)),
+            with_rag=bool(getattr(base, "with_rag", False)),
+            mode=str(getattr(base, "mode", "coding") or "coding"),
+        )
 
     def create(
         self,
@@ -423,8 +436,9 @@ class RuntimeManager:
             retained_host = self._application_hosts.get(context.execution_root)
             try:
                 runtime = assemble_runtime(
-                    runtime_config_from_args(self._args(context=context, model=model, resume=resume_session_id)),
-                    renderer=SilentRenderer(),
+                    self._runtime_config(
+                        context=context, model=model, resume=resume_session_id,
+                    ),
                     project_context=context,
                     publisher=publisher,
                     interaction_broker=broker,

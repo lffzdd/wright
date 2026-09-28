@@ -7,13 +7,13 @@ Wright 主入口：终端里的 coding agent。
 import os
 import sys
 
-from .application.runtime import (
-    assemble_runtime,
-    load_env,
-    parse_cli_args,
-    runtime_config_from_args,
-)
-from .interfaces.repl import Repl
+from .application.composition.runtime import assemble_runtime, load_env
+from .interfaces.cli.args import parse_cli_args, runtime_config_from_args
+from .interfaces.cli.console_renderer import ConsoleRenderer
+from .interfaces.cli.prompter import ConsolePrompter
+from .interfaces.cli.repl import Repl
+from .interfaces.cli.resume_select import choose_resume_session
+from .interfaces.interaction import InteractionHub
 from .interfaces.tui.terminal import configure_terminal
 
 
@@ -49,8 +49,17 @@ def main() -> None:
 
         run_tui(args)
         return
-    rt = assemble_runtime(runtime_config_from_args(args))
-    repl = Repl(rt)
+    renderer = ConsoleRenderer()
+    hub = InteractionHub()
+    prompter = ConsolePrompter(renderer)
+    rt = assemble_runtime(
+        runtime_config_from_args(args),
+        renderer=renderer,
+        interaction_broker=hub,
+        prompter=prompter,
+        resume_chooser=choose_resume_session,
+    )
+    repl = Repl(rt, prompter=prompter)
     try:
         repl.run()
     finally:

@@ -1,0 +1,143 @@
+"""Project serializable UI events onto a Renderer.
+
+This module does not create the application event channel. Hosts subscribe
+after the application has opened one.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from ...application.session.events import UiEventEnvelope
+from ...domain.model.tool import ToolCall, ToolResult
+from .contracts import Renderer
+
+
+class RendererEventSubscriber:
+    """Project serializable UI events back into an existing terminal renderer.
+
+    Root events update the main transcript. Child events stay out of that
+    transcript and become delegation progress lines.
+    """
+
+    def __init__(self, renderer: Renderer) -> None:
+        self.renderer = renderer
+        self._calls: dict[str, ToolCall] = {}
+
+    def __call__(self, event: UiEventEnvelope) -> None:
+        payload = event.payload
+        if _agent_depth(payload) > 0:
+            self._project_child(event)
+            return
+        if event.type == "reasoning.delta":
+            self.renderer.on_reasoning_delta(str(payload.get("piece", "")))
+        elif event.type == "content.delta":
+            self.renderer.on_content_delta(str(payload.get("piece", "")))
+        elif event.type == "content.final":
+            self.renderer.on_final(payload.get("content"))
+        elif event.type in {"tool.planned", "tool.awaiting_approval", "tool.running"}:
+            call = ToolCall(
+                name=str(payload.get("name", "tool")),
+                arguments=dict(payload.get("arguments") or {}),
+                id=str(payload.get("call_id", "")),
+            )
+            self._calls[call.id] = call
+            if event.type == "tool.planned":
+                self.renderer.on_tool_call(call)
+            else:
+                self.renderer.on_tool_phase(call, event.type.removeprefix("tool."))
+        elif event.type == "tool.output":
+            self.renderer.on_tool_output(
+                str(payload.get("call_id", "")),
+                str(payload.get("output", "")),
+            )
+        elif event.type == "tool.finished":
+            call_id = str(payload.get("call_id", ""))
+            call = self._calls.get(call_id) or ToolCall(
+                name=str(payload.get("name", "tool")), arguments={}, id=call_id
+            )
+            result = ToolResult(
+                ok=bool(payload.get("ok")),
+                err=str(payload.get("err", "")),
+                data=payload.get("data"),
+            )
+            self.renderer.on_tool_result(call, result)
+        elif event.type == "usage.request":
+            self.renderer.on_usage(
+                payload.get("prompt_tokens"), payload.get("completion_tokens"),
+                payload.get("total_tokens"), payload.get("context_limit"),
+            )
+        elif event.type == "usage.task":
+            self.renderer.on_usage_summary(
+                int(payload.get("prompt_tokens", 0)),
+                int(payload.get("completion_tokens", 0)),
+                int(payload.get("total_tokens", 0)),
+            )
+        elif event.type == "system.notice":
+            kind = payload.get("kind")
+            if kind == "completion_rejected":
+                self.renderer.on_completion_rejected(payload.get("issues", ()))
+            elif kind == "context_compact":
+                self.renderer.on_context_compact(
+                    int(payload.get("folded_count", 0)),
+                    payload.get("prompt_tokens"),
+                    payload.get("context_limit"),
+                    float(payload.get("context_watermark", 0)),
+                )
+            else:
+                self.renderer.on_system_notice(str(payload.get("text", "")))
+        elif event.type == "system.checkpoint_error":
+            self.renderer.on_checkpoint_error(str(payload.get("error", "")))
+        elif event.type == "task.updated":
+            self.renderer.on_agent_event(dict(payload))
+        elif event.type == "session.status_changed":
+            if payload.get("status") == "model_turn_started":
+                self.renderer.on_turn_begin()
+
+    def _project_child(self, event: UiEventEnvelope) -> None:
+        payload = event.payload
+        depth = _agent_depth(payload)
+        prefix = "    " * (depth - 1) + "│ "
+        if event.type == "tool.planned":
+            brief = json.dumps(payload.get("arguments") or {}, ensure_ascii=False)
+            if len(brief) > 80:
+                brief = brief[:77] + "..."
+            name = payload.get("name", "tool")
+            self.renderer.on_system_notice(
+                f"{prefix}🔧 子Agent(d{depth}) › {name} {brief}"
+            )
+        elif event.type == "tool.finished":
+            name = payload.get("name", "tool")
+            if payload.get("ok"):
+                self.renderer.on_system_notice(
+                    f"{prefix}✅ 子Agent(d{depth}) › {name}"
+                )
+            else:
+                self.renderer.on_system_notice(
+                    f"{prefix}❌ 子Agent(d{depth}) › {name}: {payload.get('err', '')}"
+                )
+        elif event.type == "content.final":
+            text = payload.get("content")
+            text = text if isinstance(text, str) else json.dumps(text, ensure_ascii=False)
+            if len(text) > 200:
+                text = text[:197] + "..."
+            self.renderer.on_system_notice(
+                f"{prefix}🎯 子Agent(d{depth}) 收口: {text}"
+            )
+        elif event.type == "system.notice" and payload.get("kind") == "completion_rejected":
+            issues = payload.get("issues") or ()
+            detail = ""
+            if issues:
+                first = issues[0]
+                detail = first.get("message", "") if isinstance(first, dict) else str(first)
+            self.renderer.on_system_notice(
+                f"{prefix}完成检查未通过: {detail or '未说明原因'}"
+            )
+        elif event.type == "task.updated":
+            self.renderer.on_agent_event(dict(payload))
+
+
+def _agent_depth(payload: dict[str, Any]) -> int:
+    value = payload.get("agent_depth", 0)
+    return value if isinstance(value, int) and value > 0 else 0

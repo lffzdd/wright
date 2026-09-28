@@ -3,11 +3,11 @@ import time
 
 from tests.responses import event, response
 from wright.application.agent import AgentBackgroundRuntime, make_spawn_agent_tool
-from wright.application.services import RuntimeServices
-from wright.application.tool_runtime import tool_runtime_for_session
+from wright.application.composition.services import RuntimeServices
+from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.events import ContentDone
 from wright.domain.model.session import Session
-from wright.infrastructure.tools.task_tools import cancel_task_tool, get_task_tool
+from wright.infrastructure.tools.agent_tools import cancel_agent_tool, get_agent_tool
 
 
 def _final(answer: str) -> ContentDone:
@@ -49,11 +49,13 @@ def test_background_agent_returns_immediately_and_notifies_once(tmp_path):
     )
 
     assert launched.ok
-    assert launched.data["task_status"] == "async_launched"
+    assert launched.data["status"] == "running"
+    assert launched.data["agent_task_id"]
+    assert "task_id" not in launched.data
     assert time.monotonic() - started < 0.04
     event_type, task_id = events.get(timeout=1)
     assert event_type == "TASK_DONE"
-    assert task_id == launched.data["task_id"]
+    assert task_id == launched.data["agent_task_id"]
     record = session.control_plane.get(task_id)
     assert record.status == "completed"
     assert record.result == "background done"
@@ -61,7 +63,7 @@ def test_background_agent_returns_immediately_and_notifies_once(tmp_path):
     background.shutdown(session.control_plane)
 
 
-def test_get_task_reads_background_terminal_record(tmp_path):
+def test_get_agent_reads_background_terminal_record(tmp_path):
     events = queue.Queue()
     background = AgentBackgroundRuntime(events, max_workers=1)
     session = Session.create("root", tmp_path)
@@ -75,15 +77,16 @@ def test_get_task_reads_background_terminal_record(tmp_path):
     )
     events.get(timeout=1)
 
-    result = get_task_tool.call(
-        {"task_id": launched.data["task_id"]},
+    result = get_agent_tool.call(
+        {"agent_task_id": launched.data["agent_task_id"]},
         tool_runtime_for_session(session, workspace_dir=tmp_path),
     )
     assert result.ok
     assert result.data["status"] == "completed"
     assert result.data["result"] == "background done"
-    unknown = get_task_tool.call(
-        {"task_id": "missing"}, tool_runtime_for_session(session)
+    assert result.data["agent_task_id"] == launched.data["agent_task_id"]
+    unknown = get_agent_tool.call(
+        {"agent_task_id": "missing"}, tool_runtime_for_session(session)
     )
     assert not unknown.ok
     background.shutdown(session.control_plane)
@@ -105,7 +108,7 @@ def test_child_agent_cannot_launch_background_agent(tmp_path):
     background.shutdown(session.control_plane)
 
 
-def test_cancel_task_requests_cooperative_cancellation(tmp_path):
+def test_cancel_agent_requests_cooperative_cancellation(tmp_path):
     session = Session.create("root", tmp_path)
     session.begin_user_turn("root")
     record = session.control_plane.begin_task(
@@ -117,12 +120,14 @@ def test_cancel_task_requests_cooperative_cancellation(tmp_path):
         requested_steps=5,
     )
 
-    result = cancel_task_tool.call(
-        {"task_id": record.id, "reason": "no longer needed"},
+    result = cancel_agent_tool.call(
+        {"agent_task_id": record.id, "reason": "no longer needed"},
         tool_runtime_for_session(session),
     )
 
     assert result.ok
+    assert result.data["status"] == "running"
     assert result.data["cancel_requested"] is True
+    assert "has not stopped" in result.data["message"]
     assert session.control_plane.is_cancelled(record.id)
     assert session.control_plane.cancellation_reason(record.id) == "no longer needed"

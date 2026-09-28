@@ -29,7 +29,7 @@ def render_colored_diff(diff_text: str) -> str:
     """Format unified diff text with ANSI escape codes for terminal display."""
     colored_lines: list[str] = []
     for line in diff_text.splitlines():
-        if line.startswith("+++") or line.startswith("---"):
+        if line.startswith(("+++", "---")):
             colored_lines.append(f"\033[1m{line}\033[0m")
         elif line.startswith("@@"):
             colored_lines.append(f"\033[36m{line}\033[0m")

@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
-ExecutionEnvironment = Literal["local", "worktree"]
+from ...domain.model.session.environment import ExecutionEnvironment
 
 
 @dataclass(frozen=True)

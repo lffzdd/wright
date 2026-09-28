@@ -1,6 +1,6 @@
-from wright.application.interactive_approval import InteractiveApprovalHandler
-from wright.application.tool_capabilities import assemble_tool_capabilities
-from wright.application.tool_dispatch_service import ToolDispatchService
+from wright.application.tool_execution.approval import InteractiveApprovalHandler
+from wright.application.tool_execution.capabilities import assemble_tool_capabilities
+from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall
 from wright.domain.policy import PermissionResolver
@@ -9,7 +9,7 @@ from wright.infrastructure.tools.file import (
     read_file_tool,
     write_file_tool,
 )
-from wright.interfaces.renderer import SilentRenderer
+from wright.interfaces.rendering.silent import SilentRenderer
 
 
 class _MockRenderer(SilentRenderer):
@@ -27,11 +27,22 @@ class _MockRenderer(SilentRenderer):
         return self.choices.pop(0) if self.choices else "deny"
 
 
+class _ChoicePrompter:
+    def __init__(self, renderer: _MockRenderer) -> None:
+        self._renderer = renderer
+
+    def prompt_permission(self, prompt):
+        return self._renderer.prompt_permission(prompt)
+
+    def prompt_user(self, question: str, context: str = "", options: tuple[str, ...] = ()):
+        del question, context, options
+        return None
+
+
 def _approval(renderer: _MockRenderer) -> InteractiveApprovalHandler:
     return InteractiveApprovalHandler(
-        None,
+        _ChoicePrompter(renderer),
         notify_phase=renderer.on_tool_phase,
-        prompt_fallback=renderer.prompt_permission,
     )
 
 

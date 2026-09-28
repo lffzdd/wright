@@ -5,7 +5,6 @@ from wright.application.agent import create_agent
 from wright.domain.model.session import Session
 from wright.domain.policy import PermissionResolver, PermissionResponse
 from wright.infrastructure.tools.human_input import ask_user_tool
-from wright.interfaces.renderer import SilentRenderer
 
 
 def _tool_turn(name, **arguments):
@@ -62,7 +61,6 @@ def test_ask_user_runs_through_without_pausing(tmp_path):
         llm,
         [ask_user_tool],
         session,
-        SilentRenderer(),
         permission_resolver=PermissionResolver(
             interaction_handler=_interaction_handler("蓝色", interaction_calls)
         ),
@@ -125,7 +123,6 @@ def test_ask_user_can_be_called_multiple_times(tmp_path):
         TwiceLLM(),
         [ask_user_tool],
         session,
-        SilentRenderer(),
         permission_resolver=PermissionResolver(interaction_handler=interaction_handler),
     )
 
@@ -156,7 +153,6 @@ def test_ask_user_without_interaction_handler_returns_error(tmp_path):
         AskThenFinalLLM(),
         [ask_user_tool],
         session,
-        SilentRenderer(),
         # 不传 interaction_handler
     )
 
@@ -172,7 +168,6 @@ def test_ask_user_cannot_be_auto_approved_by_normal_permission_handler(tmp_path)
         AskThenAnswerLLM(),
         [ask_user_tool],
         session,
-        SilentRenderer(),
         permission_resolver=PermissionResolver(
             approval_handler=lambda request: PermissionResponse(
                 "allow_once", {**request.arguments, "answer": "forged"}
@@ -196,6 +191,6 @@ def test_ask_user_cannot_be_auto_approved_by_normal_permission_handler(tmp_path)
 def test_agent_no_longer_has_resume_method(tmp_path):
     """确认 resume() 方法已被移除。"""
     session = Session.create("goal", tmp_path)
-    agent = create_agent(AskThenAnswerLLM(), [ask_user_tool], session, SilentRenderer())
+    agent = create_agent(AskThenAnswerLLM(), [ask_user_tool], session)
 
     assert not hasattr(agent, "resume")

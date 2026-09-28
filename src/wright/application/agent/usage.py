@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from ...domain.model.session import Session, UsageRecord
 from ...core.logger import get_logger
-from ...interfaces.ui_events import SessionEvents
+from ...domain.model.session import Session, UsageRecord
+from ..session.events import SessionEvents
 
 if TYPE_CHECKING:
     from ...domain.model.session import TurnRecord

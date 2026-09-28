@@ -9,9 +9,9 @@ from collections.abc import Callable
 from typing import Any
 
 from ....core.logger import get_logger
-from ....core.processes import ProcessResources
 from ....domain.model.tool import ToolResult
 from ...runtime import ExecutionPath, ProcessHandle
+from ...runtime.process_registry import ProcessResources
 from ..base import Tool
 from ..runtime import ToolCancelledError, ToolRuntime
 from .permissions import (
@@ -160,8 +160,11 @@ def execute_command(
         if done_event.is_set():
             _notify_background_done()
         return ToolResult.success(result_data({
-            "task_id": task_id,
-            "message": f"Command is running in the background; use get_task for {task_id}.",
+            "command_id": task_id,
+            "message": (
+                f"Command is running in the background as command_id {task_id}. "
+                "Use get_command, wait_command, list_commands, or terminate_command."
+            ),
         }))
 
     deadline = time.monotonic() + timeout
@@ -205,9 +208,13 @@ def execute_command(
         with output_lock:
             output_so_far = "".join(output_lines)[-MAX_OUTPUT_CHARS:]
         return ToolResult.success(result_data({
-            "task_id": task_id,
+            "command_id": task_id,
             "timed_out": True,
-            "message": f"Command exceeded {timeout}s; moved to background task {task_id}.",
+            "message": (
+                f"Command exceeded {timeout}s and is running in the background "
+                f"as command_id {task_id}. Use get_command, wait_command, "
+                "list_commands, or terminate_command."
+            ),
             "output_so_far": output_so_far,
         }))
 
@@ -261,8 +268,9 @@ execute_command_tool = Tool(
         "Execute a shell command in the workspace. "
         "The working directory persists across calls (cd works) and is returned as cwd "
         "on every result — do not cd into the directory you are already in. "
-        "Long-running commands auto-background after timeout and return a task_id. "
-        "Set run_in_background=true to background immediately."
+        "Long-running commands auto-background after timeout and return a command_id. "
+        "Set run_in_background=true to background immediately and return a command_id. "
+        "Follow up with get_command, wait_command, list_commands, or terminate_command."
     ),
     parameters={
         "type": "object",
@@ -278,7 +286,7 @@ execute_command_tool = Tool(
             },
             "run_in_background": {
                 "type": "boolean",
-                "description": "If true, run immediately in background and return task_id",
+                "description": "If true, run immediately in the background and return command_id",
                 "default": False,
             },
         },

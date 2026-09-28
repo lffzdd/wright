@@ -6,38 +6,45 @@
 ## 核心结构
 
 ```text
-Model / REPL
-    │
-    ▼
-TaskService  ── get / list / wait / cancel
-    │
-    ├── AgentTaskBackend ──► AgentControlPlane（Agent 状态唯一 owner）
-    │
-    └── ShellTaskBackend ──► Session.background_tasks（Shell 元数据唯一 owner）
+Model
+    ├── agent_task_id  → get_agent / wait_agent / cancel_agent
+    ├── command_id     → get_command / wait_command / list_commands / terminate_command
+    └── schedule_id / run_id → schedule tools
+              │
+              ▼
+        TaskService（内部路由，不暴露给模型）
+              │
+              ├── AgentTaskBackend ──► AgentControlPlane
+              ├── ShellTaskBackend ──► Session.background_tasks + ProcessRegistry
+              └── DurableTaskBackend ──► AutonomyStore
 ```
 
-`RuntimeTask` 是只读投影视图，不保存任务状态。它统一了 `id`、`kind`、`status`、
-时间、结果/输出、错误和取消信息；backend-specific 数据仅放在 `details` 中。
-
-这种边界避免了最危险的做法：控制面、Shell registry 和“统一任务表”各写一份 status，
-最终出现三份互相矛盾的真相。
+`RuntimeTask` 仍是 UI、事件和诊断用的只读投影，不是另一套状态机。模型看到的是
+对象类型明确的标识：`agent_task_id`、`command_id`、`schedule_id`、`run_id`。
 
 ## 模型工具面
 
-- `get_task(task_id)`：读取任意 Agent/Shell 任务；
-- `list_tasks(...)`：默认列当前 user turn，可按 kind/status 过滤；
-- `wait_task(task_id, timeout)`：等待终态，超时只返回观察结果，不取消任务；
-- `cancel_task(task_id, reason)`：Agent 走协作取消并传播到后代，Shell 终止整个进程组。
+子 Agent 委派：
 
-`get_task_output`、`get_agent_task`、`cancel_agent_task` 仍注册在 executor 中，旧 transcript
-或测试可以继续调用；但它们不再进入新会话的系统提示，避免模型同时学习两套 API。
+- `spawn_agent` / `get_agent_tree`
+- `get_agent` / `wait_agent` / `cancel_agent`，参数是 `agent_task_id`
+
+命令执行：
+
+- `execute_command` 在后台启动或超时转后台时返回 `command_id`
+- `get_command` / `wait_command` / `terminate_command`
+- `list_commands` 默认只列当前 user turn 的后台命令，可按状态过滤；
+  `include_all_turns=true` 只扩展到当前 session
+
+持久化调度见 [`long-running-autonomy.md`](long-running-autonomy.md)。
+
+等待超时只结束这次等待。`unknown` / `outcome=unconfirmed` 表示无法确认，不是成功完成。
+把别的家族的 id 传进来会在控制动作之前失败。
 
 ## 完成通知
 
-Agent worker 和 Shell reader 都只向 REPL 投递 `TASK_DONE(task_id)`。REPL 是 root session
-唯一写入者，它根据 task id 从真实 owner 读取 `RuntimeTask`，生成统一的
-`task_notification` runtime event，再让 Agent 处理结果。后台线程不会直接改 root
-transcript。
+Agent worker 和 Shell reader 仍向 REPL 投递内部 `TASK_DONE`。REPL 读取真实 owner 后，
+交给模型的事件带有 `agent_task_id` 或 `command_id`，以及对应的后续工具名。
 
 ## 第四阶段扩展（已实现）
 

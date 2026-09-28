@@ -22,13 +22,19 @@ from urllib.parse import urlparse
 
 from openai import APIConnectionError, APIStatusError, OpenAI, omit
 
-from ..storage.artifacts import ArtifactStore
-from ..storage.attachments import AttachmentError, AttachmentStore
-from ...domain.model.events import ContentDelta, ContentDone, LLMEvent, ReasoningDelta, UsageEvent
 from ...domain.gateway.llm_gateway import ILLMProvider
 from ...domain.model import ModelRequest
-from .model_adapters import ChatAdapter, ResponsesAdapter
+from ...domain.model.events import (
+    ContentDelta,
+    ContentDone,
+    LLMEvent,
+    ReasoningDelta,
+    UsageEvent,
+)
 from ...domain.model.tool import ArtifactRef
+from ..storage.artifacts import ArtifactStore
+from ..storage.attachments import AttachmentError, AttachmentStore
+from .model_adapters import ChatAdapter, ResponsesAdapter
 
 
 class LLMClient(ILLMProvider):

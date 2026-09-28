@@ -4,8 +4,8 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 
+from wright.application.composition.runtime import RuntimeConfig
 from wright.interfaces import headless
-from wright.application.runtime import RuntimeConfig
 
 
 def test_headless_entry_starts_and_stops_the_application_host(monkeypatch, tmp_path, capsys):
@@ -31,6 +31,9 @@ def test_headless_entry_starts_and_stops_the_application_host(monkeypatch, tmp_p
         RuntimeConfig(workspace=Path(tmp_path)), source_session_id="origin", stop_event=stop
     )
 
-    assert calls[0] == {"start_automation": False, "automation_session_id": "origin"}
+    kwargs = calls[0]
+    assert kwargs["start_automation"] is False
+    assert kwargs["automation_session_id"] == "origin"
+    assert kwargs["renderer"] is not None
     assert calls[1:] == ["start", runtime]
     assert str(tmp_path) in capsys.readouterr().out

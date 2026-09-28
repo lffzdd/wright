@@ -4,16 +4,12 @@ import pytest
 
 from tests.responses import event, response
 from wright.application.agent import create_agent, make_spawn_agent_tool
-from wright.application.lifecycle import (
-    HookRegistration,
-    LifecycleManager,
-    TraceRecorder,
-)
-from wright.application.tool_runtime import tool_runtime_for_session
+from wright.application.lifecycle import HookRegistration, LifecycleManager
+from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolResult
+from wright.infrastructure.lifecycle import TraceRecorder
 from wright.infrastructure.tools.base import Tool
-from wright.interfaces.renderer import SilentRenderer
 
 
 def _final(answer):
@@ -82,7 +78,6 @@ def test_agent_emits_root_lifecycle_and_compaction_events(tmp_path):
         llm,
         [specialized],
         session,
-        SilentRenderer(),
         lifecycle=lifecycle,
         context_watermark=0.5,
         keep_recent_tool_results=0,
@@ -125,7 +120,6 @@ def test_agent_stop_hook_can_reject_candidate_and_continue(tmp_path):
         ScriptLLM([_final("first"), _final("second")]),
         [],
         Session.create("goal", tmp_path),
-        SilentRenderer(),
         lifecycle=lifecycle,
     )
 
@@ -138,7 +132,7 @@ def test_llm_failure_is_traced_without_destroying_resumable_state(tmp_path):
     lifecycle = LifecycleManager("session", recorder)
     session = Session.create("goal", tmp_path)
     agent = create_agent(
-        BrokenLLM(), [], session, SilentRenderer(), lifecycle=lifecycle
+        BrokenLLM(), [], session, lifecycle=lifecycle
     )
 
     with pytest.raises(RuntimeError, match="provider unavailable"):
@@ -185,7 +179,7 @@ def test_subagent_uses_shared_lifecycle_with_agent_identity(tmp_path):
     assert [row["event"] for row in lifecycle_rows] == [
         "subagent_start", "subagent_stop"
     ]
-    assert lifecycle_rows[0]["agent_task_id"] == result.data["task_id"]
+    assert lifecycle_rows[0]["agent_task_id"] == result.data["agent_task_id"]
 
 
 def test_runtime_notification_preserves_user_turn_and_defers_episode(tmp_path):
@@ -197,7 +191,6 @@ def test_runtime_notification_preserves_user_turn_and_defers_episode(tmp_path):
         ScriptLLM([_final("initial answer"), _final("background incorporated")]),
         [],
         session,
-        SilentRenderer(),
         lifecycle=lifecycle,
         memory=memory,
     )

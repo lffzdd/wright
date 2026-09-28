@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 if TYPE_CHECKING:
-    from .ui_events import EventPublisher
+    from ...application.session.publisher import EventPublisher
 
 InteractionKind = Literal["permission", "ask_user"]
 

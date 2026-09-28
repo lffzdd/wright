@@ -14,7 +14,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from ...model.memory.semantic import SEMANTIC_READ_SCOPES, SEMANTIC_SCOPES, SEMANTIC_STATUSES
+from ...model.memory.semantic import (
+    SEMANTIC_READ_SCOPES,
+    SEMANTIC_SCOPES,
+    SEMANTIC_STATUSES,
+)
 from .user_text import is_blank_user_text, is_trivial_user_text
 
 _SENSITIVE_PATTERNS: tuple[tuple[str, str], ...] = (

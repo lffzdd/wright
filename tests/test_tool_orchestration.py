@@ -2,10 +2,10 @@ import threading
 import time
 from pathlib import Path
 
-from wright.application.task_service import TaskService
-from wright.application.tool_capabilities import assemble_tool_capabilities
-from wright.application.tool_dispatch_service import ToolDispatchService
-from wright.application.tool_runtime import tool_runtime_for_session
+from wright.application.tasks.service import TaskService
+from wright.application.tool_execution.capabilities import assemble_tool_capabilities
+from wright.application.tool_execution.dispatch import ToolDispatchService
+from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.session import Session
 from wright.domain.model.tasks import TaskNotFoundError
 from wright.domain.model.tool import ToolCall, ToolResult
@@ -117,7 +117,7 @@ def test_background_tasks_belong_to_their_session(tmp_path):
         run_in_background=True,
         runtime=first_runtime,
     )
-    task_id = result.data["task_id"]
+    task_id = result.data["command_id"]
 
     assert TaskService.for_session(first).get(task_id).id == task_id
     try:
@@ -139,7 +139,7 @@ def test_explicit_background_command_does_not_update_session_cwd(tmp_path):
         run_in_background=True,
         runtime=runtime,
     )
-    task_id = result.data["task_id"]
+    task_id = result.data["command_id"]
 
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
@@ -167,7 +167,7 @@ def test_timed_out_background_command_does_not_overwrite_later_cwd(tmp_path):
     )
     assert result.data["timed_out"] is True
     session.set_cwd(later_dir)
-    task_id = result.data["task_id"]
+    task_id = result.data["command_id"]
 
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:

@@ -6,9 +6,9 @@ from wright.application.agent import (
     create_agent,
     make_spawn_agent_tool,
 )
-from wright.application.tool_capabilities import assemble_tool_capabilities
-from wright.application.tool_dispatch_service import ToolDispatchService
-from wright.application.tool_runtime import tool_runtime_for_session
+from wright.application.tool_execution.capabilities import assemble_tool_capabilities
+from wright.application.tool_execution.dispatch import ToolDispatchService
+from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.coordination import AgentControlConfig, AgentControlPlane
 from wright.domain.model.events import UsageEvent
 from wright.domain.model.session import Session
@@ -18,9 +18,8 @@ from wright.domain.policy import (
     PermissionResolver,
     PermissionSettings,
 )
-from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
+from wright.infrastructure.persistence.session.repository import FileSessionRepository
 from wright.infrastructure.tools.command import execute_command
-from wright.interfaces.renderer import SilentRenderer
 
 
 def _tool(name, **arguments):
@@ -59,7 +58,7 @@ def test_nested_agents_form_one_shared_task_tree(tmp_path):
     )
 
     result = create_agent(
-        llm, tools, session, SilentRenderer(),
+        llm, tools, session,
         permission_resolver=permission_resolver,
     ).run("root task")
 
@@ -106,8 +105,8 @@ def test_shared_token_budget_stops_child_before_accepting_final(tmp_path):
     result = spawn.call({"task": "expensive"}, runtime)
 
     assert not result.ok
-    assert result.data["task_status"] == "cancelled"
-    task = session.control_plane.get(result.data["task_id"])
+    assert result.data["status"] == "cancelled"
+    task = session.control_plane.get(result.data["agent_task_id"])
     assert task.total_tokens == 13
     assert "token" in task.cancel_reason
 
@@ -140,7 +139,7 @@ def test_executor_deadline_propagates_to_child_control_state(tmp_path):
     ])[0]
 
     assert outcome.status == "timeout"
-    assert outcome.result.data["task_id"]
+    assert outcome.result.data["agent_task_id"]
     tree = session.control_plane.tree(session.agent_root_turn_id)
     assert tree[0]["status"] == "timed_out"
 
@@ -155,7 +154,6 @@ def test_control_plane_changes_are_checkpointed_and_live_tasks_recover_unknown(t
         ScriptLLM([_final("unused")]),
         [],
         session,
-        SilentRenderer(),
         checkpoint_store=store,
     )
 
@@ -197,7 +195,7 @@ def test_spawn_emits_structured_lifecycle_events(tmp_path):
 
     assert result.ok
     assert [event["status"] for event in events] == ["running", "completed"]
-    assert events[0]["task_id"] == result.data["task_id"]
+    assert events[0]["task_id"] == result.data["agent_task_id"]
 
 
 def test_child_runtime_cannot_leave_background_processes(tmp_path):

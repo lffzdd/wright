@@ -4,36 +4,38 @@ from __future__ import annotations
 
 import json
 import threading
-import time
-from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+from typing import Any, Literal
 from uuid import uuid4
 
-from ..planning import PlanManager
-from ....infrastructure.workspace.project import ExecutionEnvironment
-from ..tool import ToolCall, ToolResult
 from ....utils.token_counter import estimate_message_tokens
+from ..attachment import AttachmentRecord
 from ..coordination import AgentControlPlane
+from ..planning import PlanManager
 from ..runs import TERMINAL_RUN_STATUSES, RunRecord, RunStatus, new_run_id
-from .conversation import ConversationMessage, ImagePart, MessageId, MessageRecord, TextPart, UserTurnInput
+from ..tool import ToolCall, ToolResult
+from .conversation import (
+    ConversationMessage,
+    ImagePart,
+    MessageId,
+    MessageRecord,
+    TextPart,
+    UserTurnInput,
+)
+from .environment import ExecutionEnvironment
 from .records import (
     BackgroundTask,
     CallId,
     SessionLifecycle,
     ToolExecutionRecord,
-    ToolExecutionStatus,
     ToolExecutionTerminal,
     TurnRecord,
-    TurnRoute,
     UsageRecord,
     VerificationRecord,
 )
 
-if TYPE_CHECKING:
-    from ....infrastructure.storage.attachments import AttachmentRecord
 
 @dataclass
 class Session:
@@ -165,7 +167,7 @@ class Session:
 
     def add_working_directory(self, directory: Path) -> Path:
         """Grant an extra working-directory root for this session."""
-        from ...policy.scope import is_under, resolve_root
+        from ...policy.permission.scope import is_under, resolve_root
 
         resolved = resolve_root(directory)
         origin = resolve_root(self.workspace_dir)
@@ -187,7 +189,7 @@ class Session:
 
     def access_scope(self):
         """Build an immutable permission snapshot at a composition boundary."""
-        from ...policy.scope import AccessScope
+        from ...policy.permission.scope import AccessScope
 
         return AccessScope(self.workspace_dir, self.working_directories_snapshot())
 

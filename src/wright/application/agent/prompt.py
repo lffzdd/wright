@@ -9,8 +9,8 @@ from ..skills import catalog_reminder
 
 if TYPE_CHECKING:
     from ...domain.model.session import Session
-    from ..skills import SkillRegistry
     from ...infrastructure.tools.base import Tool
+    from ..skills import SkillRegistry
 
 
 class AgentPromptManager:

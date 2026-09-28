@@ -24,6 +24,26 @@ class TaskNotFoundError(ValueError):
     pass
 
 
+class TaskKindMismatch(ValueError):
+    """An id exists, but it belongs to a different execution family."""
+
+    def __init__(
+        self, identifier: str, *, expected: TaskKind, actual: TaskKind
+    ) -> None:
+        self.identifier = identifier
+        self.expected = expected
+        self.actual = actual
+        labels = {
+            "agent": "delegated agent execution (agent_task_id)",
+            "shell": "command execution (command_id)",
+            "durable": "schedule run (run_id)",
+        }
+        super().__init__(
+            f"{identifier} belongs to a {labels[actual]} and cannot be used as a "
+            f"{labels[expected]}"
+        )
+
+
 class TaskWaitCancelled(RuntimeError):
     pass
 

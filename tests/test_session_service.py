@@ -5,14 +5,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from wright.application.session_service import (
+from wright.application.session.publisher import EventPublisher
+from wright.application.session.service import (
     SessionClosedError,
     SessionService,
     SessionServiceError,
 )
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 from wright.interfaces.interaction import InteractionBroker
-from wright.interfaces.ui_events import EventPublisher
 
 
 def _runtime(*, status="completed", model="first"):

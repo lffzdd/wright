@@ -3,14 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from .model.events import ContentDone
-from .model.tool import ToolCall, ToolResult
-
-if TYPE_CHECKING:
-    from ..infrastructure.tools.base import Tool
+from .model.tool import ModelVisibleTool, ToolCall, ToolResult
 
 
 def build_tool_results_messages(
@@ -28,7 +26,7 @@ def build_tool_results_messages(
 
 
 def encode_tools(
-    tools: list[Tool], *, active_deferred: set[str] | None = None
+    tools: Sequence[ModelVisibleTool], *, active_deferred: set[str] | None = None
 ) -> tuple[list[dict], dict[str, str]]:
     """Give MCP names API-safe aliases without changing executor/permission names."""
     schemas = []

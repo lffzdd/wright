@@ -1,295 +1,50 @@
 import json
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
-from ..services import RuntimeServices
-from ...infrastructure.storage.attachments import MAX_ATTACHMENTS_PER_TURN, MAX_TOTAL_ATTACHMENT_BYTES
-from ...domain.model.agent import AgentProfile, CapabilityCatalog, CapabilitySnapshot
-from ...domain.model.session import Session, UsageRecord
-from ...domain.model.events import ContentDelta, ContentDone, ReasoningDelta, UsageEvent
-from ...infrastructure.llm.llm import LLMClient
 from ...core.logger import get_logger
-from ..memory import MemoryManager
 from ...domain.model import ModelRequest
-from ...domain.policy import AuthorizationChange, PermissionResolver
-from ...core.processes import RuntimeResources
-from ...domain.prompt import build_system_prompt
+from ...domain.model.events import ContentDelta, ContentDone, ReasoningDelta, UsageEvent
+from ...domain.model.session import Session, UsageRecord
+from ...domain.policy import AuthorizationChange
+from ...domain.policy.verifier import Verifier
 from ...domain.protocol import (
     TurnAbort,
-    build_tool_results_messages,
     encode_tools,
     parse_turn,
 )
-from ...interfaces.renderer import Renderer
-from ..skills import SkillRegistry, catalog_reminder
-from ..tool_capabilities import CapabilityAssembly, assemble_tool_capabilities
-from ...domain.model.tool import ToolResult
-from ...infrastructure.tools.base import Tool
-from ...infrastructure.tools.tool_search import MAX_ACTIVE_DEFERRED_TOOLS, make_tool_search_tool
-from ...interfaces.ui_events import EventPublisher, RendererEventSubscriber, SessionEvents
+from ...infrastructure.llm.llm import LLMClient
+from ...infrastructure.storage.attachments import (
+    MAX_ATTACHMENTS_PER_TURN,
+    MAX_TOTAL_ATTACHMENT_BYTES,
+)
 from ...utils.token_counter import estimate_message_tokens
+from ..composition.services import RuntimeServices
+from ..memory import MemoryManager
+from ..session.events import SessionEvents
+from ..session.live_resources import RuntimeResources
+from ..skills import SkillRegistry
+from ..tool_execution.capabilities import (
+    CapabilityAssembly,
+    assemble_tool_capabilities,
+)
+from .components import AgentComponents, PreparedTools
+from .context import ContextBudgetExceeded
 from .prompt import AgentPromptManager
-from .turns import AgentTurnHandler, RetryCounters
+from .turns import (
+    RetryCounters,
+    TurnControl,
+    handle_final_turn,
+    handle_invalid_turn,
+    handle_tool_calls_turn,
+)
 from .usage import AgentUsageTracker
-from .cancellation import CancellationToken
-from .context import ContextBudgetExceeded, ContextBuilder, ContextCompactor
-from ..tool_dispatch_service import ToolDispatchService
-from ...domain.policy.verifier import Verifier
 
 if TYPE_CHECKING:
-    from ...infrastructure.persistence.file_session_repo import FileSessionRepository
+    from ...infrastructure.persistence.session.repository import FileSessionRepository
 
 logger = get_logger(__name__)
-
-
-@dataclass
-class PreparedTools:
-    """The model-facing tool list for one agent, built once before it runs."""
-
-    profile: AgentProfile
-    capabilities: CapabilitySnapshot
-    tools: list[Tool]
-    schemas: list[dict]
-    names: dict[str, str]
-
-
-@dataclass
-class AgentComponents:
-    """Per-Agent collaborators assembled outside the Agent behavior object."""
-
-    cancellation: CancellationToken
-    context_builder: ContextBuilder
-    tool_dispatcher: ToolDispatchService
-
-    @property
-    def executor(self) -> ToolDispatchService:
-        return self.tool_dispatcher
-
-
-def assemble_agent_components(
-    *,
-    session_state: Session,
-    events: SessionEvents,
-    prepared: PreparedTools,
-    assembly: CapabilityAssembly,
-    tool_timeout: float = 30,
-    context_watermark: float = 0.75,
-    keep_recent_tool_results: int = 3,
-    permission_resolver: PermissionResolver | None = None,
-    cancellation_check: Callable[[], bool] | None = None,
-    allow_background_tasks: bool = True,
-    on_shell_task_done: Callable[[str], None] | None = None,
-    lifecycle=None,
-    execution_journal=None,
-    authorization_commit: Callable[[AuthorizationChange], None] | None = None,
-) -> AgentComponents:
-    """Build the collaborators bound to one Agent and one execution scope."""
-    cancellation = CancellationToken(cancellation_check)
-    compactor = ContextCompactor(
-        on_compact=events.on_context_compact,
-        context_watermark=context_watermark,
-        keep_recent_tool_results=keep_recent_tool_results,
-    )
-    context_builder = ContextBuilder(compactor)
-    tool_dispatcher = ToolDispatchService(
-        {tool.name: tool for tool in prepared.tools},
-        assembly,
-        tool_timeout=tool_timeout,
-        on_command_output=events.on_command_output,
-        on_tool_output=events.on_tool_output,
-        on_progress=events.on_agent_event,
-        on_shell_task_done=on_shell_task_done,
-        permission_resolver=permission_resolver,
-        session=session_state,
-        cancellation_check=cancellation.is_cancelled,
-        allow_background_tasks=(
-            allow_background_tasks and prepared.profile.allow_background_tasks
-        ),
-        lifecycle=lifecycle,
-        capability_snapshot=prepared.capabilities,
-        execution_journal=execution_journal,
-        authorization_commit=authorization_commit,
-    )
-    return AgentComponents(cancellation, context_builder, tool_dispatcher)
-
-
-def prepare_model_tools(
-    session: Session,
-    tools: list[Tool],
-    profile: AgentProfile | None = None,
-) -> PreparedTools:
-    """Filter tools for this profile and attach the deferred-tool catalog."""
-    catalog = CapabilityCatalog(tools)
-    resolved = profile or AgentProfile(
-        "root",
-        catalog.names,
-        allow_interaction=True,
-        allow_background_tasks=True,
-        allow_delegation=True,
-    )
-    capabilities = catalog.snapshot(resolved)
-    runtime_tools = [
-        tool for tool in capabilities.tools
-        if (resolved.allow_interaction or not tool.requires_user_interaction)
-        and (resolved.allow_delegation or tool.name not in {"spawn_agent", "get_agent_tree"})
-    ]
-    deferred_names = {
-        tool.name
-        for tool in runtime_tools
-        if tool.expose_to_model and tool.defer_to_model
-    }
-    restored_active = [
-        name
-        for name in session.active_deferred_tools
-        if name in deferred_names
-    ][-MAX_ACTIVE_DEFERRED_TOOLS:]
-    session.active_deferred_tools[:] = restored_active
-    if any(tool.expose_to_model and tool.defer_to_model for tool in runtime_tools):
-        runtime_tools.append(make_tool_search_tool(runtime_tools, session.active_deferred_tools))
-    capabilities = CapabilitySnapshot(resolved, tuple(runtime_tools))
-    schemas, names = encode_tools(
-        runtime_tools, active_deferred=set(session.active_deferred_tools)
-    )
-    return PreparedTools(resolved, capabilities, runtime_tools, schemas, names)
-
-
-def ensure_system_prompt(
-    session: Session,
-    prepared: PreparedTools,
-    memory: MemoryManager | None,
-    role_instruction: str = "",
-) -> None:
-    """Persist static instructions once; mutable memory is projected per request."""
-    if session.message_records:
-        return
-    memory_section = memory.instructions() if memory else ""
-    prompt_tools = [tool for tool in prepared.tools if tool.name != "tool_search"]
-    effective_role = role_instruction or getattr(prepared.profile, "role_instruction", "")
-    session.append_message({
-        "role": "system",
-        "content": build_system_prompt(
-            prompt_tools,
-            memory_section=memory_section,
-            role_instruction=effective_role,
-        ),
-    })
-
-
-def events_from_renderer(session: Session, renderer: Renderer | None) -> SessionEvents:
-    """Test and headless adapter: project the event stream onto a renderer."""
-    publisher = EventPublisher(project_id="local", session_id=session.session_id)
-    if renderer is not None:
-        publisher.add_listener(RendererEventSubscriber(renderer))
-    return SessionEvents(publisher)
-
-
-def bind_root_checkpoint(agent: "Agent") -> None:
-    """Persist the root control plane. Child tasks checkpoint through their parent."""
-    if agent.checkpoint_store is None or agent.session_state.agent_task_id is not None:
-        return
-    agent.session_state.control_plane.set_on_change(agent._checkpoint)
-
-
-def create_agent(
-    llm: LLMClient,
-    tools: list[Tool],
-    session_state: Session,
-    renderer: Renderer | None = None,
-    tool_timeout: float = 30,
-    context_watermark: float = 0.75,
-    keep_recent_tool_results: int = 3,
-    max_consecutive_invalid: int = 3,
-    permission_resolver: PermissionResolver | None = None,
-    cancellation_check: Callable[[], bool] | None = None,
-    memory: MemoryManager | None = None,
-    verifier: Verifier | None = None,
-    max_verification_retries: int = 3,
-    checkpoint_store: "FileSessionRepository | None" = None,
-    usage_observer: Callable[[UsageRecord], None] | None = None,
-    allow_background_tasks: bool = True,
-    on_shell_task_done: Callable[[str], None] | None = None,
-    lifecycle=None,
-    skills: SkillRegistry | None = None,
-    services: RuntimeServices | None = None,
-    runtime_resources: RuntimeResources | None = None,
-    profile: AgentProfile | None = None,
-    execution_journal=None,
-    execution_journal_factory=None,
-    on_run_started: Callable[[str], None] | None = None,
-    authorization_commit: Callable[[AuthorizationChange], None] | None = None,
-    authorization_commit_factory=None,
-    assembly: CapabilityAssembly | None = None,
-    events: SessionEvents | None = None,
-    role_instruction: str = "",
-) -> "Agent":
-    """Prepare tools, the system prompt, and events, then build an Agent.
-
-    Tests and scripts use this. Production hosts call the same steps themselves.
-    """
-    if events is None:
-        events = events_from_renderer(session_state, renderer)
-    if assembly is None:
-        resources = runtime_resources or RuntimeResources.for_session(session_state.session_id)
-        assembly = assemble_tool_capabilities(
-            session_state,
-            services,
-            resources,
-            execution_journal_factory=execution_journal_factory,
-            authorization_commit_factory=authorization_commit_factory,
-        )
-        runtime_resources = assembly.runtime_resources or resources
-    if authorization_commit is None and authorization_commit_factory is not None:
-        authorization_commit = authorization_commit_factory(session_state)
-    prepared = prepare_model_tools(session_state, tools, profile)
-    ensure_system_prompt(
-        session_state,
-        prepared,
-        memory,
-        role_instruction=role_instruction or (profile.role_instruction if profile else ""),
-    )
-    components = assemble_agent_components(
-        session_state=session_state,
-        events=events,
-        prepared=prepared,
-        assembly=assembly,
-        tool_timeout=tool_timeout,
-        context_watermark=context_watermark,
-        keep_recent_tool_results=keep_recent_tool_results,
-        permission_resolver=permission_resolver,
-        cancellation_check=cancellation_check,
-        allow_background_tasks=allow_background_tasks,
-        on_shell_task_done=on_shell_task_done,
-        lifecycle=lifecycle,
-        execution_journal=execution_journal,
-        authorization_commit=authorization_commit,
-    )
-    agent = Agent(
-        llm,
-        session_state,
-        events,
-        prepared,
-        assembly,
-        components=components,
-        max_consecutive_invalid=max_consecutive_invalid,
-        memory=memory,
-        verifier=verifier,
-        max_verification_retries=max_verification_retries,
-        checkpoint_store=checkpoint_store,
-        usage_observer=usage_observer,
-        lifecycle=lifecycle,
-        skills=skills,
-        services=services,
-        runtime_resources=runtime_resources,
-        execution_journal=execution_journal,
-        execution_journal_factory=execution_journal_factory,
-        on_run_started=on_run_started,
-        authorization_commit=authorization_commit,
-        authorization_commit_factory=authorization_commit_factory,
-    )
-    bind_root_checkpoint(agent)
-    return agent
 
 
 class Agent:
@@ -378,7 +133,6 @@ class Agent:
             skills=skills,
             schema_tools=self._schema_tools,
         )
-        self._turn_handler = AgentTurnHandler(self)
 
     @property
     def context_limit(self) -> int | None:
@@ -682,7 +436,7 @@ class Agent:
         self.session_state.mark_cancelled()
         active_run = self.session_state.active_run()
         if active_run is not None:
-            self.runtime_resources.finish_response(active_run.run_id)
+            self.runtime_resources.responses.finish_response(active_run.run_id)
         if record_memory:
             self._finalize_memory(None, extract_semantic=False)
         self._checkpoint()
@@ -722,7 +476,7 @@ class Agent:
         self._bind_executor_run()
         active_run = self.session_state.active_run()
         if active_run is not None:
-            self.runtime_resources.begin_response(active_run.run_id)
+            self.runtime_resources.responses.begin_response(active_run.run_id)
             active_run.model_config = {
                 "model": str(getattr(self.llm, "model", "")),
                 "transport": str(getattr(self.llm, "transport_name", "")),
@@ -829,7 +583,7 @@ class Agent:
                 str(event.get("type") or "runtime_event"), source="runtime_event"
             )
         self._bind_executor_run()
-        self.runtime_resources.begin_response(active_run.run_id)
+        self.runtime_resources.responses.begin_response(active_run.run_id)
         self._emit_lifecycle("runtime_event", event)
         self.session_state.append_message(
             {"role": "user", "content": content}, source="runtime_event"
@@ -917,6 +671,12 @@ class Agent:
             record_memory=True,
         )
 
+    def attach_root_checkpoint(self) -> None:
+        """Subscribe the control plane to this agent's checkpoint writer."""
+        if self.checkpoint_store is None or self.session_state.agent_task_id is not None:
+            return
+        self.session_state.control_plane.set_on_change(self._checkpoint)
+
     def _checkpoint(self) -> None:
         if self.checkpoint_store is None:
             return
@@ -986,7 +746,7 @@ class Agent:
         getattr(self.session_state, self._TERMINAL_MARKERS[status])()
         active_run = self.session_state.active_run()
         if active_run is not None:
-            self.runtime_resources.finish_response(active_run.run_id)
+            self.runtime_resources.responses.finish_response(active_run.run_id)
         if record_memory:
             self._finalize_memory(
                 None,
@@ -995,6 +755,36 @@ class Agent:
             )
         self._checkpoint()
         self._emit_agent_stop(status, reason=reason)
+
+    def _turn_control(self, *, record_memory: bool) -> TurnControl:
+        def finalize_memory(answer: str | None, *, extract_semantic: bool) -> None:
+            if record_memory:
+                self._finalize_memory(answer, extract_semantic=extract_semantic)
+
+        def terminate(status: str, *, reason: str, message: str) -> None:
+            self._terminate(
+                status,
+                reason=reason,
+                message=message,
+                record_memory=record_memory,
+            )
+
+        return TurnControl(
+            session=self.session_state,
+            verifier=self.verifier,
+            ui=self.ui,
+            executor=self.executor,
+            responses=self.runtime_resources.responses,
+            max_verification_retries=self.max_verification_retries,
+            max_consecutive_invalid=self.max_consecutive_invalid,
+            record_run_event=self._record_run_event,
+            record_usage=self._record_usage_for_turn,
+            stop_if_cancelled=lambda: self._stop_if_cancelled(record_memory=record_memory),
+            checkpoint=self._checkpoint,
+            emit_agent_stop=self._emit_agent_stop,
+            finalize_memory=finalize_memory,
+            terminate=terminate,
+        )
 
     def _handle_final_turn(
         self,
@@ -1006,13 +796,13 @@ class Agent:
         *,
         record_memory: bool,
     ) -> tuple[str | None, str]:
-        return self._turn_handler.handle_final_turn(
+        return handle_final_turn(
+            self._turn_control(record_memory=record_memory),
             turn,
             content,
             usage_record,
             transient_plan_tokens,
             counters,
-            record_memory=record_memory,
         )
 
     def _handle_tool_calls_turn(
@@ -1024,12 +814,12 @@ class Agent:
         *,
         record_memory: bool,
     ) -> bool:
-        return self._turn_handler.handle_tool_calls_turn(
+        return handle_tool_calls_turn(
+            self._turn_control(record_memory=record_memory),
             turn,
             content,
             usage_record,
             transient_plan_tokens,
-            record_memory=record_memory,
         )
 
     def _handle_invalid_turn(
@@ -1042,13 +832,13 @@ class Agent:
         *,
         record_memory: bool,
     ) -> str:
-        return self._turn_handler.handle_invalid_turn(
+        return handle_invalid_turn(
+            self._turn_control(record_memory=record_memory),
             response,
             error,
             usage_record,
             transient_plan_tokens,
             counters,
-            record_memory=record_memory,
         )
 
     def _run_loop(

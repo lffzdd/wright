@@ -65,7 +65,7 @@ manage_loop_tool = Tool(
         "current user goal, plan, and transcript. Loops are memory-only — they "
         "vanish when the session ends and do not survive restart. "
         "Do not use this for work that must outlive the session or run without "
-        "the current conversation; use schedule_task for isolated durable runs. "
+        "the current conversation; use create_schedule for isolated durable runs. "
         "Interval must be at least 5 seconds; at most 20 loops per session."
     ),
     parameters={

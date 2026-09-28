@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from ...domain.model.session import MessageRecord
-from ...interfaces.renderer import Renderer
 from ...utils import estimate_message_tokens, estimate_tools_tokens
 
 
@@ -72,13 +71,11 @@ class ContextCompactor:
 
     def __init__(
         self,
-        renderer: Renderer | None = None,
         context_watermark: float = 0.75,
         keep_recent_tool_results: int = 3,
         *,
         on_compact: Callable[..., None] | None = None,
     ) -> None:
-        self.renderer = renderer
         self.on_compact = on_compact
         self.context_watermark = context_watermark
         self.keep_recent_tool_results = keep_recent_tool_results
@@ -142,10 +139,6 @@ class ContextCompactor:
         folded_count = len(folded)
         if self.on_compact is not None:
             self.on_compact(
-                folded_count, estimated_tokens, context_limit, self.context_watermark
-            )
-        elif self.renderer is not None:
-            self.renderer.on_context_compact(
                 folded_count, estimated_tokens, context_limit, self.context_watermark
             )
         return tuple(copied), tuple(folded)

@@ -21,7 +21,6 @@ from tests.responses import event, response
 
 from wright.application.agent import build_agent_tools, create_agent, make_spawn_agent_tool
 from wright.domain.model.events import ContentDone
-from wright.interfaces.renderer import SilentRenderer
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolResult
 from wright.infrastructure.tools.base import Tool
@@ -91,7 +90,7 @@ def test_parent_delegates_and_aggregates_child_result():
 
     session = _make_session()
     tools = build_agent_tools(llm, [], depth=0, max_depth=2)
-    agent = create_agent(llm, tools, session, SilentRenderer())
+    agent = create_agent(llm, tools, session)
 
     result = agent.run("把子任务委派出去")
 
@@ -125,7 +124,7 @@ def test_child_context_is_isolated_from_parent():
 
     session = _make_session(goal=parent_goal_marker)
     tools = build_agent_tools(llm, [], depth=0, max_depth=2)
-    agent = create_agent(llm, tools, session, SilentRenderer())
+    agent = create_agent(llm, tools, session)
     agent.run(parent_goal_marker)
 
     # 第 2 次 LLM 调用是子 Agent 的 turn1;它看到的所有消息都不该提到父任务的暗号。
@@ -155,7 +154,7 @@ def test_child_failure_surfaces_as_failed_tool_result():
     )
 
     session = _make_session()
-    agent = create_agent(llm, [noop, spawn], session, SilentRenderer())
+    agent = create_agent(llm, [noop, spawn], session)
     result = agent.run("委派一个跑不完的任务")
 
     assert result == "子 Agent 没做完,主 Agent 如实收尾"
@@ -213,7 +212,7 @@ def test_multiple_spawn_agents_run_concurrently_and_preserve_result_order():
     llm = ConcurrentLLM()
     session = _make_session()
     tools = build_agent_tools(llm, [], depth=0, max_depth=1)
-    agent = create_agent(llm, tools, session, SilentRenderer(), tool_timeout=2)
+    agent = create_agent(llm, tools, session, tool_timeout=2)
 
     result = agent.run("并行委派")
 

@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from wright.application.agent import create_agent
 from wright.domain.model.session import Session
-from wright.domain.model.tool import ToolResult
+from wright.domain.model.tool import ToolResult, split_tool_catalog
 from wright.domain.prompt import build_system_prompt
-from wright.infrastructure.tools.base import Tool, split_tool_catalog
+from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.tool_search import make_tool_search_tool
-from wright.interfaces.renderer import SilentRenderer
 
 
 def _tool(name: str, *, deferred: bool = False, expose: bool = True) -> Tool:
@@ -24,18 +23,18 @@ def test_catalog_lists_follow_assembled_tools():
     tools = [
         _tool("read_file"),
         _tool("brand_new"),
-        _tool("schedule_task", deferred=True),
+        _tool("create_schedule", deferred=True),
         _tool("hidden_widget", deferred=True),
         _tool("internal_only", expose=False),
     ]
     baseline, deferred = split_tool_catalog(tools)
     assert baseline == ["read_file", "brand_new"]
-    assert deferred == ["schedule_task", "hidden_widget"]
+    assert deferred == ["create_schedule", "hidden_widget"]
 
     prompt = build_system_prompt(tools)
     assert "Always available: read_file, brand_new." in prompt
     assert "hidden_widget" not in prompt
-    assert "schedule_task" not in prompt
+    assert "create_schedule" not in prompt
     assert "tool_search" in prompt
     assert "Prefer edit_file" not in prompt
     assert "execute_command" not in prompt
@@ -80,7 +79,6 @@ def test_agent_system_prompt_uses_the_assembled_catalog(tmp_path):
         UnusedLLM(),
         [_tool("read_file"), _tool("brand_new"), _tool("new_hidden", deferred=True)],
         session,
-        SilentRenderer(),
     )
     content = session.message_records[0].message["content"]
     assert "Always available: read_file, brand_new." in content

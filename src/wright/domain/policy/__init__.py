@@ -1,22 +1,9 @@
-"""Public permission subsystem API."""
+"""Domain policies: permissions, context, guardrails, verification, and memory."""
 
-from .approval import (
-    FallbackApprovalHandler,
-    PermissionApprovalHandler,
-    PermissionRequest,
-    UserInteractionHandler,
-)
-from .config import (
-    PermissionMode,
-    PermissionRule,
-    PermissionSettings,
-    append_additional_directory,
-    append_allow_rule,
-    default_settings_path,
-    load_permission_settings,
-)
+from __future__ import annotations
+
 from .context_policy import ContextPolicy, TokenBudgetPolicy
-from .guardrail_policy import GuardrailPolicy, SecurityPolicy
+from .guardrail_policy import GuardrailPolicy
 from .memory import (
     CoreMemoryPolicy,
     EpisodePolicy,
@@ -26,25 +13,37 @@ from .memory import (
     is_delivered_answer,
     is_safe_memory,
 )
-from .resolver import (
-    PermissionPolicy,
-    PermissionResolver,
-)
-from .scope import AccessScope, PathClass, forbidden_paths, is_under, resolve_root
-from .types import (
+from .permission import (
+    AccessScope,
     AccessTarget,
     AuthorizationChange,
+    FallbackApprovalHandler,
     GrantTarget,
     InvocationGrant,
     InvocationIdentity,
+    PathClass,
+    PermissionApprovalHandler,
     PermissionChoice,
     PermissionDecision,
+    PermissionMode,
+    PermissionPolicy,
     PermissionPrompt,
+    PermissionRequest,
     PermissionResolution,
+    PermissionResolver,
     PermissionResponse,
+    PermissionRule,
+    PermissionSettings,
     PermissionSubject,
     ToolAccess,
+    UserInteractionHandler,
+    forbidden_paths,
+    is_under,
+    resolve_root,
 )
+from .verifier import Verifier
+
+SecurityPolicy = PermissionResolver
 
 __all__ = [
     "AccessScope",
@@ -79,13 +78,10 @@ __all__ = [
     "TokenBudgetPolicy",
     "ToolAccess",
     "UserInteractionHandler",
-    "append_additional_directory",
-    "append_allow_rule",
-    "default_settings_path",
+    "Verifier",
     "forbidden_paths",
     "is_delivered_answer",
     "is_safe_memory",
     "is_under",
-    "load_permission_settings",
     "resolve_root",
 ]

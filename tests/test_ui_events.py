@@ -3,15 +3,22 @@ import time
 
 import pytest
 
-from wright.interfaces.interaction import InteractionBroker
+from wright.application.session.events import EventScope, SessionEvents, UiEventEnvelope
+from wright.application.session.publisher import EventPublisher, open_session_events
 from wright.domain.model.tool import ToolCall, ToolResult
-from wright.interfaces.ui_events import (
-    EventPublisher,
-    EventScope,
-    RendererEventSubscriber,
-    SessionEvents,
-    UiEventEnvelope,
-)
+from wright.interfaces.interaction import InteractionBroker
+from wright.interfaces.rendering.subscriber import RendererEventSubscriber
+
+
+def test_open_session_events_needs_no_renderer():
+    session = type("Session", (), {"session_id": "child"})()
+    events = open_session_events(session)
+    events.on_system_notice("background")
+    recorded = events.publisher.retained_events()
+    assert events.publisher.project_id == "local"
+    assert events.publisher.session_id == "child"
+    assert recorded[-1].type == "system.notice"
+    assert recorded[-1].payload["text"] == "background"
 
 
 def test_ui_event_json_round_trip_and_unknown_rejection():

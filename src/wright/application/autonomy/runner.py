@@ -13,32 +13,27 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..services import RuntimeServices
+from ...core.logger import get_logger
 from ...domain.model.agent import AgentProfile
+from ...domain.model.autonomy import DurableRunRecord
 from ...domain.model.coordination import AgentControlError, AgentControlPlane
 from ...domain.model.session import Session, UsageRecord
+from ...domain.policy import PermissionResolver, PermissionSettings
+from ...infrastructure.config import append_additional_directory, append_allow_rule
+from ...infrastructure.llm.llm import LLMClient, resolve_transport
+from ...infrastructure.tools.base import Tool
 from ..agent import (
     Agent,
     AgentBackgroundRuntime,
     assemble_agent_components,
     build_agent_tools,
     ensure_system_prompt,
-    events_from_renderer,
     prepare_model_tools,
 )
 from ..agent.subagent import _child_base_tools
-from ...infrastructure.llm.llm import LLMClient, resolve_transport
-from ...core.logger import get_logger
-from ...domain.policy import (
-    PermissionResolver,
-    PermissionSettings,
-    append_additional_directory,
-    append_allow_rule,
-)
-from ...interfaces.renderer import SilentRenderer
-from ..tool_capabilities import assemble_tool_capabilities
-from ...infrastructure.tools.base import Tool
-from ...domain.model.autonomy import DurableRunRecord
+from ..composition.services import RuntimeServices
+from ..session.publisher import open_session_events
+from ..tool_execution.capabilities import assemble_tool_capabilities
 from .scheduler import AutonomyScheduler
 
 logger = get_logger(__name__)
@@ -152,13 +147,23 @@ DURABLE_MAX_DEPTH = 2
 # 无人值守任务应把流程写进 prompt，而不是现场发现并加载。
 _DURABLE_EXCLUDED_TOOLS = frozenset({
     "ask_user",
-    "schedule_task",
+    "create_schedule",
     "get_schedule",
     "list_schedules",
     "pause_schedule",
     "resume_schedule",
     "cancel_schedule",
-    "list_task_runs",
+    "list_schedule_runs",
+    "get_schedule_run",
+    "wait_schedule_run",
+    "cancel_schedule_run",
+    "get_agent",
+    "wait_agent",
+    "cancel_agent",
+    "get_command",
+    "wait_command",
+    "terminate_command",
+    "list_commands",
     "create_memory",
     "get_memory",
     "update_memory",
@@ -413,7 +418,7 @@ def launch_durable_run(
     )
     durable_prepared = prepare_model_tools(child_session, child_tools, durable_profile)
     ensure_system_prompt(child_session, durable_prepared, None)
-    child_events = events_from_renderer(child_session, SilentRenderer())
+    child_events = open_session_events(child_session)
     child_components = assemble_agent_components(
         session_state=child_session,
         events=child_events,

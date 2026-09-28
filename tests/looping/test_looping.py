@@ -7,18 +7,17 @@ import pytest
 
 from tests.responses import event, response
 from wright.application.agent import create_agent
-from wright.application.looping import (
+from wright.application.session.loops import (
     LoopError,
     SessionLoopRegistry,
     parse_interval,
     parse_loop_command,
 )
 from wright.domain.model.session import Session
-from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
+from wright.infrastructure.persistence.session.repository import FileSessionRepository
 from wright.infrastructure.tools.capabilities import RunScope, ToolCapabilities
 from wright.infrastructure.tools.loop_tools import manage_loop_tool
 from wright.infrastructure.tools.runtime import ToolRuntime
-from wright.interfaces.renderer import SilentRenderer
 
 
 def _final(answer):
@@ -55,7 +54,6 @@ def test_loop_tick_uses_runtime_event_without_resetting_goal_or_plan(tmp_path):
         ScriptLLM(["initial answer", "loop result"]),
         [],
         session,
-        SilentRenderer(),
     )
     assert agent.run("keep this goal") == "initial answer"
     session.plan_manager.create_plan("ship", ["watch ci"])

@@ -23,7 +23,7 @@ def _cosine_similarity(vec_a: Sequence[float], vec_b: Sequence[float]) -> float:
     norm_a_sq = 0.0
     norm_b_sq = 0.0
 
-    for a, b in zip(vec_a, vec_b):
+    for a, b in zip(vec_a, vec_b, strict=False):
         dot += a * b
         norm_a_sq += a * a
         norm_b_sq += b * b
@@ -60,7 +60,7 @@ class SimpleVectorStore(IVectorStore):
                 return []
 
             scored: list[tuple[DocumentChunk, float]] = []
-            for chunk, vec in zip(self._chunks, self._vectors):
+            for chunk, vec in zip(self._chunks, self._vectors, strict=False):
                 score = _cosine_similarity(query_vector, vec)
                 scored.append((chunk, score))
 

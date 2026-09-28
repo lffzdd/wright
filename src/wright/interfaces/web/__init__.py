@@ -3,4 +3,4 @@
 from . import auth, diff, runtime_manager, server
 from .server import run_web
 
-__all__ = ["auth", "diff", "runtime_manager", "run_web", "server"]
+__all__ = ["auth", "diff", "run_web", "runtime_manager", "server"]

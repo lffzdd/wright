@@ -14,7 +14,6 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
-from ...domain.gateway.knowledge_provider import KnowledgeProvider
 from ...domain.model.knowledge import (
     KnowledgeHit,
     KnowledgeUnavailable,

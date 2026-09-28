@@ -9,7 +9,6 @@ from wright.infrastructure.tools import tools as built_in_tools
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.runtime import ToolRuntime
 from wright.infrastructure.tools.tool_search import make_tool_search_tool
-from wright.interfaces.renderer import SilentRenderer
 
 
 def _tool(name: str, description: str, *, deferred: bool = False) -> Tool:
@@ -25,7 +24,7 @@ def _tool(name: str, description: str, *, deferred: bool = False) -> Tool:
 def test_tool_search_activates_specialized_schemas_only_after_search():
     core = _tool("read_file", "Read a file")
     schedule = _tool(
-        "schedule_task", "Create a durable recurring scheduled task", deferred=True
+        "create_schedule", "Create a durable recurring scheduled task", deferred=True
     )
     active: list[str] = []
     search = make_tool_search_tool([core, schedule], active)
@@ -44,9 +43,9 @@ def test_tool_search_activates_specialized_schemas_only_after_search():
         "read_file", "tool_search"
     ]
     assert result.ok
-    assert result.data["activated"][0]["name"] == "schedule_task"
+    assert result.data["activated"][0]["name"] == "create_schedule"
     assert [item["name"] for item in after] == [
-        "read_file", "schedule_task", "tool_search"
+        "read_file", "create_schedule", "tool_search"
     ]
 
 
@@ -93,7 +92,7 @@ def test_repeated_search_fills_with_not_yet_active_tools():
 def test_search_supports_common_chinese_capability_terms():
     tools = [
         _tool("http_request", "Send an HTTP request", deferred=True),
-        _tool("schedule_task", "Schedule a recurring task", deferred=True),
+        _tool("create_schedule", "Schedule a recurring task", deferred=True),
     ]
 
     network = make_tool_search_tool(tools, []).call(
@@ -104,14 +103,14 @@ def test_search_supports_common_chinese_capability_terms():
     )
 
     assert network.data["activated"][0]["name"] == "http_request"
-    assert schedule.data["activated"][0]["name"] == "schedule_task"
+    assert schedule.data["activated"][0]["name"] == "create_schedule"
 
 
 def test_search_drops_stop_word_only_false_positives():
     tools = [
         _tool("write_file", "Create or overwrite a file", deferred=True),
         _tool("replan", "Create a replacement plan", deferred=True),
-        _tool("cancel_task", "Cancel a running task", deferred=True),
+        _tool("cancel_schedule", "Cancel a running schedule", deferred=True),
     ]
 
     result = make_tool_search_tool(tools, []).call(
@@ -224,10 +223,13 @@ def test_web_memory_and_spawn_are_baseline():
         "http_request",
         "spawn_agent",
         "get_agent_tree",
-        "get_task",
-        "wait_task",
-        "cancel_task",
-        "list_tasks",
+        "get_agent",
+        "wait_agent",
+        "cancel_agent",
+        "get_command",
+        "wait_command",
+        "terminate_command",
+        "list_commands",
         "create_memory",
         "get_memory",
         "update_memory",
@@ -235,13 +237,16 @@ def test_web_memory_and_spawn_are_baseline():
         "search_memory",
     }
     deferred = {
-        "schedule_task",
+        "create_schedule",
         "get_schedule",
         "list_schedules",
         "pause_schedule",
         "resume_schedule",
         "cancel_schedule",
-        "list_task_runs",
+        "list_schedule_runs",
+        "get_schedule_run",
+        "wait_schedule_run",
+        "cancel_schedule_run",
     }
     assert all(not by_name[name].defer_to_model for name in baseline)
     assert all(by_name[name].defer_to_model for name in deferred)
@@ -249,7 +254,7 @@ def test_web_memory_and_spawn_are_baseline():
 
 def test_agent_refreshes_schemas_after_tool_search(tmp_path):
     specialized = _tool(
-        "schedule_task", "Create a durable recurring scheduled task", deferred=True
+        "create_schedule", "Create a durable recurring scheduled task", deferred=True
     )
 
     class ScriptLLM:
@@ -261,7 +266,7 @@ def test_agent_refreshes_schemas_after_tool_search(tmp_path):
                     "name": "tool_search",
                     "arguments": {"query": "schedule recurring task"},
                 }]),
-                response(calls=[{"name": "schedule_task", "arguments": {}}]),
+                response(calls=[{"name": "create_schedule", "arguments": {}}]),
                 response(content="done"),
             ]
             self.schema_names: list[list[str]] = []
@@ -277,20 +282,19 @@ def test_agent_refreshes_schemas_after_tool_search(tmp_path):
         llm,
         [specialized],
         Session.create("activate", tmp_path),
-        SilentRenderer(),
     )
 
     assert agent.run("schedule it") == "done"
     assert llm.schema_names[0] == ["tool_search"]
-    assert llm.schema_names[1] == ["schedule_task", "tool_search"]
+    assert llm.schema_names[1] == ["create_schedule", "tool_search"]
 
 
 def test_agent_restores_active_deferred_tools_from_session(tmp_path):
     specialized = _tool(
-        "schedule_task", "Create a durable recurring scheduled task", deferred=True
+        "create_schedule", "Create a durable recurring scheduled task", deferred=True
     )
     session = Session.create("resume", tmp_path)
-    session.active_deferred_tools = ["missing_tool", "schedule_task"]
+    session.active_deferred_tools = ["missing_tool", "create_schedule"]
 
     class UnusedLLM:
         context_limit = 128_000
@@ -298,11 +302,11 @@ def test_agent_restores_active_deferred_tools_from_session(tmp_path):
         def __call__(self, messages, *, tools):
             raise AssertionError("LLM should not be called")
 
-    agent = create_agent(UnusedLLM(), [specialized], session, SilentRenderer())
+    agent = create_agent(UnusedLLM(), [specialized], session)
 
-    assert session.active_deferred_tools == ["schedule_task"]
+    assert session.active_deferred_tools == ["create_schedule"]
     assert [item["name"] for item in agent.tool_schemas] == [
-        "schedule_task",
+        "create_schedule",
         "tool_search",
     ]
 
@@ -310,10 +314,10 @@ def test_agent_restores_active_deferred_tools_from_session(tmp_path):
 def test_agent_rejects_deferred_tool_before_activation(tmp_path):
     invoked: list[str] = []
     specialized = Tool(
-        name="schedule_task",
+        name="create_schedule",
         description="Create a durable recurring scheduled task",
         parameters={"type": "object", "properties": {}},
-        call=lambda args, runtime: invoked.append("schedule_task") or ToolResult.success(),
+        call=lambda args, runtime: invoked.append("create_schedule") or ToolResult.success(),
         defer_to_model=True,
     )
 
@@ -322,7 +326,7 @@ def test_agent_rejects_deferred_tool_before_activation(tmp_path):
 
         def __init__(self):
             self.script = [
-                response(calls=[{"name": "schedule_task", "arguments": {}}]),
+                response(calls=[{"name": "create_schedule", "arguments": {}}]),
                 response(content="done"),
             ]
 
@@ -333,7 +337,6 @@ def test_agent_rejects_deferred_tool_before_activation(tmp_path):
         ScriptLLM(),
         [specialized],
         Session.create("must-search", tmp_path),
-        SilentRenderer(),
     ).run("schedule it")
 
     assert answer == "done"

@@ -9,11 +9,10 @@ from pathlib import Path
 
 from tests.responses import event, response
 from wright.application.agent import create_agent
-from wright.application.memory import MemoryManager
+from wright.application.memory.assembly import assemble_memory_manager
 from wright.domain.model.events import UsageEvent
 from wright.domain.model.session import Session
 from wright.infrastructure.persistence.memory import write_memory_file
-from wright.interfaces.renderer import SilentRenderer
 
 
 class _Usage:
@@ -86,9 +85,9 @@ def test_agent_recall_injection_and_extraction(tmp_path: Path):
 
     selector = SelectorLLM()
     main = MainLLM()
-    manager = MemoryManager(main, selector_llm=selector, directory=tmp_path)
+    manager = assemble_memory_manager(main, selector_llm=selector, directory=tmp_path)
     session = Session.create(initial_goal="t", workspace_dir=tmp_path)
-    agent = create_agent(main, [], session, SilentRenderer(), memory=manager)
+    agent = create_agent(main, [], session, memory=manager)
 
     answer = agent.run("记住我以后只用 bun")
     assert answer == "done"
@@ -131,9 +130,9 @@ def test_agent_recall_injection_and_extraction(tmp_path: Path):
 
 def test_greeting_skips_semantic_extract_and_episode(tmp_path: Path):
     selector = SelectorLLM()
-    manager = MemoryManager(MainLLM(), selector_llm=selector, directory=tmp_path)
+    manager = assemble_memory_manager(MainLLM(), selector_llm=selector, directory=tmp_path)
     session = Session.create(initial_goal="t", workspace_dir=tmp_path)
-    agent = create_agent(MainLLM(), [], session, SilentRenderer(), memory=manager)
+    agent = create_agent(MainLLM(), [], session, memory=manager)
 
     assert agent.run("hi") == "done"
     assert selector.calls == 0
@@ -144,7 +143,7 @@ def test_greeting_skips_semantic_extract_and_episode(tmp_path: Path):
 def test_agent_without_memory_unaffected(tmp_path: Path):
     """memory=None 时:无记忆段、无召回注入,行为与原 Agent 一致。"""
     session = Session.create(initial_goal="t", workspace_dir=tmp_path)
-    agent = create_agent(MainLLM(), [], session, SilentRenderer())  # 不传 memory
+    agent = create_agent(MainLLM(), [], session)  # 不传 memory
     answer = agent.run("hi")
     assert answer == "done"
     wire = [r.message for r in session.message_records]
@@ -153,11 +152,11 @@ def test_agent_without_memory_unaffected(tmp_path: Path):
 
 
 def test_new_user_turn_resets_plan_and_episode_does_not_inherit_old_plan(tmp_path: Path):
-    manager = MemoryManager(MainLLM(), selector_llm=EmptySelectorLLM(), directory=tmp_path)
+    manager = assemble_memory_manager(MainLLM(), selector_llm=EmptySelectorLLM(), directory=tmp_path)
     session = Session.create(initial_goal="t", workspace_dir=tmp_path)
     session.plan_manager.create_plan("first task", ["finish first"])
     session.plan_manager.update_step("step_1", "completed")
-    agent = create_agent(MainLLM(), [], session, SilentRenderer(), memory=manager)
+    agent = create_agent(MainLLM(), [], session, memory=manager)
 
     assert agent.run("first") == "done"
     assert agent.run("second") == "done"
@@ -176,7 +175,7 @@ def test_recall_failure_is_best_effort(tmp_path: Path):
         def __call__(self, messages, **kwargs):
             raise RuntimeError("selector unavailable")
 
-    manager = MemoryManager(MainLLM(), selector_llm=BrokenSelector(), directory=tmp_path)
+    manager = assemble_memory_manager(MainLLM(), selector_llm=BrokenSelector(), directory=tmp_path)
     block = manager.recall_block("query")
     assert "forces selector call" in block
     assert "Traceback" not in block

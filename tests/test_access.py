@@ -5,9 +5,9 @@ import shlex
 import threading
 from pathlib import Path
 
-from wright.application.tool_capabilities import assemble_tool_capabilities
-from wright.application.tool_dispatch_service import ToolDispatchService
-from wright.application.tool_runtime import tool_runtime_for_session
+from wright.application.tool_execution.capabilities import assemble_tool_capabilities
+from wright.application.tool_execution.dispatch import ToolDispatchService
+from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.domain.policy import (
@@ -252,7 +252,7 @@ def test_independent_backend_covers_files_search_shell_and_cancellation():
 
     background = execute_command("background", run_in_background=True, runtime=runtime)
     assert background.ok
-    task_id = background.data["task_id"]
+    task_id = background.data["command_id"]
     resources = runtime.runtime_resources.process_registry.get(task_id)
     assert resources is not None and resources.process.poll() is None
     resources.process.terminate()

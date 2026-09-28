@@ -5,9 +5,9 @@ import pytest
 
 from tests.responses import event, response
 from wright.application.agent import create_agent
-from wright.application.application_host import ApplicationHost
-from wright.application.tool_capabilities import assemble_tool_capabilities
-from wright.application.tool_dispatch_service import ToolDispatchService
+from wright.application.composition.host import ApplicationHost
+from wright.application.tool_execution.capabilities import assemble_tool_capabilities
+from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.autonomy import TriggerSpec
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
@@ -21,7 +21,6 @@ from wright.infrastructure.persistence.autonomy_store import (
     AutonomyStoreError,
 )
 from wright.infrastructure.tools.base import Tool
-from wright.interfaces.renderer import SilentRenderer
 
 
 class ScriptLLM:
@@ -287,7 +286,6 @@ def test_result_persistence_failure_stops_agent_without_retrying_effect(tmp_path
         ToolLLM(),
         [Tool("effect", "effect", {"type": "object"}, lambda _args, _rt: calls.append("ran") or ToolResult.success())],
         Session.create("effect", tmp_path),
-        SilentRenderer(),
         permission_resolver=PermissionResolver(
             PermissionPolicy(PermissionSettings(mode="bypass"))
         ),

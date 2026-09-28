@@ -5,7 +5,6 @@ from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.domain.policy.verifier import Verifier
 from wright.infrastructure.tools.plan_tools import update_plan_tool
-from wright.interfaces.renderer import SilentRenderer
 
 
 def _final(answer):
@@ -40,7 +39,6 @@ def test_incomplete_plan_blocks_final_and_returns_to_agent_loop(tmp_path):
         llm,
         [update_plan_tool],
         session,
-        SilentRenderer(),
         verifier=Verifier(),
     )
 
@@ -61,7 +59,7 @@ def test_incomplete_plan_blocks_final_and_returns_to_agent_loop(tmp_path):
 def test_structural_verifier_does_not_add_llm_turns_on_chat(tmp_path):
     llm = ScriptLLM([_final("hello")])
     session = Session.create("?", tmp_path)
-    agent = create_agent(llm, [], session, SilentRenderer(), verifier=Verifier())
+    agent = create_agent(llm, [], session, verifier=Verifier())
 
     assert agent.run("?") == "hello"
     assert len(llm.messages) == 1
@@ -114,7 +112,6 @@ def test_verifier_and_stop_hook_retries_are_independent(tmp_path):
         main_llm,
         [update_plan_tool],
         session,
-        SilentRenderer(),
         verifier=Verifier(),
         lifecycle=lifecycle,
         max_verification_retries=2,

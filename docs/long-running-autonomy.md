@@ -85,8 +85,10 @@ LaunchAgent/systemd、不会 daemonize、不会开放端口；进程仍在前台
   禁止外层调度器将其降级为普通失败再次执行。即使工具已有确认结果，也不能在缺少幂等契约时
   因后续模型失败而重跑整个任务。领取队列时同样检查工具日志，旧版本遗留的
   不安全 queued/waiting_retry 记录会被终结，不会继续执行。
-- `cancel_task(run_id)` 对 queued/dispatched 立即终止，对 running 设置取消信号，Agent 和工具
-  在正常协作取消边界观察它。
+- `cancel_schedule_run(run_id)` 对 queued/dispatched/waiting_retry 立即终止，对 running
+  设置取消信号，Agent 和工具在正常协作取消边界观察它。它不改变规则的未来触发。
+  `cancel_schedule` 才会停止未来触发并请求取消该规则的活动运行。`pause_schedule`
+  只暂停未来触发。
 
 默认 `manual` 是故意的：任意 Agent prompt 可能写文件、调用网络或触发外部副作用，不能
 仅凭“进程断了”就假定可安全重放。
@@ -121,19 +123,21 @@ provider 原始 call ID，不重写
 
 ## 模型工具
 
-调度定义：
+调度规则使用 `schedule_id`：
 
-- `schedule_task`
+- `create_schedule`
 - `get_schedule` / `list_schedules`
-- `pause_schedule` / `resume_schedule` / `cancel_schedule`
-- `list_task_runs`
+- `pause_schedule`：暂停未来触发，不取消已经产生的运行
+- `resume_schedule`
+- `cancel_schedule`：停止未来触发，并请求取消该规则的活动运行
 
-具体运行继续使用统一接口：
+一次具体运行使用 `run_id`。这里的 `run_id` 只指标久化调度运行：
 
-- `get_task`
-- `list_tasks`
-- `wait_task`
-- `cancel_task`
+- `list_schedule_runs`
+- `get_schedule_run` / `wait_schedule_run` / `cancel_schedule_run`
+
+运行结果保留 `queued`、`dispatched`、`waiting_retry` 等原生状态。`cancel_schedule_run`
+只取消这一次运行。`unknown` 表示无法确认，不是成功完成。
 
 创建或修改持久化调度会进入 permission `ask`，风险标识为
 `persistent_automation`。无人值守环境不会因此绕过既有工具权限：没有持久化 allow 规则

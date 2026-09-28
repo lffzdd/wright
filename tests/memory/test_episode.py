@@ -1,6 +1,6 @@
 import pytest
 
-from wright.application.memory import MemoryManager
+from wright.application.memory.assembly import assemble_memory_manager
 from wright.application.memory.episode import episode_from_session
 from wright.application.memory.memory_service import MemoryService
 from wright.domain.gateway.memory import SelectorChoice
@@ -186,7 +186,7 @@ class _UnusedLLM:
 
 
 def test_record_episode_skips_empty_turns_and_keeps_traces(tmp_path):
-    manager = MemoryManager(_UnusedLLM(), directory=tmp_path)
+    manager = assemble_memory_manager(_UnusedLLM(), directory=tmp_path)
 
     empty = Session.create("placeholder", tmp_path)
     empty.begin_user_turn("hi")

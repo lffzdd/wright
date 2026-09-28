@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import threading
 
-from ..application.runtime import RuntimeConfig, assemble_runtime, shutdown_runtime
+from ..application.composition.runtime import (
+    RuntimeConfig,
+    assemble_runtime,
+    shutdown_runtime,
+)
+from .cli.console_renderer import ConsoleRenderer
+from .cli.prompter import ConsolePrompter
+from .interaction import InteractionHub
 
 
 def run_headless_host(
@@ -14,8 +21,13 @@ def run_headless_host(
     stop_event: threading.Event | None = None,
 ) -> None:
     """Run one opened project's persisted automations until explicitly stopped."""
+    renderer = ConsoleRenderer()
+    hub = InteractionHub()
     runtime = assemble_runtime(
         config,
+        renderer=renderer,
+        interaction_broker=hub,
+        prompter=ConsolePrompter(renderer),
         start_automation=False,
         automation_session_id=source_session_id,
     )

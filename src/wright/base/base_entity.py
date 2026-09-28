@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import time
-from abc import ABC
 from dataclasses import dataclass, field
 from uuid import uuid4
 
 
 @dataclass(eq=False)
-class BaseEntity(ABC):
-    """Abstract base class for all domain entities with identity and timestamps."""
+class BaseEntity:
+    """Domain entity with identity and timestamps."""
 
     id: str = field(default_factory=lambda: str(uuid4()))
     created_at: float = field(default_factory=time.time)

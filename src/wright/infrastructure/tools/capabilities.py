@@ -6,18 +6,18 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from ...domain.policy.types import AuthorizationChange
+from ...domain.policy.permission.types import AuthorizationChange
 from .ports import LoopOperations
 
 if TYPE_CHECKING:
-    from ...application.autonomy.scheduler import AutonomyScheduler
-    from ..persistence.autonomy_store import AutonomyStore
-    from ...domain.model.coordination import AgentControlPlane
-    from ...domain.model.session import BackgroundTask, Session
     from ...application.agent import AgentBackgroundRuntime
-    from ..runtime import ExecutionPath
+    from ...application.autonomy.scheduler import AutonomyScheduler
+    from ...application.tasks.service import TaskService
+    from ...domain.model.coordination import AgentControlPlane
     from ...domain.model.planning import PlanManager
-    from ...application.task_service import TaskService
+    from ...domain.model.session import BackgroundTask, Session
+    from ..persistence.autonomy_store import AutonomyStore
+    from ..runtime import ExecutionPath
 
 
 @dataclass(frozen=True)

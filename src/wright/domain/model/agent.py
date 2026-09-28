@@ -5,10 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from ...infrastructure.tools.base import Tool
+from .tool import ModelVisibleTool
 
 
 class AgentState(str, Enum):
@@ -43,21 +41,21 @@ class CapabilitySnapshot:
     """Per-run immutable view used for schema, search and execution lookup."""
 
     profile: AgentProfile
-    tools: tuple[Tool, ...]
+    tools: tuple[ModelVisibleTool, ...]
 
     @property
     def names(self) -> frozenset[str]:
         return frozenset(tool.name for tool in self.tools)
 
-    def registry(self) -> dict[str, Tool]:
+    def registry(self) -> dict[str, ModelVisibleTool]:
         return {tool.name: tool for tool in self.tools}
 
 
 class CapabilityCatalog:
     """The one registration source; rejects aliases or names that collide."""
 
-    def __init__(self, tools: Iterable[Tool]) -> None:
-        self._tools: dict[str, Tool] = {}
+    def __init__(self, tools: Iterable[ModelVisibleTool]) -> None:
+        self._tools: dict[str, ModelVisibleTool] = {}
         for tool in tools:
             if not tool.name or tool.name in self._tools:
                 raise CapabilityError(f"duplicate capability name: {tool.name!r}")

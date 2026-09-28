@@ -5,9 +5,11 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from ...domain.model.autonomy import TriggerSpec
-from ..persistence.autonomy_store import AutonomyStoreError
+from ...application.tasks.service import TaskService
+from ...domain.model.autonomy import DurableRunRecord, TriggerSpec
+from ...domain.model.tasks import TaskKindMismatch, TaskNotFoundError, TaskWaitCancelled
 from ...domain.model.tool import ToolAccess, ToolResult
+from ..persistence.autonomy_store import AutonomyNotFoundError, AutonomyStoreError
 from .base import Tool
 from .runtime import ToolRuntime
 
@@ -17,6 +19,73 @@ def _store(runtime: ToolRuntime):
     if store is None:
         raise RuntimeError("durable task runtime is not configured")
     return store
+
+
+def _tasks(runtime: ToolRuntime) -> TaskService:
+    service = runtime.capabilities.tasks if runtime.capabilities else None
+    if service is None:
+        raise RuntimeError("schedule run tools require task classification")
+    return service
+
+
+def _schedule_view(record, *, summary: bool = False) -> dict[str, Any]:
+    row = record.to_dict()
+    row["schedule_id"] = row.pop("id")
+    if summary:
+        row["prompt"] = record.prompt[:500]
+        row.pop("trigger_state", None)
+    return row
+
+
+def _run_view(record: DurableRunRecord, *, summary: bool = False) -> dict[str, Any]:
+    """Expose the store's native run status. Do not flatten it to pending."""
+    if record.status == "unknown":
+        outcome = "unconfirmed"
+    elif record.terminal:
+        outcome = record.status
+    else:
+        outcome = "waiting"
+    text = 500 if summary else 8_000
+    view: dict[str, Any] = {
+        "run_id": record.id,
+        "schedule_id": record.automation_id,
+        "automation_name": record.automation_name,
+        "status": record.status,
+        "terminal": record.terminal,
+        "outcome": outcome,
+        "prompt": record.prompt[:text],
+        "trigger_type": record.trigger_type,
+        "result": record.result[:text],
+        "error": record.error[:text],
+        "cancel_requested": record.cancel_requested,
+        "cancel_reason": record.cancel_reason[:text],
+        "attempt": record.attempt,
+        "max_retries": record.max_retries,
+        "created_at": record.created_at,
+        "started_at": record.started_at,
+        "ended_at": record.ended_at,
+    }
+    if summary:
+        view["trigger_payload"] = {"preview": str(record.trigger_payload)[:1_000]}
+    else:
+        view["trigger_payload"] = dict(record.trigger_payload)
+    if record.status == "unknown":
+        view["note"] = (
+            "Status cannot be confirmed. This is not a successful completion."
+        )
+    return view
+
+
+def _run_failure(exc: Exception, *, run_id: str) -> ToolResult:
+    if isinstance(exc, TaskKindMismatch):
+        return ToolResult.fail(str(exc))
+    if isinstance(exc, TaskNotFoundError) or isinstance(exc, AutonomyNotFoundError):
+        return ToolResult.fail(f"Unknown run_id: {run_id}")
+    if isinstance(exc, TaskWaitCancelled):
+        return ToolResult.fail(
+            "This wait was cancelled. The schedule run was not cancelled."
+        )
+    return ToolResult.fail(str(exc))
 
 
 def _notify(runtime: ToolRuntime) -> None:
@@ -62,7 +131,7 @@ def _trigger(arguments: dict[str, Any]) -> TriggerSpec:
     raise ValueError(f"unsupported trigger type: {trigger_type}")
 
 
-def schedule_task(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
+def create_schedule(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
     try:
         record = _store(runtime).create_automation(
             name=arguments["name"],
@@ -74,7 +143,7 @@ def schedule_task(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult
             run_config=arguments.get("run_config"),
         )
         _notify(runtime)
-        return ToolResult.success(record.to_dict())
+        return ToolResult.success(_schedule_view(record))
     except (RuntimeError, ValueError, AutonomyStoreError) as exc:
         return ToolResult.fail(str(exc))
 
@@ -82,7 +151,9 @@ def schedule_task(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult
 def get_schedule(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
     try:
         return ToolResult.success(
-            _store(runtime).get_automation(str(arguments["schedule_id"])).to_dict()
+            _schedule_view(
+                _store(runtime).get_automation(str(arguments["schedule_id"]))
+            )
         )
     except (RuntimeError, AutonomyStoreError) as exc:
         return ToolResult.fail(str(exc))
@@ -97,12 +168,7 @@ def list_schedules(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResul
     if status is not None:
         records = [record for record in records if record.status == status]
     bounded = records[:100]
-    summaries = []
-    for record in bounded:
-        row = record.to_dict()
-        row["prompt"] = record.prompt[:500]
-        row.pop("trigger_state", None)
-        summaries.append(row)
+    summaries = [_schedule_view(record, summary=True) for record in bounded]
     return ToolResult.success({
         "count": len(bounded),
         "truncated": len(records) > len(bounded),
@@ -114,7 +180,7 @@ def pause_schedule(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResul
     try:
         record = _store(runtime).pause_automation(str(arguments["schedule_id"]))
         _notify(runtime)
-        return ToolResult.success(record.to_dict())
+        return ToolResult.success(_schedule_view(record))
     except (RuntimeError, AutonomyStoreError) as exc:
         return ToolResult.fail(str(exc))
 
@@ -123,7 +189,7 @@ def resume_schedule(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResu
     try:
         record = _store(runtime).resume_automation(str(arguments["schedule_id"]))
         _notify(runtime)
-        return ToolResult.success(record.to_dict())
+        return ToolResult.success(_schedule_view(record))
     except (RuntimeError, AutonomyStoreError) as exc:
         return ToolResult.fail(str(exc))
 
@@ -135,12 +201,12 @@ def cancel_schedule(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResu
             str(arguments["schedule_id"]), reason
         )
         _notify(runtime)
-        return ToolResult.success(record.to_dict())
+        return ToolResult.success(_schedule_view(record))
     except (RuntimeError, AutonomyStoreError) as exc:
         return ToolResult.fail(str(exc))
 
 
-def list_task_runs(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
+def list_schedule_runs(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
     try:
         records = _store(runtime).list_runs(
             str(arguments["schedule_id"])
@@ -149,21 +215,76 @@ def list_task_runs(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResul
     except (RuntimeError, AutonomyStoreError) as exc:
         return ToolResult.fail(str(exc))
     bounded = records[:100]
-    summaries = []
-    for record in bounded:
-        row = record.to_dict()
-        row["prompt"] = record.prompt[:500]
-        row["result"] = record.result[:500]
-        row["error"] = record.error[:500]
-        row["trigger_payload"] = {
-            "preview": str(record.trigger_payload)[:1_000]
-        }
-        summaries.append(row)
     return ToolResult.success({
         "count": len(bounded),
         "truncated": len(records) > len(bounded),
-        "runs": summaries,
+        "runs": [_run_view(record, summary=True) for record in bounded],
     })
+
+
+def get_schedule_run(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
+    run_id = str(arguments["run_id"])
+    try:
+        _tasks(runtime).require_kind(run_id, "durable")
+        return ToolResult.success(_run_view(_store(runtime).get_run(run_id)))
+    except (
+        RuntimeError, TaskKindMismatch, TaskNotFoundError, AutonomyStoreError
+    ) as exc:
+        return _run_failure(exc, run_id=run_id)
+
+
+def wait_schedule_run(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
+    run_id = str(arguments["run_id"])
+    timeout = float(arguments.get("timeout", 30))
+    try:
+        service = _tasks(runtime)
+        service.wait_kind(
+            run_id,
+            "durable",
+            timeout=timeout,
+            cancellation_check=runtime.is_cancelled,
+        )
+        run = _store(runtime).get_run(run_id)
+    except (
+        RuntimeError,
+        TaskKindMismatch,
+        TaskNotFoundError,
+        TaskWaitCancelled,
+        AutonomyStoreError,
+        ValueError,
+    ) as exc:
+        return _run_failure(exc, run_id=run_id)
+    data = _run_view(run)
+    data["wait_completed"] = run.terminal
+    data["wait_timed_out"] = not run.terminal
+    return ToolResult.success(data)
+
+
+def cancel_schedule_run(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
+    run_id = str(arguments["run_id"])
+    reason = str(arguments.get("reason") or "schedule run cancelled by root Agent")[:1_000]
+    try:
+        store = _store(runtime)
+        _tasks(runtime).require_kind(run_id, "durable")
+        before = store.get_run(run_id)
+        schedule_before = store.get_automation(before.automation_id)
+        updated = store.cancel_run(run_id, reason)
+        schedule_after = store.get_automation(before.automation_id)
+    except (
+        RuntimeError, TaskKindMismatch, TaskNotFoundError, AutonomyStoreError
+    ) as exc:
+        return _run_failure(exc, run_id=run_id)
+    data = _run_view(updated)
+    data["already_terminal"] = before.terminal
+    data["schedule_status"] = schedule_after.status
+    data["schedule_changed"] = (
+        schedule_after.status != schedule_before.status
+        or schedule_after.next_run_at != schedule_before.next_run_at
+    )
+    data["message"] = (
+        "Only this run was affected. Future triggers of the schedule were not changed."
+    )
+    return ToolResult.success(data)
 
 
 def _describe_persistent_mutation(arguments: dict[str, Any]) -> ToolAccess:
@@ -223,15 +344,19 @@ _TRIGGER_SCHEMA = {
 }
 
 
-schedule_task_tool = Tool(
-    name="schedule_task",
+create_schedule_tool = Tool(
+    name="create_schedule",
     description=(
-        "Create a durable autonomous task that runs in an isolated session. "
+        "Create a durable schedule that runs in an isolated session. "
+        "The returned schedule_id identifies the rule, not one execution. "
         "It cannot see the current conversation, user goal, plan, or transcript. "
         "Use this for work that must survive process restart or must not share "
         "the live dialogue. Trigger types: once (delay_seconds or epoch run_at), "
         "interval, file_change inside workspace, web_change for a public HTTP(S) "
         "page, or named external event. Recovery defaults to manual/no blind replay. "
+        "Inspect a concrete execution with list_schedule_runs, get_schedule_run, "
+        "wait_schedule_run, or cancel_schedule_run. run_id there is a persisted "
+        "schedule run, not an agent delegation or a shell command. "
         "For recurring checks that should see the current conversation and die "
         "with this session, use manage_loop or /loop instead."
     ),
@@ -268,7 +393,7 @@ schedule_task_tool = Tool(
         "required": ["name", "prompt", "trigger"],
         "additionalProperties": False,
     },
-    call=schedule_task,
+    call=create_schedule,
     required_capabilities=frozenset({"durable", "autonomy"}),
     access_descriptor=_describe_persistent_mutation,
     defer_to_model=True,
@@ -337,23 +462,55 @@ def _schedule_mutation_tool(name: str, description: str, call) -> Tool:
 
 
 pause_schedule_tool = _schedule_mutation_tool(
-    "pause_schedule", "Pause future triggers without cancelling an active run.", pause_schedule
+    "pause_schedule",
+    "Pause future triggers of one schedule. Does not cancel a run that is already executing or queued.",
+    pause_schedule,
 )
 resume_schedule_tool = _schedule_mutation_tool(
     "resume_schedule", "Resume a paused durable schedule.", resume_schedule
 )
 cancel_schedule_tool = _schedule_mutation_tool(
     "cancel_schedule",
-    "Permanently cancel future triggers and request cancellation of active runs.",
+    "Stop future triggers and request cancellation of this schedule's active runs. "
+    "This changes the rule. To cancel only one run, use cancel_schedule_run.",
     cancel_schedule,
 )
 
 
-list_task_runs_tool = Tool(
-    name="list_task_runs",
+def _describe_run_read(arguments: dict[str, Any]) -> ToolAccess:
+    return ToolAccess(
+        frozenset({"internal_read"}),
+        subject=str(arguments.get("run_id") or arguments.get("schedule_id") or ""),
+        reason="read a persisted schedule run",
+    )
+
+
+def _describe_run_cancel(arguments: dict[str, Any]) -> ToolAccess:
+    return ToolAccess(
+        frozenset({"persistent_write"}),
+        subject=str(arguments.get("run_id") or ""),
+        risk_flags=("persistent_automation",),
+        reason="cancel one persisted schedule run without changing future triggers",
+    )
+
+
+_RUN_ID = {
+    "type": "string",
+    "minLength": 1,
+    "description": (
+        "Identifier of one persisted schedule run. Not an agent_task_id, "
+        "command_id, or schedule_id."
+    ),
+}
+
+
+list_schedule_runs_tool = Tool(
+    name="list_schedule_runs",
     description=(
-        "List durable execution history. Optionally restrict it to one schedule_id; "
-        "individual run ids also work with get_task/wait_task/cancel_task."
+        "List persisted schedule runs for this session. Optionally restrict the "
+        "list to one schedule_id. Each run_id is a schedule run, not an agent "
+        "delegation or a shell command. Status values such as queued, dispatched, "
+        "and waiting_retry are returned as stored. Results are capped."
     ),
     parameters={
         "type": "object",
@@ -361,20 +518,100 @@ list_task_runs_tool = Tool(
         "required": [],
         "additionalProperties": False,
     },
-    call=list_task_runs,
+    call=list_schedule_runs,
     required_capabilities=frozenset({"durable"}),
-    access_descriptor=_describe_schedule_read,
+    access_descriptor=_describe_run_read,
     is_concurrency_safe=lambda args: True,
     defer_to_model=True,
 )
 
 
+get_schedule_run_tool = Tool(
+    name="get_schedule_run",
+    description=(
+        "Read one persisted schedule run by run_id. Returns the store's native "
+        "status, including queued, dispatched, and waiting_retry. "
+        "outcome=unconfirmed means the result cannot be confirmed and is not "
+        "a successful completion. terminal says whether the run has finished waiting."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {"run_id": _RUN_ID},
+        "required": ["run_id"],
+        "additionalProperties": False,
+    },
+    call=get_schedule_run,
+    required_capabilities=frozenset({"durable", "tasks"}),
+    access_descriptor=_describe_run_read,
+    is_concurrency_safe=lambda args: True,
+    defer_to_model=True,
+)
+
+
+wait_schedule_run_tool = Tool(
+    name="wait_schedule_run",
+    description=(
+        "Wait up to timeout seconds for one schedule run. A timeout sets "
+        "wait_timed_out=true and does not cancel the run or mean it failed. "
+        "The returned status is the store's native status. If this wait is "
+        "itself cancelled, the run is left unchanged."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "run_id": _RUN_ID,
+            "timeout": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 300,
+                "default": 30,
+            },
+        },
+        "required": ["run_id"],
+        "additionalProperties": False,
+    },
+    call=wait_schedule_run,
+    required_capabilities=frozenset({"durable", "tasks"}),
+    access_descriptor=_describe_run_read,
+    is_concurrency_safe=lambda args: True,
+    timeout_owner="tool",
+    defer_to_model=True,
+)
+
+
+cancel_schedule_run_tool = Tool(
+    name="cancel_schedule_run",
+    description=(
+        "Cancel one persisted schedule run. Does not pause the schedule and does "
+        "not change its future triggers. Queued, dispatched, and waiting_retry "
+        "runs become cancelled; a running run is asked to stop and is not "
+        "reported as already stopped until its status is terminal."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "run_id": _RUN_ID,
+            "reason": {"type": "string", "maxLength": 1_000},
+        },
+        "required": ["run_id"],
+        "additionalProperties": False,
+    },
+    call=cancel_schedule_run,
+    required_capabilities=frozenset({"durable", "tasks"}),
+    access_descriptor=_describe_run_cancel,
+    defer_to_model=True,
+)
+
+
 autonomy_tools = [
-    schedule_task_tool,
+    create_schedule_tool,
     get_schedule_tool,
     list_schedules_tool,
     pause_schedule_tool,
     resume_schedule_tool,
     cancel_schedule_tool,
-    list_task_runs_tool,
+    list_schedule_runs_tool,
+    get_schedule_run_tool,
+    wait_schedule_run_tool,
+    cancel_schedule_run_tool,
 ]

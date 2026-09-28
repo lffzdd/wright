@@ -7,21 +7,20 @@ from tests.paths import PACKAGE_ROOT
 from tests.responses import response
 from tests.test_attachments import _png_bytes
 from wright.application.agent import create_agent
-from wright.application.tool_capabilities import assemble_tool_capabilities
-from wright.application.tool_dispatch_service import ToolDispatchService
-from wright.application.tool_runtime import tool_runtime_for_session
+from wright.application.tool_execution.capabilities import assemble_tool_capabilities
+from wright.application.tool_execution.dispatch import ToolDispatchService
+from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.agent import AgentProfile, CapabilityCatalog, CapabilityError
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.domain.policy import ToolAccess
-from wright.infrastructure.persistence.file_session_repo import FileSessionRepository
+from wright.infrastructure.persistence.session.repository import FileSessionRepository
 from wright.infrastructure.runtime import LocalExecutionBackend
 from wright.infrastructure.storage.artifacts import ArtifactStore
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.command import execute_command
 from wright.infrastructure.tools.file import read_file_tool
 from wright.infrastructure.tools.mcp_client import _to_tool_result
-from wright.interfaces.renderer import SilentRenderer
 
 
 def _png_base64():
@@ -159,7 +158,6 @@ def test_agent_mcp_artifact_survives_checkpoint_and_is_readable(tmp_path):
             access_descriptor=lambda _args: ToolAccess.internal_read(),
         )],
         session,
-        SilentRenderer(),
     ).run("make a report")
     assert result == "Report delivered"
     ref = session.tool_executions["mcp-call"].result.artifacts[0]
@@ -322,7 +320,7 @@ def test_profile_limits_are_enforced_by_agent_not_only_descriptive(tmp_path):
         requires_user_interaction=True,
     )
     agent = create_agent(
-        _tool_llm("done"), [ask], Session.create("goal", tmp_path), SilentRenderer(), profile=profile
+        _tool_llm("done"), [ask], Session.create("goal", tmp_path), profile=profile
     )
     assert "ask" not in agent.executor.tool_registry
     assert agent.profile.max_steps == 1
@@ -340,7 +338,7 @@ def test_profile_filters_the_system_catalog_as_well_as_execution(tmp_path):
         allow_interaction=False,
     )
     session = Session.create("goal", tmp_path)
-    create_agent(_tool_llm("done"), [public, private], session, SilentRenderer(), profile=profile)
+    create_agent(_tool_llm("done"), [public, private], session, profile=profile)
     prompt = session.message_records[0].message["content"]
     assert "public" in prompt
     assert "private_interaction" not in prompt
