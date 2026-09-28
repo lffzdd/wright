@@ -1,6 +1,12 @@
+export type SessionLifecycle = "open" | "closing" | "closed";
+export type SessionExecution = "idle" | "running" | "queued" | "waiting_for_input";
+
 export type SessionSummary = {
   session_id: string;
   status: string;
+  lifecycle?: SessionLifecycle;
+  execution?: SessionExecution;
+  queue_reason?: string;
   agent_status?: string;
   user_goal?: string;
   model?: string;

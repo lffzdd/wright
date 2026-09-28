@@ -1,12 +1,12 @@
 ---
-name: 发布前检查
+name: release-check
 description: 本项目发布前必须执行的检查流程；当用户提到发布、上线、release 时使用
-allowed_tools: [execute_command, read_file]
+allowed-tools: execute_command read_file
 ---
 
 # 发布前检查
 
-这是一份可复用的发布前核对流程。调用 skill 工具加载后按步骤执行。
+这是一份可复用的发布前核对流程。调用 load_skill 加载后按步骤执行。
 
 ## 步骤
 
@@ -18,4 +18,4 @@ allowed_tools: [execute_command, read_file]
 ## 注意
 
 - 不要把本流程写进长期记忆；它是做法，不是事实。
-- `allowed_tools` 只是建议。当前会话的工具清单在启动时已经冻结，不会因为加载本 skill 而增减。
+- `allowed-tools` 只是建议，不会授予权限，也不会增删当前工具。

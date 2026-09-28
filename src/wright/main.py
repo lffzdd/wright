@@ -14,6 +14,7 @@ from .interfaces.cli.prompter import ConsolePrompter
 from .interfaces.cli.repl import Repl
 from .interfaces.cli.resume_select import choose_resume_session
 from .interfaces.interaction import InteractionHub
+from .interfaces.rendering.attach import attach_renderer
 from .interfaces.tui.terminal import configure_terminal
 
 
@@ -54,12 +55,12 @@ def main() -> None:
     prompter = ConsolePrompter(renderer)
     rt = assemble_runtime(
         runtime_config_from_args(args),
-        renderer=renderer,
         interaction_broker=hub,
         prompter=prompter,
         resume_chooser=choose_resume_session,
     )
-    repl = Repl(rt, prompter=prompter)
+    attach_renderer(rt.publisher, renderer, session=rt.session_state)
+    repl = Repl(rt, prompter=prompter, renderer=renderer)
     try:
         repl.run()
     finally:

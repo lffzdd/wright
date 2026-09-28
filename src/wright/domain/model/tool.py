@@ -94,21 +94,47 @@ class ToolResult:
     summary: str = ""
     content: tuple[dict[str, Any], ...] = ()
     artifacts: tuple[ArtifactRef, ...] = ()
+    # ``instruction`` marks content the request projection must keep.
+    # The compactor reads these fields from the serialized result; it does
+    # not special-case a tool name. Empty means an ordinary foldable result.
+    retention: str = ""
+    retention_key: str = ""
 
     @classmethod
     def success(
-        cls, data=None, *, summary: str = "", content=(), artifacts=()
+        cls,
+        data=None,
+        *,
+        summary: str = "",
+        content=(),
+        artifacts=(),
+        retention: str = "",
+        retention_key: str = "",
     ) -> ToolResult:
-        return cls(True, "", data, summary, tuple(content), tuple(artifacts))
+        return cls(
+            True, "", data, summary, tuple(content), tuple(artifacts),
+            retention, retention_key,
+        )
 
     @classmethod
     def fail(
-        cls, err: str, data=None, *, summary: str = "", content=(), artifacts=()
+        cls,
+        err: str,
+        data=None,
+        *,
+        summary: str = "",
+        content=(),
+        artifacts=(),
+        retention: str = "",
+        retention_key: str = "",
     ) -> ToolResult:
-        return cls(False, err, data, summary, tuple(content), tuple(artifacts))
+        return cls(
+            False, err, data, summary, tuple(content), tuple(artifacts),
+            retention, retention_key,
+        )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "ok": self.ok,
             "err": self.err,
             "data": self.data,
@@ -116,6 +142,11 @@ class ToolResult:
             "content": [dict(item) for item in self.content],
             "artifacts": [item.to_dict() for item in self.artifacts],
         }
+        if self.retention:
+            payload["retention"] = self.retention
+        if self.retention_key:
+            payload["retention_key"] = self.retention_key
+        return payload
 
 
 @dataclass(frozen=True)

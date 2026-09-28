@@ -7,6 +7,7 @@ after the application has opened one.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any
 
 from ...application.session.events import UiEventEnvelope
@@ -21,14 +22,23 @@ class RendererEventSubscriber:
     transcript and become delegation progress lines.
     """
 
-    def __init__(self, renderer: Renderer) -> None:
+    def __init__(
+        self,
+        renderer: Renderer,
+        *,
+        session_provider: Callable[[], Any] | None = None,
+    ) -> None:
         self.renderer = renderer
         self._calls: dict[str, ToolCall] = {}
+        self._session_provider = session_provider
 
     def __call__(self, event: UiEventEnvelope) -> None:
         payload = event.payload
         if _agent_depth(payload) > 0:
             self._project_child(event)
+            return
+        if event.type == "session.history_requested":
+            self._render_history(payload)
             return
         if event.type == "reasoning.delta":
             self.renderer.on_reasoning_delta(str(payload.get("piece", "")))
@@ -136,6 +146,19 @@ class RendererEventSubscriber:
             )
         elif event.type == "task.updated":
             self.renderer.on_agent_event(dict(payload))
+
+    def _render_history(self, payload: dict[str, Any]) -> None:
+        render = getattr(self.renderer, "render_session_history", None)
+        session = self._session_provider() if self._session_provider is not None else None
+        if not callable(render) or session is None:
+            self.renderer.on_system_notice("对话记录就在上方，滚动即可")
+            return
+        max_turns = payload.get("max_turns", 5)
+        pager = bool(payload.get("pager"))
+        if pager:
+            render(session, pager=True)
+            return
+        render(session, max_turns=int(max_turns) if isinstance(max_turns, int) else 5)
 
 
 def _agent_depth(payload: dict[str, Any]) -> int:

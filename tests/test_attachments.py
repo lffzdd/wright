@@ -75,7 +75,7 @@ def test_terminal_attachment_commands_accept_shell_escaped_paths(tmp_path):
     source = tmp_path / "Finder image.png"
     source.write_bytes(_png_bytes())
     renderer = Renderer()
-    runtime = SimpleNamespace(draft_attachments=drafts, renderer=renderer)
+    runtime = SimpleNamespace(draft_attachments=drafts, event_renderer=renderer)
 
     escaped_source = str(source).replace(" ", "\\ ")
     handled, prompt = _dispatch_attachment_command(f"/attach {escaped_source}", runtime)

@@ -24,6 +24,23 @@ from .runner import RuntimeShutdown, SessionRunner
 
 logger = get_logger(__name__)
 
+
+def _plan_brief(session_state: Any) -> str:
+    manager = getattr(session_state, "plan_manager", None)
+    if manager is None or not getattr(manager, "has_plan", False):
+        return ""
+    steps = getattr(manager, "steps", ())
+    if not steps:
+        return ""
+    current = next((step for step in steps if step.status == "in_progress"), None)
+    done = sum(1 for step in steps if step.status in {"completed", "skipped"})
+    if current is not None:
+        title = current.title
+        if len(title) > 32:
+            title = title[:29] + "…"
+        return f"plan {done}/{len(steps)} {title}"
+    return f"plan {getattr(manager, 'status', '')} {done}/{len(steps)}"
+
 if TYPE_CHECKING:
     from ..composition.runtime import WrightRuntime
 
@@ -484,14 +501,16 @@ class SessionService:
     def summary(self) -> dict[str, Any]:
         state = self.runtime.session_state
         lifecycle_state = self.runner.state
+        lifecycle = "open" if lifecycle_state in {"new", "running"} else lifecycle_state
         run_status = getattr(state, "current_run_status", None)
         agent_status = run_status() if callable(run_status) else "idle"
+        execution, queue_reason = self._execution(lifecycle)
         return {
             "session_id": state.session_id,
-            "status": "closing" if lifecycle_state == "closing" else (
-                "closed" if lifecycle_state == "closed" else
-                ("running" if not self.runtime.agent_idle.is_set() else "idle")
-            ),
+            "lifecycle": lifecycle,
+            "execution": execution,
+            "queue_reason": queue_reason,
+            "status": lifecycle if lifecycle != "open" else execution,
             "agent_status": agent_status,
             # Legacy API field, projected from the Run owner rather than a
             # second writable session-level task field.
@@ -507,6 +526,64 @@ class SessionService:
             "history_context_tokens": getattr(state, "context_tokens", 0),
             "pending_interactions": len(self._interaction_snapshot()),
             "active": lifecycle_state not in {"closing", "closed"},
+        }
+
+    def _execution(self, lifecycle: str) -> tuple[str, str | None]:
+        if lifecycle != "open":
+            return "idle", None
+        coordinator = getattr(self.runtime, "directory_coordinator", None)
+        if coordinator is not None:
+            reason = coordinator.waiting_reason(self.session_id)
+            if reason:
+                return "queued", reason
+        if self._interaction_snapshot():
+            return "waiting_for_input", "waiting for permission or a reply"
+        if not self.runtime.agent_idle.is_set():
+            return "running", None
+        return "idle", None
+
+    def persist(self) -> None:
+        """Save the session checkpoint. Adapters do not touch the store."""
+
+        self._checkpoint()
+
+    def list_saved_sessions(self, limit: int = 12) -> list[dict[str, Any]]:
+        store = getattr(self.runtime, "checkpoint_store", None)
+        if store is None:
+            return []
+        return list(store.list_recent_sessions(limit=limit))
+
+    def history(self) -> list[dict[str, Any]]:
+        from .history_projection import project_history, seed_ids
+
+        state = self.runtime.session_state
+        turn_ids, run_ids = seed_ids(state)
+        return project_history(state, turn_ids, run_ids)
+
+    def view(self) -> dict[str, Any]:
+        """Stable status snapshot for a terminal or browser status line."""
+
+        state = self.runtime.session_state
+        summary = self.summary()
+        drafts = getattr(self.runtime, "draft_attachments", None)
+        pending = drafts.summaries() if drafts is not None else []
+        limit = getattr(self.runtime.llm, "context_limit", None)
+        return {
+            **summary,
+            "resumed": bool(getattr(self.runtime, "resumed", False)),
+            "run_status": state.current_run_status() if hasattr(state, "current_run_status") else "",
+            "context_tokens": getattr(state, "context_tokens", 0),
+            "context_limit": limit,
+            "workspace_dir": str(getattr(state, "workspace_dir", "") or ""),
+            "plan_brief": _plan_brief(state),
+            "draft_attachments": [
+                {
+                    "filename": record.filename,
+                    "width": record.width,
+                    "height": record.height,
+                }
+                for record in pending
+            ],
         }
 
     def snapshot(self) -> dict[str, Any]:

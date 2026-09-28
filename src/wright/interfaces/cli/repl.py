@@ -10,9 +10,12 @@ from .prompter import ConsolePrompter
 
 
 class Repl:
-    def __init__(self, rt: WrightRuntime, *, prompter: ConsolePrompter) -> None:
+    def __init__(
+        self, rt: WrightRuntime, *, prompter: ConsolePrompter, renderer: ConsoleRenderer,
+    ) -> None:
         self.rt = rt
         self.prompter = prompter
+        self.renderer = renderer
         self.service = SessionService(rt)
 
     def run(self) -> None:
@@ -23,7 +26,7 @@ class Repl:
         if services.autonomy_scheduler is None or services.agent_background is None:
             raise RuntimeError("REPL requires autonomy scheduler and background runtime")
 
-        if not isinstance(rt.renderer, ConsoleRenderer):
+        if not isinstance(self.renderer, ConsoleRenderer):
             raise TypeError("CLI host requires ConsoleRenderer")
 
         # 只有这个循环会改 root Session。durable run 在这里构造独立会话后
@@ -38,10 +41,10 @@ class Repl:
                 f"已恢复 session {session_state.session_id} "
                 f"(run_status={session_state.current_run_status()})"
             )
-            rt.renderer.render_session_history(session_state)
+            self.renderer.render_session_history(session_state)
         self.service.start()
         CliInputController(
-            renderer=rt.renderer,
+            renderer=self.renderer,
             prompter=self.prompter,
             hub=rt.interaction_broker,
             service=self.service,

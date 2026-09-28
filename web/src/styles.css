@@ -37,6 +37,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, summary:focus
 .connection { display: flex; align-items: center; gap: 7px; }
 .status-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: #5f6874; }
 .status-running, .status-connected, .status-idle { background: var(--accent); box-shadow: 0 0 0 3px rgba(141, 225, 189, .08); }
+.status-queued, .status-waiting_for_input { background: #e6b35c; }
 .status-connecting { background: var(--warning); }
 .status-disconnected { background: var(--danger); }
 .context-meter { position: relative; min-width: 84px; padding-top: 8px; overflow: hidden; }

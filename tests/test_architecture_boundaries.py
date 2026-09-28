@@ -79,6 +79,9 @@ def test_application_execution_does_not_import_interface_rendering() -> None:
         PACKAGE_ROOT / "application/autonomy",
         PACKAGE_ROOT / "application/session",
         PACKAGE_ROOT / "application/tool_execution",
+        PACKAGE_ROOT / "application/composition",
+        PACKAGE_ROOT / "application/command",
+        PACKAGE_ROOT / "application/execution",
     )
     offenders: list[str] = []
     for root in roots:
@@ -87,6 +90,50 @@ def test_application_execution_does_not_import_interface_rendering() -> None:
                 if "interfaces.rendering" in module or module.endswith(".renderer"):
                     offenders.append(f"{path.relative_to(PACKAGE_ROOT)} -> {module}")
     assert offenders == []
+
+
+def _imports_including_type_checking(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            found.add(node.module)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                found.add(alias.name)
+    return found
+
+
+def test_application_and_domain_do_not_import_interfaces() -> None:
+    """Interfaces are subscribed by the composition root, not by application code.
+
+    TYPE_CHECKING and function-local imports count. Hiding a renderer or
+    broker behind them is still a layering break.
+    """
+
+    offenders: list[str] = []
+    for layer in ("application", "domain"):
+        for path in _py_files(PACKAGE_ROOT / layer):
+            for module in _imports_including_type_checking(path):
+                if (
+                    module == "interfaces"
+                    or ".interfaces" in module
+                    or module.startswith(("interfaces.", "wright.interfaces"))
+                ):
+                    offenders.append(f"{path.relative_to(PACKAGE_ROOT)} -> {module}")
+    assert offenders == []
+
+
+def test_web_runtime_adapter_does_not_own_session_catalog_rules() -> None:
+    modules = _imports_including_type_checking(
+        PACKAGE_ROOT / "interfaces/web/runtime_manager.py"
+    )
+    assert "wright.infrastructure.persistence.autonomy_store" not in modules
+    assert not any(module.endswith("autonomy_store") for module in modules)
+    text = (PACKAGE_ROOT / "interfaces/web/runtime_manager.py").read_text(encoding="utf-8")
+    assert "local checkout" not in text
+    assert "WorktreeManager" not in text
+    assert "directory.open" in text
 
 
 def test_tui_view_models_do_not_import_the_renderer() -> None:

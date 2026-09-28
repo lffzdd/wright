@@ -34,6 +34,7 @@ def test_headless_entry_starts_and_stops_the_application_host(monkeypatch, tmp_p
     kwargs = calls[0]
     assert kwargs["start_automation"] is False
     assert kwargs["automation_session_id"] == "origin"
-    assert kwargs["renderer"] is not None
+    assert kwargs["prompter"].__class__.__name__ == "DeniedPrompter"
+    assert "renderer" not in kwargs
     assert calls[1:] == ["start", runtime]
     assert str(tmp_path) in capsys.readouterr().out

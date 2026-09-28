@@ -192,21 +192,16 @@ def test_one_session_processes_submitted_turns_fifo(monkeypatch, tmp_path):
     handle.close()
 
 
-def test_manager_rejects_duplicate_restore_local_conflict_and_capacity(tmp_path):
+def test_manager_rejects_capacity_and_duplicate_resume_without_blocking_idle_local(tmp_path):
     args = argparse.Namespace()
     manager = RuntimeManager(tmp_path, capacity=1, base_args=args)
-    existing = SimpleNamespace(
-        runtime=SimpleNamespace(project_context=ProjectContext.local(tmp_path))
-    )
-    manager._handles["active"] = existing
+    manager.directory._sessions["active"] = SimpleNamespace()
 
     with pytest.raises(RuntimeManagerError, match="capacity"):
         manager.create(environment="local")
-    manager.capacity = 2
+    manager.directory.capacity = 2
     with pytest.raises(RuntimeManagerError, match="already active"):
         manager.create(resume_session_id="active")
-    with pytest.raises(RuntimeManagerError, match="local checkout"):
-        manager.create(environment="local")
 
 
 def test_duplicate_command_is_idempotent(monkeypatch, tmp_path):
@@ -418,7 +413,7 @@ def test_closed_local_session_can_be_replaced_without_losing_its_schedules(monke
         assert restored.runtime.application_host is host
         assert restored.runtime.autonomy_store is first_store
         assert restored.runtime.autonomy_store.list_automations().records[0].id == auto.id
-        assert len(manager._application_hosts) == 1
+        assert len(manager.directory._hosts) == 1
     finally:
         manager.shutdown()
     assert first_store.closed and second_store.closed

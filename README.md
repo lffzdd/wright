@@ -170,6 +170,8 @@ RAG package. Wright does not vendor that stack.
 | `docs/` | Design notes |
 
 Copy `examples/skills/` into `~/.wright/skills` or a project’s `.wright/skills`.
+The root agent discloses the current catalog and loads a body with `load_skill`.
+See `docs/skills-and-knowledge.md`.
 Copy `examples/mcp.json` to `~/.wright/mcp.json` or `{project}/.wright/mcp.json`
 when you actually want MCP servers — Wright does not seed a dummy config.
 

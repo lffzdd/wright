@@ -69,8 +69,6 @@ class Session:
     # retained while Agent/Tool APIs are migrated.
     runs: dict[str, RunRecord] = field(default_factory=dict)
     active_run_id: str | None = None
-    # 目录只往 transcript 写一次。正文走 load_skill 的 tool_result，不另建激活表。
-    skill_catalog_sent: bool = False
     # Deferred tool schemas discovered by tool_search. Order is least-recently
     # touched first so the catalog can remain bounded and survive resume.
     active_deferred_tools: list[str] = field(default_factory=list)
@@ -243,14 +241,6 @@ class Session:
     def _next_step(self) -> int:
         self.step_count += 1
         return self.step_count
-
-    def mark_skill_catalog_sent(self) -> None:
-        self.skill_catalog_sent = True
-
-    def clear_active_deferred_tools(self) -> int:
-        count = len(self.active_deferred_tools)
-        self.active_deferred_tools.clear()
-        return count
 
     def touch_active_deferred_tool(self, name: str) -> None:
         if name not in self.active_deferred_tools:

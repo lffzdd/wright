@@ -84,7 +84,7 @@ def test_child_keeps_knowledge_search_but_drops_skill_tools(tmp_path):
     write_skill(
         tmp_path,
         "release-check",
-        name="发布前检查",
+        name="release-check",
         description="发布时使用",
         body="先跑测试",
     )

@@ -19,6 +19,28 @@ _PHASES = {
     "timeout": "failed",
 }
 
+_USER_SOURCE = "user_input"
+
+
+def public_attachment(record: Any) -> dict[str, Any]:
+    """Attachment fields a UI may show. Storage locations stay on the server."""
+
+    data = record.to_dict() if hasattr(record, "to_dict") else dict(record)
+    data.pop("storage_path", None)
+    return data
+
+
+def _without_storage(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _without_storage(item)
+            for key, item in value.items()
+            if key != "storage_path"
+        }
+    if isinstance(value, list):
+        return [_without_storage(item) for item in value]
+    return value
+
 
 def turn_history_id(turn: Any) -> str:
     step_id = str(getattr(turn, "step_id", "") or "")
@@ -84,10 +106,18 @@ def project_history(
         item: dict[str, Any] = {
             "turn_id": identity,
             "run_id": run_id,
+            "message_id": user_text["message_id"],
             "status": status,
             "user": user_text["text"],
             "assistant": assistant,
         }
+        usage = getattr(turn, "usage", None)
+        if usage is not None:
+            item["usage"] = {
+                "prompt_tokens": usage.prompt_tokens,
+                "completion_tokens": usage.completion_tokens,
+                "total_tokens": usage.total_tokens,
+            }
         if attachments:
             item["attachments"] = attachments
         tools = _run_tools(session, run_id)
@@ -116,16 +146,25 @@ def project_history(
 
 
 def _user_text(records: list[Any], start: int) -> dict[str, Any]:
+    """Nearest real user message. Source is the identity, not the text shape."""
+
     for index in range(start - 1, -1, -1):
-        message = records[index].message
+        record = records[index]
+        if getattr(record, "source", "") != _USER_SOURCE:
+            continue
+        message = record.message
         if message.get("role") != "user":
             continue
         text = message.get("content", "")
-        if not isinstance(text, str) or text.lstrip().startswith("<"):
-            continue
+        if not isinstance(text, str):
+            text = ""
         attachment_ids = message.get("attachments", [])
-        return {"text": text.strip(), "attachment_ids": attachment_ids if isinstance(attachment_ids, list) else []}
-    return {"text": "", "attachment_ids": []}
+        return {
+            "text": text.strip(),
+            "message_id": record.id,
+            "attachment_ids": attachment_ids if isinstance(attachment_ids, list) else [],
+        }
+    return {"text": "", "message_id": "", "attachment_ids": []}
 
 
 def _run_tools(session: Any, run_id: str) -> list[dict[str, Any]]:
@@ -145,12 +184,7 @@ def _run_tools(session: Any, run_id: str) -> list[dict[str, Any]]:
             "phase": _PHASES.get(str(execution.status), "failed"),
         }
         if execution.result is not None:
-            result = execution.result.to_dict()
-            result.pop("storage_path", None)
-            for artifact in result.get("artifacts") or []:
-                if isinstance(artifact, dict):
-                    artifact.pop("storage_path", None)
-            tool.update(result)
+            tool.update(_without_storage(execution.result.to_dict()))
         tools.append(tool)
     return tools
 
@@ -159,4 +193,4 @@ def attachment_summaries(session: Any, attachment_ids: list[str]) -> list[dict[s
     if not attachment_ids:
         return []
     records = session.attachment_records(attachment_ids)
-    return [record.to_dict() for record in records]
+    return [public_attachment(record) for record in records]

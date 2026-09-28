@@ -25,6 +25,7 @@ from ...infrastructure.tools.command.control import command_tools
 from ...infrastructure.tools.runtime import ToolRuntime
 from ..command.execution import CommandExecution
 from ..composition.roles import tools_for_role
+from ..execution.directory import current_directory_binding
 from ..execution.identity import bind_identity
 from ..session.events import EventScope, SessionEvents
 from ..session.live_resources import RuntimeResources
@@ -314,6 +315,7 @@ def make_spawn_agent_tool(
                 return _run_child_body()
             finally:
                 child_commands.close()
+                release_child_lease()
 
         def _run_child_body() -> ToolResult:
             try:
@@ -345,9 +347,25 @@ def make_spawn_agent_tool(
                 return ToolResult.fail(error or finished.error, data=view)
             return ToolResult.success(view)
 
+        binding = current_directory_binding()
+        child_lease = None
+        if binding is not None:
+            child_lease = binding.coordinator.retain(
+                binding.lease.lease_id,
+                kind="subagent",
+                holder_id=record.id,
+                session_id=child_session.session_id,
+                label=f"subagent {record.id}",
+            )
+
+        def release_child_lease() -> None:
+            if child_lease is not None:
+                child_lease.release()
+
         if run_in_background:
             if delegation.submit_background is None:
                 child_commands.close()
+                release_child_lease()
                 finished = delegation.finish_task(
                     record.id, status="failed", steps_used=0,
                     error="Current session has no background Agent runtime",
@@ -358,6 +376,7 @@ def make_spawn_agent_tool(
                 delegation.submit_background(record.id, run_child)
             except Exception as exc:
                 child_commands.close()
+                release_child_lease()
                 finished = delegation.finish_task(
                     record.id, status="failed", steps_used=0, error=str(exc)
                 )

@@ -171,6 +171,8 @@ test("isolates sessions and completes a structured permission flow", async ({ pa
 
   await page.goto("/");
   await expect(page.getByRole("dialog", { name: "Choose an execution environment" })).toBeVisible();
+  await expect(page.getByText("Several sessions can stay open; one task runs in this directory at a time.")).toBeVisible();
+  await expect(page.getByText("One active session max")).toHaveCount(0);
   await page.getByLabel("First instruction").fill("First isolated task");
   await page.getByRole("button", { name: "Create session" }).click();
   await expect(page.getByRole("heading", { name: "First isolated task" })).toBeVisible();
@@ -188,4 +190,119 @@ test("isolates sessions and completes a structured permission flow", async ({ pa
   await expect(page.getByRole("button", { name: "Allow directory for this session" })).toBeVisible();
   await page.getByRole("button", { name: "Allow directory for this session" }).click();
   await expect(page.getByText("Web smoke passed.", { exact: true })).toHaveCount(1);
+});
+
+test("switching sessions only changes the view subscription", async ({ page }) => {
+  const sessions: Session[] = [];
+  const snapshots = new Map<string, ReturnType<typeof snapshot>>();
+
+  await page.addInitScript(() => {
+    class MockWebSocket {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSING = 2;
+      static readonly CLOSED = 3;
+      readonly url: string;
+      readyState = MockWebSocket.CONNECTING;
+      onopen: ((event: Event) => void) | null = null;
+      onclose: ((event: CloseEvent) => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+
+      constructor(url: string | URL) {
+        this.url = String(url);
+        const sent = ((window as unknown as { __sent?: string[] }).__sent ??= []);
+        setTimeout(() => {
+          this.readyState = MockWebSocket.OPEN;
+          this.onopen?.(new Event("open"));
+        }, 0);
+        (window as unknown as { __sockets?: MockWebSocket[] }).__sockets ??= [];
+        (window as unknown as { __sockets: MockWebSocket[] }).__sockets.push(this);
+        void sent;
+      }
+
+      send(raw: string) {
+        const sent = ((window as unknown as { __sent?: string[] }).__sent ??= []);
+        sent.push(raw);
+      }
+
+      close() {
+        this.readyState = MockWebSocket.CLOSED;
+        this.onclose?.(new CloseEvent("close"));
+      }
+    }
+    Object.defineProperty(window, "WebSocket", { value: MockWebSocket });
+  });
+
+  await page.route("**/api/v1/project", (route) => route.fulfill({
+    json: {
+      project_id: "project-e2e",
+      name: "wright-e2e",
+      project_root: "/tmp/wright-e2e",
+      git: true,
+      capacity: 4,
+      active_count: sessions.length,
+      default_environment: "local",
+      dirty_checkout: false,
+    },
+  }));
+  await page.route("**/api/v1/sessions", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({ json: sessions });
+      return;
+    }
+    const body = route.request().postDataJSON() as { prompt?: string };
+    const index = sessions.length + 1;
+    const session: Session = {
+      session_id: `session-${index}`,
+      status: index === 1 ? "running" : "idle",
+      user_goal: body.prompt || `Session ${index}`,
+      model: "deterministic-e2e",
+      environment: "worktree",
+      execution_root: "/tmp/wright-e2e",
+      branch_name: `wright/session-${index}`,
+      active: true,
+      recoverable: true,
+    };
+    sessions.push(session);
+    const value = snapshot(session);
+    if (index === 1) {
+      value.history = [{
+        turn_id: "kept",
+        user: "keep going",
+        assistant: "still running",
+        status: "completed",
+      }] as unknown as typeof value.history;
+    }
+    snapshots.set(session.session_id, value);
+    await route.fulfill({ json: value });
+  });
+  await page.route("**/api/v1/sessions/*/snapshot", async (route) => {
+    const id = route.request().url().match(/sessions\/([^/]+)\/snapshot/)?.[1] ?? "";
+    await route.fulfill({ json: snapshots.get(id) });
+  });
+  await page.route("**/api/v1/sessions/*/changes", (route) => route.fulfill({
+    json: { local_warning: false, baseline: "HEAD", changes: [] },
+  }));
+  await page.route("**/api/v1/sessions/*/close", (route) => route.fulfill({
+    json: { session_id: "closed", lifecycle: "closed", status: "closed", active: false },
+  }));
+
+  await page.goto("/");
+  await page.getByLabel("First instruction").fill("Alpha task");
+  await page.getByRole("button", { name: "Create session" }).click();
+  await expect(page.getByText("still running", { exact: true })).toBeVisible();
+  await page.getByLabel("Message Wright").fill("draft for alpha");
+
+  await page.getByLabel("New session").click();
+  await page.getByLabel("First instruction").fill("Beta task");
+  await page.getByRole("button", { name: "Create session" }).click();
+  await expect(page.getByRole("heading", { name: "Beta task" })).toBeVisible();
+  await expect(page.getByText("still running", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Message Wright")).toHaveValue("");
+
+  await page.getByRole("button", { name: /Alpha task/ }).click();
+  await expect(page.getByText("still running", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Message Wright")).toHaveValue("draft for alpha");
+  const sent = await page.evaluate(() => (window as unknown as { __sent?: string[] }).__sent ?? []);
+  expect(sent.join("\n")).not.toContain("turn.cancel");
 });

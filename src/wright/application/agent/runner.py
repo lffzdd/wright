@@ -235,11 +235,13 @@ class Agent:
         token 再传入同一份列表，用量校准才能扣掉这笔临时开销。
         """
 
-        # A preceding tool_search call may have activated specialized schemas.
+        # Schema exposure is snapshotted for this request. tool_search updates
+        # the session set during tool execution, so new names apply next request.
+        # Request compaction must not clear that set: folding is a projection.
         self.tool_schemas, self._tool_names = encode_tools(
-            self._schema_tools, active_deferred=set(self._active_deferred_tools)
+            self._prompt_manager.visible_schema_tools(),
+            active_deferred=set(self._active_deferred_tools),
         )
-        self._ensure_skill_catalog()
         response = ContentDone("", finish_reason="incomplete")
         usage_record: UsageRecord | None = None
         self.ui.on_turn_begin()
@@ -277,25 +279,25 @@ class Agent:
             logger.info("episode_recall omitted reason=context_budget")
         self.session_state.request_context_tokens = view.estimated_tokens
         if view.folded_record_ids:
-            # ContextView owns the projection. Session owns the decision to
-            # deactivate deferred schemas after a compacted request.
+            # The projection folded older tool results. Activated tool schemas
+            # belong to the session and stay available on later requests.
             self._emit_lifecycle("pre_compact", {
                 "context_tokens": view.estimated_tokens,
                 "context_limit": self.context_limit,
                 "watermark": self.compactor.context_watermark,
             })
-            deactivated_tools = self.session_state.clear_active_deferred_tools()
             self._emit_lifecycle("post_compact", {
                 "folded_count": len(view.folded_record_ids),
                 "token_savings": 0,
                 "context_tokens": view.estimated_tokens,
-                "deactivated_tools": deactivated_tools,
+                "deactivated_tools": 0,
                 "folded_record_ids": list(view.folded_record_ids),
                 "over_budget": view.over_budget,
             })
         if view.over_budget:
             raise ContextBudgetExceeded(
-                "context exceeds the request budget after deterministic compression"
+                view.budget_reason
+                or "context exceeds the request budget after deterministic compression"
             )
         note_injection = (
             getattr(self.memory, "note_injection", None)
@@ -377,9 +379,6 @@ class Agent:
 
     def _plan_reminder(self) -> dict | None:
         return self._prompt_manager.plan_reminder()
-
-    def _ensure_skill_catalog(self) -> None:
-        self._prompt_manager.ensure_skill_catalog(self._active_deferred_tools)
 
     def _ephemeral_reminders(self) -> list[dict]:
         return self._prompt_manager.ephemeral_reminders()
@@ -527,12 +526,11 @@ class Agent:
                     f"{prompt_decision.additional_context}\n"
                     "</hook-additional-context>"
                 ),
-            })
+            }, source="system_feedback")
 
         # Recall is projected onto the current user turn only. It is not appended
         # to the transcript, so later turns do not accumulate old recall blocks.
         self._recover_pending_episodes()
-        self._ensure_skill_catalog()
         self._checkpoint()
         self._emit_agent_start(turn_goal)
 
@@ -669,7 +667,6 @@ class Agent:
             )
         self._bind_executor_run()
         self._recover_pending_episodes()
-        self._ensure_skill_catalog()
         self._checkpoint()
         self._emit_agent_start(self.session_state.current_goal(), resumed=True)
         return self._run_with_cancellation(

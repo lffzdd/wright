@@ -36,7 +36,13 @@ class Tool:
     timeout_owner: TimeoutOwner = "executor"
     execution_timeout: float | None = None
     expose_to_model: bool = True
+    # Delays schema exposure until tool_search activates the tool.
+    # Registration, permission checks, and any startup (for example an MCP
+    # connection) are separate and are not deferred by this flag.
     defer_to_model: bool = False
+    # Skills disclosure is request-scoped, so the loader is omitted from the
+    # frozen system-prompt tool list.
+    list_in_system_prompt: bool = True
     source: str = "builtin"
     required_capabilities: frozenset[str] = frozenset()
 

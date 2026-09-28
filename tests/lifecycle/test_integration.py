@@ -88,7 +88,7 @@ def test_agent_emits_root_lifecycle_and_compaction_events(tmp_path):
     })
 
     assert agent.run("do it") == "done"
-    assert session.active_deferred_tools == []
+    assert session.active_deferred_tools == ["specialized_tool"]
 
     events = [row["event"] for row in recorder.read()]
     assert events == [

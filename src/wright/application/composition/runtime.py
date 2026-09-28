@@ -56,10 +56,8 @@ from ...infrastructure.tools.mcp_client import (
     McpManager,
     load_mcp_configs,
 )
-from ...infrastructure.tools.skill_tools import optional_skill_tools
+from ...infrastructure.tools.skill_tools import resident_skill_tools
 from ...infrastructure.workspace.project import ProjectContext
-from ...interfaces.rendering.contracts import Renderer
-from ...interfaces.rendering.subscriber import RendererEventSubscriber
 from ..agent import (
     Agent,
     AgentBackgroundRuntime,
@@ -69,6 +67,7 @@ from ..agent import (
     ensure_system_prompt,
     prepare_model_tools,
 )
+from ..execution.directory import DirectoryExecutionCoordinator
 from ..lifecycle import LifecycleConfigError
 from ..memory.assembly import (
     assemble_memory_manager,
@@ -92,7 +91,6 @@ logger = get_logger(__name__)
 class WrightRuntime:
     agent: Agent
     session_state: Session
-    renderer: Renderer | None
     event_renderer: SessionEvents
     publisher: EventPublisher
     project_context: ProjectContext
@@ -114,8 +112,9 @@ class WrightRuntime:
     runtime_resources: RuntimeResources
     interaction_broker: Any = None
     # The ApplicationHost owns durable scheduling, SQLite and durable workers.
-    # A Web RuntimeManager may retain it after this Session closes.
+    # A session catalog may retain it after this Session closes.
     application_host: ApplicationHost | None = None
+    directory_coordinator: DirectoryExecutionCoordinator | None = None
     owns_application_host: bool = True
     shutdown_lock: threading.Lock = field(default_factory=threading.Lock)
     shutdown_complete: threading.Event = field(default_factory=threading.Event)
@@ -282,7 +281,6 @@ def _trusted_mcp_config_paths(
 def assemble_runtime(
     config: RuntimeConfig,
     *,
-    renderer: Renderer | None = None,
     project_context: ProjectContext | None = None,
     publisher: EventPublisher | None = None,
     interaction_broker: Any = None,
@@ -291,6 +289,7 @@ def assemble_runtime(
     start_automation: bool = True,
     automation_session_id: str | None = None,
     application_host: ApplicationHost | None = None,
+    directory_coordinator: DirectoryExecutionCoordinator | None = None,
     resume_chooser: Callable[[list[dict]], str] | None = None,
 ) -> WrightRuntime:
     load_env()
@@ -400,13 +399,14 @@ def assemble_runtime(
     from ..execution.identity import bind_identity
 
     identity = bind_identity(session_state, autonomy_store)
+    command_execution = CommandExecution(
+        session_state,
+        identity,
+        notify=lambda command_id: event_queue.put(("TASK_DONE", command_id)),
+    )
     runtime_resources = RuntimeResources(
         session_state.session_id,
-        commands=CommandExecution(
-            session_state,
-            identity,
-            notify=lambda command_id: event_queue.put(("TASK_DONE", command_id)),
-        ),
+        commands=command_execution,
         identity=identity,
     )
     opened.runtime_resources = runtime_resources
@@ -429,6 +429,15 @@ def assemble_runtime(
                     interaction_scope, request_id, kind=str(kind), payload=payload,
                     run_id=active.run_id if active is not None else "",
                 )
+                publisher.publish(
+                    "session.status_changed",
+                    {
+                        "session_id": session_state.session_id,
+                        "lifecycle": "open",
+                        "execution": "waiting_for_input",
+                        "queue_reason": "waiting for permission or a reply",
+                    },
+                )
 
             def resolve_interaction(request_id, _kind, resolution) -> None:
                 status = str(resolution.get("status") or "resolved")
@@ -443,6 +452,15 @@ def assemble_runtime(
                         "tool_name": resolution.get("tool_name", ""),
                     },
                     status=status,
+                )
+                publisher.publish(
+                    "session.status_changed",
+                    {
+                        "session_id": session_state.session_id,
+                        "lifecycle": "open",
+                        "execution": "running",
+                        "queue_reason": "",
+                    },
                 )
 
             bind_persistence(record_interaction, resolve_interaction)
@@ -501,9 +519,8 @@ def assemble_runtime(
         publisher,
         runtime_resources=runtime_resources,
     )
-    if renderer is not None:
-        publisher.add_listener(RendererEventSubscriber(renderer))
     user_prompter = RoutedPrompter(interaction_target, fallback=prompter)
+    coordinator = directory_coordinator or DirectoryExecutionCoordinator()
 
     # Permission policy is centralized in the resolver.  Approval adapters only
     # collect a structured choice and never mutate settings themselves.
@@ -569,6 +586,8 @@ def assemble_runtime(
         coding_only = {"edit_file", "write_file", "execute_command"}
         active_base_tools = [t for t in base_tools if t.name not in coding_only]
 
+    # defer_to_model 只推迟 MCP 工具的 schema 暴露。McpManager.start() 已经
+    # 在启动时连接服务器并发现工具，这里不是延迟初始化。
     assembled_base = [
         *active_base_tools,
         *(replace(tool, defer_to_model=True) for tool in mcp_tools),
@@ -596,10 +615,8 @@ def assemble_runtime(
         session_repository=checkpoint_store,
     )
     skill_registry = SkillRegistry(skill_directories(workspace_dir))
-    skill_tools = [
-        replace(tool, defer_to_model=True)
-        for tool in optional_skill_tools(skill_registry)
-    ]
+    # 注册与 schema 暴露分开：加载器常驻注册，有技能时才出现在当轮 schema 和目录里。
+    skill_tools = resident_skill_tools(skill_registry)
     tools = [
         *tools,
         ask_user_tool,
@@ -623,8 +640,12 @@ def assemble_runtime(
             permission_settings=settings,
             mcp_configs=mcp_configs,
             artifact_store=artifact_store,
+            directory_coordinator=coordinator,
         )
         opened.created_host = constructed_application_host
+    else:
+        constructed_application_host.bind_coordinator(coordinator)
+    command_execution.attach_directory(coordinator)
     services.autonomy_scheduler = constructed_application_host.scheduler_for(autonomy_store)
     assembly = assemble_tool_capabilities(
         session_state,
@@ -687,7 +708,6 @@ def assemble_runtime(
     return WrightRuntime(
         agent=agent,
         session_state=session_state,
-        renderer=renderer,
         event_renderer=event_renderer,
         publisher=publisher,
         project_context=project_context,
@@ -709,6 +729,7 @@ def assemble_runtime(
         runtime_resources=runtime_resources,
         interaction_broker=interaction_broker,
         application_host=constructed_application_host,
+        directory_coordinator=coordinator,
     )
 
 

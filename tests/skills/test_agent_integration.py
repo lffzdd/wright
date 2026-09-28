@@ -1,3 +1,8 @@
+"""Skill disclosure follows the production loader.
+
+These tests capture scripted model requests. They do not call a live model.
+"""
+
 from pathlib import Path
 
 from tests.responses import event, response
@@ -6,7 +11,7 @@ from wright.application.skills import SkillRegistry
 from wright.domain.model.session import Session
 from wright.infrastructure.persistence.session.repository import FileSessionRepository
 from wright.infrastructure.storage.skills import write_skill
-from wright.infrastructure.tools.skill_tools import build_skill_tools
+from wright.infrastructure.tools.skill_tools import resident_skill_tools
 
 
 class ScriptLLM:
@@ -15,9 +20,11 @@ class ScriptLLM:
     def __init__(self, script):
         self.script = list(script)
         self.seen_messages = []
+        self.seen_tools = []
 
     def __call__(self, messages, **kwargs):
         self.seen_messages.append(list(messages))
+        self.seen_tools.append(list(kwargs.get("tools") or []))
         yield event(content=self.script.pop(0))
 
 
@@ -33,7 +40,7 @@ def _write_skill(directory: Path) -> SkillRegistry:
     write_skill(
         directory,
         "release-check",
-        name="发布前检查",
+        name="release-check",
         description="发布时使用的检查流程",
         body="发布前必须先跑测试。",
         allowed_tools=["execute_command"],
@@ -49,63 +56,56 @@ def _catalog_texts(messages) -> list[str]:
     ]
 
 
-def test_parent_and_child_sessions_isolate_catalog_flag(tmp_path: Path):
-    parent = Session.create("parent", tmp_path)
-    child = Session.create("child", tmp_path)
-    parent.mark_skill_catalog_sent()
-    assert parent.skill_catalog_sent is True
-    assert child.skill_catalog_sent is False
+def _schema_names(tools) -> list[str]:
+    return [item["name"] for item in tools]
 
 
-def test_empty_skills_directory_injects_nothing(tmp_path: Path):
+def test_empty_registry_exposes_neither_catalog_nor_loader(tmp_path: Path):
     llm = ScriptLLM([_final("done")])
     session = Session.create("task", tmp_path)
-    create_agent(llm, [], session, skills=SkillRegistry(tmp_path)).run("hi")
+    registry = SkillRegistry(tmp_path)
+    create_agent(
+        llm, resident_skill_tools(registry), session, skills=registry,
+    ).run("hi")
+    assert not any(_catalog_texts(batch) for batch in llm.seen_messages)
+    assert all("load_skill" not in _schema_names(tools) for tools in llm.seen_tools)
     assert not any(
-        "<skill-catalog>" in str(message.get("content", ""))
-        for batch in llm.seen_messages
-        for message in batch
-    )
-    assert not any(
-        "<system-reminder>" in str(record.message.get("content", ""))
+        "<skill-catalog>" in str(record.message.get("content", ""))
         for record in session.message_records
     )
-    assert session.skill_catalog_sent is True
 
 
-def test_catalog_is_written_once_into_transcript(tmp_path: Path):
+def test_catalog_is_projected_each_request_and_not_appended(tmp_path: Path):
     registry = _write_skill(tmp_path)
     llm = ScriptLLM([
         _tool("load_skill", skill_id="release-check"),
         _final("已按流程检查"),
     ])
     session = Session.create("task", tmp_path)
-    tools = build_skill_tools(registry)
     answer = create_agent(
-        llm, tools, session, skills=registry
+        llm, resident_skill_tools(registry), session, skills=registry,
     ).run("准备发布")
 
     assert answer == "已按流程检查"
-    assert session.skill_catalog_sent is True
-
     first_catalogs = _catalog_texts(llm.seen_messages[0])
     assert len(first_catalogs) == 1
     assert "release-check" in first_catalogs[0]
-    assert "调用 load_skill 工具" in first_catalogs[0]
+    assert "发布时使用的检查流程" in first_catalogs[0]
+    assert "load_skill" in first_catalogs[0]
+    assert "load_skill" in _schema_names(llm.seen_tools[0])
 
     second_catalogs = _catalog_texts(llm.seen_messages[1])
     assert len(second_catalogs) == 1
-    assert "发布前必须先跑测试" in str(llm.seen_messages[1][-1].get("content", ""))
-
+    assert "发布前必须先跑测试" in str(llm.seen_messages[1])
     transcript = [
         str(record.message.get("content", ""))
         for record in session.message_records
     ]
-    assert sum("<skill-catalog>" in text for text in transcript) == 1
+    assert sum("<skill-catalog>" in text for text in transcript) == 0
     assert any("发布前必须先跑测试" in text for text in transcript)
 
 
-def test_second_user_turn_does_not_resend_catalog(tmp_path: Path):
+def test_later_user_turn_refreshes_catalog_without_duplicating_history(tmp_path: Path):
     registry = _write_skill(tmp_path)
     llm = ScriptLLM([
         _final("第一轮完成"),
@@ -113,10 +113,7 @@ def test_second_user_turn_does_not_resend_catalog(tmp_path: Path):
     ])
     session = Session.create("task", tmp_path)
     agent = create_agent(
-        llm,
-        build_skill_tools(registry),
-        session,
-        skills=registry,
+        llm, resident_skill_tools(registry), session, skills=registry,
     )
     assert agent.run("发布") == "第一轮完成"
     assert agent.run("另一件事") == "第二轮完成"
@@ -124,11 +121,12 @@ def test_second_user_turn_does_not_resend_catalog(tmp_path: Path):
         str(record.message.get("content", ""))
         for record in session.message_records
     ]
-    assert sum("<skill-catalog>" in text for text in transcript) == 1
+    assert sum("<skill-catalog>" in text for text in transcript) == 0
+    assert len(_catalog_texts(llm.seen_messages[0])) == 1
     assert len(_catalog_texts(llm.seen_messages[1])) == 1
 
 
-def test_continue_run_keeps_catalog_and_does_not_resend(tmp_path: Path):
+def test_restored_session_uses_live_catalog_not_stale_transcript(tmp_path: Path):
     registry = _write_skill(tmp_path)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -138,18 +136,23 @@ def test_continue_run_keeps_catalog_and_does_not_resend(tmp_path: Path):
     session.append_message({"role": "user", "content": "准备发布"})
     session.append_message({
         "role": "user",
-        "content": "<system-reminder>\n<skill-catalog>\n- release-check: 发布\n</skill-catalog>\n</system-reminder>",
+        "content": (
+            "<system-reminder>\n<skill-catalog>\n- stale-skill: 过期目录\n"
+            "</skill-catalog>\n</system-reminder>"
+        ),
     })
-    session.mark_skill_catalog_sent()
     store.save(session)
 
     restored = store.load(session.session_id)
-    assert restored.skill_catalog_sent is True
     llm = ScriptLLM([_final("继续")])
     answer = create_agent(
-        llm, [], restored, skills=registry
+        llm, resident_skill_tools(registry), restored, skills=registry,
     ).continue_run()
     assert answer == "继续"
+    catalogs = _catalog_texts(llm.seen_messages[0])
+    assert len(catalogs) == 1
+    assert "release-check" in catalogs[0]
+    assert "stale-skill" not in catalogs[0]
     transcript = [
         str(record.message.get("content", ""))
         for record in restored.message_records

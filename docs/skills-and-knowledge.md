@@ -1,63 +1,119 @@
-# Skills 与知识检索（第五阶段）
+# Skills 与知识检索
 
-第五阶段给 Agent 两样按需能力：磁盘上的领域流程（Skill），以及隔壁 RAG
-项目的只读检索（`knowledge_search`）。两者都不改已经冻结的 system prompt。
+Agent 有两样按需能力：磁盘上的领域流程（Skill），以及可选的只读检索
+（`knowledge_search`）。Skill 不是系统指令，正文不写进冻结的 system prompt。
 
-## 为什么不能改 system prompt
+下面几件事不是同一个状态：
 
-`Agent` 只在会话第一条消息时构造 system prompt，之后永不重建。工具清单、
-记忆静态指令都冻在那里。Skill 是领域流程，不是系统指令：写进 system prompt
-会和既有规则抢优先级，恢复会话或子 Agent 也会把过期流程当成“系统规则”。
+| 问题 | 所有者 |
+|---|---|
+| 工具是否已注册、是否允许执行 | 组合根注册的工具 + `PermissionResolver` |
+| 工具 schema 当前是否向模型暴露 | 当轮 `encode_tools` 快照 |
+| MCP 是否已连接、工具是否已发现 | `McpManager.start()`（启动时完成） |
+| 技能正文是否留在历史里 | transcript 里的 `load_skill` 结果 |
+| 技能正文是否在当前模型请求里 | `ContextBuilder` 投影；`retention=instruction` 不被折叠 |
 
-因此：
+`defer_to_model` 只推迟 **schema 暴露**。它不推迟注册、权限或 MCP 连接。
+MCP 工具在 `McpManager.start()` 时已经连接并发现；随后才用
+`defer_to_model=True` 把 schema 留到 `tool_search` 激活之后。
 
-- **目录**作为一条 `user` 消息写入 transcript，每个会话只发一次；
-- **正文**走 `skill` 工具的 `tool_result`，钉在调用点，和普通工具输出一样留在历史上；
-- 都不进 system prompt，也不再每轮往 `wire_messages` 末尾临时贴。
-
-计划提醒（`plan_reminder`）仍是每轮 ephemeral；Skill 已经不是那条路。
-
-## Skill 生命周期
+## 调用链
 
 ```text
-磁盘  {project}/.wright/skills/<id>/SKILL.md
-      ~/.wright/skills/<id>/SKILL.md
-        │  SkillRegistry 扫描 / 缓存 / 失效（项目目录优先）
-        ▼
-会话开始  若至少有一个合法 skill
-        ├── 工具：skill（写入冻结的工具清单）
-        └── 目录：id + description 写入 transcript 一次
-            （超 2500 字符只截描述，不丢掉 id）
-
-skill(skill_id)
-        │  当时从磁盘读完整正文
-        ▼
-tool_result  正文进入 transcript，之后随对话历史保留
+磁盘 SKILL.md
+  storage/skills.py          解析、路径校验、单技能故障隔离
+  SkillRegistry              缓存、指纹失效、项目目录优先、扫描诊断打日志
+        │
+根 Agent 组合
+  resident_skill_tools       注册 load_skill（不 defer）
+  tools_for_role             子 Agent / durable run 去掉 load_skill
+        │
+每一轮模型请求
+  AgentPromptManager         有技能才暴露 load_skill，并附上当前目录
+  encode_tools               本轮 schema / 名称快照
+  ContextBuilder             丢掉历史里的旧目录消息，保留指令类工具结果
+        │
+load_skill
+  读当前文件，把正文快照写入 tool_result
+  结果带 retention=instruction 与 retention_key
+  相对路径以 skill_root 为基准；不预读资源，不执行脚本
 ```
 
-`continue_run` / `run_runtime_event` 不是新会话：目录标记
-`Session.skill_catalog_sent` 已为真则不再重发。后续 `Agent.run()`
-也不清空这份目录——它已经在历史里。
+`tool_search` 只发现被 `defer_to_model` 标出的工具。技能不走这条路：
+目录直接给出 id 和用途，`load_skill` 在有技能时属于当轮 schema。
 
-没有 `list_skills` / `load_skill` / `unload_skill`，也没有激活表。
-模型看见目录后调用 `skill`；对话里已经有过该正文就直接遵循，不必再调。
+## 目录契约：可更新的请求投影
 
-## 所有权边界
+目录不写入 transcript，也不进 checkpoint。每一轮从 `SkillRegistry` 现读，
+作为 ephemeral user 消息放进这次请求。因此：
 
-| 状态 | 所有者 | 不放在 |
-|---|---|---|
-| skill 文件 / 正文 | 磁盘 + `SkillRegistry`（进程级只读缓存） | Session、checkpoint、system prompt |
-| 目录是否已写入 transcript | `Session.skill_catalog_sent` | 全局 registry、Memory |
-| 计划 | `Session.plan_manager` | Skill |
-| 跨会话事实 | Memory | Skill |
+- 启动、恢复、继续运行看到的都是当时磁盘上的目录；
+- 技能文件增删或描述更新后，下一次模型请求换成新目录；
+- 不会每轮往历史里再追加一份目录；
+- 旧 checkpoint 里已经写入的 `<skill-catalog>` 消息会从请求投影中省略，
+  避免和当前目录叠成两份；
+- 没有技能时不注入空目录，也不把 `load_skill` 放进当轮 schema。
+  根 Agent 仍注册这个加载器，所以会话中途出现第一个技能后，下一轮就能看见它；
+- 超 2500 字符时只截描述，不丢掉 id。
 
-正文只在被调用时出现在 transcript 的 `tool_result` 里，不另建
-`active_skill_ids`。主 Agent 和子 Agent 各有自己的 session，目录标记天然隔离。
-子任务不该自己调 `skill`——委派时把需要的步骤写进任务描述，子 Agent 才能保持
-“自包含、可独立完成”。
+目录不写入 checkpoint。
 
-Checkpoint 只存 `skill_catalog_sent`，不存正文。旧 checkpoint 没有该字段、
-或仍带着已废弃的 `active_skill_ids` 时，当成尚未发送目录。
+已加载正文是调用当时的快照，存在那条 tool result 里。目录更新不会改写
+已经加载的正文；文件变了要再调一次 `load_skill`。
+
+## 正文保留
+
+`load_skill` 的结果带 `retention=instruction` 和 `retention_key=skill:<id>`。
+压缩器只认这个标记，不按工具名开特例。
+
+- 同一个 key 只保留最新一份完整正文；更早的副本可以标成 superseded。
+- 最新正文不会被换成 “folded” 占位。
+- 折叠只发生在请求投影上，不改 transcript，也不清空
+  `active_deferred_tools`。
+- 把可折叠结果都收掉之后仍然超过预算时，请求失败，并说明必需的指令内容
+  放不进预算、没有被占位符替换。不会假装正文还在上下文里。
+- 重复加载产生新的 tool result。恢复会话时，正文随 transcript 回来，
+  目录按当前磁盘重建，已激活的延迟工具按 checkpoint 恢复后再按当前工具过滤。
+
+Checkpoint 不另存一份技能正文。没有 `retention` 的工具结果按普通结果折叠，
+不会补成技能指令。
+
+## 格式
+
+解析使用只接受安全类型的 YAML，并拒绝重复键。
+
+| 字段 | 行为 |
+|---|---|
+| `name` | 必填，必须与目录名相同：1–64 字符，小写字母、数字和单个连字符 |
+| `description` | 必填，最多 1024 字符，进入目录 |
+| `allowed-tools` | 唯一的建议字段。空格分隔字符串或 YAML 字符串序列，归一成同一个内部列表 |
+| `license` / `compatibility` / `metadata` | 只作为元数据返回，不参与权限或工具暴露。`metadata` 可以嵌套 |
+| 其他未知键 | 保留为 extra 元数据，没有行为 |
+
+`allowed-tools` 不会绕过 `PermissionResolver`，也不会增删工具清单。
+正文里的 `scripts/`、`references/`、`assets/` 相对 `skill_root`（SKILL.md
+所在目录的绝对路径）。模型用现有文件或命令工具按需读取；加载器不预读、
+不执行脚本。
+
+资源上限：文件 256KB，正文 100000 字符，描述 1024 字符。超出时错误里带
+当前长度和上限。一个技能编码错误、YAML 损坏、读失败或扫描时消失，只变成
+该技能的诊断并写入日志；其余技能继续可用。
+
+项目目录 `{project}/.wright/skills/` 优先于 `~/.wright/skills/`。同名技能
+加载到的是胜出那一份自己的 `skill_root`。
+
+## 所有权
+
+| 状态 | 所有者 |
+|---|---|
+| 文件、解析、扫描错误 | `infrastructure/storage/skills.py` |
+| 发现、优先级、缓存失效 | `SkillRegistry` |
+| 目录是否出现在本轮请求 | `AgentPromptManager` + 当轮 schema |
+| 已加载正文 | transcript 中的 tool result |
+| 请求里是否仍有全文 | `ContextBuilder` / `ContextCompactor` |
+| 已激活的延迟工具 | `Session.active_deferred_tools` |
+| 计划 | `Session.plan_manager` |
+| 跨会话事实 | Memory |
 
 ## knowledge_search
 
@@ -109,25 +165,24 @@ WRIGHT_KNOWLEDGE_LIVE_TEST=1 pytest -q \
 - **knowledge_search 给子 Agent，不给 durable run。** 它是只读检索，没有跨会话
   副作用，子任务常常需要查资料；但无人值守运行会消耗 embedding 额度、依赖
   网络，且权限是 `ask`——fail-closed 下调用必被拒，放进工具集只会误导模型。
-- **`skill` 工具不给子 Agent，也不给 durable run。** 子 Agent 的契约是自包含任务；
+- **`load_skill` 不给子 Agent，也不给 durable run。** 子 Agent 的契约是自包含任务；
   父 Agent 应在 spawn 描述里写清流程。durable run 把步骤写进调度 prompt，避免
-  用步数去发现和展开 skill。
+  用步数去发现和展开 skill。两者都没有技能目录。
 
-这两处分别写进 `_child_base_tools` 和 `_DURABLE_EXCLUDED_TOOLS`。漏一处就会
-让隔离上下文或无人值守任务拿到不该有的能力。
+排除名单在 `CHILD_EXCLUDED_TOOLS` 和 `DURABLE_EXCLUDED_TOOLS`，由
+`tools_for_role` 执行。漏掉 `load_skill` 会让隔离上下文或无人值守任务拿到
+技能加载器。
 
 ## 有意没做的事
 
 - **不给模型 `create_skill` / `update_skill`。** Skill 由人维护。让模型自动沉淀
   流程会和 Memory 抢职责：Memory 存“跨会话为真的事实”，Skill 存“完成某类
   任务的做法”。自动写入会把一次性对话习惯写进仓库级流程。
-- **`allowed_tools` 只是提示，不动态增删工具集。** 模型看见的工具清单在会话
-  开始时冻结。运行期改 executor 注册表会造成 prompt 与可执行集合不一致。
+- **`allowed-tools` 只是提示，不动态增删工具集，也不授权。** 文件里的 `allowed_tools` 会拒绝加载。
 - **不把 Skills 塞进 Memory。** 召回的是事实，展开的是流程；两者的失效策略、
   注入时机和所有权都不同。
 - **不用 `RAGChain.query()`。** 那条路径会再调 LLM 生成答案。这里只要检索。
-- **不在会话中途把新出现的 skill 补进工具清单。** system prompt 已经冻结；
-  启动时一个 skill 都没有，则本会话没有 `skill` 工具。新增文件后开新会话即可。
-- **不把 skill 正文写入 checkpoint。** 正文只在被调用时出现在 transcript。
-- **不做按任务检索的相关便签。** 目录一次性给出全部 id；超预算只截描述。
-  清单涨到需要检索时再加，不让模型自己 `list_skills`。
+- **不把 skill 正文复制进 checkpoint 的独立字段。** 正文在 transcript 的
+  tool result 里；请求投影从那里保留最新全文。
+- **不做按任务检索技能。** 当前规模下，目录给出全部 id；超预算只截描述。
+- **不把技能发现塞进 `tool_search`。** 目录和常驻 `load_skill` 是同一条路径。

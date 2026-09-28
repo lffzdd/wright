@@ -1,7 +1,26 @@
+import logging
 from pathlib import Path
 
 from wright.application.skills import SkillRegistry
+from wright.application.skills.registry import logger
 from wright.infrastructure.storage.skills import write_skill
+
+
+def test_scan_diagnostics_are_logged(tmp_path: Path):
+    bad = tmp_path / "bad"
+    bad.mkdir()
+    (bad / "SKILL.md").write_bytes(b"\xff")
+    registry = SkillRegistry(tmp_path)
+    messages: list[str] = []
+    handler = logging.Handler()
+    handler.emit = lambda record: messages.append(record.getMessage())
+    logger.addHandler(handler)
+    try:
+        assert registry.list_metas() == []
+    finally:
+        logger.removeHandler(handler)
+    assert registry.scan_errors()
+    assert any("bad" in message for message in messages)
 
 
 def test_registry_scan_and_cache_invalidation(tmp_path: Path):
@@ -12,7 +31,7 @@ def test_registry_scan_and_cache_invalidation(tmp_path: Path):
     write_skill(
         tmp_path,
         "release-check",
-        name="发布前检查",
+        name="release-check",
         description="发布时使用",
         body="先跑测试",
     )
@@ -27,7 +46,7 @@ def test_registry_scan_and_cache_invalidation(tmp_path: Path):
     write_skill(
         tmp_path,
         "release-check",
-        name="发布前检查",
+        name="release-check",
         description="更新后的描述",
         body="先跑测试，再检查日志",
     )
@@ -37,8 +56,8 @@ def test_registry_scan_and_cache_invalidation(tmp_path: Path):
 
 
 def test_registry_keyword_filter(tmp_path: Path):
-    write_skill(tmp_path, "alpha", name="A", description="发布检查", body="a")
-    write_skill(tmp_path, "beta", name="B", description="日常备忘", body="b")
+    write_skill(tmp_path, "alpha", name="alpha", description="发布检查", body="a")
+    write_skill(tmp_path, "beta", name="beta", description="日常备忘", body="b")
     registry = SkillRegistry(tmp_path)
     found = registry.list_metas("发布")
     assert [meta.id for meta in found] == ["alpha"]
@@ -47,9 +66,9 @@ def test_registry_keyword_filter(tmp_path: Path):
 def test_later_directory_fills_missing_ids_without_overriding(tmp_path: Path):
     project = tmp_path / "project"
     user = tmp_path / "user"
-    write_skill(project, "shared", name="P", description="项目版", body="project body")
-    write_skill(user, "shared", name="U", description="用户版", body="user body")
-    write_skill(user, "extra", name="E", description="仅用户", body="user only")
+    write_skill(project, "shared", name="shared", description="项目版", body="project body")
+    write_skill(user, "shared", name="shared", description="用户版", body="user body")
+    write_skill(user, "extra", name="extra", description="仅用户", body="user only")
     registry = SkillRegistry([project, user])
     assert registry.get("shared").body == "project body"
     assert registry.get("extra").body == "user only"

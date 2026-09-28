@@ -23,6 +23,7 @@
     "system.notice",
     "system.checkpoint_error",
     "command.accepted",
-    "command.rejected"
+    "command.rejected",
+    "session.history_requested"
   ]
 }

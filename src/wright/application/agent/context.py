@@ -32,6 +32,37 @@ def _is_persisted_memory_recall(message: dict[str, Any]) -> bool:
     )
 
 
+def _is_persisted_skill_catalog(message: dict[str, Any]) -> bool:
+    """Old transcripts stored a catalog snapshot. The live catalog is ephemeral."""
+    if message.get("role") != "user":
+        return False
+    content = message.get("content")
+    return isinstance(content, str) and "<skill-catalog>" in content
+
+
+def _tool_payload(message: dict[str, Any]) -> dict[str, Any] | None:
+    if message.get("role") != "tool" or not isinstance(message.get("content"), str):
+        return None
+    try:
+        raw = json.loads(message["content"])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    return raw
+
+
+def _instruction_key(message: dict[str, Any]) -> str | None:
+    """Retention is a property of the result, not of a tool name."""
+    raw = _tool_payload(message)
+    if raw is None or raw.get("retention") != "instruction":
+        return None
+    key = raw.get("retention_key")
+    if isinstance(key, str) and key:
+        return key
+    return ""
+
+
 class ContextBudgetExceeded(ValueError):
     """The deterministic projection cannot safely fit the request budget."""
 
@@ -58,6 +89,7 @@ class ContextView:
     output_reserve_tokens: int
     folded_record_ids: tuple[str, ...] = ()
     over_budget: bool = False
+    budget_reason: str = ""
     omitted_optional_reminders: bool = False
 
     @property
@@ -107,10 +139,20 @@ class ContextCompactor:
             for index, entry in enumerate(copied)
             if self._is_tool_result_message(entry.message)
         ]
+        latest_instruction: dict[str, int] = {}
+        for index, entry in enumerate(copied):
+            key = _instruction_key(entry.message)
+            if key is None:
+                continue
+            # An instruction without a key is its own protected copy.
+            latest_instruction[key or f"\0{index}"] = index
+        protected = set(latest_instruction.values())
         keep_recent = max(0, self.keep_recent_tool_results)
         fold_indexes = candidates[:-keep_recent] if keep_recent else candidates
         folded: list[str] = []
         for index in fold_indexes:
+            if index in protected:
+                continue
             entry = copied[index]
             content = entry.message.get("content")
             if not isinstance(content, str):
@@ -121,15 +163,28 @@ class ContextCompactor:
                 continue
             if not isinstance(raw, dict) or raw.get("folded"):
                 continue
-            replacement = json.dumps(
-                {
+            instruction = _instruction_key(entry.message)
+            if instruction is not None:
+                replacement_body = {
+                    "ok": raw.get("ok", True),
+                    "err": raw.get("err", ""),
+                    "data": (
+                        "[earlier instruction superseded; the latest full "
+                        "text remains in this request]"
+                    ),
+                    "folded": True,
+                    "superseded": True,
+                    "retention": "instruction",
+                    "retention_key": instruction,
+                }
+            else:
+                replacement_body = {
                     "ok": raw.get("ok", True),
                     "err": raw.get("err", ""),
                     "data": "[older tool result folded for this request]",
                     "folded": True,
-                },
-                ensure_ascii=False,
-            )
+                }
+            replacement = json.dumps(replacement_body, ensure_ascii=False)
             if len(replacement) >= len(content):
                 continue
             entry.message["content"] = replacement
@@ -210,6 +265,7 @@ class ContextBuilder:
             ContextEntry(record.id, deepcopy(record.message), record.source)
             for record in records
             if not _is_persisted_memory_recall(record.message)
+            and not _is_persisted_skill_catalog(record.message)
         ]
         # Apply the current system context before budgeting and compaction.
         # Only this request's copies change; durable records retain history.
@@ -260,6 +316,17 @@ class ContextBuilder:
             if entry.record_id is None
         )
         projected_total = projected_history + projected_transient + tool_tokens + reserve
+        over_budget = context_limit is not None and projected_total > context_limit
+        budget_reason = ""
+        if over_budget and any(
+            _instruction_key(entry.message) is not None
+            and not (_tool_payload(entry.message) or {}).get("folded")
+            for entry in projected
+        ):
+            budget_reason = (
+                "required instruction content does not fit the request budget "
+                "and was not replaced with a placeholder"
+            )
         return ContextView(
             entries=projected,
             tools=tool_copies,
@@ -269,6 +336,7 @@ class ContextBuilder:
             tool_schema_tokens=tool_tokens,
             output_reserve_tokens=reserve,
             folded_record_ids=folded_ids,
-            over_budget=context_limit is not None and projected_total > context_limit,
+            over_budget=over_budget,
+            budget_reason=budget_reason,
             omitted_optional_reminders=omitted_optional_reminders,
         )

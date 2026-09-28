@@ -23,6 +23,7 @@ from ...domain.policy.permission.scope import AccessScope
 from ...infrastructure.runtime.command_log import CommandOutputLog, OutputSlice
 from ...infrastructure.runtime.protocols import ProcessHandle
 from ...infrastructure.runtime.types import ExecutionPath
+from ..execution.directory import current_directory_binding
 from ..execution.identity import (
     ExecutionIdentity,
     ExecutionKindMismatch,
@@ -84,6 +85,8 @@ class CommandExecution:
         self._log_dir = Path(tempfile.mkdtemp(prefix=f"wright-cmd-{session.session_id}-"))
         os.chmod(self._log_dir, 0o700)
         self._closed = False
+        self._coordinator = None
+        self._background_leases: dict[str, str] = {}
 
     def execute(
         self,
@@ -379,6 +382,34 @@ class CommandExecution:
         shutil.rmtree(self._log_dir, ignore_errors=True)
         return tuple(terminated)
 
+    def attach_directory(self, coordinator) -> None:
+        """Record directory occupancy for background processes this session owns."""
+
+        self._coordinator = coordinator
+
+    def _retain_background(self, command_id: str) -> None:
+        binding = current_directory_binding()
+        coordinator = self._coordinator or (binding.coordinator if binding is not None else None)
+        if binding is None or coordinator is None or command_id in self._background_leases:
+            return
+        lease = coordinator.retain(
+            binding.lease.lease_id,
+            kind="background",
+            holder_id=command_id,
+            session_id=self._session.session_id,
+            label=f"background command {command_id}",
+        )
+        self._background_leases[command_id] = lease.lease_id
+        live = self._live.get(command_id)
+        if live is not None and live.done.is_set():
+            self._release_background(command_id)
+
+    def _release_background(self, command_id: str) -> None:
+        lease_id = self._background_leases.pop(command_id, None)
+        coordinator = self._coordinator
+        if lease_id and coordinator is not None:
+            coordinator.release(lease_id)
+
     def _publish(self, command_id: str, record: CommandRecord, live: _LiveCommand) -> None:
         self._session.register_command(record)
         notify = False
@@ -387,6 +418,7 @@ class CommandExecution:
             if live.done.is_set() and not live.notified:
                 live.notified = True
                 notify = True
+        self._retain_background(command_id)
         if notify:
             self._emit_done(command_id)
 
@@ -432,6 +464,7 @@ class CommandExecution:
                 self._apply_cwd(process, execution, access_scope, set_cwd, record)
         finally:
             live.done.set()
+            self._release_background(record.command_id)
             notify = False
             with self._lock:
                 if live.background and not live.notified:

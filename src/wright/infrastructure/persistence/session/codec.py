@@ -105,7 +105,6 @@ def _serialize_session(session: Session) -> dict[str, Any]:
                 for call_id, execution in session.tool_executions.items()
             },
             "plan": session.plan_manager.snapshot(),
-            "skill_catalog_sent": session.skill_catalog_sent,
             "active_deferred_tools": list(session.active_deferred_tools),
             "agent_control": session.control_plane.snapshot(),
             "agent_task_id": session.agent_task_id,
@@ -225,9 +224,6 @@ def _deserialize_session(payload: Any) -> Session:
     turns = _deserialize_turns(data.get("turns"))
     tool_executions = _deserialize_executions(data.get("tool_executions"))
     plan_manager = PlanManager.from_snapshot(_object(data.get("plan"), "plan"))
-    skill_catalog_sent = _deserialize_skill_catalog_sent(
-        data.get("skill_catalog_sent")
-    )
     active_deferred_value = data.get("active_deferred_tools", [])
     if not isinstance(active_deferred_value, list) or not all(
         isinstance(item, str) and item for item in active_deferred_value
@@ -319,7 +315,6 @@ def _deserialize_session(payload: Any) -> Session:
         # execution history is restored; live background process handles are not.
         commands={},
         plan_manager=plan_manager,
-        skill_catalog_sent=skill_catalog_sent,
         active_deferred_tools=active_deferred_tools,
         control_plane=control_plane,
         agent_task_id=agent_task_id,
@@ -460,15 +455,6 @@ def _deserialize_attachments(value: Any) -> dict[str, AttachmentRecord]:
     return records
 
 
-def _deserialize_skill_catalog_sent(value: Any) -> bool:
-    # 旧 checkpoint 没有该字段，或仍带着已废弃的 active_skill_ids：当成尚未发送目录。
-    if value is None:
-        return False
-    if not isinstance(value, bool):
-        raise CheckpointError("skill_catalog_sent 必须是 boolean")
-    return value
-
-
 def _deserialize_messages(value: Any) -> list[MessageRecord]:
     rows = _array(value, "message_records")
     records: list[MessageRecord] = []
@@ -561,12 +547,20 @@ def _deserialize_executions(value: Any) -> dict[str, ToolExecutionRecord]:
             ok = raw_result.get("ok")
             if not isinstance(ok, bool):
                 raise CheckpointError("tool result.ok 必须是 boolean")
+            retention = raw_result.get("retention", "")
+            retention_key = raw_result.get("retention_key", "")
+            if not isinstance(retention, str) or retention not in {"", "instruction"}:
+                retention = ""
+            if not isinstance(retention_key, str):
+                retention_key = ""
             result = ToolResult(
                 ok=ok,
                 err=_string(raw_result.get("err", ""), "tool result.err", allow_empty=True),
                 data=raw_result.get("data"),
                 summary=_string(raw_result.get("summary", ""), "tool result.summary", allow_empty=True),
                 content=tuple(_array(raw_result.get("content", []), "tool result.content")),
+                retention=retention,
+                retention_key=retention_key,
                 artifacts=tuple(
                     ArtifactRef(
                         id=_string(_object(row, "tool artifact").get("id"), "tool artifact.id"),

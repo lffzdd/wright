@@ -61,7 +61,7 @@ git worktree add --detach ../wright-legacy-study legacy-json-react
 
 `parsed.final_answer` 等是程序内部记录字段，不再要求模型生成这个信封。
 `reasoning` 只记录供应商实际返回的推理内容；它不代表模型完整的内部思考。
-上下文压缩只折叠旧工具结果的正文，保留角色和调用 ID；完整结果仍在执行记录中。
+上下文压缩只作用于当次请求投影：它折叠可丢弃的旧工具结果正文，保留角色和调用 ID；完整结果仍在执行记录中。带 `retention=instruction` 的结果（技能正文）不会被换成占位符。压缩不会清空会话里已经激活的延迟工具。
 
 ## 会话兼容与失败处理
 

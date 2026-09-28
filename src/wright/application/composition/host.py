@@ -35,6 +35,10 @@ from ..autonomy import (
     AutonomyScheduler,
     launch_durable_run,
 )
+from ..execution.directory import (
+    DirectoryExecutionCoordinator,
+    DirectoryWaitCancelled,
+)
 from .services import RuntimeServices
 
 
@@ -62,6 +66,7 @@ class ApplicationHost:
         artifact_store: ArtifactStore | None = None,
         on_event: Callable[[str, object], None] | None = None,
         poll_interval: float = 0.5,
+        directory_coordinator: DirectoryExecutionCoordinator | None = None,
     ) -> None:
         self.workspace_dir = workspace_dir.resolve()
         self.store = store
@@ -82,6 +87,8 @@ class ApplicationHost:
         self._closed = threading.Event()
         self._lock_fd: int | None = None
         self._event_thread: threading.Thread | None = None
+        self._coordinator = directory_coordinator
+        self._stop = threading.Event()
         self._poll_interval = poll_interval
         self._host_id = f"host_{uuid4().hex}"
         self._schedulers: dict[str, AutonomyScheduler] = {}
@@ -91,6 +98,18 @@ class ApplicationHost:
             durable_store=store,
             autonomy_scheduler=self.scheduler,
         )
+
+    def bind_coordinator(self, coordinator: DirectoryExecutionCoordinator) -> None:
+        """Reuse the process directory queue when another session opens this host."""
+
+        with self._lock:
+            if self._coordinator is None:
+                self._coordinator = coordinator
+                return
+            if self._coordinator is not coordinator:
+                raise RuntimeError(
+                    "application host already uses another directory coordinator"
+                )
 
     def scheduler_for(self, store: AutonomyStore) -> AutonomyScheduler:
         """Retain source-session isolation under one execution-directory owner.
@@ -220,6 +239,48 @@ class ApplicationHost:
         with self._lock:
             if self._state != "running":
                 return
+            coordinator = self._coordinator
+        if coordinator is None:
+            self._launch(run_id, scheduler)
+            return
+        threading.Thread(
+            target=self._launch_when_directory_free,
+            args=(run_id, scheduler, coordinator),
+            name=f"wright-directory-{run_id[:8]}",
+            daemon=True,
+        ).start()
+
+    def _launch_when_directory_free(
+        self,
+        run_id: str,
+        scheduler: AutonomyScheduler,
+        coordinator: DirectoryExecutionCoordinator,
+    ) -> None:
+        try:
+            lease = coordinator.acquire(
+                self.workspace_dir,
+                kind="automation",
+                holder_id=run_id,
+                session_id=scheduler.store.session_id,
+                label=f"automation run {run_id}",
+                cancel=self._stop,
+            )
+        except DirectoryWaitCancelled:
+            try:
+                scheduler.store.cancel_run(
+                    run_id, "application host closed before the run started",
+                )
+            except Exception:
+                return
+            return
+        self._launch(run_id, scheduler, lease=lease)
+
+    def _launch(
+        self,
+        run_id: str,
+        scheduler: AutonomyScheduler,
+        lease: object | None = None,
+    ) -> None:
         try:
             launch_durable_run(
                 run_id=run_id,
@@ -233,6 +294,8 @@ class ApplicationHost:
                 services=replace(
                     self.services, durable_store=scheduler.store, autonomy_scheduler=scheduler,
                 ),
+                directory_coordinator=self._coordinator,
+                directory_lease=lease,
             )
         except Exception as exc:
             try:
@@ -277,6 +340,7 @@ class ApplicationHost:
         raise KeyError(run_id)
 
     def close(self, *, grace_seconds: float = 2.0) -> bool:
+        self._stop.set()
         with self._lock:
             if self._state in {"closed", "closing"}:
                 return self._state == "closed"

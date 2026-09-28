@@ -10,6 +10,7 @@ from typing import Any
 
 from ...application.composition.runtime import WrightRuntime, assemble_runtime
 from ..interaction import InteractionHub
+from ..rendering.attach import attach_renderer
 from .args import runtime_config_from_args
 from .console_renderer import ConsoleRenderer
 from .prompter import ConsolePrompter
@@ -31,10 +32,11 @@ def build_runtime(
     if prompter is None:
         prompter = ConsolePrompter(renderer)
     kwargs.setdefault("resume_chooser", choose_resume_session)
-    return assemble_runtime(
+    runtime = assemble_runtime(
         runtime_config_from_args(args),
-        renderer=renderer,
         interaction_broker=hub,
         prompter=prompter,
         **kwargs,
     )
+    attach_renderer(runtime.publisher, renderer, session=runtime.session_state)
+    return runtime

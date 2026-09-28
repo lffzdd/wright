@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from ..planning.prompt import plan_prompt_block
-from ..skills import catalog_reminder
+from ..skills import SKILL_LOADER_NAME, catalog_reminder
 
 if TYPE_CHECKING:
     from ...domain.model.session import Session
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 class AgentPromptManager:
-    """Manages ephemeral reminders and skill catalogs injected into turns."""
+    """Request-scoped reminders. The skill catalog is not written to the transcript."""
 
     def __init__(
         self,
@@ -33,31 +33,43 @@ class AgentPromptManager:
         # 并由 plan_prompt_block 的 JSON 数据边界明确它不具备指令权限。
         return {"role": "user", "content": block} if block else None
 
-    def ensure_skill_catalog(self, active_deferred_tools: Sequence[str] = ()) -> None:
-        """会话里只把 skill 目录写入 transcript 一次。"""
-        # load_skill 走按需发现时，普通对话不应背整个技能目录；它被 tool_search
-        # 激活后的下一次模型调用，才需要目录来选择具体 skill_id。
-        load_skill = next(
-            (tool for tool in self.schema_tools if tool.name == "load_skill"),
+    def skill_loader_exposed(self) -> bool:
+        """True when this request should both list and be able to call load_skill."""
+        if self.skills is None or not self.skills.has_skills():
+            return False
+        tool = next(
+            (item for item in self.schema_tools if item.name == SKILL_LOADER_NAME),
             None,
         )
-        if (
-            load_skill is not None
-            and load_skill.defer_to_model
-            and "load_skill" not in active_deferred_tools
+        if tool is None or not tool.expose_to_model:
+            return False
+        if tool.defer_to_model and SKILL_LOADER_NAME not in self.session_state.active_deferred_tools:
+            return False
+        return True
+
+    def visible_schema_tools(self) -> list[Tool]:
+        """Schema snapshot for this request. Hides the loader when no skills exist."""
+        if self.skill_loader_exposed() or not any(
+            tool.name == SKILL_LOADER_NAME for tool in self.schema_tools
         ):
-            return
-        if self.skills is None or self.session_state.skill_catalog_sent:
-            return
+            return list(self.schema_tools)
+        return [tool for tool in self.schema_tools if tool.name != SKILL_LOADER_NAME]
+
+    def skill_catalog_message(self) -> dict | None:
+        if not self.skill_loader_exposed() or self.skills is None:
+            return None
         catalog = catalog_reminder(self.skills.list_metas())
-        if catalog:
-            self.session_state.append_message({"role": "user", "content": catalog})
-        self.session_state.mark_skill_catalog_sent()
+        if not catalog:
+            return None
+        return {"role": "user", "content": catalog}
 
     def ephemeral_reminders(self) -> list[dict]:
-        """本轮才需要、不能落进会话记录的提醒。目前只有最新计划块。"""
+        """Reminders for this request only. They are not appended to the transcript."""
         reminders: list[dict] = []
         plan = self.plan_reminder()
         if plan is not None:
             reminders.append(plan)
+        catalog = self.skill_catalog_message()
+        if catalog is not None:
+            reminders.append(catalog)
         return reminders

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
+
 from tests.responses import event, response
 from wright.application.agent import create_agent
 from wright.domain.model.session import Session
-from wright.domain.model.tool import ToolResult
+from wright.domain.model.tool import ToolAccess, ToolResult
 from wright.domain.protocol import encode_tools
 from wright.infrastructure.tools import tools as built_in_tools
 from wright.infrastructure.tools.base import Tool
@@ -341,3 +343,97 @@ def test_agent_rejects_deferred_tool_before_activation(tmp_path):
 
     assert answer == "done"
     assert invoked == []
+
+
+def test_request_projection_does_not_clear_activated_tools(tmp_path):
+    """The same folded history is projected on every turn."""
+    specialized = _tool(
+        "create_schedule", "Create a durable recurring scheduled task", deferred=True
+    )
+
+    class ScriptLLM:
+        context_limit = 8_000
+
+        def __init__(self):
+            self.script = [response(content="one"), response(content="two")]
+            self.schema_names: list[list[str]] = []
+
+        def __call__(self, messages, *, tools):
+            self.schema_names.append([item["name"] for item in tools])
+            yield event(self.script.pop(0))
+
+    session = Session.create("compact", tmp_path)
+    session.active_deferred_tools = ["create_schedule"]
+    session.append_message({
+        "role": "tool",
+        "tool_call_id": "old",
+        "content": json.dumps({"ok": True, "err": "", "data": "x" * 40_000}),
+    })
+    llm = ScriptLLM()
+    agent = create_agent(
+        llm,
+        [specialized],
+        session,
+        context_watermark=0.2,
+        keep_recent_tool_results=0,
+    )
+
+    assert agent.run("first") == "one"
+    assert agent.run("second") == "two"
+    assert session.active_deferred_tools == ["create_schedule"]
+    assert llm.schema_names == [
+        ["create_schedule", "tool_search"],
+        ["create_schedule", "tool_search"],
+    ]
+
+
+def test_recent_use_survives_eviction_and_hidden_names_cannot_run(tmp_path):
+    invoked: list[str] = []
+
+    def make(name: str) -> Tool:
+        return Tool(
+            name=name,
+            description=f"Specialized task tool {name}",
+            parameters={"type": "object", "properties": {}},
+            call=lambda args, runtime, tool_name=name: (
+                invoked.append(tool_name) or ToolResult.success()
+            ),
+            access_descriptor=lambda args: ToolAccess.internal_read(),
+            defer_to_model=True,
+        )
+
+    names = [f"task_tool_{index:02d}" for index in range(12)]
+    tools = [make(name) for name in names]
+    tools.append(make("extra_tool"))
+    session = Session.create("lru", tmp_path)
+    session.active_deferred_tools = list(names)
+
+    class ScriptLLM:
+        context_limit = 128_000
+
+        def __init__(self):
+            self.script = [
+                response(calls=[{"name": "task_tool_00", "arguments": {}}]),
+                response(calls=[{
+                    "name": "tool_search",
+                    "arguments": {"names": ["extra_tool"]},
+                }]),
+                response(calls=[{"name": "task_tool_01", "arguments": {}}]),
+                response(content="done"),
+            ]
+            self.schema_names: list[list[str]] = []
+
+        def __call__(self, messages, *, tools):
+            self.schema_names.append([item["name"] for item in tools])
+            yield event(self.script.pop(0))
+
+    llm = ScriptLLM()
+    assert create_agent(llm, tools, session).run("use the oldest") == "done"
+    assert invoked == ["task_tool_00"]
+    assert "extra_tool" not in llm.schema_names[0]
+    assert "extra_tool" not in llm.schema_names[1]
+    assert "extra_tool" in llm.schema_names[2]
+    assert "task_tool_00" in llm.schema_names[2]
+    assert "task_tool_01" not in llm.schema_names[2]
+    assert session.active_deferred_tools[0] != "task_tool_01"
+    assert session.active_deferred_tools[-2:] == ["task_tool_00", "extra_tool"]

@@ -25,6 +25,7 @@ UI_EVENT_TYPES = frozenset({
     "tool.running", "tool.output", "tool.finished", "interaction.requested", "interaction.resolved",
     "task.updated", "usage.request", "usage.task", "system.notice",
     "system.checkpoint_error", "command.accepted", "command.rejected",
+    "session.history_requested",
 })
 
 

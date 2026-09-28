@@ -6,6 +6,7 @@ import threading
 from collections.abc import Sequence
 from pathlib import Path
 
+from ...core.logger import get_logger
 from ...domain.model.skills import (
     SkillDefinition,
     SkillMeta,
@@ -18,6 +19,8 @@ from ...infrastructure.storage.skills import (
     scan_skills,
     skill_file_path,
 )
+
+logger = get_logger(__name__)
 
 
 class SkillRegistry:
@@ -100,6 +103,8 @@ class SkillRegistry:
         self._skills = merged
         self._errors = tuple(errors)
         self._fingerprint = fingerprint
+        for message in self._errors:
+            logger.warning("skill scan: %s", message)
 
     def _current_fingerprint(self) -> tuple[tuple[str, int, int], ...]:
         rows: list[tuple[str, int, int]] = []

@@ -128,10 +128,10 @@ def test_history_keeps_distinct_turns_and_failed_runs():
         runs={"run-a": SimpleNamespace(run_id="run-a", tool_execution_ids=[]), "run-c": failed},
         tool_executions={},
         message_records=[
-            SimpleNamespace(id="user-a", message={"role": "user", "content": "继续", "attachments": []}),
-            SimpleNamespace(id="msg-a", message={"role": "assistant", "content": "first"}),
-            SimpleNamespace(id="user-b", message={"role": "user", "content": "继续", "attachments": []}),
-            SimpleNamespace(id="msg-b", message={"role": "assistant", "content": ""}),
+            SimpleNamespace(id="user-a", source="user_input", message={"role": "user", "content": "继续", "attachments": []}),
+            SimpleNamespace(id="msg-a", source="model_output", message={"role": "assistant", "content": "first"}),
+            SimpleNamespace(id="user-b", source="user_input", message={"role": "user", "content": "继续", "attachments": []}),
+            SimpleNamespace(id="msg-b", source="model_output", message={"role": "assistant", "content": ""}),
         ],
         attachment_records=lambda _ids: [],
     )

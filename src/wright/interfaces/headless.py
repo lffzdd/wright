@@ -1,4 +1,8 @@
-"""Explicit local-only host for persisted durable automations."""
+"""Explicit local-only host for persisted durable automations.
+
+Headless execution has no terminal collector. Permission and ask_user fail
+closed instead of waiting on a prompt nobody can answer.
+"""
 
 from __future__ import annotations
 
@@ -9,9 +13,7 @@ from ..application.composition.runtime import (
     assemble_runtime,
     shutdown_runtime,
 )
-from .cli.console_renderer import ConsoleRenderer
-from .cli.prompter import ConsolePrompter
-from .interaction import InteractionHub
+from ..application.session.interaction import DeniedPrompter
 
 
 def run_headless_host(
@@ -21,18 +23,14 @@ def run_headless_host(
     stop_event: threading.Event | None = None,
 ) -> None:
     """Run one opened project's persisted automations until explicitly stopped."""
-    renderer = ConsoleRenderer()
-    hub = InteractionHub()
     runtime = assemble_runtime(
         config,
-        renderer=renderer,
-        interaction_broker=hub,
-        prompter=ConsolePrompter(renderer),
+        prompter=DeniedPrompter(),
         start_automation=False,
         automation_session_id=source_session_id,
     )
     host = runtime.application_host
-    if host is None:  # defensive: runtime construction guarantees this owner
+    if host is None:
         raise RuntimeError("headless runtime has no application host")
     stop = stop_event or threading.Event()
     try:

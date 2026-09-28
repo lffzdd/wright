@@ -104,15 +104,23 @@ class WrightTUI(App):
         Binding("ctrl+l", "scroll_end", "Scroll to bottom", show=False),
     ]
 
-    def __init__(self, rt: WrightRuntime) -> None:
+    def __init__(
+        self,
+        rt: WrightRuntime,
+        *,
+        renderer: TUIRenderer | None = None,
+        service: SessionService | None = None,
+    ) -> None:
         super().__init__()
         self.rt = rt
-        if not isinstance(rt.renderer, TUIRenderer):
+        selected = renderer if renderer is not None else getattr(rt, "renderer", None)
+        if not isinstance(selected, TUIRenderer):
             raise TypeError("TUI host requires TUIRenderer")
-        self.renderer = rt.renderer
-        self.service: SessionService | None = (
-            SessionService(rt) if hasattr(rt, "publisher") else None
-        )
+        self.renderer = selected
+        if service is not None:
+            self.service: SessionService | None = service
+        else:
+            self.service = SessionService(rt) if hasattr(rt, "publisher") else None
         self.session_thread: Any | None = None
         self._draft: AssistantBlock | None = None
         self._reasoning: ReasoningBlock | None = None
@@ -170,15 +178,56 @@ class WrightTUI(App):
         session = self.rt.session_state
         records = session.message_records
         positions = {record.id: index for index, record in enumerate(records)}
-        shown_user: tuple[str, tuple[str, ...]] | None = None
+        shown_turn: str | None = None
         restored = False
+        history = self.service.history() if self.service is not None else []
+        if history:
+            for item in history:
+                turn_id = str(item.get("turn_id") or "")
+                user_text = str(item.get("user") or "")
+                attachment_ids = [
+                    str(attachment.get("id"))
+                    for attachment in item.get("attachments") or []
+                    if isinstance(attachment, dict) and attachment.get("id")
+                ]
+                if (user_text or attachment_ids) and turn_id != shown_turn:
+                    labels = [
+                        f"[{index}] {record.filename} ({record.width}×{record.height})"
+                        for index, attachment_id in enumerate(attachment_ids, 1)
+                        if (record := session.attachments.get(attachment_id)) is not None
+                    ]
+                    transcript.mount(UserBlock(
+                        user_text + ("\n🖼 " + "  ".join(labels) if labels else "")
+                    ))
+                    shown_turn = turn_id
+                    restored = True
+                if item.get("assistant"):
+                    transcript.mount(AssistantBlock(str(item["assistant"])))
+                    restored = True
+                for tool in item.get("tools") or []:
+                    if not isinstance(tool, dict):
+                        continue
+                    ok = tool.get("ok")
+                    transcript.mount(ToolBlock(ToolView(
+                        key=str(tool.get("call_id") or ""),
+                        name=str(tool.get("name") or "tool"),
+                        arguments=tool.get("arguments") if isinstance(tool.get("arguments"), dict) else {},
+                        status="done" if ok else "error" if ok is False else str(tool.get("phase") or "done"),
+                        result=tool.get("data") if ok else None,
+                        error=str(tool.get("err") or ""),
+                    )))
+                    restored = True
+            if restored:
+                transcript.mount(SystemBlock("earlier turns above  ·  new messages follow"))
+            self._scroll_to_end()
+            return
         for turn in session.turns:
             assistant_index = positions.get(turn.message_id)
             if assistant_index is None:
                 continue
             user_text, attachment_ids = self._history_user_before(records, assistant_index)
-            user_key = (user_text, tuple(attachment_ids))
-            if (user_text or attachment_ids) and user_key != shown_user:
+            user_key = str(getattr(turn, "step_id", "") or id(turn))
+            if (user_text or attachment_ids) and user_key != shown_turn:
                 labels = [
                     f"[{index}] {record.filename} ({record.width}×{record.height})"
                     for index, attachment_id in enumerate(attachment_ids, 1)
@@ -187,7 +236,7 @@ class WrightTUI(App):
                 transcript.mount(UserBlock(
                     user_text + ("\n🖼 " + "  ".join(labels) if labels else "")
                 ))
-                shown_user = user_key
+                shown_turn = user_key
                 restored = True
 
             assistant = records[assistant_index].message
@@ -478,7 +527,12 @@ class WrightTUI(App):
         self._refresh_status()
 
     def _control_available(self) -> bool:
-        if self.rt.agent_idle.is_set():
+        if self.service is not None:
+            idle = self.service.summary().get("execution") == "idle"
+        else:
+            idle_event = getattr(self.rt, "agent_idle", None)
+            idle = idle_event is None or idle_event.is_set()
+        if idle:
             return True
         self.renderer.on_system_notice("session controls are available when Wright is idle")
         return False
@@ -486,21 +540,22 @@ class WrightTUI(App):
     def _transition(self, request: SessionControlRequest) -> None:
         if not self._control_available():
             return
-        store = self.rt.agent.checkpoint_store
-        if store is not None:
+        if self.service is not None:
             try:
-                store.save(self.rt.session_state)
-            except Exception as exc:
-                self.renderer.on_system_notice(f"checkpoint failed: {exc}")
+                self.service.persist()
+            except SessionServiceError as exc:
+                self.renderer.on_system_notice(str(exc))
                 return
-        assert self.service is not None
-        self.service.close(wait_timeout=0)
+            self.service.close(wait_timeout=0)
         self.exit(result=request)
 
     async def _choose_resume(self) -> None:
         if not self._control_available():
             return
-        sessions = self.rt.checkpoint_store.list_recent_sessions(limit=12)
+        if self.service is None:
+            self.renderer.on_system_notice("no saved sessions")
+            return
+        sessions = self.service.list_saved_sessions(limit=12)
         if not sessions:
             self.renderer.on_system_notice("no saved sessions")
             return
@@ -511,7 +566,7 @@ class WrightTUI(App):
     async def _choose_model(self) -> None:
         if not self._control_available():
             return
-        current = str(self.rt.llm.model)
+        current = str(self.service.summary()["model"]) if self.service is not None else str(self.rt.llm.model)
         model = await self.push_screen_wait(ModelModal(available_models(current), current))
         if model:
             self._set_model(model)
@@ -519,7 +574,10 @@ class WrightTUI(App):
     def _set_model(self, model: str) -> None:
         if not self._control_available() or not model:
             return
-        current = str(self.rt.llm.model)
+        current = (
+            str(self.service.summary()["model"])
+            if self.service is not None else str(self.rt.llm.model)
+        )
         try:
             if self.service is None:
                 set_session_model(self.rt, model)
@@ -620,42 +678,66 @@ class WrightTUI(App):
 
     def _refresh_status(self) -> None:
         try:
-            idle = self.rt.agent_idle.is_set()
+            if self.service is not None:
+                view = self.service.view()
+                execution = str(view.get("execution") or "idle")
+                idle = execution == "idle"
+                context_tokens = int(view.get("context_tokens") or 0)
+                context_limit = view.get("context_limit")
+                plan = str(view.get("plan_brief") or "")
+                model = str(view.get("model") or "")
+                ws_dir = view.get("workspace_dir")
+                pending = view.get("draft_attachments") or []
+                queue_reason = str(view.get("queue_reason") or "")
+            else:
+                idle_event = getattr(self.rt, "agent_idle", None)
+                idle = idle_event is None or idle_event.is_set()
+                execution = "idle" if idle else "running"
+                context_tokens = int(getattr(self.rt.session_state, "context_tokens", 0) or 0)
+                context_limit = getattr(getattr(self.rt, "agent", None), "context_limit", None)
+                plan = _plan_brief(self.rt.session_state)
+                model = str(getattr(getattr(self.rt, "llm", None), "model", "") or "")
+                ws_dir = getattr(self.rt.session_state, "workspace_dir", None)
+                drafts = getattr(self.rt, "draft_attachments", None)
+                pending = drafts.summaries() if drafts is not None else []
+                queue_reason = ""
             composer = self.query_one("#composer", MultilineComposer)
-            composer.placeholder = (
-                "Message Wright…" if idle else "Queue a follow-up…"
-            )
-            context_limit = getattr(self.rt.agent, "context_limit", None)
-            context, tooltip, context_class = _context_ring(
-                self.rt.session_state.context_tokens, context_limit,
-            )
-            plan = _plan_brief(self.rt.session_state)
+            composer.placeholder = "Message Wright…" if idle else "Queue a follow-up…"
+            context, tooltip, context_class = _context_ring(context_tokens, context_limit)
             meta_parts = []
             if plan:
                 meta_parts.append(plan)
-
-            model = getattr(getattr(self.rt, "llm", None), "model", "") or ""
+            if execution == "queued" and queue_reason:
+                meta_parts.append(queue_reason)
+            elif execution == "waiting_for_input":
+                meta_parts.append("waiting for permission or a reply")
             if model:
                 self.query_one("#status-model", Static).update(f"🤖 {model}")
-
-            ws_dir = getattr(self.rt.session_state, "workspace_dir", None)
             ws_name = Path(ws_dir).name if ws_dir else Path.cwd().name
             self.query_one("#status-workspace", Static).update(f"📁 {ws_name}")
-
-            state_icon = "●" if idle else "⏳"
-            state_text = f"{state_icon} idle" if idle else f"{state_icon} running"
+            labels = {
+                "idle": "● idle",
+                "running": "⏳ running",
+                "queued": "⏳ queued",
+                "waiting_for_input": "⏳ waiting for input",
+                "closing": "○ closing",
+                "closed": "○ closed",
+            }
             status_state = self.query_one("#status-state", Static)
-            status_state.update(state_text)
-            status_state.set_class(not idle, "running")
-
+            status_state.update(labels.get(execution, f"⏳ {execution}"))
+            status_state.set_class(execution not in {"idle", "closed"}, "running")
             self.query_one("#status-meta", Static).update("  ·  ".join(meta_parts))
             attachment_bar = self.query_one("#attachments", Static)
-            drafts = getattr(self.rt, "draft_attachments", None)
-            pending = drafts.summaries() if drafts is not None else []
             if pending:
+                def _attached(record: Any) -> tuple[Any, Any, Any]:
+                    if isinstance(record, dict):
+                        return record.get("filename"), record.get("width"), record.get("height")
+                    return record.filename, record.width, record.height
+
                 attachment_bar.update("Attached: " + "  ".join(
-                    f"[{index}] {record.filename} ({record.width}×{record.height})"
+                    f"[{index}] {filename} ({width}×{height})"
                     for index, record in enumerate(pending, 1)
+                    for filename, width, height in [_attached(record)]
                 ))
                 attachment_bar.display = True
             else:
@@ -687,46 +769,43 @@ def _plan_brief(session_state: Any) -> str:
 
 def run_tui(args: Any) -> None:
     require_interactive_tty()
+    from ...application.session.directory import SessionDirectory
     from ..interaction import InteractionHub
+    from ..rendering.attach import attach_renderer
 
-    renderer = TUIRenderer()
-    hub = InteractionHub()
     active_args = args
-    # A TUI session is only a conversation owner.  Persisted automations use
-    # an ApplicationHost which must outlive close/new/resume transitions in
-    # this process, just as the Web RuntimeManager retains its hosts.
-    hosts_by_session: dict[str, Any] = {}
-    hosts_by_workspace: dict[str, Any] = {}
+    workspace = Path(getattr(args, "workspace", None) or Path.cwd()).expanduser().resolve()
+    directory = SessionDirectory(
+        workspace,
+        capacity=int(getattr(args, "web_capacity", 4) or 4),
+        base_args=args,
+        assemble=assemble_runtime,
+    )
     try:
         while True:
             config = runtime_config_from_args(active_args)
-            resume_id = getattr(active_args, "resume", None)
-            host = hosts_by_session.get(resume_id) if resume_id else None
-            if host is None and config.workspace is not None:
-                host = hosts_by_workspace.get(str(config.workspace.resolve()))
-            rt = assemble_runtime(
-                config,
-                renderer=renderer,
+            renderer = TUIRenderer()
+            hub = InteractionHub()
+            opened = directory.open(
+                model=getattr(config, "model", None),
+                resume_session_id=getattr(active_args, "resume", None) or None,
                 interaction_broker=hub,
-                application_host=host,
+                workspace=config.workspace,
                 resume_chooser=choose_resume_session,
             )
-            if rt.application_host is not None:
-                # The enclosing TUI is the application owner.  Closing this
-                # particular conversation must not stop its automations.
-                rt.owns_application_host = False
-                hosts_by_session[rt.session_state.session_id] = rt.application_host
-                hosts_by_workspace[str(rt.application_host.workspace_dir)] = rt.application_host
-            app = WrightTUI(rt)
+            attach_renderer(opened.publisher, renderer, session=opened.runtime.session_state)
+            app = WrightTUI(opened.runtime, renderer=renderer, service=opened.service)
             transition: SessionControlRequest | None = None
             try:
                 result = app.run()
                 if isinstance(result, SessionControlRequest):
                     transition = result
-                elif rt.agent.checkpoint_store:
-                    print(f"💾 会话已保存 (session_id: {rt.session_state.session_id})")
+                elif opened.runtime.agent.checkpoint_store:
+                    print(f"💾 会话已保存 (session_id: {opened.session_id})")
             finally:
-                stopped = app.service.close(wait_timeout=2.0) if app.service is not None else True
+                stopped = directory.close(opened.session_id).get("lifecycle") == "closed" or (
+                    app.service.closed if app.service is not None else True
+                )
             if transition is not None and not stopped:
                 print("会话仍在关闭中；尚未安全退出，无法切换会话。")
                 return
@@ -734,6 +813,4 @@ def run_tui(args: Any) -> None:
                 return
             active_args = runtime_args_for_transition(active_args, transition)
     finally:
-        # Several session ids may reference the same local execution host.
-        for host in set(hosts_by_session.values()) | set(hosts_by_workspace.values()):
-            host.close()
+        directory.shutdown()

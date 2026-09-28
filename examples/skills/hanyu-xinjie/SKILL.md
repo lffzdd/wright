@@ -1,7 +1,6 @@
 ---
-name: 汉语新解
+name: hanyu-xinjie
 description: 李继刚风格的汉语新解；当用户要求用李继刚风格、辛辣讽刺、批判幽默、一针见血、解构本质或以全新角度解释某个概念/词汇时使用
-allowed_tools: []
 ---
 
 # 李继刚·汉语新解 (Chinese Nouveau)

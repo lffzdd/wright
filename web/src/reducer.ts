@@ -216,9 +216,18 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
     next = addNotice(next, event);
   } else if (event.type === "session.status_changed") {
     const model = event.payload.model;
-    if (typeof model === "string" && model.trim()) {
-      next.session = { ...next.session, model: model.trim() };
-    }
+    const execution = event.payload.execution;
+    const lifecycle = event.payload.lifecycle;
+    const queueReason = event.payload.queue_reason;
+    const knownExecution = execution === "idle" || execution === "running" || execution === "queued" || execution === "waiting_for_input";
+    next.session = {
+      ...next.session,
+      ...(typeof model === "string" && model.trim() ? { model: model.trim() } : {}),
+      ...(lifecycle === "open" || lifecycle === "closing" || lifecycle === "closed" ? { lifecycle } : {}),
+      ...(knownExecution ? { execution } : {}),
+      ...(typeof queueReason === "string" ? { queue_reason: queueReason } : {}),
+      ...(knownExecution ? { status: lifecycle === "closing" || lifecycle === "closed" ? lifecycle : execution } : {}),
+    };
   }
   return next;
 }

@@ -46,8 +46,7 @@ def test_hub_serializes_two_agent_threads():
         thread.start()
     deadline = time.time() + 2
     while True:
-        with hub._lock:
-            pending = len(hub._pending)
+        pending = len(hub.snapshot())
         if pending == 2 or time.time() >= deadline:
             break
         time.sleep(0.01)
@@ -111,8 +110,7 @@ def test_hub_close_and_cancel_release_waiting_agents():
     # Wait until both requests are visible.
     deadline = time.time() + 2
     while True:
-        with hub._lock:
-            pending = len(hub._requests)
+        pending = len(hub.snapshot())
         if pending == 2 or time.time() >= deadline:
             break
         time.sleep(0.01)

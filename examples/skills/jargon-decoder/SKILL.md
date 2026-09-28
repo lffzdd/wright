@@ -1,7 +1,6 @@
 ---
-name: 互联网黑话破壁机
+name: jargon-decoder
 description: 互联网与职场黑话破壁机；当用户提到黑话、大厂术语、汇报套话（如赋能、闭环、抓手、对齐、组合拳）并要求还原真相、辛辣翻译或撕开虚伪包装时使用
-allowed_tools: []
 ---
 
 # 互联网黑话破壁机 (Corporate Jargon Decoder)

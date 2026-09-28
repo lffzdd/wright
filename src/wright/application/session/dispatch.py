@@ -20,7 +20,16 @@ from ...infrastructure.storage.attachments import AttachmentError
 from ..agent.operations import agent_completion_notice
 from ..autonomy import launch_durable_run
 from ..composition.runtime import WrightRuntime
-from .history_projection import current_run_id, latest_turn_history_id
+from ..execution.directory import (
+    DirectoryWaitCancelled,
+    bind_directory_work,
+    reset_directory_work,
+)
+from .history_projection import (
+    current_run_id,
+    latest_turn_history_id,
+    public_attachment,
+)
 from .loops import (
     SessionLoopRegistry,
     parse_loop_command,
@@ -52,7 +61,19 @@ def _completion_notice(rt: WrightRuntime, identifier: str) -> dict | None:
 
 
 def _notice(rt: WrightRuntime, text: str) -> None:
-    getattr(rt, "event_renderer", rt.renderer).on_system_notice(text)
+    rt.event_renderer.on_system_notice(text)
+
+
+def _publish_execution(rt: WrightRuntime, execution: str, reason: str = "") -> None:
+    rt.publisher.publish(
+        "session.status_changed",
+        {
+            "session_id": rt.session_state.session_id,
+            "lifecycle": "open",
+            "execution": execution,
+            "queue_reason": reason,
+        },
+    )
 
 
 def _render_durable_run_finished(store: AutonomyStore, run_id: str, rt: WrightRuntime) -> None:
@@ -113,16 +134,15 @@ def _handle_loop_command(value: str, registry: SessionLoopRegistry, rt: WrightRu
 
 def _cmd_history(text: str, rt: WrightRuntime) -> None:
     arg = text.strip()[len("/history"):].strip().lower()
-    render = getattr(rt.renderer, "render_session_history", None)
-    if not callable(render):
-        _notice(rt, "对话记录就在上方，滚动即可")
-        return
+    payload: dict[str, object] = {}
     if arg == "all":
-        render(rt.session_state, pager=True)
+        payload = {"pager": True}
     elif arg.isdigit():
-        render(rt.session_state, max_turns=int(arg))
-    else:
-        render(rt.session_state)
+        payload = {"max_turns": int(arg)}
+    elif arg:
+        _notice(rt, "用法: /history [N|all]")
+        return
+    rt.publisher.publish("session.history_requested", payload)
 
 
 def _cmd_help(_text: str, rt: WrightRuntime) -> None:
@@ -333,13 +353,33 @@ def process_session_event(
             agent_idle.set()
             return False
         turn_id = f"{session_state.session_id}:{len(session_state.message_records)}"
+        coordinator = getattr(rt, "directory_coordinator", None)
+        lease = None
+        token = None
+        if coordinator is not None:
+            try:
+                lease = coordinator.acquire(
+                    rt.project_context.execution_root,
+                    kind="turn",
+                    holder_id=command_id or turn_id,
+                    session_id=session_state.session_id,
+                    label=f"session {session_state.session_id}",
+                    cancel=rt.cancellation_event,
+                    on_queued=lambda reason: _publish_execution(rt, "queued", reason),
+                )
+            except DirectoryWaitCancelled:
+                _publish_execution(rt, "idle")
+                agent_idle.set()
+                return False
+            token = bind_directory_work(coordinator, lease)
+            _publish_execution(rt, "running")
         rt.publisher.publish(
             "turn.started",
             {
                 "prompt": user_input,
                 "command_id": command_id,
                 "attachments": [
-                    record.to_dict()
+                    public_attachment(record)
                     for record in session_state.attachment_records(attachment_ids)
                 ],
             },
@@ -356,6 +396,12 @@ def process_session_event(
             _publish_turn_terminal(rt, command_id, turn_id, error=str(exc))
             raise
         finally:
+            if token is not None:
+                reset_directory_work(token)
+            if lease is not None:
+                lease.release()
+            if coordinator is not None:
+                _publish_execution(rt, "idle")
             agent_idle.set()
         return False
 
@@ -385,6 +431,21 @@ def process_session_event(
         if autonomy_scheduler is None or background_runtime is None:
             logger.error("durable run dispatch missing scheduler/runtime: %s", payload)
             return False
+        coordinator = getattr(rt, "directory_coordinator", None)
+        lease = None
+        if coordinator is not None:
+            try:
+                lease = coordinator.acquire(
+                    rt.project_context.execution_root,
+                    kind="automation",
+                    holder_id=str(payload),
+                    session_id=session_state.session_id,
+                    label=f"automation run {payload}",
+                    cancel=rt.cancellation_event,
+                    on_queued=lambda reason: _publish_execution(rt, "queued", reason),
+                )
+            except DirectoryWaitCancelled:
+                return False
         try:
             launch_durable_run(
                 run_id=str(payload),
@@ -396,6 +457,8 @@ def process_session_event(
                 background_runtime=background_runtime,
                 lifecycle=rt.lifecycle,
                 services=services,
+                directory_coordinator=coordinator,
+                directory_lease=lease,
             )
         except Exception:
             logger.exception("durable task dispatch failed: %s", payload)

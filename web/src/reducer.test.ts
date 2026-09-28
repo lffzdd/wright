@@ -78,6 +78,29 @@ describe("UI event reducer", () => {
     expect(next.session.status).toBe("idle");
   });
 
+  it("shows a directory queue without treating it as a running turn", () => {
+    const next = applyEvent(state, event(1, "session.status_changed", {
+      session_id: "abc",
+      lifecycle: "open",
+      execution: "queued",
+      queue_reason: "waiting for session abc to finish in this directory",
+    }));
+    expect(next.session.execution).toBe("queued");
+    expect(next.session.status).toBe("queued");
+    expect(next.session.queue_reason).toContain("this directory");
+    expect(next.active_turn).toBeNull();
+  });
+
+  it("ignores a history request without mixing sessions", () => {
+    const next = applyEvent(state, event(1, "session.history_requested", { max_turns: 5 }));
+    expect(next.history).toEqual([]);
+    expect(next.last_seq).toBe(1);
+    const other = applyEvent(next, event(2, "content.delta", { piece: "no" }, "other:1"));
+    const isolated = { ...event(2, "content.delta", { piece: "no" }), session_id: "other-session" };
+    expect(applyEvent(next, isolated)).toBe(next);
+    expect(other.last_seq).toBe(2);
+  });
+
   it("keeps request and task usage separate", () => {
     let next = applyEvent(state, event(1, "usage.request", { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 }));
     next = applyEvent(next, event(2, "usage.task", { prompt_tokens: 30, completion_tokens: 7, total_tokens: 37 }));

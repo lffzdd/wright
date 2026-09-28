@@ -96,7 +96,9 @@ def handle_final_turn(
         if not verification.approved:
             counters.verifier += 1
             control.ui.on_completion_rejected(verification.issues)
-            control.session.append_message(verification.feedback_message())
+            control.session.append_message(
+                verification.feedback_message(), source="system_feedback",
+            )
             control.checkpoint()
             if counters.verifier >= control.max_verification_retries:
                 control.terminate(
@@ -129,7 +131,7 @@ def handle_final_turn(
                 },
                 ensure_ascii=False,
             ),
-        })
+        }, source="system_feedback")
         control.checkpoint()
         if counters.hook >= control.max_verification_retries:
             control.terminate(
@@ -276,7 +278,7 @@ def handle_invalid_turn(
             {"error": f"LLM output could not be parsed or routed: {error}"},
             ensure_ascii=False,
         ),
-    })
+    }, source="system_feedback")
     control.checkpoint()
     return "retry"
 

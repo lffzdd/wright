@@ -32,6 +32,11 @@ from ..agent import (
 from ..command.execution import CommandExecution
 from ..composition.roles import tools_for_role
 from ..composition.services import RuntimeServices
+from ..execution.directory import (
+    DirectoryLease,
+    bind_directory_work,
+    reset_directory_work,
+)
 from ..execution.identity import bind_identity
 from ..session.live_resources import RuntimeResources
 from ..session.publisher import open_session_events
@@ -244,13 +249,22 @@ def launch_durable_run(
     services: RuntimeServices,
     max_steps: int = 50,
     max_depth: int = DURABLE_MAX_DEPTH,
+    directory_coordinator: Any = None,
+    directory_lease: DirectoryLease | None = None,
 ) -> DurableLaunch | None:
     """Construct an isolated durable session on the REPL thread and return.
 
     The worker runs in the shared background pool.  Callers must not wait.
+    A directory lease passed in stays held until that worker finishes.
     """
+
+    def release_directory() -> None:
+        if directory_lease is not None:
+            directory_lease.release()
+
     run = scheduler.store.get_run(run_id)
     if run.status != "dispatched":
+        release_directory()
         return None
     configured_steps = run.run_config.get("max_steps")
     if configured_steps is not None:
@@ -281,6 +295,7 @@ def launch_durable_run(
             status="failed",
             error=f"AgentControlError: {exc}",
         )
+        release_directory()
         raise
 
     if record.status != "running":
@@ -289,6 +304,7 @@ def launch_durable_run(
             status="failed",
             error=record.error or "control plane did not start durable task",
         )
+        release_directory()
         return None
 
     permission_resolver = _fail_closed_resolver(permission_settings)
@@ -419,6 +435,9 @@ def launch_durable_run(
         final_answer: str | None = None
         task_status = "failed"
         error = ""
+        token = None
+        if directory_lease is not None and directory_coordinator is not None:
+            token = bind_directory_work(directory_coordinator, directory_lease)
         try:
             final_answer = child_agent.run(
                 user_prompt, max_steps=record.step_budget
@@ -448,6 +467,9 @@ def launch_durable_run(
                 f"{type(exc).__name__}: {exc}",
             )
         finally:
+            if token is not None:
+                reset_directory_work(token)
+            release_directory()
             durable_commands.close()
             finished = _commit_durable_run(
                 scheduler=scheduler,
@@ -484,6 +506,7 @@ def launch_durable_run(
         )
     except Exception as exc:
         durable_commands.close()
+        release_directory()
         control.finish_task(
             record.id, status="failed", steps_used=0, error=str(exc)
         )

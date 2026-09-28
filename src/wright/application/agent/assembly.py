@@ -139,7 +139,10 @@ def ensure_system_prompt(
     if session.message_records:
         return
     memory_section = memory.instructions() if memory else ""
-    prompt_tools = [tool for tool in prepared.tools if tool.name != "tool_search"]
+    prompt_tools = [
+        tool for tool in prepared.tools
+        if tool.name != "tool_search" and tool.list_in_system_prompt
+    ]
     effective_role = role_instruction or getattr(prepared.profile, "role_instruction", "")
     session.append_message({
         "role": "system",

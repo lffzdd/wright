@@ -187,10 +187,10 @@ function SessionRail({
       <div className="session-list">
         {active.map((session) => (
           <button key={session.session_id} className={`session-item ${selected === session.session_id ? "selected" : ""}`} onClick={() => onSelect(session)}>
-            <StatusDot status={session.status} />
+            <StatusDot status={session.execution || session.status} />
             <span className="session-copy">
               <strong>{session.user_goal && session.user_goal !== "(interactive session)" ? session.user_goal : `Session ${session.session_id.slice(0, 6)}`}</strong>
-              <small>{session.environment} · {session.model ?? "configured model"}</small>
+              <small>{session.execution === "queued" ? (session.queue_reason || "Queued for this directory") : session.execution === "waiting_for_input" ? "Waiting for permission or a reply" : `${session.environment} · ${session.model ?? "configured model"}`}</small>
             </span>
             {Boolean(session.pending_interactions) && <Warning size={15} weight="fill" className="warning-icon" />}
           </button>
@@ -365,6 +365,11 @@ function Timeline({ state, respond, cancelQueued }: { state: ViewState; respond:
         {agent.tools.map((tool) => <ToolCard key={tool.call_id} sessionId={state.session.session_id} tool={tool} />)}
       </section>)}
       {state.pending_interactions.map((item) => <InteractionCard key={item.request_id} interaction={item} respond={respond} />)}
+      {state.session.execution === "queued" && <section className="queue-list" aria-label="Directory queue">
+        <strong>Queued</strong>
+        <p>{state.session.queue_reason || "Waiting for the current task in this directory to finish."}</p>
+      </section>}
+      {state.session.execution === "waiting_for_input" && <p className="system-notice" role="status">This session is waiting for a permission decision or a reply.</p>}
       {state.queued_commands.length > 0 && <section className="queue-list" aria-label="Queued instructions">
         <strong>{state.queued_commands.length} queued instruction{state.queued_commands.length === 1 ? "" : "s"}</strong>
         {state.queued_commands.map((item) => <div className="queue-item" key={item.command_id}>
@@ -584,7 +589,7 @@ export function NewSessionDialog({
     <div className="dialog-head"><div><span>NEW SESSION</span><h2 id="new-session-title">Choose an execution environment</h2></div><button className="icon-button" onClick={close} title="Close (Esc)" aria-label="Close"><X size={18} /></button></div>
     <div className="environment-grid" role="group" aria-label="Execution environment">
       <button aria-pressed={environment === "worktree"} className={environment === "worktree" ? "selected" : ""} disabled={!project.git} onClick={() => setEnvironment("worktree")}><GitBranch size={22} /><strong>Isolated worktree</strong><span>Starts from current HEAD. Uncommitted checkout changes are not copied.</span>{!dirtyCheckout && <em>Recommended</em>}</button>
-      <button aria-pressed={environment === "local"} className={environment === "local" ? "selected" : ""} onClick={() => setEnvironment("local")}><TerminalWindow size={22} /><strong>Current checkout</strong><span>Uses existing files, including current uncommitted changes. One active session max.</span>{dirtyCheckout && <em>Recommended for current changes</em>}</button>
+      <button aria-pressed={environment === "local"} className={environment === "local" ? "selected" : ""} onClick={() => setEnvironment("local")}><TerminalWindow size={22} /><strong>Current checkout</strong><span>Uses existing files, including current uncommitted changes. Several sessions can stay open; one task runs in this directory at a time.</span>{dirtyCheckout && <em>Recommended for current changes</em>}</button>
     </div>
     {models.length > 0 && <div className="dialog-field">
       <label className="field-label" htmlFor="first-model">Model <span>optional</span></label>
@@ -828,7 +833,9 @@ export default function App() {
     });
   }, [state?.resync, selected]);
 
-  const running = state?.session.status === "running";
+  const execution = state?.session.execution ?? state?.session.status;
+  const running = execution === "running" || execution === "waiting_for_input";
+  const directoryQueued = execution === "queued";
   const contextTokens = state?.usage.context_tokens;
   const contextLimit = state?.usage.context_limit;
   const contextKnown = contextTokens != null && contextLimit != null && contextLimit > 0;
@@ -844,7 +851,7 @@ export default function App() {
         <ModelSelector
           currentModel={state?.session.model ?? String(project?.default_model ?? "configured model")}
           models={Array.isArray(project?.models) ? (project.models as string[]) : []}
-          running={Boolean(running)}
+          running={Boolean(running || directoryQueued)}
           onSelect={changeModel}
         />
         <span className="context-meter" title={contextKnown ? `${contextTokens} / ${contextLimit} context tokens` : "Context usage is unknown"}><i style={{ width: `${contextPercent}%` }} />{contextKnown ? `Context ${contextPercent}%` : "Context unknown"}</span>
@@ -856,7 +863,7 @@ export default function App() {
       <SessionRail sessions={sessions} selected={selected} onSelect={(session) => selectSession(session).catch((error) => setFatal(String(error)))} onCreate={() => setDialog(true)} open={railOpen} onClose={() => setRailOpen(false)} />
       <main className="conversation">
         {state ? <>
-          <div className="conversation-head"><div><span className="eyebrow">{state.session.environment === "worktree" ? "ISOLATED WORKTREE" : "CURRENT CHECKOUT"}</span><h1>{state.session.user_goal && state.session.user_goal !== "(interactive session)" ? state.session.user_goal : `Session ${state.session.session_id.slice(0, 6)}`}</h1></div><div className="session-actions"><button className="icon-button inspector-trigger" title="Open inspector (⌘J)" onClick={() => setInspectorOpen(true)}><FileCode size={17} /></button><button className="icon-button" title="Close session" onClick={() => api.close(state.session.session_id).then(() => { setSelected(null); setState(null); refreshSessions(); }).catch((error) => setFatal(String(error)))}><SidebarSimple size={17} /></button><button className="icon-button" title="Archive session" onClick={() => archiveSession().catch((error) => setFatal(String(error)))}><Archive size={17} /></button></div></div>
+          <div className="conversation-head"><div><span className="eyebrow">{state.session.environment === "worktree" ? "ISOLATED WORKTREE" : "CURRENT CHECKOUT"}</span><h1>{state.session.user_goal && state.session.user_goal !== "(interactive session)" ? state.session.user_goal : `Session ${state.session.session_id.slice(0, 6)}`}</h1></div><div className="session-actions"><button className="icon-button inspector-trigger" title="Open inspector (⌘J)" onClick={() => setInspectorOpen(true)}><FileCode size={17} /></button><button className="icon-button" title="Cancel and close this session" aria-label="Cancel and close this session" onClick={() => api.close(state.session.session_id).then(() => { setSelected(null); setState(null); refreshSessions(); }).catch((error) => setFatal(String(error)))}><SidebarSimple size={17} /></button><button className="icon-button" title="Archive session" onClick={() => archiveSession().catch((error) => setFatal(String(error)))}><Archive size={17} /></button></div></div>
           <Timeline
             state={state}
             respond={(requestId, answer) => {
@@ -880,10 +887,10 @@ export default function App() {
           />
           <Composer
             sessionId={state.session.session_id}
-            connection={state.session.status === "closing" || state.session.status === "closed" ? "closed" : state.connection}
+            connection={state.session.lifecycle === "closing" || state.session.lifecycle === "closed" || state.session.status === "closing" || state.session.status === "closed" ? "closed" : state.connection}
             draft={draft}
             updateDraft={updateDraft}
-            running={Boolean(running)}
+            running={Boolean(running || directoryQueued)}
             submit={(commandId, prompt, attachmentIds) => sendCommand({ type: "turn.submit", command_id: commandId, prompt, attachment_ids: attachmentIds })}
             cancel={async () => {
               const id = cancelId.current ?? crypto.randomUUID();
