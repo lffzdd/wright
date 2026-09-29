@@ -92,10 +92,10 @@ function applyAgent(state: ViewState, event: UiEvent, identity: { taskId: string
   if (event.type === "content.delta") next = { ...current, content: current.content + String(event.payload.piece ?? "") };
   else if (event.type === "content.final") next = { ...current, content: String(event.payload.content ?? ""), status: "finished" };
   else if (event.type.startsWith("tool.")) {
-    const phase = event.type === "tool.finished"
+    const phase = event.type === "tool.output" ? undefined : event.type === "tool.finished"
       ? (event.payload.ok ? "succeeded" : "failed")
       : event.type.slice("tool.".length);
-    next = { ...current, tools: upsertTool(current.tools, { ...event.payload, phase }) };
+    next = { ...current, tools: upsertTool(current.tools, { ...event.payload, ...(phase ? { phase } : {}) }) };
   } else if (event.type === "usage.request") {
     next = {
       ...current,
@@ -142,6 +142,10 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
       tools: [],
     };
     next.session = { ...state.session, status: "running" };
+    if (next.timeline) next.timeline = [...next.timeline, {
+      id: `${event.turn_id || event.event_id}:user`, kind: "text", role: "user",
+      turn_id: event.turn_id, text: next.active_turn.prompt, attachments: next.active_turn.attachments,
+    }];
     const commandId = String(event.payload.command_id ?? "");
     next.queued_commands = next.queued_commands.filter((item) => item.command_id !== commandId);
     next.queue_depth = next.queued_commands.length;
@@ -152,12 +156,12 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
   } else if (event.type === "content.final" && next.active_turn) {
     next.active_turn = { ...next.active_turn, content: String(event.payload.content ?? "") };
   } else if (event.type.startsWith("tool.") && next.active_turn) {
-    const phase = event.type === "tool.finished"
+    const phase = event.type === "tool.output" ? undefined : event.type === "tool.finished"
       ? (event.payload.ok ? "succeeded" : "failed")
       : event.type.slice("tool.".length);
     next.active_turn = {
       ...next.active_turn,
-      tools: upsertTool(next.active_turn.tools, { ...event.payload, phase }),
+      tools: upsertTool(next.active_turn.tools, { ...event.payload, ...(phase ? { phase } : {}) }),
     };
     if (
       event.type === "tool.finished" &&
@@ -183,8 +187,8 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
       }];
     }
     const finished = next.active_turn?.content ?? "";
-    if (finished && next.timeline && !next.timeline.some((item) => item.kind === "text" && item.text === finished)) {
-      next.timeline = [...next.timeline, { id: event.event_id, kind: "text", role: "assistant", text: finished }];
+    if (finished && next.timeline && !next.timeline.some((item) => item.role === "assistant" && item.turn_id === event.turn_id)) {
+      next.timeline = [...next.timeline, { id: `${event.turn_id || event.event_id}:assistant`, turn_id: event.turn_id, kind: "text", role: "assistant", text: finished }];
     }
     next.active_turn = null;
     next.session = { ...next.session, status: "idle", agent_status: event.type.split(".")[1] };
@@ -259,23 +263,29 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
   if (next.timeline && event.type.startsWith("tool.")) {
     const callId = String(event.payload.call_id ?? "");
     if (callId) {
-      const phase = event.type === "tool.finished" ? (event.payload.ok ? "succeeded" : "failed") : event.type.slice("tool.".length);
-      const result = event.payload.data && typeof event.payload.data === "object" ? event.payload.data as Record<string, unknown> : undefined;
       const index = next.timeline.findIndex((item) => item.id === callId);
-      if (index >= 0) {
-        const copy = next.timeline.slice();
-        copy[index] = { ...copy[index], phase, ...(result ? { result } : {}) };
-        next.timeline = copy;
-      } else {
-        next.timeline = [...next.timeline, { id: callId, kind: "tool", name: String(event.payload.name ?? ""), phase, ...(result ? { result } : {}) }];
-      }
+      const previous = index >= 0 ? next.timeline[index] : { id: callId, kind: "tool" as const };
+      const phase = event.type === "tool.output" ? previous.phase : event.type === "tool.finished"
+        ? (event.payload.ok ? "succeeded" : "failed") : event.type.slice("tool.".length);
+      const item = {
+        ...previous, phase,
+        call_id: callId,
+        name: String(event.payload.name ?? previous.name ?? "tool"),
+        arguments: event.payload.arguments as Record<string, unknown> | undefined ?? previous.arguments,
+        output: eventOutput(previous.output, event.payload),
+        // Keep the same ToolResult envelope as the server snapshot.
+        result: event.type === "tool.finished" ? event.payload : previous.result,
+      };
+      next.timeline = index >= 0 ? next.timeline.map((old, i) => i === index ? item : old) : [...next.timeline, item];
     }
   }
   if (next.timeline && event.type === "content.final") {
     const text = String(event.payload.content ?? "");
-    if (text && !next.timeline.some((item) => item.kind === "text" && item.text === text)) {
-      next.timeline = [...next.timeline, { id: event.event_id, kind: "text", role: "assistant", text }];
-    }
+    const id = `${event.turn_id || event.event_id}:assistant`;
+    const item = { id, turn_id: event.turn_id, kind: "text" as const, role: "assistant", text };
+    next.timeline = next.timeline.some((old) => old.id === id)
+      ? next.timeline.map((old) => old.id === id ? item : old)
+      : [...next.timeline, item];
   }
   return next;
 }

@@ -1,7 +1,9 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { marked } from "marked";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { t } from "./i18n";
 import { Composer, InteractionCard, visibleModels } from "./App";
+import { sessionTitle } from "./workspace/widgets";
 import { DiffViewer } from "./DiffViewer";
 import { MarkdownContent, markdownChunks } from "./Markdown";
 
@@ -37,6 +39,13 @@ describe("MarkdownContent", () => {
     const { container } = render(<MarkdownContent content="<b>raw</b>" />);
     expect(container.querySelector("b")).toBeNull();
     expect(screen.getByText("<b>raw</b>")).toBeDefined();
+  });
+});
+
+describe("session titles", () => {
+  it("hides the interactive placeholder from recent tasks", () => {
+    expect(sessionTitle({ session_id: "abcdef123", user_goal: "(interactive session)" }, t)).toBe("Session abcdef");
+    expect(sessionTitle({ session_id: "abcdef123", user_goal: "Fix Redis leak" }, t)).toBe("Fix Redis leak");
   });
 });
 
@@ -113,6 +122,24 @@ describe("InteractionCard", () => {
     fireEvent.click(screen.getByRole("button", { name: /Allow once/ }));
     expect(await screen.findByText(/Kept choice: allow_once/)).toBeDefined();
     expect(screen.getByRole("button", { name: /Allow once/ })).toBeDefined();
+  });
+
+  it("does not dump grant scopes into a truncated summary row", () => {
+    render(<InteractionCard interaction={{
+      ...interaction,
+      risk_flags: ["recursive_delete"],
+      grant_summary: "./build, ./dist",
+      choices: [
+        { id: "allow_once", label: "Allow once", scope: "This invocation only", persistence: "No save" },
+        { id: "allow_session", label: "Allow for this session", scope: "This session", persistence: "Save on this session only" },
+        { id: "allow_persistent", label: "Allow permanently", scope: "Later sessions", persistence: "Save in user permissions" },
+        { id: "deny", label: "Deny", scope: "No execution", persistence: "No save" },
+      ],
+    }} respond={() => true} />);
+    expect(screen.queryByText(/Allow once: This invocation only/)).toBeNull();
+    expect(screen.getByText("Recursive deletion in workspace")).toBeDefined();
+    expect(screen.getByText("Directory purge outside git tracking")).toBeDefined();
+    expect(screen.queryByText("recursive_delete")).toBeNull();
   });
 });
 

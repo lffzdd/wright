@@ -1,4 +1,4 @@
-import { Archive, Brain, Clock, Folder, Gear, GitBranch, MagnifyingGlass, Scroll, SidebarSimple, Sun, Warning, X } from "@phosphor-icons/react";
+import { Archive, Brain, Clock, Folder, Gear, GitBranch, MagnifyingGlass, Moon, Scroll, SidebarSimple, Sun, Warning, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, bootstrap } from "./api";
 import { getLocale, setLocale, useT } from "./i18n";
@@ -6,9 +6,9 @@ import { parseEvent } from "./protocol";
 import { applyEvent } from "./reducer";
 import type { SessionSummary, Snapshot, ViewState } from "./types";
 import { MemoryDialog, RulesDialog, SchedulesDialog, SearchDialog, SettingsDialog } from "./workspace/panels";
-import { VisualFixture } from "./workspace/visual-fixture";
+import { EmptyFixture, VisualFixture } from "./workspace/visual-fixture";
 import {
-  Composer, Inspector, SessionRail, Timeline, emptyDraft,
+  Composer, Inspector, SessionRail, Timeline, emptyDraft, taskCode, sessionTitle, EnvironmentChoice,
   type Draft,
 } from "./workspace/widgets";
 import type { FileReference } from "./types";
@@ -30,6 +30,10 @@ const initialView = (snapshot: Snapshot): ViewState => ({
 type WorkspaceRow = { project_id: string; name: string; root: string; selected?: boolean; exists?: boolean };
 type Panel = null | "search" | "memory" | "rules" | "schedules" | "settings";
 
+const compactTokens = (value: number | null | undefined) => typeof value === "number"
+  ? value >= 1_000 ? `${(value / 1_000).toFixed(value >= 100_000 ? 0 : 1)}k` : String(value)
+  : "unknown";
+
 export default function App() {
   const tr = useT();
   const [project, setProject] = useState<Record<string, unknown> | null>(null);
@@ -45,6 +49,7 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<WorkspaceRow[]>([]);
   const [panel, setPanel] = useState<Panel>(null);
   const [focusPath, setFocusPath] = useState<string | null>(null);
+  const [booted, setBooted] = useState(false);
   const socket = useRef<WebSocket | null>(null);
   const commandWaiters = useRef(new Map<string, (outcome: "accepted" | "rejected" | "unknown") => void>());
   const epoch = useRef(0);
@@ -81,22 +86,11 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("visual") === "fixture") {
-      setLocale("en");
-      applyTheme("dark");
-      return;
-    }
-    document.documentElement.classList.add("dark");
-    api.preferences().then((prefs) => {
-      setLocale(prefs.interface_language);
-      applyTheme(prefs.theme);
-      setInspectorOpen(prefs.inspector_open);
-    }).catch(() => undefined);
-  }, []);
-
-  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPanel("search");
+      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
         event.preventDefault();
         setBrowsing("draft");
         setSelected(null);
@@ -113,8 +107,11 @@ export default function App() {
         setRailOpen((prev) => !prev);
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
         event.preventDefault();
-        setInspectorOpen((prev) => !prev);
-        setNarrowInspector((prev) => !prev);
+        setInspectorOpen((prev) => {
+          const next = !prev;
+          setNarrowInspector(next);
+          return next;
+        });
       } else if (event.key === "Escape") {
         setPanel(null);
         setRailOpen(false);
@@ -126,11 +123,27 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("visual") === "fixture") {
+      setLocale("en");
+      applyTheme("dark");
+      return;
+    }
+    document.documentElement.classList.add("dark");
+    let cancelled = false;
     bootstrap().then(async () => {
-      const [projectData, registry] = await Promise.all([
+      if (cancelled) return;
+      const [prefs, projectData, registry] = await Promise.all([
+        api.preferences().catch(() => null),
         api.project(),
         api.workspaces().catch(() => null),
       ]);
+      if (cancelled) return;
+      if (prefs) {
+        setLocale(prefs.interface_language);
+        applyTheme(prefs.theme);
+        setInspectorOpen(prefs.inspector_open);
+        setNarrowInspector(prefs.inspector_open);
+      }
       setProject(projectData);
       launchId.current = String(projectData.project_id ?? "");
       if (registry) {
@@ -138,6 +151,7 @@ export default function App() {
         workspaceId.current = registry.selected_project_id;
       }
       const items = await refreshSessions();
+      if (cancelled) return;
       const projectKey = String(projectData.project_id ?? "");
       const remembered = localStorage.getItem(`wright.viewed.${projectKey}`);
       const match = items.find((item) => item.session_id === remembered);
@@ -151,7 +165,11 @@ export default function App() {
         setBrowsing("draft");
         setSelected(null);
       }
-    }).catch((error) => setFatal(String(error)));
+      setBooted(true);
+    }).catch((error) => {
+      if (!cancelled) setFatal(String(error));
+    });
+    return () => { cancelled = true; };
   }, [refreshSessions]);
 
   useEffect(() => {
@@ -286,12 +304,14 @@ export default function App() {
         connection: "closed",
       });
     }).catch((error) => { if (epoch.current === generation) setFatal(String(error)); });
+    return () => { epoch.current += 1; };
   }, [browsing, selected]);
 
   useEffect(() => {
+    if (!booted) return;
     const timer = window.setInterval(() => refreshSessions().catch(() => undefined), 5_000);
     return () => window.clearInterval(timer);
-  }, [refreshSessions]);
+  }, [booted, refreshSessions]);
 
   const sendCommand = (payload: Record<string, unknown>) => {
     const id = String(payload.command_id ?? "");
@@ -397,6 +417,7 @@ export default function App() {
     remember(session.session_id);
     if (session.active) setBrowsing("live");
     else setBrowsing("preview");
+    if (session.session_id !== selected) setState(null);
     setSelected(session.session_id);
     setRailOpen(false);
     if (session.recoverable === false) {
@@ -432,17 +453,30 @@ export default function App() {
   const dirty = Number(project?.uncommitted_count ?? 0);
   const projectName = String(project?.name ?? tr("web.local"));
   const launchProject = String(project?.project_id ?? "");
+  const planSteps = state?.plan.steps ?? [];
+  const currentStep = planSteps.findIndex((step) => ["in_progress", "running", "active"].includes(step.status));
+  const selectedProgress = planSteps.length
+    ? tr("web.step_of", { current: currentStep >= 0 ? currentStep + 1 : Math.min(planSteps.length, planSteps.filter((step) => step.status === "completed").length + 1), total: planSteps.length })
+    : "";
 
-  if (new URLSearchParams(window.location.search).get("visual") === "fixture") return <VisualFixture />;
+  const visual = new URLSearchParams(window.location.search).get("visual");
+  if (visual === "fixture") return <VisualFixture />;
+  if (visual === "empty") return <EmptyFixture />;
   if (fatal && !project) return <main className="fatal"><Warning size={28} /><h1>{tr("web.fatal_title")}</h1><p>{fatal}</p><button className="button primary" onClick={() => location.reload()}>{tr("web.reload")}</button></main>;
-  const connection = state?.connection ?? "connecting";
+  const connection = state?.connection ?? (booted ? "idle" : "connecting");
   const statusClass = execution === "waiting_for_input" ? "waiting" : execution === "failed" ? "failed" : running ? "running" : "";
+  const statusText = state?.pending_interactions.length
+    ? tr("web.permission_required")
+    : execution ? tr(`web.status.${execution}`) : tr(`web.connection.${connection}`);
+  const capacity = typeof project?.capacity === "number" ? project.capacity as number : null;
   const breakdown = state?.context_breakdown;
   const contextWidth = breakdown?.limit ? Math.min(100, Math.round(((breakdown.total ?? 0) / breakdown.limit) * 100)) : 0;
   return <div className="app-viewport">
     <header className="topbar">
       <div className="brand">
         <button className="icon-button rail-toggle" onClick={() => setRailOpen(true)} aria-label={tr("web.open_sessions")}><SidebarSimple size={14} /></button>
+        <span className="traffic-lights" aria-hidden="true"><i /><i /><i /></span>
+        <span className="chrome-divider" aria-hidden="true" />
         <span className="brand-mark">W</span>
         <strong>Wright</strong>
         <span className="sep">/</span>
@@ -450,10 +484,12 @@ export default function App() {
       </div>
       <div className="top-center">
         {branch && <div className="branch-pill"><GitBranch size={12} /><span>{branch}</span>{dirty > 0 ? <span className="dirty">{dirty} uncommitted</span> : null}</div>}
-        <button type="button" className="search-trigger" onClick={() => setPanel("search")}><MagnifyingGlass size={14} /><span>{tr("web.search")}</span></button>
+        <button type="button" className="search-trigger" onClick={() => setPanel("search")}><MagnifyingGlass size={14} /><span>{tr("web.search")}</span><kbd className="kbd">⌘K</kbd></button>
       </div>
       <div className="top-status">
-        <span className="active-count">{tr("web.active", { count: `${activeCount}/${project?.capacity as number ?? 0}` })}</span>
+        <span className="top-status-label">Active</span>
+        <span className={`top-agent-state ${statusClass}`}><span className={`dot ${running ? "pulse" : ""}`} />{statusText}</span>
+        <span className="active-count">{tr("web.active", { count: capacity === null ? `${activeCount}` : `${activeCount}/${capacity}` })}</span>
         <select aria-label={tr("web.language_label")} title={tr("web.language_note")} value={getLocale()} onChange={(event) => {
           const next = setLocale(event.target.value);
           api.setPreference({ interface_language: next }).catch(() => undefined);
@@ -461,12 +497,12 @@ export default function App() {
           <option value="en">EN</option>
           <option value="zh-CN">中文</option>
         </select>
-        <button type="button" className="icon-button" title={tr("web.theme")} onClick={() => savePreference({ theme: theme === "dark" ? "light" : "dark" }).catch((error) => setFatal(String(error)))}><Sun size={14} /></button>
-        <button type="button" className="icon-button" aria-label={tr("web.open_inspector")} onClick={() => { setInspectorOpen(true); setNarrowInspector(true); }}><SidebarSimple size={14} /></button>
+        <button type="button" className="icon-button" title={tr("web.theme")} onClick={() => savePreference({ theme: theme === "dark" ? "light" : "dark" }).catch((error) => setFatal(String(error)))}>{theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}</button>
+        {state && selected ? <button type="button" className="icon-button" aria-label={tr("web.open_inspector")} onClick={() => { setInspectorOpen(true); setNarrowInspector(true); }}><SidebarSimple size={14} /></button> : null}
       </div>
     </header>
     <div className="workspace-grid">
-      <SessionRail sessions={sessions} selected={selected} onSelect={(session) => selectSession(session).catch((error) => setFatal(String(error)))} onCreate={() => { setBrowsing("draft"); setSelected(null); setState(null); }} open={railOpen} footer={[state?.session.model, state?.connection].filter(Boolean).join(" · ")}>
+      <SessionRail sessions={sessions} selected={selected} onSelect={(session) => selectSession(session).catch((error) => setFatal(String(error)))} onCreate={() => { setBrowsing("draft"); setSelected(null); setState(null); }} open={railOpen} selectedProgress={selectedProgress} footer={state?.session.model ?? ""}>
         <div>
           <div className="section-label"><span>{tr("web.workspaces")}</span></div>
           {workspaces.map((item) => <button type="button" key={item.project_id} className={`nav-row ${item.selected ? "selected" : ""}`} onClick={() => {
@@ -480,7 +516,7 @@ export default function App() {
             if (!path) return;
             api.registerWorkspace(path).then(() => api.workspaces()).then((registry) => setWorkspaces(registry.projects)).catch((error) => setFatal(String(error)));
           }}>{tr("web.register_workspace")}</button>
-          <button type="button" className="nav-row" onClick={() => {
+          {workspaces.length > 0 && <button type="button" className="nav-row" onClick={() => {
             const current = workspaces.find((item) => item.selected) ?? workspaces[0];
             if (!current) return;
             if (!window.confirm(`Unregister ${current.name}? This removes it from the list only. Files and task data stay.`)) return;
@@ -489,7 +525,7 @@ export default function App() {
               workspaceId.current = registry.selected_project_id;
               return refreshSessions();
             }).catch((error) => setFatal(String(error)));
-          }}>{tr("web.unregister_selected")}</button>
+          }}>{tr("web.unregister_selected")}</button>}
         </div>
         <div>
           <div className="section-label"><span>{tr("web.capabilities")}</span></div>
@@ -503,13 +539,13 @@ export default function App() {
         {state ? <>
           <div className="conversation-head">
             <div className="task-heading">
-              <span className="task-id-pill">{state.session.session_id.slice(0, 8)}</span>
-              <h1>{state.session.user_goal && state.session.user_goal !== "(interactive session)" ? state.session.user_goal : tr("web.session_label", { id: state.session.session_id.slice(0, 6) })}</h1>
+              <span className="task-id-pill">{taskCode(state.session.session_id)}</span>
+              <h1>{sessionTitle(state.session, tr)}</h1>
             </div>
             <div className="task-status">
-              <span className={`status-badge ${statusClass}`}><span className={`dot ${running ? "pulse" : ""}`} />{execution ? tr(`web.status.${execution}`) : tr(`web.connection.${connection}`)}</span>
+              <span className={`status-badge ${statusClass}`}><span className={`dot ${running ? "pulse" : ""}`} />{statusText}</span>
               {typeof breakdown?.total === "number" && <div className="context-meter" title={tr("web.estimate")}>
-                <span className="figures"><span>{breakdown.total} / {breakdown.limit ?? "unknown"}</span><span className="muted">{contextWidth}%</span></span>
+                <span className="figures"><span>{compactTokens(breakdown.total)} / {compactTokens(breakdown.limit)}</span><span className="muted">{contextWidth}% context</span></span>
                 <span className="meter slim"><i style={{ width: `${contextWidth}%` }} /></span>
               </div>}
               <button className="icon-button" title={tr("web.archive")} aria-label={tr("web.archive")} onClick={() => archiveSession().catch((error) => setFatal(String(error)))}><Archive size={14} /></button>
@@ -517,10 +553,10 @@ export default function App() {
                 if (!window.confirm(`Close ${state.session.user_goal || state.session.session_id}? The task stops and the checkpoint stays.`)) return;
                 api.close(state.session.session_id).then(() => { setSelected(null); setState(null); refreshSessions(); }).catch((error) => setFatal(String(error)));
               }}><X size={14} /></button>
-              <button className="icon-button" aria-label={tr("web.open_inspector")} onClick={() => { setInspectorOpen(true); setNarrowInspector(true); }}><SidebarSimple size={14} /></button>
             </div>
           </div>
           <Timeline
+            key={state.session.session_id}
             state={state}
             respond={(requestId, answer) => {
               const existing = respondIds.current.get(requestId);
@@ -541,7 +577,7 @@ export default function App() {
             <Composer
               sessionId={state.session.session_id}
               projectId={projectKey() || null}
-              connection={state.session.lifecycle === "closing" || state.session.lifecycle === "closed" || state.session.status === "closing" || state.session.status === "closed" ? "closed" : browsing === "preview" ? "connected" : state.connection}
+              connection={browsing === "preview" ? "connected" : (state.session.lifecycle === "closing" || state.session.lifecycle === "closed" || state.session.status === "closing" || state.session.status === "closed" ? "closed" : state.connection)}
               draft={draft}
               updateDraft={updateDraft}
               running={Boolean(running || directoryQueued)}
@@ -581,16 +617,16 @@ export default function App() {
               }}
             />
           </div>
-        </> : <div className="conversation">
+        </> : selected ? <p className="hint" role="status">{tr("web.loading_session")}</p> : <>
           <div className="conversation-head"><div className="task-heading"><h1>{tr("web.no_session")}</h1></div></div>
-          <p className="hint">{tr("web.no_session_help")}</p>
+          <div className="timeline welcome-pane">
+            <p className="hint">{tr("web.no_session_help")}</p>
+            <EnvironmentChoice sessionId={draftKey} draft={draft} updateDraft={updateDraft} git={Boolean(project?.git)} workLabel={typeof project?.project_root === "string" ? project.project_root : ""} />
+          </div>
           <div className="composer-wrap">
             <Composer
               sessionId={draftKey}
               projectId={projectKey() || null}
-              chooseEnvironment
-              git={Boolean(project?.git)}
-              workLabel={String(project?.project_root ?? "")}
               connection="connected"
               draft={draft}
               updateDraft={updateDraft}
@@ -604,9 +640,9 @@ export default function App() {
               cancel={async () => undefined}
             />
           </div>
-        </div>}
+        </>}
       </main>
-      {state && selected ? <Inspector state={state} sessionId={selected} open={inspectorOpen} narrow={narrowInspector} focusPath={focusPath} close={() => { setInspectorOpen(false); setNarrowInspector(false); api.setPreference({ inspector_open: false }).catch(() => undefined); }} /> : <aside className={`inspector ${inspectorOpen ? "" : "is-closed"} ${narrowInspector ? "narrow-open" : ""}`}><p className="empty-small">{tr("web.inspector_empty")}</p></aside>}
+      {state && selected ? <Inspector key={selected} state={state} sessionId={selected} open={inspectorOpen} narrow={narrowInspector} focusPath={focusPath} close={() => { setInspectorOpen(false); setNarrowInspector(false); api.setPreference({ inspector_open: false }).catch(() => undefined); }} /> : null}
     </div>
     {railOpen && <button className="sidebar-backdrop" aria-label={tr("web.close_sessions")} onClick={() => setRailOpen(false)} />}
     {fatal && project && <div className="toast" role="alert"><Warning size={16} /><span>{fatal}</span><button className="icon-button" onClick={() => setFatal("")} aria-label={tr("web.dismiss")}><X size={14} /></button></div>}

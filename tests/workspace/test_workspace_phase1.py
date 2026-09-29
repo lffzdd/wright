@@ -480,6 +480,34 @@ def test_timeline_uses_records_not_prose(tmp_path: Path):
     }]
 
 
+def test_timeline_projects_reasoning_apart_from_assistant_text():
+    class Record:
+        def __init__(self, identifier, role, text, source, extra=None):
+            self.id = identifier
+            self.source = source
+            self.message = {"role": role, "content": text, **(extra or {})}
+
+    session = SimpleNamespace(
+        message_records=[
+            Record("m1", "user", "what tools?", "user_input"),
+            Record(
+                "m2",
+                "assistant",
+                "I can read files.",
+                "model",
+                {"reasoning": "List the tools. Keep the reply short."},
+            ),
+        ],
+        tool_executions={},
+    )
+    timeline = project_timeline(session)
+    assert [item["kind"] for item in timeline] == ["text", "reasoning", "text"]
+    assert timeline[1]["id"] == "m2:reason"
+    assert timeline[1]["text"] == "List the tools. Keep the reply short."
+    assert timeline[2]["id"] == "m2"
+    assert timeline[2]["text"] == "I can read files."
+
+
 def test_documents_inline_without_entering_the_workspace(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "home"))
     project = tmp_path / "project"

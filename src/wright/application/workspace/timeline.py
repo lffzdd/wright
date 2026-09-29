@@ -32,10 +32,20 @@ def project_timeline(session: Any, pending: list[dict[str, Any]] | None = None) 
                 "order": index,
             })
         elif role == "assistant":
+            record_id = getattr(record, "id", f"assistant:{index}")
+            reasoning = str(message.get("reasoning") or message.get("reasoning_content") or "").strip()
+            if reasoning:
+                items.append({
+                    "id": f"{record_id}:reason",
+                    "kind": "reasoning",
+                    "role": "assistant",
+                    "text": reasoning,
+                    "order": index,
+                })
             text = _text(message)
             if text:
                 items.append({
-                    "id": getattr(record, "id", f"assistant:{index}"),
+                    "id": record_id,
                     "kind": "text",
                     "role": "assistant",
                     "text": text,

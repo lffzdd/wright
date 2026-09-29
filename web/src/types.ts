@@ -139,7 +139,10 @@ export type Notice = {
 
 export type TimelineItem = {
   id: string;
-  kind: "text" | "tool" | "shell" | "edit" | "approval";
+  turn_id?: string;
+  attachments?: Attachment[];
+  output?: string;
+  kind: "text" | "reasoning" | "tool" | "shell" | "edit" | "approval";
   role?: string;
   text?: string;
   name?: string;

@@ -17,6 +17,7 @@ const snapshot = (session: Session) => ({
   last_seq: 0,
   session,
   history: [],
+  timeline: [],
   active_turn: null,
   plan: {},
   pending_interactions: [],
@@ -187,7 +188,7 @@ test("isolates sessions and completes a structured permission flow", async ({ pa
   await expect(page.getByRole("heading", { name: "First isolated task" })).toBeVisible();
   expect(sessions[0]?.environment).toBe("local");
 
-  await page.getByRole("button", { name: "New session (⌘K)" }).click();
+  await page.getByRole("button", { name: "New session (⌘N)" }).click();
   await page.getByLabel("Message Wright").fill("Second isolated task");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByRole("heading", { name: "Second isolated task" })).toBeVisible();
@@ -312,7 +313,7 @@ test("switching sessions only changes the view subscription", async ({ page }) =
   await expect(page.getByText("still running", { exact: true })).toBeVisible();
   await page.getByLabel("Message Wright").fill("draft for alpha");
 
-  await page.getByRole("button", { name: "New session (⌘K)" }).click();
+  await page.getByRole("button", { name: "New session (⌘N)" }).click();
   await page.getByLabel("Message Wright").fill("Beta task");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByRole("heading", { name: "Beta task" })).toBeVisible();

@@ -1,14 +1,14 @@
 import {
-  Archive, Check, FileCode, Paperclip, PaperPlaneRight, Plus, Square, Warning, X,
+  Archive, Check, Circle, DotsThreeVertical, FileCode, Paperclip, PaperPlaneRight, Plus, SpinnerGap, Square, Warning, X,
 } from "@phosphor-icons/react";
 import { FormEvent, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { DiffViewer } from "../DiffViewer";
 import { MarkdownContent } from "../Markdown";
 import { api } from "../api";
-import { present, useT } from "../i18n";
+import { present, t, useT } from "../i18n";
 import { commandAfter } from "../protocol";
 import type { Attachment, FileReference, ReviewChange, SessionSummary, ViewState } from "../types";
-import { InteractionCard, SummaryRow, UserMessage, toolCardFromState, toolCardFromTimeline } from "./cards";
+import { InteractionCard, ReasoningRow, AssistantMessage, UserMessage, toolCardFromState, toolCardFromTimeline } from "./cards";
 
 export type Draft = {
   prompt: string;
@@ -30,6 +30,60 @@ export const emptyDraft = (): Draft => ({
   clientRequestId: null, boundSessionId: null, environment: "local", localFiles: [], phase: "idle", reason: "",
 });
 
+export function taskCode(id: string, compact = false): string {
+  const match = /^task[-_]?(\d+)/i.exec(id);
+  if (match) return compact ? `#${match[1]}` : `TASK-${match[1]}`;
+  return compact ? `#${id.slice(0, 4)}` : id.slice(0, 8);
+}
+
+export function formatAgo(iso?: string): string {
+  if (!iso) return "";
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) return "";
+  const delta = Date.now() - then;
+  if (delta < 45_000) return t("web.just_now");
+  if (delta < 3_600_000) return `${Math.max(1, Math.round(delta / 60_000))}m`;
+  if (delta < 86_400_000) return `${Math.max(1, Math.round(delta / 3_600_000))}h`;
+  return `${Math.max(1, Math.round(delta / 86_400_000))}d`;
+}
+
+export function sessionTitle(session: { session_id: string; user_goal?: string }, tr: typeof t): string {
+  const goal = session.user_goal?.trim();
+  if (goal && goal !== "(interactive session)") return goal;
+  return tr("web.session_label", { id: session.session_id.slice(0, 6) });
+}
+
+export function EnvironmentChoice({
+  sessionId, draft, updateDraft, git = false, workLabel = "", compact = false,
+}: {
+  sessionId: string;
+  draft: Draft;
+  updateDraft: (sessionId: string, patch: (current: Draft) => Draft) => void;
+  git?: boolean;
+  workLabel?: string;
+  compact?: boolean;
+}) {
+  const tr = useT();
+  const local = (draft.environment ?? "local") === "local";
+  return <div className={compact ? "row-actions environment-compact" : "environment-choice"}>
+    {workLabel && <p className="hint">{workLabel}</p>}
+    {compact ? <>
+      <button type="button" className="button" aria-pressed={local} onClick={() => updateDraft(sessionId, (current) => ({ ...current, environment: "local" }))}>{tr("web.work_here")}</button>
+      <button type="button" className="button" aria-pressed={!local} disabled={!git} onClick={() => updateDraft(sessionId, (current) => ({ ...current, environment: "worktree" }))}>{tr("web.isolated_option")}</button>
+      <span className="hint">{local ? tr("web.current_help") : tr("web.isolated_help")}</span>
+    </> : <div className="environment-grid">
+      <button type="button" className={local ? "selected" : ""} aria-pressed={local} onClick={() => updateDraft(sessionId, (current) => ({ ...current, environment: "local" }))}>
+        <strong>{tr("web.work_here")}</strong>
+        <span className="hint">{tr("web.current_help")}</span>
+      </button>
+      <button type="button" className={!local ? "selected" : ""} aria-pressed={!local} disabled={!git} onClick={() => updateDraft(sessionId, (current) => ({ ...current, environment: "worktree" }))}>
+        <strong>{tr("web.isolated_option")}</strong>
+        <span className="hint">{tr("web.isolated_help")}</span>
+      </button>
+    </div>}
+  </div>;
+}
+
 export function visibleModels(models: string[], currentModel: string, extras: string[] = []): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -44,10 +98,12 @@ export function visibleModels(models: string[], currentModel: string, extras: st
 
 export { InteractionCard };
 
-export function Timeline({ state, respond, cancelQueued }: {
+export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }: {
   state: ViewState;
   respond: (requestId: string, answer: unknown) => boolean | Promise<boolean>;
   cancelQueued: (commandId: string) => void;
+  userLabel?: string;
+  timestamp?: string;
 }) {
   const tr = useT();
   const scroller = useRef<HTMLDivElement>(null);
@@ -66,14 +122,15 @@ export function Timeline({ state, respond, cancelQueued }: {
   const timeline = state.timeline ?? [];
   const known = new Set(timeline.map((item) => item.id));
   const liveTools = (state.active_turn?.tools ?? []).filter((tool) => !known.has(tool.call_id));
-  const liveText = state.active_turn?.content && !timeline.some((item) => item.kind === "text" && item.text === state.active_turn?.content) ? state.active_turn.content : "";
+  const liveText = state.active_turn?.content && !timeline.some((item) => item.role === "assistant" && item.turn_id === state.active_turn?.turn_id && item.turn_id !== undefined) ? state.active_turn.content : "";
   const pending = state.pending_interactions.filter((item) => !known.has(item.request_id));
   return <div className="timeline" ref={scroller} onScroll={onScroll}>
     {!timeline.length && !state.history.length && !state.active_turn && <p className="empty-small">{tr("web.empty_timeline")}</p>}
     {timeline.length > 0 ? <>
       {timeline.map((item) => {
-        if (item.kind === "text" && item.role === "user") return <UserMessage key={item.id} text={item.text || ""} />;
-        if (item.kind === "text") return <SummaryRow key={item.id} text={item.text || ""} />;
+        if (item.kind === "text" && item.role === "user") return <UserMessage key={item.id} text={item.text || ""} userLabel={userLabel} timestamp={timestamp} />;
+        if (item.kind === "reasoning") return <ReasoningRow key={item.id} text={item.text || ""} />;
+        if (item.kind === "text") return <AssistantMessage key={item.id} text={item.text || ""} />;
         if (item.kind === "approval" && item.interaction) {
           const stillPending = state.pending_interactions.some((entry) => entry.request_id === item.interaction?.request_id);
           if (!stillPending) return null;
@@ -82,7 +139,8 @@ export function Timeline({ state, respond, cancelQueued }: {
         return toolCardFromTimeline(item);
       })}
       {liveTools.map((tool) => toolCardFromState(tool))}
-      {liveText && <SummaryRow text={liveText} />}
+      {state.active_turn?.reasoning && <ReasoningRow text={state.active_turn.reasoning} />}
+      {liveText && <AssistantMessage text={liveText} />}
       {state.history.filter((turn) => turn.status === "failed" || turn.status === "cancelled").map((turn) => <p className="form-error" key={turn.turn_id || turn.status}>{turn.status === "cancelled" ? tr("web.turn_cancelled") : tr("web.turn_failed")}</p>)}
     </> : <>
       {state.history.map((turn, index) => <div className="turn" key={turn.turn_id || index}>
@@ -90,12 +148,13 @@ export function Timeline({ state, respond, cancelQueued }: {
         {turn.tools?.map((tool) => toolCardFromState(tool))}
         {turn.status === "failed" && <p className="form-error">{tr("web.turn_failed")}</p>}
         {turn.status === "cancelled" && <p className="form-error">{tr("web.turn_cancelled")}</p>}
-        {turn.assistant ? <SummaryRow text={turn.assistant} /> : turn.status === "failed" || turn.status === "cancelled" ? null : <p className="empty-small">{tr("web.no_answer")}</p>}
+        {turn.assistant ? <AssistantMessage text={turn.assistant} /> : turn.status === "failed" || turn.status === "cancelled" ? null : <p className="empty-small">{tr("web.no_answer")}</p>}
       </div>)}
       {state.active_turn && <div className="turn">
         {state.active_turn.prompt && <UserMessage text={state.active_turn.prompt} />}
         {state.active_turn.tools.map((tool) => toolCardFromState(tool))}
-        {state.active_turn.content ? <SummaryRow text={state.active_turn.content} /> : <p className="empty-small">Working…</p>}
+        {state.active_turn.reasoning && <ReasoningRow text={state.active_turn.reasoning} />}
+        {state.active_turn.content ? <AssistantMessage text={state.active_turn.content} /> : <p className="empty-small">Working…</p>}
       </div>}
     </>}
     {(state.agents ?? []).map((agent) => <section className="agent-progress" key={agent.task_id}><strong>Subagent {agent.task_id} · {agent.status}</strong>{agent.content && <MarkdownContent content={agent.content} />}</section>)}
@@ -246,12 +305,7 @@ export function Composer({
   return <form className="composer" onSubmit={(event) => { send(event).catch((reason) => updateDraft(sessionId, (item) => ({ ...item, phase: "unknown", reason: String(reason) }))); }}>
     <input ref={imageInput} className="file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => { if (event.target.files) upload(event.target.files, true); event.target.value = ""; }} />
     <input ref={fileInput} className="file-input" type="file" multiple onChange={(event) => { if (event.target.files) upload(event.target.files, false); event.target.value = ""; }} />
-    {chooseEnvironment && <div className="row-actions">
-      <span className="hint">{workLabel}</span>
-      <button type="button" className="button" aria-pressed={(draft.environment ?? "local") === "local"} onClick={() => updateDraft(sessionId, (current) => ({ ...current, environment: "local" }))}>{tr("web.work_here")}</button>
-      <button type="button" className="button" aria-pressed={draft.environment === "worktree"} disabled={!git} onClick={() => updateDraft(sessionId, (current) => ({ ...current, environment: "worktree" }))}>{tr("web.isolated_option")}</button>
-      <span className="hint">{draft.environment === "worktree" ? tr("web.isolated_help") : tr("web.current_help")}</span>
-    </div>}
+    {chooseEnvironment && <EnvironmentChoice sessionId={sessionId} draft={draft} updateDraft={updateDraft} git={git} workLabel={workLabel} compact />}
     {(draft.attachments.length > 0 || (draft.documents ?? []).length > 0 || (draft.references ?? []).length > 0 || (draft.localFiles ?? []).length > 0) && <div className="chips">
       {draft.attachments.map((attachment) => <span className="chip" key={attachment.id}>{attachment.filename}<button type="button" aria-label={tr("web.remove", { name: attachment.filename })} onClick={() => {
         const owner = sessionId;
@@ -308,9 +362,9 @@ export function Composer({
           <option value="plan">{tr("web.perm.plan")}</option>
           <option value="bypass">{tr("web.perm.bypass")}</option>
         </select>
-        {running && <button type="button" className="button stop" onClick={() => { cancel().catch(() => undefined); }}><Square size={11} weight="fill" />{tr("web.stop")}</button>}
+        {running && <button type="button" className="button stop" onClick={() => { cancel().catch(() => undefined); }}><Square size={11} weight="fill" />{tr("web.stop")}<kbd>⌘.</kbd></button>}
         {running && cancelAll && <button type="button" className="button stop" onClick={() => { cancelAll().catch(() => undefined); }}>{tr("web.stop_all")}</button>}
-        <button className="button primary" disabled={uploading || draft.phase === "awaiting" || (!draft.prompt.trim() && !draft.attachments.length && !(draft.documents ?? []).length && !(draft.references ?? []).length && !(draft.localFiles ?? []).length)}><PaperPlaneRight size={13} />{draft.phase === "unknown" ? tr("web.retry") : tr("web.send")}</button>
+        {(!running || draft.prompt.trim()) && <button className="button primary" disabled={uploading || draft.phase === "awaiting" || (!draft.prompt.trim() && !draft.attachments.length && !(draft.documents ?? []).length && !(draft.references ?? []).length && !(draft.localFiles ?? []).length)}><PaperPlaneRight size={13} />{draft.phase === "unknown" ? tr("web.retry") : tr("web.send")}</button>}
       </div>
     </div>
   </form>;
@@ -403,19 +457,24 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
   };
   const breakdown = state.context_breakdown;
   const tabs: InspectorTab[] = ["task", "files", "changes", "permissions", "context"];
+  const steps = state.plan.steps ?? [];
+  const completedSteps = steps.filter((step) => step.status === "completed").length;
+  const currentStep = steps.findIndex((step) => ["in_progress", "running", "active"].includes(step.status));
+  const changedLines = (state.accessed_files ?? []).reduce((sum, file) => sum + Number(/\+(\d+)/.exec(file.access ?? "")?.[1] ?? 0), 0);
+  const tabCount = (item: InspectorTab) => item === "files" ? files.length || (state.accessed_files ?? []).length : item === "changes" ? changedLines || changes?.length || 0 : 0;
   return <aside className={`inspector ${open ? "" : "is-closed"} ${narrow ? "narrow-open" : ""}`}>
     <div className="inspector-tabs" role="tablist">
-      {tabs.map((item) => <button key={item} role="tab" aria-selected={tab === item} onClick={() => setTab(item)}>{tr(`web.tab.${item}`)}</button>)}
-      <button className="icon-button" onClick={close} aria-label={tr("web.close_inspector")}><X size={14} /></button>
+      {tabs.map((item) => <button key={item} className={item === "permissions" && state.pending_interactions.length ? "pending-tab" : ""} role="tab" aria-selected={tab === item} onClick={() => setTab(item)}><span>{tr(`web.tab.${item}`)}</span>{tabCount(item) > 0 && <small className={item === "changes" ? "tab-positive" : ""}>{item === "changes" ? `(+${tabCount(item)})` : `(${tabCount(item)})`}</small>}</button>)}
+      <button className="icon-button" onClick={close} aria-label={tr("web.close_inspector")}><DotsThreeVertical size={14} weight="bold" /></button>
     </div>
     {tab === "task" && <div className="inspector-body">
       <section className="goal-card">
-        <div className="card-kicker"><span>{tr("web.goal")}</span>{state.plan.steps?.length ? <span>{state.plan.steps.filter((step) => step.status === "completed").length} / {state.plan.steps.length}</span> : null}</div>
+        <div className="card-kicker"><span>{tr("web.goal")}</span>{steps.length ? <span className="goal-progress-copy">{completedSteps} of {steps.length} steps completed</span> : null}</div>
         <p>{state.plan.objective || state.session.user_goal || tr("web.no_plan")}</p>
-        {state.plan.steps?.length ? <div className="progress"><i style={{ width: `${Math.round((state.plan.steps.filter((step) => step.status === "completed").length / state.plan.steps.length) * 100)}%` }} /></div> : null}
+        {steps.length ? <div className="progress"><i style={{ width: `${Math.round((completedSteps / steps.length) * 100)}%` }} /></div> : null}
       </section>
-      <div className="section-label"><span>{tr("web.execution_plan")}</span></div>
-      <div className="step-list">{state.plan.steps?.map((step) => <article key={step.id} className={`step-card ${step.status}`}><Check size={14} /><div><strong>{step.title}</strong><small>{step.status}{step.note ? ` · ${step.note}` : ""}</small></div></article>)}</div>
+      <div className="section-label"><span>{tr("web.execution_plan")} {steps.length ? `(${completedSteps}/${steps.length})` : ""}</span>{currentStep >= 0 && <span>Step {currentStep + 1} active</span>}</div>
+      <div className="step-list">{steps.map((step) => <article key={step.id} className={`step-card ${step.status}`}>{step.status === "completed" ? <Check size={15} weight="bold" /> : ["in_progress", "running", "active"].includes(step.status) ? <SpinnerGap size={15} className="spin" /> : <Circle size={15} />}<div><strong>{step.title}</strong><small>{step.status}{step.note ? ` · ${step.note}` : ""}</small></div>{["in_progress", "running", "active"].includes(step.status) && <span className="current-step">Current</span>}</article>)}</div>
       {!state.plan.steps?.length && <p className="empty-small">{tr("web.no_plan")}</p>}
       <section className="goal-card">
         <div className="card-kicker"><span>{tr("web.accessed_files")}</span><span>{(state.accessed_files ?? []).length}</span></div>
@@ -476,7 +535,7 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
   </aside>;
 }
 
-export function SessionRail({ sessions, selected, onSelect, onCreate, open, children, footer = "" }: {
+export function SessionRail({ sessions, selected, onSelect, onCreate, open, children, footer = "", selectedProgress }: {
   sessions: SessionSummary[];
   selected: string | null;
   onSelect: (session: SessionSummary) => void;
@@ -484,26 +543,34 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
   open: boolean;
   children?: ReactNode;
   footer?: string;
+  selectedProgress?: string;
 }) {
   const tr = useT();
   const active = sessions.filter((item) => item.active);
   const history = sessions.filter((item) => !item.active);
+  const statusLabel = (session: SessionSummary) => {
+    const execution = session.execution || session.status;
+    if (session.pending_interactions) return tr("web.awaiting_permission");
+    if (session.active && execution === "idle") return tr("web.status.paused");
+    return tr(`web.status.${execution}`);
+  };
   return <aside className={`sidebar ${open ? "responsive-open" : ""}`}>
     <div className="sidebar-scroll">
-      <button className="primary-action" onClick={onCreate} aria-label={tr("web.new_session")}><span><Plus size={14} /> {tr("web.new_task")}</span><kbd>⌘K</kbd></button>
+      <button className="primary-action" onClick={onCreate} aria-label={tr("web.new_session")}><span><Plus size={14} /> {tr("web.new_task")}</span><kbd>⌘N</kbd></button>
       <div>
         <div className="section-label"><span>{tr("web.active_tasks")}</span>{active.length > 0 && <span className="live-dot" />}</div>
         {active.map((session) => {
-          const title = session.user_goal && session.user_goal !== "(interactive session)" ? session.user_goal : tr("web.session_label", { id: session.session_id.slice(0, 6) });
+          const title = sessionTitle(session, tr);
           const current = selected === session.session_id;
           const execution = session.execution || session.status;
+          const when = formatAgo(session.saved_at) || (session.environment === "worktree" ? tr("web.isolated_option") : "");
           return <button key={session.session_id} className={current ? "task-card" : "task-row"} onClick={() => onSelect(session)}>
             {current ? <>
-              <span className="task-card-top"><span className={`status-dot ${execution}`} /><span className="task-id">{session.session_id.slice(0, 8)}</span></span>
+              <span className="task-card-top"><span><span className={`status-dot ${execution}`} /><span className="task-id">{taskCode(session.session_id)}</span></span><span className="task-step">{selectedProgress || tr(`web.status.${execution}`)}</span></span>
               <span className="task-title">{title}</span>
-              <span className="task-meta">{tr(`web.status.${execution}`)}{session.environment ? ` · ${session.environment}` : ""}</span>
+              <span className="task-meta"><span className={session.pending_interactions ? "waiting-copy" : ""}>{session.pending_interactions ? <><Warning size={11} weight="bold" />{tr("web.awaiting_permission")}</> : statusLabel(session)}</span><span>{when}</span></span>
             </> : <>
-              <span className="status-dot" /><span className="task-id">{session.session_id.slice(0, 4)}</span><span className="task-title">{title}</span><span className="task-meta">{tr(`web.status.${execution}`)}</span>
+              <span className={`status-dot ${execution}`} /><span className="task-id">{taskCode(session.session_id, true)}</span><span className="task-title">{title}</span><span className="task-meta">{statusLabel(session)}</span>
             </>}
           </button>;
         })}
@@ -511,11 +578,11 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
       </div>
       <div>
         <div className="section-label"><span>{tr("web.recent_tasks")}</span></div>
-        {history.map((session) => <button key={session.session_id} className="recent-row" disabled={session.recoverable === false} onClick={() => onSelect(session)}><span className={session.status === "failed" ? "recent-mark fail" : "recent-mark ok"} />{session.user_goal || session.session_id.slice(0, 6)}</button>)}
+        {history.map((session) => <button key={session.session_id} className="recent-row" onClick={() => onSelect(session)}><span className={session.status === "failed" ? "recent-mark fail" : "recent-mark ok"} />{sessionTitle(session, tr)}</button>)}
       </div>
       {children}
     </div>
-    {footer && <div className="sidebar-foot"><span>{footer}</span></div>}
+    {footer && <div className="sidebar-foot"><span className="profile-avatar">W</span><span className="profile-copy"><strong>Wright</strong><small>{footer}</small></span><span className="connection-latency" title={tr("web.connection.connected")}><i /></span></div>}
   </aside>;
 }
 
