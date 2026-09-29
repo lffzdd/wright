@@ -161,7 +161,7 @@ def test_same_directory_turns_queue_and_cancel_does_not_stop_the_holder(tmp_path
         assert queued, second.summary()
         assert "directory" in second.summary()["queue_reason"]
         assert first.summary()["execution"] == "running"
-        second.cancel_current("cancel-b")
+        second.stop_current("cancel-b")
         time.sleep(0.2)
         assert not second_entered.is_set()
         assert coordinator.occupied(root)
@@ -351,7 +351,7 @@ def test_waiting_for_permission_still_allows_other_session_queries(tmp_path):
         assert first.summary()["execution"] == "waiting_for_input"
         pending = hub.poll()
         assert pending is not None
-        second.cancel_current("cancel-b")
+        second.stop_current("cancel-b")
         time.sleep(0.2)
         assert coordinator.occupied(root)
         assert hub.resolve(pending.request_id, "allow_once")

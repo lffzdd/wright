@@ -33,11 +33,27 @@ class SessionRequest(BaseModel):
     environment: str | None = None
     model: str | None = None
     prompt: str | None = None
-    resume_session_id: str | None = None
+    resume: str | None = None
+    continue_latest: bool = False
+    client_request_id: str | None = None
+    command_id: str | None = None
+    references: list[dict[str, Any]] = []
+    attachment_ids: list[str] = []
+    document_ids: list[str] = []
+    interaction_mode: str | None = None
+    permission_mode: str | None = None
 
 
 class ModelRequest(BaseModel):
     model: str
+
+
+class TurnRequest(BaseModel):
+    prompt: str = ""
+    command_id: str
+    attachment_ids: list[str] = []
+    document_ids: list[str] = []
+    references: list[dict[str, Any]] = []
 
 
 class PreferenceRequest(BaseModel):
@@ -106,14 +122,41 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
     def create_session(body: SessionRequest, request: Request) -> dict[str, Any]:
         _require_auth(request, auth)
         try:
-            return manager.create(
+            handle = manager.create(
                 environment=body.environment,
                 model=body.model,
                 prompt=body.prompt,
-                resume_session_id=body.resume_session_id,
-            ).snapshot()
+                resume=body.resume,
+                continue_latest=body.continue_latest,
+                client_request_id=body.client_request_id,
+                command_id=body.command_id,
+                references=body.references,
+                attachment_ids=body.attachment_ids,
+                document_ids=body.document_ids,
+                interaction_mode=body.interaction_mode,
+                permission_mode=body.permission_mode,
+            )
+            snapshot = handle.snapshot()
+            if getattr(handle, "submit_error", None):
+                snapshot["submit_error"] = handle.submit_error
+            return snapshot
         except (RuntimeManagerError, ValueError, WorktreeError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @router.get("/sessions/{session_id}/preview")
+    def preview_session(session_id: str, request: Request) -> dict[str, Any]:
+        """History only. This does not start execution."""
+        _require_auth(request, auth)
+        try:
+            return manager.preview(session_id)
+        except RuntimeManagerError as exc:
+            raise HTTPException(status_code=exc.status_code or 404, detail=str(exc)) from exc
+
+    @router.get("/references")
+    def references(request: Request, q: str = "") -> dict[str, Any]:
+        """Project-file candidates. Does not create a session or read file bytes."""
+        _require_auth(request, auth)
+        return {"results": manager.search_references(q)}
 
     @router.get("/sessions/{session_id}/snapshot")
     def snapshot(session_id: str, request: Request) -> dict[str, Any]:
@@ -140,6 +183,21 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
             return manager.run_history(run_id)
         except RuntimeManagerError as exc:
             raise HTTPException(status_code=exc.status_code or 404, detail=str(exc)) from exc
+
+    @router.post("/sessions/{session_id}/turns")
+    def submit_turn(session_id: str, body: TurnRequest, request: Request) -> dict[str, Any]:
+        """Submit one turn. Creation does not also submit this command."""
+        _require_auth(request, auth)
+        try:
+            return manager.get(session_id).submit(
+                body.prompt,
+                body.command_id,
+                body.attachment_ids,
+                body.document_ids,
+                body.references,
+            )
+        except RuntimeManagerError as exc:
+            raise HTTPException(status_code=exc.status_code or 409, detail=str(exc)) from exc
 
     @router.post("/sessions/{session_id}/model")
     def set_session_model(session_id: str, body: ModelRequest, request: Request) -> dict[str, Any]:

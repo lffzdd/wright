@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { marked } from "marked";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { InteractionCard, NewSessionDialog, visibleModels } from "./App";
+import { Composer, InteractionCard, visibleModels } from "./App";
 import { DiffViewer } from "./DiffViewer";
 import { MarkdownContent, markdownChunks } from "./Markdown";
 
@@ -56,40 +56,23 @@ describe("visibleModels", () => {
   });
 });
 
-describe("NewSessionDialog", () => {
-  it("keeps keyboard focus inside the modal and closes on Escape", () => {
-    const close = vi.fn();
-    render(<><button>Outside session</button><NewSessionDialog
-      project={{ git: true, default_environment: "local", models: ["model"], default_model: "model" }}
-      close={close}
-      create={async () => undefined}
-    /></>);
-    const create = screen.getByRole("button", { name: "Create session" });
-    const closeButton = screen.getByRole("button", { name: "Close" });
-    create.focus();
-    fireEvent.keyDown(document, { key: "Tab" });
-    expect(document.activeElement).toBe(closeButton);
-    fireEvent.keyDown(document, { key: "Escape" });
-    expect(close).toHaveBeenCalledOnce();
-  });
-
-  it("offers the configured project models as the default choice", () => {
-    render(<NewSessionDialog
-      project={{
-        git: true,
-        default_environment: "local",
-        models: ["deepseek-v4-flash", "deepseek-chat"],
-        default_model: "deepseek-v4-flash",
-      }}
-      close={() => undefined}
-      create={async () => undefined}
+describe("draft environment", () => {
+  it("offers the current checkout by default and an explicit isolated option", () => {
+    render(<Composer
+      sessionId="draft:project"
+      connection="connected"
+      draft={{ prompt: "", attachments: [], commandId: null, phase: "idle", reason: "", environment: "local" }}
+      updateDraft={() => undefined}
+      submit={async () => "accepted"}
+      cancel={async () => undefined}
+      running={false}
+      chooseEnvironment
+      git
+      workLabel="/tmp/project"
     />);
-    const select = screen.getByLabelText(/Model/) as HTMLSelectElement;
-    expect(select.value).toBe("deepseek-v4-flash");
-    expect(Array.from(select.options).map((option) => option.value)).toEqual([
-      "deepseek-v4-flash",
-      "deepseek-chat",
-    ]);
+    expect(screen.getByRole("button", { name: "This checkout" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Isolated execution" }).hasAttribute("disabled")).toBe(false);
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
 

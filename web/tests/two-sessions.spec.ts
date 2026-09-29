@@ -5,7 +5,7 @@ type Session = {
   status: string;
   user_goal: string;
   model: string;
-  environment: "worktree";
+  environment: "local" | "worktree";
   execution_root: string;
   branch_name: string;
   active: boolean;
@@ -134,7 +134,7 @@ test("isolates sessions and completes a structured permission flow", async ({ pa
       git: true,
       capacity: 4,
       active_count: sessions.length,
-      default_environment: "worktree",
+      default_environment: "local",
       dirty_checkout: false,
     },
   }));
@@ -143,14 +143,14 @@ test("isolates sessions and completes a structured permission flow", async ({ pa
       await route.fulfill({ json: sessions });
       return;
     }
-    const body = route.request().postDataJSON() as { prompt?: string };
+    const body = route.request().postDataJSON() as { prompt?: string; environment?: "local" | "worktree" };
     const index = sessions.length + 1;
     const session: Session = {
       session_id: `session-${index}`,
       status: "idle",
       user_goal: body.prompt || `Session ${index}`,
       model: "deterministic-e2e",
-      environment: "worktree",
+      environment: body.environment === "worktree" ? "worktree" : "local",
       execution_root: `/tmp/wright-e2e/session-${index}`,
       branch_name: `wright/session-${index}`,
       active: true,
@@ -168,18 +168,28 @@ test("isolates sessions and completes a structured permission flow", async ({ pa
   await page.route("**/api/v1/sessions/*/changes", (route) => route.fulfill({
     json: { local_warning: false, baseline: "HEAD", changes: [] },
   }));
+  await page.route("**/api/v1/sessions/*/turns", async (route) => {
+    const id = route.request().url().match(/sessions\/([^/]+)\/turns/)?.[1] ?? "";
+    const body = route.request().postDataJSON() as { prompt?: string };
+    const session = sessions.find((item) => item.session_id === id);
+    const saved = snapshots.get(id);
+    if (session && body.prompt) session.user_goal = body.prompt;
+    if (saved && body.prompt) saved.session.user_goal = body.prompt;
+    await route.fulfill({ json: { type: "command.accepted", payload: { duplicate: false } } });
+  });
 
   await page.goto("/");
-  await expect(page.getByRole("dialog", { name: "Choose an execution environment" })).toBeVisible();
-  await expect(page.getByText("Several sessions can stay open; one task runs in this directory at a time.")).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "This checkout" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("One active session max")).toHaveCount(0);
-  await page.getByLabel("First instruction").fill("First isolated task");
-  await page.getByRole("button", { name: "Create session" }).click();
+  await page.getByLabel("Message Wright").fill("First isolated task");
+  await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByRole("heading", { name: "First isolated task" })).toBeVisible();
+  expect(sessions[0]?.environment).toBe("local");
 
-  await page.getByLabel("New session").click();
-  await page.getByLabel("First instruction").fill("Second isolated task");
-  await page.getByRole("button", { name: "Create session" }).click();
+  await page.getByRole("button", { name: "New session (⌘K)" }).click();
+  await page.getByLabel("Message Wright").fill("Second isolated task");
+  await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByRole("heading", { name: "Second isolated task" })).toBeVisible();
   await expect(page.getByText("2/4 active")).toBeVisible();
   await expect(page.getByRole("button", { name: /First isolated task/ })).toBeVisible();
@@ -250,14 +260,14 @@ test("switching sessions only changes the view subscription", async ({ page }) =
       await route.fulfill({ json: sessions });
       return;
     }
-    const body = route.request().postDataJSON() as { prompt?: string };
+    const body = route.request().postDataJSON() as { prompt?: string; environment?: "local" | "worktree" };
     const index = sessions.length + 1;
     const session: Session = {
       session_id: `session-${index}`,
       status: index === 1 ? "running" : "idle",
       user_goal: body.prompt || `Session ${index}`,
       model: "deterministic-e2e",
-      environment: "worktree",
+      environment: body.environment === "worktree" ? "worktree" : "local",
       execution_root: "/tmp/wright-e2e",
       branch_name: `wright/session-${index}`,
       active: true,
@@ -286,16 +296,25 @@ test("switching sessions only changes the view subscription", async ({ page }) =
   await page.route("**/api/v1/sessions/*/close", (route) => route.fulfill({
     json: { session_id: "closed", lifecycle: "closed", status: "closed", active: false },
   }));
+  await page.route("**/api/v1/sessions/*/turns", async (route) => {
+    const id = route.request().url().match(/sessions\/([^/]+)\/turns/)?.[1] ?? "";
+    const body = route.request().postDataJSON() as { prompt?: string };
+    const session = sessions.find((item) => item.session_id === id);
+    const saved = snapshots.get(id);
+    if (session && body.prompt) session.user_goal = body.prompt;
+    if (saved && body.prompt) saved.session.user_goal = body.prompt;
+    await route.fulfill({ json: { type: "command.accepted", payload: { duplicate: false } } });
+  });
 
   await page.goto("/");
-  await page.getByLabel("First instruction").fill("Alpha task");
-  await page.getByRole("button", { name: "Create session" }).click();
+  await page.getByLabel("Message Wright").fill("Alpha task");
+  await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("still running", { exact: true })).toBeVisible();
   await page.getByLabel("Message Wright").fill("draft for alpha");
 
-  await page.getByLabel("New session").click();
-  await page.getByLabel("First instruction").fill("Beta task");
-  await page.getByRole("button", { name: "Create session" }).click();
+  await page.getByRole("button", { name: "New session (⌘K)" }).click();
+  await page.getByLabel("Message Wright").fill("Beta task");
+  await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByRole("heading", { name: "Beta task" })).toBeVisible();
   await expect(page.getByText("still running", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Message Wright")).toHaveValue("");

@@ -175,19 +175,34 @@ class SessionHandle:
     def submit(
         self, prompt: str, command_id: str, attachment_ids: list[str] | None = None,
         document_ids: list[str] | None = None,
+        references: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         if not command_id:
             raise RuntimeManagerError("command_id is required")
         try:
-            return self.service.submit(prompt, command_id, attachment_ids, document_ids)
+            return self.service.submit(
+                prompt, command_id, attachment_ids, document_ids, references,
+            )
         except SessionServiceError as exc:
             raise RuntimeManagerError(str(exc)) from exc
 
     def cancel(self, command_id: str) -> dict[str, Any]:
+        """Stop the current turn and leave queued messages in place."""
+
         if not command_id:
             raise RuntimeManagerError("command_id is required")
         try:
-            return self.service.cancel_current(command_id, cancel_queued=True)
+            return self.service.stop_current(command_id)
+        except SessionServiceError as exc:
+            raise RuntimeManagerError(str(exc)) from exc
+
+    def cancel_all(self, command_id: str) -> dict[str, Any]:
+        """Stop the current turn and cancel every queued message."""
+
+        if not command_id:
+            raise RuntimeManagerError("command_id is required")
+        try:
+            return self.service.stop_all(command_id)
         except SessionServiceError as exc:
             raise RuntimeManagerError(str(exc)) from exc
 
@@ -406,21 +421,50 @@ class RuntimeManager:
         environment: str | None = None,
         model: str | None = None,
         prompt: str | None = None,
-        resume_session_id: str | None = None,
+        resume: str | None = None,
+        continue_latest: bool = False,
+        client_request_id: str | None = None,
+        command_id: str | None = None,
+        references: list[dict[str, Any]] | None = None,
+        attachment_ids: list[str] | None = None,
+        document_ids: list[str] | None = None,
+        interaction_mode: str | None = None,
+        permission_mode: str | None = None,
     ) -> SessionHandle:
         return self._open_on(
-            self.directory, environment, model, prompt, resume_session_id,
+            self.directory,
+            environment=environment,
+            model=model,
+            prompt=prompt,
+            resume=resume,
+            continue_latest=continue_latest,
+            client_request_id=client_request_id,
+            command_id=command_id,
+            references=references,
+            attachment_ids=attachment_ids,
+            document_ids=document_ids,
+            interaction_mode=interaction_mode,
+            permission_mode=permission_mode,
         )
 
     def _open_on(
         self,
         directory: SessionDirectory,
+        *,
         environment: str | None,
         model: str | None,
         prompt: str | None,
-        resume_session_id: str | None,
+        resume: str | None,
+        continue_latest: bool = False,
+        client_request_id: str | None = None,
+        command_id: str | None = None,
+        references: list[dict[str, Any]] | None = None,
+        attachment_ids: list[str] | None = None,
+        document_ids: list[str] | None = None,
+        interaction_mode: str | None = None,
+        permission_mode: str | None = None,
     ) -> SessionHandle:
-        session_id = resume_session_id or uuid4().hex[:12]
+        session_id = resume or uuid4().hex[:12]
         publisher = EventPublisher(
             project_id=project_id(directory.project_root), session_id=session_id,
         )
@@ -429,27 +473,56 @@ class RuntimeManager:
             opened = directory.open(
                 environment=environment,
                 model=model,
-                resume_session_id=resume_session_id,
+                resume=resume,
+                continue_latest=continue_latest,
                 interaction_broker=broker,
                 publisher=publisher,
-                session_id=None if resume_session_id else session_id,
+                session_id=None if resume or continue_latest else session_id,
+                client_request_id=client_request_id,
             )
         except SessionDirectoryError as exc:
             broker.close()
             publisher.close()
-            status = 404 if exc.kind == "not_found" else None
+            if exc.kind == "not_found":
+                status = 404
+            elif exc.kind == "history_only":
+                status = 409
+            else:
+                status = None
             raise RuntimeManagerError(str(exc), status_code=status) from exc
         except Exception:
             broker.close()
             publisher.close()
             raise
+        if opened.publisher is not publisher:
+            broker.close()
+            publisher.close()
         handle = SessionHandle(opened=opened)
         handle.owner = directory
+        handle.submit_error = None
         with self._lock:
             self._handles[handle.session_id] = handle
+        if (interaction_mode or permission_mode) and not resume and not continue_latest:
+            try:
+                handle.set_execution_policy(
+                    interaction_mode=interaction_mode,
+                    permission_mode=permission_mode,
+                )
+            except RuntimeManagerError as exc:
+                handle.submit_error = str(exc)
         publisher.publish("session.snapshot", handle.snapshot())
-        if prompt and prompt.strip():
-            handle.submit(prompt, uuid4().hex)
+        has_turn = bool((prompt and prompt.strip()) or references or attachment_ids or document_ids)
+        if has_turn and handle.submit_error is None:
+            try:
+                handle.submit(
+                    prompt or "",
+                    command_id or uuid4().hex,
+                    attachment_ids,
+                    document_ids,
+                    references,
+                )
+            except RuntimeManagerError as exc:
+                handle.submit_error = str(exc)
         return handle
 
     def get(self, session_id: str) -> SessionHandle:
@@ -567,14 +640,16 @@ class RuntimeManager:
     def workspace_sessions(self, registered_id: str) -> list[dict[str, Any]]:
         return self._directory_for(registered_id).list_sessions()
 
-    def create_in_workspace(
-        self,
-        project_id: str,
-        *,
-        environment: str | None = None,
-        model: str | None = None,
-        prompt: str | None = None,
-        resume_session_id: str | None = None,
-    ) -> SessionHandle:
-        directory = self._directory_for(project_id)
-        return self._open_on(directory, environment, model, prompt, resume_session_id)
+    def preview(self, session_id: str) -> dict[str, Any]:
+        try:
+            return self.directory.preview(session_id)
+        except SessionDirectoryError as exc:
+            status = 404 if exc.kind == "not_found" else None
+            raise RuntimeManagerError(str(exc), status_code=status) from exc
+
+    def search_references(self, query: str) -> list[dict[str, Any]]:
+        return self.directory.search_references(query)
+
+    def create_in_workspace(self, registered_id: str, **fields: Any) -> SessionHandle:
+        directory = self._directory_for(registered_id)
+        return self._open_on(directory, **fields)

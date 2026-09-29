@@ -228,7 +228,7 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
       const target = String(event.payload.target_command_id ?? "");
       next.queued_commands = next.queued_commands.filter((item) => item.command_id !== target);
       next.queue_depth = next.queued_commands.length;
-    } else if (event.payload.command === "turn.cancel") {
+    } else if (event.payload.command === "turn.cancel_all") {
       next.queued_commands = [];
       next.queue_depth = 0;
     }
@@ -246,7 +246,7 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
     const execution = event.payload.execution;
     const lifecycle = event.payload.lifecycle;
     const queueReason = event.payload.queue_reason;
-    const knownExecution = execution === "idle" || execution === "running" || execution === "queued" || execution === "waiting_for_input";
+    const knownExecution = execution === "idle" || execution === "running" || execution === "queued" || execution === "waiting_for_input" || execution === "cancelling";
     next.session = {
       ...next.session,
       ...(typeof model === "string" && model.trim() ? { model: model.trim() } : {}),

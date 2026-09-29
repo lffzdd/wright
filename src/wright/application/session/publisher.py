@@ -312,6 +312,10 @@ class EventPublisher:
             self._listeners[listener_id] = listener
         return listener_id
 
+    def remove_listener(self, listener_id: str) -> None:
+        with self._lock:
+            self._listeners.pop(listener_id, None)
+
     def close(self) -> None:
         with self._lock:
             self._closed = True

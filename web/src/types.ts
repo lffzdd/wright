@@ -1,5 +1,13 @@
 export type SessionLifecycle = "open" | "closing" | "closed";
-export type SessionExecution = "idle" | "running" | "queued" | "waiting_for_input";
+export type SessionExecution = "idle" | "running" | "queued" | "waiting_for_input" | "cancelling";
+
+export type FileReference = {
+  kind: "file";
+  path: string;
+  name: string;
+  project_id: string;
+  external?: boolean;
+};
 
 export type SessionSummary = {
   session_id: string;

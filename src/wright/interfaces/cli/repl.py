@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from ...application.composition.runtime import WrightRuntime
 from ...application.session.service import SessionService
 from ..i18n import t
@@ -12,12 +14,23 @@ from .prompter import ConsolePrompter
 
 class Repl:
     def __init__(
-        self, rt: WrightRuntime, *, prompter: ConsolePrompter, renderer: ConsoleRenderer,
+        self,
+        rt: WrightRuntime,
+        *,
+        prompter: ConsolePrompter,
+        renderer: ConsoleRenderer,
+        service: SessionService | None = None,
+        directory: Any = None,
+        resume_chooser: Any = None,
+        listener_id: str | None = None,
     ) -> None:
         self.rt = rt
         self.prompter = prompter
         self.renderer = renderer
-        self.service = SessionService(rt)
+        self.service = service or SessionService(rt)
+        self.directory = directory
+        self.resume_chooser = resume_chooser
+        self.listener_id = listener_id
 
     def run(self) -> None:
         rt = self.rt
@@ -51,8 +64,12 @@ class Repl:
             hub=rt.interaction_broker,
             service=self.service,
             agent_idle=agent_idle,
+            directory=getattr(self, "directory", None),
+            resume_chooser=getattr(self, "resume_chooser", None),
+            listener_id=getattr(self, "listener_id", None),
         ).start()
         try:
             self.service.runner.join()
         finally:
-            self.service.close(wait_timeout=0)
+            if not self.service.closed:
+                self.service.close(wait_timeout=0)

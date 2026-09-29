@@ -149,8 +149,12 @@ def test_fulfill_exception_unblocks_the_waiting_agent():
     while request is None and time.time() < deadline:
         request = hub.poll()
     assert request is not None
+    class Service:
+        def respond_interaction(self, _command_id, request_id, answer):
+            return hub.resolve(request_id, answer)
+
     CliInputController(
-        service=object(),
+        service=Service(),
         agent_idle=threading.Event(),
         hub=hub,
         prompter=Boom(renderer=object()),  # type: ignore[arg-type]
@@ -246,9 +250,21 @@ def test_persist_failure_keeps_the_request_pending():
     assert answered == ["allow_once"]
 
 
-def test_input_reader_holds_main_prompt_until_idle():
+def test_input_coordinator_stops_while_busy_and_still_queues_text():
     idle = threading.Event()
-    events: queue.Queue[tuple[str, object]] = queue.Queue()
+    stopped: list[str] = []
+    submitted: list[str] = []
+
+    class Service:
+        def stop_current(self, command_id=None):
+            stopped.append(command_id or "")
+            return {}
+
+        def submit(self, prompt, command_id=None, **_kwargs):
+            submitted.append(prompt)
+
+        def close(self, wait_timeout=0):
+            submitted.append("EXIT")
 
     class ScriptInput:
         def __init__(self) -> None:
@@ -256,21 +272,18 @@ def test_input_reader_holds_main_prompt_until_idle():
 
         def __call__(self, prompt_session=None, queueing=False):
             self.calls += 1
+            assert queueing is True or self.calls > 1
             if self.calls == 1:
+                return "/stop"
+            if self.calls == 2:
                 return "hello"
             return None
 
     reader = ScriptInput()
-    CliInputController(service=events, agent_idle=idle, read_main=reader).start()
-    with pytest.raises(queue.Empty):
-        events.get(timeout=0.3)
-    assert reader.calls == 0
-    idle.set()
-    kind, payload = events.get(timeout=2)
-    assert kind == "USER_INPUT"
-    assert payload == "hello"
-    with pytest.raises(queue.Empty):
-        events.get(timeout=0.2)
-    idle.set()
-    kind, payload = events.get(timeout=2)
-    assert kind == "EXIT"
+    CliInputController(service=Service(), agent_idle=idle, read_main=reader).start()
+    deadline = time.time() + 2
+    while len(submitted) < 2 and time.time() < deadline:
+        time.sleep(0.01)
+    assert stopped
+    assert submitted[0] == "hello"
+    assert submitted[1] == "EXIT"

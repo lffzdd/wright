@@ -31,7 +31,7 @@ from wright.interfaces.tui.format import (
     _tool_title,
 )
 from wright.interfaces.tui.renderer import TUIRenderer
-from wright.interfaces.tui.session_control import SessionControlRequest
+from wright.application.session.directory import SessionDirectory
 
 
 def test_cli_ui_flag_defaults_to_tui(monkeypatch):
@@ -46,94 +46,57 @@ def test_tui_exposes_a_visible_stop_binding():
 
 def test_tui_keeps_application_host_alive_across_session_resume(tmp_path, monkeypatch):
     from wright.application.session.publisher import EventPublisher
-    from wright.interfaces import interaction as interaction_module
+    from wright.application.session.service import SessionService
+    from wright.interfaces.interaction import InteractionHub
 
     class Host:
         def __init__(self):
             self.workspace_dir = tmp_path
             self.closed = 0
+            self.state = "open"
 
         def close(self):
             self.closed += 1
+            self.state = "closed"
             return True
 
         def has_active_work(self):
             return False
 
-    class FakeApp:
-        def __init__(self, _runtime, renderer=None, service=None):
-            self.service = service or SimpleNamespace(closed=True, close=lambda **_kwargs: True)
-
-        def run(self):
-            if len(hubs) == 2:
-                assert hubs[0].closed
-                assert renderers[0] is not renderers[1]
-                assert renderers[0].content == "session-one"
-                assert renderers[1].content == ""
-                result: dict[str, object] = {}
-
-                def ask() -> None:
-                    result["value"] = hubs[1].request("permission", {"tool_name": "shell"})
-
-                thread = threading.Thread(target=ask)
-                thread.start()
-                pending = None
-                deadline = time.monotonic() + 2
-                while time.monotonic() < deadline:
-                    pending = hubs[1].poll()
-                    if pending is not None:
-                        break
-                    time.sleep(0.01)
-                assert pending is not None
-                assert hubs[0].poll() is None
-                assert hubs[1].resolve(pending.request_id, "allow_once")
-                thread.join(2)
-                assert result["value"] == "allow_once"
-                assert hubs[0].request("ask_user", {"question": "old"}) is None
-            elif len(renderers) == 1:
-                renderers[0].content = "session-one"
-            return transitions.pop(0)
-
     host = Host()
-    transitions = [SessionControlRequest.resume("saved"), None]
     assembled_hosts = []
-    hubs: list[interaction_module.InteractionHub] = []
-    renderers: list[TUIRenderer] = []
-
-    class RecordingHub(interaction_module.InteractionHub):
-        def __init__(self) -> None:
-            super().__init__()
-            hubs.append(self)
-
-    class RecordingRenderer(TUIRenderer):
-        def __init__(self) -> None:
-            super().__init__()
-            renderers.append(self)
 
     class Saved:
+        session_id = "saved"
         project_root = tmp_path.resolve()
         workspace_dir = tmp_path.resolve()
-        environment = "local"
-        base_commit = ""
-        branch_name = ""
+        environment = "worktree"
+        base_commit = "abc"
+        branch_name = "wright/saved"
+        model_name = "test"
+        user_goal = "kept"
 
-    def assemble(_config, *, session_id=None, application_host=None, interaction_broker=None, publisher=None, **_kwargs):
+        def current_goal(self):
+            return self.user_goal
+
+    def assemble(_config, *, session_id=None, application_host=None, interaction_broker=None, publisher=None, project_context=None, **_kwargs):
         assembled_hosts.append(application_host)
         chosen = application_host or host
         state = SimpleNamespace(
             session_id=session_id or "saved",
             lifecycle="open",
             model_name="test",
-            environment="local",
+            environment=getattr(project_context, "environment", "local"),
             workspace_dir=tmp_path,
             project_root=tmp_path,
-            base_commit="",
-            branch_name="",
+            base_commit=getattr(project_context, "base_commit", ""),
+            branch_name=getattr(project_context, "branch_name", ""),
             user_goal="",
             message_records=[],
             turns=[],
             runs={},
             attachments={},
+            documents={},
             current_run_status=lambda: "idle",
             active_run=lambda: None,
             attachment_records=lambda _ids: [],
@@ -141,6 +104,7 @@ def test_tui_keeps_application_host_alive_across_session_resume(tmp_path, monkey
             plan_manager=SimpleNamespace(has_plan=False, snapshot=lambda: {"steps": []}),
             request_context_tokens=0,
             context_tokens=0,
+            permission_mode="default",
         )
         idle = threading.Event()
         idle.set()
@@ -148,46 +112,66 @@ def test_tui_keeps_application_host_alive_across_session_resume(tmp_path, monkey
             application_host=chosen,
             owns_application_host=True,
             session_state=state,
-            agent=SimpleNamespace(checkpoint_store=None),
+            agent=SimpleNamespace(checkpoint_store=None, on_run_started=None),
             publisher=publisher or EventPublisher(project_id="tui", session_id=state.session_id),
             interaction_broker=interaction_broker,
             event_queue=queue.Queue(),
             agent_idle=idle,
             cancellation_event=threading.Event(),
             autonomy_store=None,
-            resumed=False,
-            project_context=SimpleNamespace(execution_root=tmp_path.resolve()),
+            resumed=bool(getattr(_config, "resume", None)),
+            project_context=project_context,
+            permission_settings=SimpleNamespace(mode="default", additional_directories=[]),
         )
 
-    monkeypatch.setattr(tui_app_module, "require_interactive_tty", lambda: None)
-    monkeypatch.setattr(tui_app_module, "assemble_runtime", assemble)
-    monkeypatch.setattr(tui_app_module, "WrightTUI", FakeApp)
-    monkeypatch.setattr(tui_app_module, "TUIRenderer", RecordingRenderer)
-    monkeypatch.setattr(interaction_module, "InteractionHub", RecordingHub)
+    monkeypatch.setattr(SessionService, "start", lambda self: None)
     monkeypatch.setattr(
         "wright.application.session.directory.shutdown_runtime",
         lambda _runtime: None,
     )
     monkeypatch.setattr(
         "wright.application.session.directory.FileSessionRepository.load",
-        lambda _self, _session_id: Saved(),
+        lambda _self, session_id: Saved(),
     )
-    monkeypatch.setattr(
-        tui_app_module, "runtime_config_from_args",
-        lambda args: SimpleNamespace(workspace=args.workspace, model=None),
-    )
-    monkeypatch.setattr(
-        tui_app_module, "runtime_args_for_transition",
-        lambda args, request: Namespace(workspace=args.workspace, resume=request.session_id),
-    )
+    directory = SessionDirectory(tmp_path, assemble=assemble)
+    first_hub = InteractionHub()
+    second_hub = InteractionHub()
+    first = directory.open(environment="local", interaction_broker=first_hub)
+    resumed = directory.open(resume="saved", interaction_broker=second_hub)
+    try:
+        assert assembled_hosts == [None, host]
+        assert first.runtime.application_host is resumed.runtime.application_host
+        assert resumed.runtime.session_state.environment == "worktree"
+        assert first.session_id in {
+            item["session_id"] for item in directory.list_sessions() if item["active"]
+        }
+        assert resumed.session_id in {
+            item["session_id"] for item in directory.list_sessions() if item["active"]
+        }
+        result: dict[str, object] = {}
 
-    tui_app_module.run_tui(Namespace(workspace=tmp_path, resume=None))
+        def ask() -> None:
+            result["value"] = second_hub.request("permission", {"tool_name": "shell"})
 
-    assert assembled_hosts == [None, host]
+        thread = threading.Thread(target=ask)
+        thread.start()
+        pending = None
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            pending = second_hub.poll()
+            if pending is not None:
+                break
+            time.sleep(0.01)
+        assert pending is not None
+        assert first_hub.poll() is None
+        assert second_hub.resolve(pending.request_id, "allow_once")
+        thread.join(2)
+        assert result["value"] == "allow_once"
+    finally:
+        directory.shutdown()
     assert host.closed == 1
-    assert len(hubs) == 2
-    assert all(hub.closed for hub in hubs)
-    assert len(renderers) == 2
+    first_hub.close()
+    assert first_hub.request("ask_user", {"question": "old"}) is None
 
 
 def test_cli_ui_flag_accepts_tui(monkeypatch):
@@ -427,20 +411,9 @@ def test_slash_command_matches_and_completion_selection():
     assert "/model" in tui_help_text()
 
 
-def test_session_control_preserves_cli_settings_and_model_choices():
-    from argparse import Namespace
+def test_session_control_preserves_model_choices():
+    from wright.interfaces.tui.session_control import available_models
 
-    from wright.interfaces.tui.session_control import (
-        SessionControlRequest,
-        available_models,
-        runtime_args_for_transition,
-    )
-
-    args = Namespace(resume="old", continue_latest=True, model="current", ui="tui")
-    new_args = runtime_args_for_transition(args, SessionControlRequest.new())
-    assert (new_args.resume, new_args.continue_latest, new_args.model) == (None, False, "current")
-    resumed_args = runtime_args_for_transition(args, SessionControlRequest.resume("saved"))
-    assert (resumed_args.resume, resumed_args.continue_latest) == ("saved", False)
     assert available_models("current", "fast,current,fast, careful ") == (
         "fast", "current", "careful",
     )

@@ -8,12 +8,13 @@ import type { SessionSummary, Snapshot, ViewState } from "./types";
 import { MemoryDialog, RulesDialog, SchedulesDialog, SearchDialog, SettingsDialog } from "./workspace/panels";
 import { VisualFixture } from "./workspace/visual-fixture";
 import {
-  Composer, Inspector, NewSessionDialog, SessionRail, Timeline, emptyDraft,
+  Composer, Inspector, SessionRail, Timeline, emptyDraft,
   type Draft,
 } from "./workspace/widgets";
+import type { FileReference } from "./types";
 
 export type { Draft };
-export { Composer, Inspector, InteractionCard, NewSessionDialog, visibleModels } from "./workspace/widgets";
+export { Composer, Inspector, InteractionCard, visibleModels } from "./workspace/widgets";
 
 const initialView = (snapshot: Snapshot): ViewState => ({
   ...snapshot,
@@ -35,7 +36,7 @@ export default function App() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [state, setState] = useState<ViewState | null>(null);
-  const [dialog, setDialog] = useState(false);
+  const [browsing, setBrowsing] = useState<"draft" | "preview" | "live">("draft");
   const [fatal, setFatal] = useState("");
   const [railOpen, setRailOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(true);
@@ -51,6 +52,7 @@ export default function App() {
   const respondIds = useRef(new Map<string, string>());
   const cancelId = useRef<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const [draftPolicy, setDraftPolicy] = useState({ interaction_mode: "agent", permission_mode: "default" });
   const draftsRef = useRef(drafts);
   draftsRef.current = drafts;
   const activeSent = useRef(new Set<string>());
@@ -96,7 +98,9 @@ export default function App() {
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setDialog(true);
+        setBrowsing("draft");
+        setSelected(null);
+        setState(null);
       } else if ((event.metaKey || event.ctrlKey) && event.key === ".") {
         event.preventDefault();
         const id = cancelId.current ?? crypto.randomUUID();
@@ -112,7 +116,6 @@ export default function App() {
         setInspectorOpen((prev) => !prev);
         setNarrowInspector((prev) => !prev);
       } else if (event.key === "Escape") {
-        setDialog(false);
         setPanel(null);
         setRailOpen(false);
         setNarrowInspector(false);
@@ -135,13 +138,27 @@ export default function App() {
         workspaceId.current = registry.selected_project_id;
       }
       const items = await refreshSessions();
-      const first = items.find((item) => item.active);
-      if (first) setSelected(first.session_id); else setDialog(true);
+      const projectKey = String(projectData.project_id ?? "");
+      const remembered = localStorage.getItem(`wright.viewed.${projectKey}`);
+      const match = items.find((item) => item.session_id === remembered);
+      if (match?.active) {
+        setBrowsing("live");
+        setSelected(match.session_id);
+      } else if (match) {
+        setBrowsing("preview");
+        setSelected(match.session_id);
+      } else {
+        setBrowsing("draft");
+        setSelected(null);
+      }
     }).catch((error) => setFatal(String(error)));
   }, [refreshSessions]);
 
   useEffect(() => {
-    if (!selected) { setState(null); return; }
+    if (!selected || browsing !== "live") {
+      if (!selected) setState(null);
+      return;
+    }
     const generation = ++epoch.current;
     const sessionId = selected;
     socket.current?.close();
@@ -238,7 +255,38 @@ export default function App() {
       connect(snapshot);
     }).catch((error) => { if (owned()) setFatal(String(error)); });
     return () => { epoch.current += 1; if (retryTimer !== undefined) window.clearTimeout(retryTimer); socket.current?.close(); };
-  }, [selected, refreshSessions, updateDraft]);
+  }, [selected, browsing, refreshSessions, updateDraft]);
+
+  useEffect(() => {
+    if (browsing !== "preview" || !selected) return;
+    const generation = ++epoch.current;
+    const sessionId = selected;
+    socket.current?.close();
+    api.preview(sessionId).then((preview) => {
+      if (epoch.current !== generation) return;
+      const body = preview as unknown as { session: Snapshot["session"]; history?: Snapshot["history"] };
+      setState({
+        ...initialView({
+          stream_id: "preview",
+          last_seq: 0,
+          session: { ...body.session, active: false },
+          history: body.history ?? [],
+          active_turn: null,
+          plan: {},
+          pending_interactions: [],
+          notices: [],
+          queued_commands: [],
+          queue_depth: 0,
+          usage: {
+            prompt_tokens: null, completion_tokens: null, total_tokens: null,
+            request_prompt_tokens: null, request_completion_tokens: null, request_total_tokens: null,
+            context_tokens: null, context_limit: null,
+          },
+        }),
+        connection: "closed",
+      });
+    }).catch((error) => { if (epoch.current === generation) setFatal(String(error)); });
+  }, [browsing, selected]);
 
   useEffect(() => {
     const timer = window.setInterval(() => refreshSessions().catch(() => undefined), 5_000);
@@ -254,14 +302,75 @@ export default function App() {
       socket.current?.send(JSON.stringify(payload));
     });
   };
-  const create = async (environment: string, prompt: string, model?: string) => {
-    const registered = workspaceId.current;
-    const snapshot = registered && launchId.current && registered !== launchId.current
-      ? await api.createInWorkspace(registered, { environment, prompt: prompt || undefined, model: model || undefined })
-      : await api.create({ environment, prompt: prompt || undefined, model: model || undefined });
-    await refreshSessions();
-    setSelected(snapshot.session.session_id);
-    setDialog(false);
+  const projectKey = () => String(workspaceId.current || launchId.current || "");
+  const draftKey = projectKey() ? `draft:${projectKey()}` : "draft:local";
+  const remember = (sessionId: string | null) => {
+    const key = projectKey();
+    if (!key) return;
+    if (sessionId) localStorage.setItem(`wright.viewed.${key}`, sessionId);
+    else localStorage.removeItem(`wright.viewed.${key}`);
+  };
+  const beginTurn = async (owner: string, commandId: string, prompt: string, attachmentIds: string[], documentIds: string[] = [], references: FileReference[] = []) => {
+    const surface = projectKey();
+    const generation = epoch.current;
+    const current = draftsRef.current[owner] ?? emptyDraft();
+    const clientRequestId = current.clientRequestId || crypto.randomUUID();
+    updateDraft(owner, (item) => ({ ...item, clientRequestId, commandId, phase: "awaiting", reason: "" }));
+    try {
+      let sessionId = current.boundSessionId;
+      const environment = current.environment ?? "local";
+      const registered = workspaceId.current;
+      const foreign = Boolean(registered && launchId.current && registered !== launchId.current);
+      const open = (body: Record<string, unknown>) => foreign
+        ? api.createInWorkspace(registered as string, body)
+        : api.create(body);
+      if (!sessionId && browsing === "preview" && selected) {
+        const created = await open({ resume: selected, client_request_id: clientRequestId });
+        if (projectKey() !== surface) return "rejected" as const;
+        sessionId = created.session.session_id;
+        updateDraft(owner, (item) => item.clientRequestId === clientRequestId ? { ...item, boundSessionId: sessionId } : item);
+      } else if (!sessionId) {
+        const created = await open({
+          environment,
+          client_request_id: clientRequestId,
+          interaction_mode: draftPolicy.interaction_mode,
+          permission_mode: draftPolicy.permission_mode,
+        });
+        if (projectKey() !== surface) return "rejected" as const;
+        sessionId = created.session.session_id;
+        updateDraft(owner, (item) => item.clientRequestId === clientRequestId ? { ...item, boundSessionId: sessionId } : item);
+      }
+      if (!sessionId) return "rejected" as const;
+      const imageIds = [...attachmentIds];
+      const docIds = [...documentIds];
+      for (const file of current.localFiles ?? []) {
+        if (file.image) {
+          const record = await api.uploadAttachment(sessionId, file.file) as { id: string };
+          imageIds.push(record.id);
+        } else {
+          const record = await api.uploadDocument(sessionId, file.file);
+          docIds.push(record.id);
+        }
+      }
+      if (projectKey() !== surface) return "rejected" as const;
+      const accepted = await api.submitTurn(sessionId, {
+        prompt, command_id: commandId, attachment_ids: imageIds, document_ids: docIds, references,
+      });
+      if (projectKey() !== surface) return "rejected" as const;
+      remember(sessionId);
+      setBrowsing("live");
+      setSelected(sessionId);
+      refreshSessions().catch(() => undefined);
+      if (accepted && (accepted as { duplicate?: boolean }).duplicate !== true) {
+        updateDraft(owner, () => emptyDraft());
+      }
+      return "accepted" as const;
+    } catch (error) {
+      if (projectKey() === surface && epoch.current === generation) {
+        updateDraft(owner, (item) => ({ ...item, phase: "unknown", reason: String(error) }));
+      }
+      return "unknown" as const;
+    }
   };
   const changeModel = async (newModel: string) => {
     const sessionId = selected;
@@ -285,20 +394,14 @@ export default function App() {
     await refreshSessions();
   };
   const selectSession = async (session: SessionSummary) => {
-    if (session.recoverable === false) {
-      setFatal("This archived session is history-only because its clean worktree was removed.");
-      return;
-    }
-    if (!session.active) {
-      const registered = workspaceId.current;
-      const foreign = Boolean(registered && launchId.current && registered !== launchId.current);
-      const snapshot = foreign
-        ? await api.createInWorkspace(registered as string, { resume_session_id: session.session_id })
-        : await api.create({ resume_session_id: session.session_id });
-      await refreshSessions();
-      setSelected(snapshot.session.session_id);
-    } else setSelected(session.session_id);
+    remember(session.session_id);
+    if (session.active) setBrowsing("live");
+    else setBrowsing("preview");
+    setSelected(session.session_id);
     setRailOpen(false);
+    if (session.recoverable === false) {
+      setFatal("This checkpoint can be read as history. Its execution directory is gone, so it cannot run again.");
+    }
   };
   const savePreference = async (patch: { theme?: "dark" | "light"; inspector_open?: boolean; interface_language?: string }) => {
     const saved = await api.setPreference(patch);
@@ -322,7 +425,8 @@ export default function App() {
   const execution = state?.session.execution ?? state?.session.status;
   const running = execution === "running" || execution === "waiting_for_input";
   const directoryQueued = execution === "queued";
-  const draft = selected ? (drafts[selected] ?? emptyDraft()) : emptyDraft();
+  const composerOwner = browsing === "live" && selected ? selected : draftKey;
+  const draft = drafts[composerOwner] ?? emptyDraft();
   const activeCount = sessions.filter((item) => item.active).length;
   const branch = String(state?.session.branch_name ?? project?.branch ?? "");
   const dirty = Number(project?.uncommitted_count ?? 0);
@@ -362,7 +466,7 @@ export default function App() {
       </div>
     </header>
     <div className="workspace-grid">
-      <SessionRail sessions={sessions} selected={selected} onSelect={(session) => selectSession(session).catch((error) => setFatal(String(error)))} onCreate={() => setDialog(true)} open={railOpen} footer={[state?.session.model, state?.connection].filter(Boolean).join(" · ")}>
+      <SessionRail sessions={sessions} selected={selected} onSelect={(session) => selectSession(session).catch((error) => setFatal(String(error)))} onCreate={() => { setBrowsing("draft"); setSelected(null); setState(null); }} open={railOpen} footer={[state?.session.model, state?.connection].filter(Boolean).join(" · ")}>
         <div>
           <div className="section-label"><span>{tr("web.workspaces")}</span></div>
           {workspaces.map((item) => <button type="button" key={item.project_id} className={`nav-row ${item.selected ? "selected" : ""}`} onClick={() => {
@@ -432,10 +536,12 @@ export default function App() {
               sendCommand({ type: "turn.cancel_queued", command_id: id, target_command_id: targetCommandId }).catch(() => undefined);
             }}
           />
+          {browsing === "preview" && <p className="hint">{state.session.recoverable === false ? tr("web.archived") : tr("web.history_view")}</p>}
           <div className="composer-wrap">
             <Composer
               sessionId={state.session.session_id}
-              connection={state.session.lifecycle === "closing" || state.session.lifecycle === "closed" || state.session.status === "closing" || state.session.status === "closed" ? "closed" : state.connection}
+              projectId={projectKey() || null}
+              connection={state.session.lifecycle === "closing" || state.session.lifecycle === "closed" || state.session.status === "closing" || state.session.status === "closed" ? "closed" : browsing === "preview" ? "connected" : state.connection}
               draft={draft}
               updateDraft={updateDraft}
               running={Boolean(running || directoryQueued)}
@@ -460,23 +566,51 @@ export default function App() {
                   };
                 });
               }}
-              submit={(commandId, prompt, attachmentIds, documentIds) => sendCommand({ type: "turn.submit", command_id: commandId, prompt, attachment_ids: attachmentIds, document_ids: documentIds ?? [] })}
+              submit={(commandId, prompt, attachmentIds, documentIds, references) => browsing === "live"
+                ? sendCommand({ type: "turn.submit", command_id: commandId, prompt, attachment_ids: attachmentIds, document_ids: documentIds ?? [], references: references ?? [] })
+                : beginTurn(composerOwner, commandId, prompt, attachmentIds, documentIds ?? [], references ?? [])}
               cancel={async () => {
                 const id = cancelId.current ?? crypto.randomUUID();
                 cancelId.current = id;
                 const outcome = await sendCommand({ type: "turn.cancel", command_id: id });
                 if (outcome === "accepted" || outcome === "rejected") cancelId.current = null;
               }}
+              cancelAll={async () => {
+                const id = crypto.randomUUID();
+                await sendCommand({ type: "turn.cancel_all", command_id: id });
+              }}
             />
           </div>
-        </> : <div className="no-session"><h2>{tr("web.no_session")}</h2><p>{tr("web.no_session_help")}</p><button className="button primary" onClick={() => setDialog(true)}>{tr("web.new_session")}</button></div>}
+        </> : <div className="conversation">
+          <div className="conversation-head"><div className="task-heading"><h1>{tr("web.no_session")}</h1></div></div>
+          <p className="hint">{tr("web.no_session_help")}</p>
+          <div className="composer-wrap">
+            <Composer
+              sessionId={draftKey}
+              projectId={projectKey() || null}
+              chooseEnvironment
+              git={Boolean(project?.git)}
+              workLabel={String(project?.project_root ?? "")}
+              connection="connected"
+              draft={draft}
+              updateDraft={updateDraft}
+              running={false}
+              models={Array.isArray(project?.models) ? project.models as string[] : []}
+              currentModel={String(project?.default_model ?? "")}
+              interactionMode={draftPolicy.interaction_mode}
+              permissionMode={draftPolicy.permission_mode}
+              onPolicy={async (body) => { setDraftPolicy((current) => ({ ...current, ...body })); }}
+              submit={(commandId, prompt, attachmentIds, documentIds, references) => beginTurn(draftKey, commandId, prompt, attachmentIds, documentIds ?? [], references ?? [])}
+              cancel={async () => undefined}
+            />
+          </div>
+        </div>}
       </main>
       {state && selected ? <Inspector state={state} sessionId={selected} open={inspectorOpen} narrow={narrowInspector} focusPath={focusPath} close={() => { setInspectorOpen(false); setNarrowInspector(false); api.setPreference({ inspector_open: false }).catch(() => undefined); }} /> : <aside className={`inspector ${inspectorOpen ? "" : "is-closed"} ${narrowInspector ? "narrow-open" : ""}`}><p className="empty-small">{tr("web.inspector_empty")}</p></aside>}
     </div>
     {railOpen && <button className="sidebar-backdrop" aria-label={tr("web.close_sessions")} onClick={() => setRailOpen(false)} />}
     {fatal && project && <div className="toast" role="alert"><Warning size={16} /><span>{fatal}</span><button className="icon-button" onClick={() => setFatal("")} aria-label={tr("web.dismiss")}><X size={14} /></button></div>}
-    {dialog && project && <NewSessionDialog project={project} close={() => setDialog(false)} create={create} />}
-    {panel === "search" && <SearchDialog sessionId={selected} projectId={workspaceId.current || launchProject || null} close={() => setPanel(null)} openFile={(path) => { setFocusPath(path); setPanel(null); setInspectorOpen(true); setNarrowInspector(true); }} />}
+    {panel === "search" && <SearchDialog sessionId={browsing === "live" ? selected : null} projectId={workspaceId.current || launchProject || null} close={() => setPanel(null)} openFile={(path) => { setFocusPath(path); setPanel(null); setInspectorOpen(true); setNarrowInspector(true); }} />}
     {panel === "memory" && <MemoryDialog sessionId={selected} close={() => setPanel(null)} />}
     {panel === "rules" && <RulesDialog sessionId={selected} close={() => setPanel(null)} />}
     {panel === "schedules" && <SchedulesDialog sessionId={selected} projectId={workspaceId.current || launchProject || null} close={() => setPanel(null)} />}

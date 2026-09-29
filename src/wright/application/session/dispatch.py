@@ -345,10 +345,15 @@ def process_session_event(
                 str(item) for item in payload.get("attachment_ids", [])
                 if isinstance(item, str)
             ]
+            references = [
+                item for item in payload.get("references", [])
+                if isinstance(item, dict)
+            ]
         else:
             user_input = str(payload)
             command_id = ""
             attachment_ids = []
+            references = []
         handled, send_prompt = _dispatch_attachment_command(user_input, rt)
         if handled:
             agent_idle.set()
@@ -362,7 +367,7 @@ def process_session_event(
             drafts = getattr(rt, "draft_attachments", None)
             if drafts is not None:
                 attachment_ids = drafts.consume()
-        if not user_input.strip() and not attachment_ids:
+        if not user_input.strip() and not attachment_ids and not references:
             _notice(
                 rt,
                 "Type a message, or attach an image with /attach first",
@@ -370,6 +375,19 @@ def process_session_event(
             )
             agent_idle.set()
             return False
+        captured: list[dict] = []
+        if references:
+            from ..workspace.references import capture_references, render_captures
+
+            settings = getattr(rt, "permission_settings", None)
+            external = list(getattr(settings, "additional_directories", []) or [])
+            captured = capture_references(
+                project_root=rt.project_context.project_root,
+                execution_root=rt.project_context.execution_root,
+                references=references,
+                external_roots=external,
+            )
+            user_input = render_captures(user_input, captured)
         turn_id = f"{session_state.session_id}:{len(session_state.message_records)}"
         coordinator = getattr(rt, "directory_coordinator", None)
         lease = None
@@ -396,6 +414,7 @@ def process_session_event(
             {
                 "prompt": user_input,
                 "command_id": command_id,
+                "references": captured,
                 "attachments": [
                     public_attachment(record)
                     for record in session_state.attachment_records(attachment_ids)

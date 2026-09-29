@@ -8,9 +8,12 @@ instances. HTTP status codes and terminal widgets stay in the adapters.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import os
 import threading
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -34,6 +37,7 @@ from ..composition.runtime import (
     shutdown_runtime,
 )
 from ..execution.directory import DirectoryExecutionCoordinator
+from .opening import OpenIntentError, load_resume_checkpoint, resolve_new_environment
 from .publisher import EventPublisher
 from .service import SessionService
 
@@ -98,6 +102,7 @@ class SessionDirectory:
         self._sessions: dict[str, OpenSession] = {}
         self._hosts: dict[Path, ApplicationHost] = {}
         self._root_locks: dict[Path, threading.Lock] = {}
+        self._request_locks: dict[str, threading.Lock] = {}
         self._lock = threading.RLock()
 
     def project(self) -> dict[str, Any]:
@@ -111,7 +116,7 @@ class SessionDirectory:
             "git": self.worktrees.is_git,
             "capacity": self.capacity,
             "active_count": active_count,
-            "default_environment": "worktree" if self.worktrees.is_git else "local",
+            "default_environment": "local",
             "dirty_checkout": bool(
                 self.worktrees.is_git
                 and self.worktrees.inspect(ProjectContext.local(self.project_root))["dirty"]
@@ -126,14 +131,59 @@ class SessionDirectory:
         *,
         environment: str | None = None,
         model: str | None = None,
-        prompt: str | None = None,
-        resume_session_id: str | None = None,
+        resume: str | None = None,
+        continue_latest: bool = False,
         interaction_broker: Any = None,
         publisher: EventPublisher | None = None,
         workspace: Path | None = None,
         resume_chooser: Callable[[list[dict]], str] | None = None,
         session_id: str | None = None,
+        client_request_id: str | None = None,
     ) -> OpenSession:
+        """Open a new local session, an explicit worktree, or a saved checkpoint.
+
+        An empty ``resume`` keeps the caller's choice intent. ``continue_latest``
+        loads the newest checkpoint. Neither path changes the saved environment.
+        A repeated ``client_request_id`` returns the session already created for it.
+        """
+
+        request_lock = (
+            self._request_lock(client_request_id) if client_request_id else nullcontext()
+        )
+        with request_lock:
+            return self._open(
+                environment=environment,
+                model=model,
+                resume=resume,
+                continue_latest=continue_latest,
+                interaction_broker=interaction_broker,
+                publisher=publisher,
+                workspace=workspace,
+                resume_chooser=resume_chooser,
+                session_id=session_id,
+                client_request_id=client_request_id,
+            )
+
+    def _open(
+        self,
+        *,
+        environment: str | None,
+        model: str | None,
+        resume: str | None,
+        continue_latest: bool,
+        interaction_broker: Any,
+        publisher: EventPublisher | None,
+        workspace: Path | None,
+        resume_chooser: Callable[[list[dict]], str] | None,
+        session_id: str | None,
+        client_request_id: str | None,
+    ) -> OpenSession:
+        if client_request_id:
+            reused = self._reuse_request(client_request_id)
+            if reused is not None and reused in self._sessions:
+                return self.get(reused)
+            if reused is not None and resume is None and not continue_latest:
+                resume = reused
         created_worktree = False
         context: ProjectContext | None = None
         with self._lock:
@@ -143,43 +193,66 @@ class SessionDirectory:
                     "close a session before opening another",
                     kind="capacity",
                 )
-            if resume_session_id and resume_session_id in self._sessions:
+            resume_id = (resume or "").strip()
+            if resume_id and resume_id in self._sessions:
                 raise SessionDirectoryError(
                     "session is already active", kind="conflict",
                 )
-            if resume_session_id:
-                try:
-                    saved = self.checkpoints.load(resume_session_id)
-                except CheckpointError as exc:
-                    raise SessionDirectoryError(str(exc), kind="not_found") from exc
+            try:
+                saved = load_resume_checkpoint(
+                    self.checkpoints,
+                    resume=resume,
+                    continue_latest=continue_latest,
+                    resume_chooser=resume_chooser,
+                )
+            except OpenIntentError as exc:
+                raise SessionDirectoryError(str(exc), kind=exc.kind) from exc
+            if saved is not None:
+                if saved.session_id in self._sessions:
+                    raise SessionDirectoryError(
+                        "session is already active", kind="conflict",
+                    )
                 saved_project = (saved.project_root or self.project_root).resolve()
                 if saved_project != self.project_root:
                     raise SessionDirectoryError("checkpoint belongs to a different project")
                 context = ProjectContext(
                     project_root=saved_project,
-                    execution_root=saved.workspace_dir,
+                    execution_root=Path(saved.workspace_dir),
                     environment=saved.environment,
                     base_commit=saved.base_commit,
                     branch_name=saved.branch_name,
                 )
-                session_id = resume_session_id
+                if not context.execution_root.is_dir():
+                    raise SessionDirectoryError(
+                        "execution directory is no longer available; the checkpoint can still be viewed",
+                        kind="history_only",
+                    )
+                session_id = saved.session_id
             else:
                 session_id = session_id or uuid4().hex[:12]
-                selected = environment or ("worktree" if self.worktrees.is_git else "local")
-                if selected not in {"local", "worktree"}:
-                    raise SessionDirectoryError("environment must be local or worktree")
-                if selected == "worktree" and not self.worktrees.is_git:
-                    selected = "local"
+                try:
+                    selected = resolve_new_environment(
+                        environment, git=self.worktrees.is_git,
+                    )
+                except OpenIntentError as exc:
+                    raise SessionDirectoryError(str(exc), kind=exc.kind) from exc
+                if workspace is not None:
+                    requested = workspace.expanduser().resolve()
+                    if requested != self.project_root:
+                        raise SessionDirectoryError(
+                            "workspace must be the project root; execution directory is chosen separately",
+                        )
                 if selected == "worktree":
                     context = self.worktrees.create(session_id)
                     created_worktree = True
                 else:
-                    root = (workspace or self.project_root).expanduser().resolve()
-                    context = ProjectContext.local(root)
+                    context = ProjectContext.local(self.project_root)
             assert context is not None
             root = context.execution_root.resolve()
             config = self._runtime_config(
-                context=context, model=model, resume=resume_session_id,
+                context=context,
+                model=model,
+                resume=saved.session_id if saved is not None else None,
             )
         root_lock = self._root_lock(root)
         with root_lock:
@@ -248,8 +321,8 @@ class SessionDirectory:
                     "close a session before opening another",
                     kind="capacity",
                 )
-        if prompt and prompt.strip():
-            opened.service.submit(prompt, uuid4().hex)
+        if client_request_id:
+            self._remember_request(client_request_id, opened.session_id)
         return opened
 
     def _root_lock(self, root: Path) -> threading.Lock:
@@ -259,6 +332,49 @@ class SessionDirectory:
                 lock = threading.Lock()
                 self._root_locks[root] = lock
             return lock
+
+    def preview(self, session_id: str) -> dict[str, Any]:
+        """Read a checkpoint without starting a runtime or a worktree."""
+
+        try:
+            saved = self.checkpoints.load(session_id)
+        except CheckpointError as exc:
+            raise SessionDirectoryError(str(exc), kind="not_found") from exc
+        saved_project = (saved.project_root or self.project_root).resolve()
+        if saved_project != self.project_root:
+            raise SessionDirectoryError("checkpoint belongs to a different project")
+        from .history_projection import project_history, seed_ids
+
+        turn_ids, run_ids = seed_ids(saved)
+        execution_root = Path(saved.workspace_dir)
+        return {
+            "view_only": True,
+            "history": project_history(saved, turn_ids, run_ids),
+            "session": {
+                "session_id": saved.session_id,
+                "lifecycle": "closed",
+                "execution": "idle",
+                "status": "closed",
+                "active": False,
+                "user_goal": saved.current_goal() if hasattr(saved, "current_goal") else saved.user_goal,
+                "model": saved.model_name,
+                "interaction_mode": getattr(saved, "interaction_mode", "agent"),
+                "permission_mode": getattr(saved, "permission_mode", None),
+                "environment": saved.environment,
+                "execution_root": str(execution_root),
+                "project_root": str(saved_project),
+                "base_commit": saved.base_commit,
+                "branch_name": saved.branch_name,
+                "recoverable": execution_root.is_dir(),
+            },
+        }
+
+    def search_references(self, query: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        """Search the project checkout. Does not create a session or a worktree."""
+
+        from ..workspace.references import search_file_references
+
+        return search_file_references(self.project_root, query, limit=limit)
 
     def get(self, session_id: str) -> OpenSession:
         with self._lock:
@@ -388,6 +504,59 @@ class SessionDirectory:
                 logger.exception("session close during directory shutdown failed")
         for host in hosts:
             host.close()
+
+    def _request_lock(self, request_id: str) -> threading.Lock:
+        with self._lock:
+            lock = self._request_locks.get(request_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._request_locks[request_id] = lock
+            return lock
+
+    def _request_path(self) -> Path:
+        return session_dir(self.project_root) / "open_requests.json"
+
+    def _reuse_request(self, request_id: str) -> str | None:
+        path = self._request_path()
+        if not path.is_file():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        session_id = data.get(request_id)
+        if not isinstance(session_id, str) or not session_id:
+            return None
+        with self._lock:
+            if session_id in self._sessions:
+                return session_id
+        try:
+            self.checkpoints.load(session_id)
+        except CheckpointError:
+            return None
+        return session_id
+
+    def _remember_request(self, request_id: str, session_id: str) -> None:
+        path = self._request_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        current: dict[str, str] = {}
+        if path.is_file():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                loaded = {}
+            if isinstance(loaded, dict):
+                current = {
+                    str(key): str(value)
+                    for key, value in loaded.items()
+                    if isinstance(key, str) and isinstance(value, str)
+                }
+        current[request_id] = session_id
+        temporary = path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(current), encoding="utf-8")
+        os.replace(temporary, path)
 
     def _runtime_config(
         self, *, context: ProjectContext, model: str | None, resume: str | None,

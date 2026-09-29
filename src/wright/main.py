@@ -3,7 +3,10 @@
 import os
 import sys
 
-from .application.composition.runtime import assemble_runtime, load_env
+from pathlib import Path
+
+from .application.composition.runtime import load_env
+from .application.session.directory import SessionDirectory, SessionDirectoryError
 from .interfaces.cli.args import parse_cli_args, runtime_config_from_args
 from .interfaces.i18n import activate_saved_locale, set_locale, t
 from .interfaces.cli.console_renderer import ConsoleRenderer
@@ -50,20 +53,37 @@ def main() -> None:
     renderer = ConsoleRenderer()
     hub = InteractionHub()
     prompter = ConsolePrompter(renderer)
-    rt = assemble_runtime(
-        runtime_config_from_args(args),
-        interaction_broker=hub,
-        prompter=prompter,
-        resume_chooser=choose_resume_session,
+    config = runtime_config_from_args(args)
+    workspace = Path(config.workspace or Path.cwd()).expanduser().resolve()
+    directory = SessionDirectory(workspace, base_args=args)
+    try:
+        opened = directory.open(
+            environment=getattr(args, "environment", None),
+            model=config.model,
+            resume=getattr(args, "resume", None),
+            continue_latest=config.continue_latest,
+            interaction_broker=hub,
+            resume_chooser=choose_resume_session,
+        )
+    except SessionDirectoryError as exc:
+        raise SystemExit(str(exc)) from exc
+    listener_id = attach_renderer(
+        opened.publisher, renderer, session=opened.runtime.session_state,
     )
-    attach_renderer(rt.publisher, renderer, session=rt.session_state)
-    repl = Repl(rt, prompter=prompter, renderer=renderer)
+    repl = Repl(
+        opened.runtime,
+        prompter=prompter,
+        renderer=renderer,
+        service=opened.service,
+        directory=directory,
+        resume_chooser=choose_resume_session,
+        listener_id=listener_id,
+    )
     try:
         repl.run()
     finally:
-        repl.service.close(wait_timeout=5)
-    if rt.agent.checkpoint_store:
-        print(t("cli.session_saved", session_id=rt.session_state.session_id))
+        directory.shutdown()
+    print(t("cli.session_saved", session_id=opened.session_id))
 
 
 if __name__ == "__main__":

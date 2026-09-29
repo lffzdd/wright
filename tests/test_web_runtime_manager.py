@@ -201,7 +201,7 @@ def test_manager_rejects_capacity_and_duplicate_resume_without_blocking_idle_loc
         manager.create(environment="local")
     manager.directory.capacity = 2
     with pytest.raises(RuntimeManagerError, match="already active"):
-        manager.create(resume_session_id="active")
+        manager.create(resume="active")
 
 
 def test_duplicate_command_is_idempotent(monkeypatch, tmp_path):
@@ -239,7 +239,9 @@ def test_cancel_rejects_queued_turn_before_it_starts(monkeypatch, tmp_path):
     handle.submit("first", "command-one")
     assert first_started.wait(timeout=1)
     handle.submit("second", "command-two")
-    cancelled = handle.cancel("cancel-command")
+    kept = handle.cancel("stop-current")
+    assert kept["payload"]["cancelled_queued"] == 0
+    cancelled = handle.cancel_all("cancel-command")
     assert cancelled["payload"]["cancelled_queued"] == 1
     release_first.set()
 
@@ -409,7 +411,7 @@ def test_closed_local_session_can_be_replaced_without_losing_its_schedules(monke
         assert first_store.get_job(auto.id).session_id == first_id
         second_store = second.runtime.autonomy_store
         manager.close(second_id)
-        restored = manager.create(resume_session_id=first_id)
+        restored = manager.create(resume=first_id)
         assert restored.runtime.application_host is host
         assert restored.runtime.autonomy_store is first_store
         assert restored.runtime.autonomy_store.list_jobs().records[0].id == auto.id

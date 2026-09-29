@@ -17,15 +17,16 @@ from ...application.workspace.catalog import WorkspaceCatalogError
 from ...application.workspace.documents import DocumentError
 from ...application.workspace.files import PathRejected, list_directory, read_text
 from ...application.workspace.git_status import summarize_git
-from ...application.workspace.grants import (
-    GrantError,
-    add_session_rule,
-    change_directory,
-    list_grants,
-    revoke_persistent_rule,
-    revoke_session_rule,
+from ...application.session.errors import SessionServiceError
+from ...application.workspace.session_commands import (
+    add_grant,
+    change_directory_grant,
+    memory_binding,
+    review_action,
+    revoke_grant,
+    session_grants,
 )
-from ...application.workspace.journal import ChangeJournalError, SessionChangeJournal
+from ...application.workspace.journal import SessionChangeJournal
 from ...application.workspace.memory_view import (
     MemoryViewError,
     bound_project,
@@ -77,7 +78,15 @@ class WorkspaceSessionBody(BaseModel):
     environment: str | None = None
     model: str | None = None
     prompt: str | None = None
-    resume_session_id: str | None = None
+    resume: str | None = None
+    continue_latest: bool = False
+    client_request_id: str | None = None
+    command_id: str | None = None
+    references: list[dict[str, Any]] = Field(default_factory=list)
+    attachment_ids: list[str] = Field(default_factory=list)
+    document_ids: list[str] = Field(default_factory=list)
+    interaction_mode: str | None = None
+    permission_mode: str | None = None
 
 
 class PolicyBody(BaseModel):
@@ -199,13 +208,25 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
                 payload = raw
         body = WorkspaceSessionBody.model_validate(payload)
         try:
-            return manager.create_in_workspace(
+            handle = manager.create_in_workspace(
                 registered_id,
                 environment=body.environment,
                 model=body.model,
                 prompt=body.prompt,
-                resume_session_id=body.resume_session_id,
-            ).snapshot()
+                resume=body.resume,
+                continue_latest=body.continue_latest,
+                client_request_id=body.client_request_id,
+                command_id=body.command_id,
+                references=body.references,
+                attachment_ids=body.attachment_ids,
+                document_ids=body.document_ids,
+                interaction_mode=body.interaction_mode,
+                permission_mode=body.permission_mode,
+            )
+            snapshot = handle.snapshot()
+            if getattr(handle, "submit_error", None):
+                snapshot["submit_error"] = handle.submit_error
+            return snapshot
         except (RuntimeManagerError, WorkspaceCatalogError) as exc:
             status = getattr(exc, "status_code", None) or 409
             raise HTTPException(status_code=status, detail=str(exc)) from exc
@@ -220,6 +241,14 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
     def workspace_file(registered_id: str, request: Request, path: str) -> dict[str, Any]:
         require(request)
         return _files(_project_root(manager, registered_id), path, listing=False)
+
+    @router.get("/workspaces/{registered_id}/references")
+    def workspace_references(registered_id: str, request: Request, q: str = "") -> dict[str, Any]:
+        require(request)
+        try:
+            return {"results": manager._directory_for(registered_id).search_references(q)}
+        except RuntimeManagerError as exc:
+            raise HTTPException(status_code=exc.status_code or 404, detail=str(exc)) from exc
 
     @router.get("/workspaces/{registered_id}/search")
     def workspace_search(
@@ -311,64 +340,43 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
     @router.get("/sessions/{session_id}/grants")
     def grants(session_id: str, request: Request) -> dict[str, Any]:
         require(request)
-        handle = _handle(manager, session_id)
-        return list_grants(handle.runtime.session_state, handle.runtime.permission_settings)
+        return session_grants(_handle(manager, session_id).service)
 
     @router.post("/sessions/{session_id}/grants")
     def create_grant(session_id: str, body: RuleBody, request: Request) -> dict[str, Any]:
         require(request)
         if not body.confirm or not isinstance(body.rule, dict):
             raise HTTPException(status_code=400, detail="confirmation and a rule are required")
-        handle = _handle(manager, session_id)
-        _require_idle(handle)
         try:
-            created = add_session_rule(handle.runtime.session_state, body.rule)
-        except (GrantError, TypeError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        handle.service.persist()
-        return created
+            return add_grant(_handle(manager, session_id).service, body.rule)
+        except SessionServiceError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @router.post("/sessions/{session_id}/grants/{rule_id}/revoke")
     def revoke_grant(session_id: str, rule_id: str, body: ConfirmBody, request: Request) -> dict[str, Any]:
         require(request)
-        handle = _handle(manager, session_id)
-        _require_idle(handle)
         try:
-            try:
-                result = revoke_session_rule(
-                    handle.runtime.session_state, rule_id, confirm=body.confirm,
-                )
-            except GrantError:
-                result = revoke_persistent_rule(
-                    handle.runtime.permission_settings, rule_id, confirm=body.confirm,
-                )
-        except GrantError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if result.get("scope") == "session":
-            handle.service.persist()
-        return result
+            return revoke_grant(
+                _handle(manager, session_id).service, rule_id, confirm=body.confirm,
+            )
+        except SessionServiceError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @router.post("/sessions/{session_id}/directories")
     def change_directory_grant(
         session_id: str, body: DirectoryBody, request: Request,
     ) -> dict[str, Any]:
         require(request)
-        handle = _handle(manager, session_id)
-        _require_idle(handle)
         try:
-            result = change_directory(
-                handle.runtime.session_state,
-                handle.runtime.permission_settings,
-                body.path,
+            return change_directory_grant(
+                _handle(manager, session_id).service,
+                path=body.path,
                 scope=body.scope,
                 confirm=body.confirm,
                 action=body.action,
             )
-        except GrantError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if result["scope"] == "session":
-            handle.service.persist()
-        return result
+        except SessionServiceError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @router.get("/sessions/{session_id}/review")
     def review(session_id: str, request: Request) -> dict[str, Any]:
@@ -658,27 +666,23 @@ def _journal(manager: RuntimeManager, session_id: str) -> SessionChangeJournal:
 
 
 def _review_action(manager: RuntimeManager, session_id: str, body: ConfirmBody, action: str) -> dict[str, Any]:
-    journal = _journal(manager, session_id)
     try:
-        if action == "accept":
-            return journal.accept(body.paths, confirm=body.confirm)
-        return journal.revert(body.paths, confirm=body.confirm)
-    except ChangeJournalError as exc:
+        return review_action(
+            _handle(manager, session_id).service,
+            action,
+            body.paths,
+            confirm=body.confirm,
+        )
+    except SessionServiceError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _memory(handle: Any):
-    agent = getattr(handle.runtime, "agent", None)
-    memory = getattr(agent, "memory", None)
-    return getattr(memory, "service", None)
-
-
-def _require_idle(handle: Any) -> None:
-    if not handle.runtime.agent_idle.is_set():
-        raise HTTPException(
-            status_code=409,
-            detail="a turn is still executing; grants change on the next resolution once it is idle",
-        )
+    try:
+        service, _project = memory_binding(handle.service)
+    except SessionServiceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return service
 
 
 def _schedule_call(manager: RuntimeManager, session_id: str, call) -> dict[str, Any]:

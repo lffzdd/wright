@@ -1,5 +1,5 @@
 import {
-  Archive, Check, FileCode, GitBranch, Paperclip, PaperPlaneRight, Plus, Square, TerminalWindow, Warning, X,
+  Archive, Check, FileCode, Paperclip, PaperPlaneRight, Plus, Square, Warning, X,
 } from "@phosphor-icons/react";
 import { FormEvent, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { DiffViewer } from "../DiffViewer";
@@ -7,21 +7,27 @@ import { MarkdownContent } from "../Markdown";
 import { api } from "../api";
 import { present, useT } from "../i18n";
 import { commandAfter } from "../protocol";
-import type { Attachment, ReviewChange, SessionSummary, ViewState } from "../types";
+import type { Attachment, FileReference, ReviewChange, SessionSummary, ViewState } from "../types";
 import { InteractionCard, SummaryRow, UserMessage, toolCardFromState, toolCardFromTimeline } from "./cards";
 
 export type Draft = {
   prompt: string;
   attachments: Attachment[];
   documents?: Array<{ id: string; filename: string }>;
+  references?: FileReference[];
   mentions?: string[];
   commandId: string | null;
+  clientRequestId?: string | null;
+  boundSessionId?: string | null;
+  environment?: "local" | "worktree";
+  localFiles?: Array<{ name: string; file: File; image: boolean }>;
   phase: "idle" | "awaiting" | "accepted" | "rejected" | "unknown";
   reason: string;
 };
 
 export const emptyDraft = (): Draft => ({
-  prompt: "", attachments: [], documents: [], mentions: [], commandId: null, phase: "idle", reason: "",
+  prompt: "", attachments: [], documents: [], references: [], mentions: [], commandId: null,
+  clientRequestId: null, boundSessionId: null, environment: "local", localFiles: [], phase: "idle", reason: "",
 });
 
 export function visibleModels(models: string[], currentModel: string, extras: string[] = []): string[] {
@@ -101,14 +107,16 @@ export function Timeline({ state, respond, cancelQueued }: {
 }
 
 export function Composer({
-  sessionId, connection, draft, updateDraft, submit, cancel, running, models = [], currentModel = "", interactionMode = "agent", permissionMode = "default", onModel, onPolicy,
+  sessionId, connection, draft, updateDraft, submit, cancel, cancelAll, running, models = [], currentModel = "", interactionMode = "agent", permissionMode = "default", onModel, onPolicy,
+  projectId = null, chooseEnvironment = false, git = false, workLabel = "",
 }: {
   sessionId: string;
   connection: ViewState["connection"];
   draft: Draft;
   updateDraft: (sessionId: string, patch: (current: Draft) => Draft) => void;
-  submit: (commandId: string, prompt: string, attachmentIds: string[], documentIds?: string[]) => Promise<"accepted" | "rejected" | "unknown">;
+  submit: (commandId: string, prompt: string, attachmentIds: string[], documentIds?: string[], references?: FileReference[]) => Promise<"accepted" | "rejected" | "unknown">;
   cancel: () => Promise<void>;
+  cancelAll?: () => Promise<void>;
   running: boolean;
   models?: string[];
   currentModel?: string;
@@ -116,11 +124,15 @@ export function Composer({
   permissionMode?: string;
   onModel?: (model: string) => void;
   onPolicy?: (body: { interaction_mode?: string; permission_mode?: string }) => Promise<void>;
+  projectId?: string | null;
+  chooseEnvironment?: boolean;
+  git?: boolean;
+  workLabel?: string;
 }) {
   const tr = useT();
   const [uploading, setUploading] = useState(false);
   const [menu, setMenu] = useState<null | { kind: "file" | "command"; query: string; index: number }>(null);
-  const [results, setResults] = useState<Array<{ id: string; label: string; insert: string }>>([]);
+  const [results, setResults] = useState<Array<{ id: string; label: string; insert: string; reference?: FileReference }>>([]);
   const [menuError, setMenuError] = useState("");
   const imageInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -129,6 +141,13 @@ export function Composer({
     const owner = sessionId;
     const selected = Array.from(files);
     if (!selected.length) return;
+    if (chooseEnvironment) {
+      updateDraft(owner, (current) => ({
+        ...current,
+        localFiles: [...(current.localFiles ?? []), ...selected.map((file) => ({ name: file.name, file, image: images }))],
+      }));
+      return;
+    }
     setUploading(true);
     updateDraft(owner, (current) => ({ ...current, reason: "" }));
     const uploaded: Attachment[] = [];
@@ -150,23 +169,30 @@ export function Composer({
     if (errors.length) updateDraft(owner, (current) => ({ ...current, reason: errors.join("; ") }));
     setUploading(false);
   };
+  const sending = useRef(false);
   const send = async (event?: FormEvent) => {
     event?.preventDefault();
+    if (sending.current || draft.phase === "awaiting") return;
     const current = draft;
-    if (!current.prompt.trim() && !current.attachments.length && !(current.documents ?? []).length) return;
-    const commandId = current.commandId && current.phase !== "rejected" ? current.commandId : crypto.randomUUID();
-    updateDraft(sessionId, (item) => ({ ...item, commandId, phase: "awaiting", reason: "" }));
-    const outcome = await submit(commandId, current.prompt.trim(), current.attachments.map((item) => item.id), (current.documents ?? []).map((item) => item.id));
-    const next = commandAfter(outcome === "accepted" ? "accepted" : outcome === "rejected" ? "rejected" : "disconnected");
-    if (next.phase === "accepted") updateDraft(sessionId, (item) => item.commandId === commandId ? emptyDraft() : item);
-    else updateDraft(sessionId, (item) => ({
-      ...item,
-      commandId: next.keepId ? commandId : null,
-      phase: next.phase,
-      reason: next.phase === "rejected"
-        ? "The server rejected this command. Edit it and send again to start a new one. Acceptance only means the command was received."
-        : "Not confirmed. Retry keeps this command id and does not start a second one.",
-    }));
+    if (!current.prompt.trim() && !current.attachments.length && !(current.documents ?? []).length && !(current.references ?? []).length && !(current.localFiles ?? []).length) return;
+    sending.current = true;
+    try {
+      const commandId = current.commandId && current.phase !== "rejected" ? current.commandId : crypto.randomUUID();
+      updateDraft(sessionId, (item) => ({ ...item, commandId, phase: "awaiting", reason: "" }));
+      const outcome = await submit(commandId, current.prompt.trim(), current.attachments.map((item) => item.id), (current.documents ?? []).map((item) => item.id), current.references ?? []);
+      const next = commandAfter(outcome === "accepted" ? "accepted" : outcome === "rejected" ? "rejected" : "disconnected");
+      if (next.phase === "accepted") updateDraft(sessionId, (item) => item.commandId === commandId ? emptyDraft() : item);
+      else updateDraft(sessionId, (item) => ({
+        ...item,
+        commandId: next.keepId ? commandId : null,
+        phase: next.phase,
+        reason: next.phase === "rejected"
+          ? "The server rejected this command. Edit it and send again to start a new one. Acceptance only means the command was received."
+          : "Not confirmed. Retry keeps this command id and does not start a second one.",
+      }));
+    } finally {
+      sending.current = false;
+    }
   };
   const refreshMenu = (value: string, caret: number) => {
     const before = value.slice(0, caret);
@@ -180,16 +206,39 @@ export function Composer({
     let cancelled = false;
     const load = menu.kind === "command"
       ? api.commands().then((commands) => commands.filter((command) => command.name.toLowerCase().includes(menu.query.toLowerCase())).map((command) => ({ id: command.name, label: `${command.name} ${command.description}`, insert: command.name })))
-      : api.search(sessionId, menu.query, "file").then((found) => found.results.map((item) => ({ id: String(item.path), label: String(item.path), insert: `@${item.path}` })));
+      : (projectId ? api.references(projectId, menu.query) : api.search(sessionId, menu.query, "file")).then((found) => {
+          const rows = "results" in found ? found.results : [];
+          return rows.map((item) => ({
+            id: String(item.path),
+            label: String(item.path),
+            insert: "",
+            reference: {
+              kind: "file" as const,
+              path: String(item.path),
+              name: String(item.name ?? item.path),
+              project_id: String(item.project_id ?? projectId ?? ""),
+              external: Boolean(item.external),
+            },
+          }));
+        });
     load.then((items) => { if (!cancelled) { setResults(items); setMenuError(""); } }).catch((error) => { if (!cancelled) setMenuError(String(error)); });
     return () => { cancelled = true; };
-  }, [menu?.kind, menu?.query, sessionId]);
-  const applyMenu = (item: { insert: string }) => {
+  }, [menu?.kind, menu?.query, sessionId, projectId]);
+  const applyMenu = (item: { insert: string; reference?: FileReference }) => {
     const node = box.current;
     const value = draft.prompt;
     const caret = node?.selectionStart ?? value.length;
-    const before = value.slice(0, caret).replace(/(^|\s)([@/])([^\s]*)$/, `$1${item.insert} `);
-    updateDraft(sessionId, (current) => ({ ...current, prompt: before + value.slice(caret) }));
+    if (item.reference) {
+      const before = value.slice(0, caret).replace(/(^|\s)[@/][^\s]*$/, "$1");
+      updateDraft(sessionId, (current) => ({
+        ...current,
+        prompt: before + value.slice(caret),
+        references: [...(current.references ?? []).filter((ref) => ref.path !== item.reference?.path), item.reference as FileReference],
+      }));
+    } else {
+      const before = value.slice(0, caret).replace(/(^|\s)([@/])([^\s]*)$/, `$1${item.insert} `);
+      updateDraft(sessionId, (current) => ({ ...current, prompt: before + value.slice(caret) }));
+    }
     setMenu(null);
     node?.focus();
   };
@@ -197,7 +246,13 @@ export function Composer({
   return <form className="composer" onSubmit={(event) => { send(event).catch((reason) => updateDraft(sessionId, (item) => ({ ...item, phase: "unknown", reason: String(reason) }))); }}>
     <input ref={imageInput} className="file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => { if (event.target.files) upload(event.target.files, true); event.target.value = ""; }} />
     <input ref={fileInput} className="file-input" type="file" multiple onChange={(event) => { if (event.target.files) upload(event.target.files, false); event.target.value = ""; }} />
-    {(draft.attachments.length > 0 || (draft.documents ?? []).length > 0) && <div className="chips">
+    {chooseEnvironment && <div className="row-actions">
+      <span className="hint">{workLabel}</span>
+      <button type="button" className="button" aria-pressed={(draft.environment ?? "local") === "local"} onClick={() => updateDraft(sessionId, (current) => ({ ...current, environment: "local" }))}>{tr("web.work_here")}</button>
+      <button type="button" className="button" aria-pressed={draft.environment === "worktree"} disabled={!git} onClick={() => updateDraft(sessionId, (current) => ({ ...current, environment: "worktree" }))}>{tr("web.isolated_option")}</button>
+      <span className="hint">{draft.environment === "worktree" ? tr("web.isolated_help") : tr("web.current_help")}</span>
+    </div>}
+    {(draft.attachments.length > 0 || (draft.documents ?? []).length > 0 || (draft.references ?? []).length > 0 || (draft.localFiles ?? []).length > 0) && <div className="chips">
       {draft.attachments.map((attachment) => <span className="chip" key={attachment.id}>{attachment.filename}<button type="button" aria-label={tr("web.remove", { name: attachment.filename })} onClick={() => {
         const owner = sessionId;
         api.deleteAttachment(owner, attachment.id).then(() => {
@@ -205,7 +260,10 @@ export function Composer({
         }).catch((error) => updateDraft(owner, (current) => ({ ...current, reason: String(error) })));
       }}><X size={10} /></button></span>)}
       {(draft.documents ?? []).map((document) => <span className="chip" key={document.id}>{document.filename}<button type="button" aria-label={tr("web.remove", { name: document.filename })} onClick={() => updateDraft(sessionId, (current) => ({ ...current, documents: (current.documents ?? []).filter((item) => item.id !== document.id) }))}><X size={10} /></button></span>)}
+      {(draft.references ?? []).map((reference) => <span className="chip" key={reference.path}>{reference.path}<button type="button" aria-label={tr("web.remove", { name: reference.name })} onClick={() => updateDraft(sessionId, (current) => ({ ...current, references: (current.references ?? []).filter((item) => item.path !== reference.path) }))}><X size={10} /></button></span>)}
+      {(draft.localFiles ?? []).map((file, index) => <span className="chip" key={`${file.name}-${index}`}>{file.name}<button type="button" aria-label={tr("web.remove", { name: file.name })} onClick={() => updateDraft(sessionId, (current) => ({ ...current, localFiles: (current.localFiles ?? []).filter((_, item) => item !== index) }))}><X size={10} /></button></span>)}
     </div>}
+    {(draft.references ?? []).length > 0 && <p className="hint">{tr("web.capture_hint")}</p>}
     <textarea ref={box} aria-label={tr("web.message")} rows={2} value={draft.prompt} placeholder={running ? tr("web.queue_placeholder") : tr("web.message_placeholder")} onChange={(event) => {
       const value = event.target.value;
       updateDraft(sessionId, (item) => ({ ...item, prompt: value }));
@@ -251,7 +309,8 @@ export function Composer({
           <option value="bypass">{tr("web.perm.bypass")}</option>
         </select>
         {running && <button type="button" className="button stop" onClick={() => { cancel().catch(() => undefined); }}><Square size={11} weight="fill" />{tr("web.stop")}</button>}
-        <button className="button primary" disabled={uploading || draft.phase === "awaiting" || (!draft.prompt.trim() && !draft.attachments.length && !(draft.documents ?? []).length)}><PaperPlaneRight size={13} />{draft.phase === "unknown" ? tr("web.retry") : tr("web.send")}</button>
+        {running && cancelAll && <button type="button" className="button stop" onClick={() => { cancelAll().catch(() => undefined); }}>{tr("web.stop_all")}</button>}
+        <button className="button primary" disabled={uploading || draft.phase === "awaiting" || (!draft.prompt.trim() && !draft.attachments.length && !(draft.documents ?? []).length && !(draft.references ?? []).length && !(draft.localFiles ?? []).length)}><PaperPlaneRight size={13} />{draft.phase === "unknown" ? tr("web.retry") : tr("web.send")}</button>
       </div>
     </div>
   </form>;
@@ -415,49 +474,6 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
       <p className="hint">Billing {state.usage.total_tokens ?? "unknown"} total tokens</p>
     </div>}
   </aside>;
-}
-
-export function NewSessionDialog({ project, close, create }: {
-  project: Record<string, unknown>;
-  close: () => void;
-  create: (environment: string, prompt: string, model?: string) => Promise<void>;
-}) {
-  const tr = useT();
-  const dirtyCheckout = Boolean(project.dirty_checkout);
-  const models = Array.isArray(project.models) ? project.models as string[] : [];
-  const [environment, setEnvironment] = useState(dirtyCheckout ? "local" : String(project.default_environment ?? "local"));
-  const [model, setModel] = useState(String(project.default_model ?? models[0] ?? ""));
-  const [prompt, setPrompt] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const dialogRef = useRef<HTMLElement>(null);
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
-    const trap = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); return; }
-      if (event.key !== "Tab" || !dialogRef.current) return;
-      const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>("button:not([disabled]), select:not([disabled]), textarea:not([disabled]), input:not([disabled])"));
-      if (!focusable.length) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    };
-    document.addEventListener("keydown", trap);
-    return () => { document.removeEventListener("keydown", trap); previous?.focus(); };
-  }, [close]);
-  return <div className="dialog-backdrop"><section ref={dialogRef} className="dialog" role="dialog" aria-modal="true" aria-labelledby="new-session-title">
-    <div className="dialog-head"><h2 id="new-session-title">{tr("web.choose_environment")}</h2><button className="icon-button" onClick={close} aria-label={tr("web.close")}><X size={16} /></button></div>
-    <div className="environment-grid">
-      <button type="button" aria-pressed={environment === "worktree"} className={environment === "worktree" ? "selected" : ""} disabled={!project.git} onClick={() => setEnvironment("worktree")}><GitBranch size={18} /><strong>{tr("web.isolated")}</strong><span>{tr("web.isolated_help")}</span></button>
-      <button type="button" aria-pressed={environment === "local"} className={environment === "local" ? "selected" : ""} onClick={() => setEnvironment("local")}><TerminalWindow size={18} /><strong>{tr("web.current_checkout")}</strong><span>{tr("web.current_help")}</span></button>
-    </div>
-    {models.length > 0 && <label className="field-label" htmlFor="first-model">{tr("web.model_optional")}<select id="first-model" className="dialog-select" value={model} onChange={(event) => setModel(event.target.value)}>{models.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>}
-    <label className="field-label" htmlFor="first-prompt">First instruction <span>optional</span></label>
-    <textarea id="first-prompt" aria-label="First instruction" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={tr("web.first_prompt")} rows={3} />
-    {error && <p className="form-error">{error}</p>}
-    <div className="dialog-actions"><button type="button" className="button" onClick={close}>{tr("web.cancel")}</button><button type="button" className="button primary" disabled={busy} onClick={() => { setBusy(true); setError(""); create(environment, prompt, model).catch((reason) => { setError(String(reason)); setBusy(false); }); }}>{tr("web.create_session")}</button></div>
-  </section></div>;
 }
 
 export function SessionRail({ sessions, selected, onSelect, onCreate, open, children, footer = "" }: {

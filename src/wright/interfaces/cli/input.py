@@ -11,6 +11,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from typing import Any
+from uuid import uuid4
 
 from prompt_toolkit import PromptSession, prompt
 from prompt_toolkit.formatted_text import HTML
@@ -35,6 +36,9 @@ class CliInputController:
         prompter: ConsolePrompter | None = None,
         hub: InteractionHub | None = None,
         read_main: MainInput | None = None,
+        directory: Any = None,
+        resume_chooser: Any = None,
+        listener_id: str | None = None,
     ) -> None:
         self._service = service
         self._agent_idle = agent_idle
@@ -42,6 +46,9 @@ class CliInputController:
         self._prompter = prompter
         self._hub = hub
         self._read_main = read_main
+        self._directory = directory
+        self._resume_chooser = resume_chooser
+        self._listener_id = listener_id
         self._prompt_session: Any = None
 
     def interrupt_main_prompt(self) -> None:
@@ -67,9 +74,92 @@ class CliInputController:
                 result = "deny"
         except Exception:  # 必须结束这次请求，否则 Agent 线程会挂
             result = None if request.kind == "ask_user" else "deny"
-        if self._hub is None:
-            return
-        self._hub.resolve(request.request_id, result)
+        respond = getattr(self._service, "respond_interaction", None)
+        if not callable(respond):
+            raise RuntimeError("interaction answers must go through the session service")
+        respond(uuid4().hex, request.request_id, result)
+
+    def _dispatch_control(self, value: str) -> bool:
+        from ...application.session.controls import apply_control, interpret_control
+        from ...application.session.service import SessionServiceError
+
+        action = interpret_control(value)
+        if action is None or action.name == "exit":
+            return False
+        renderer = self._renderer
+        try:
+            if action.name in {"new", "resume"}:
+                self._switch_session(action.name, action.argument)
+                return True
+            if action.name == "close":
+                closer = getattr(self._service, "close", None)
+                if callable(closer):
+                    closer(wait_timeout=0)
+                if renderer is not None:
+                    renderer.on_system_notice("session closed")
+                return True
+            result = apply_control(self._service, action)
+        except (SessionServiceError, ValueError, OSError) as exc:
+            if renderer is not None:
+                renderer.on_system_notice(str(exc))
+            return True
+        if renderer is not None and action.name == "status":
+            session = result.get("session", {})
+            renderer.on_system_notice(
+                " ".join(
+                    part for part in (
+                        str(session.get("execution") or ""),
+                        str(session.get("queue_reason") or ""),
+                        str(session.get("environment") or ""),
+                        str(session.get("execution_root") or ""),
+                    ) if part
+                )
+            )
+        elif renderer is not None and action.name == "reference":
+            renderer.on_system_notice(str(result.get("path") or result.get("references") or "reference"))
+        return True
+
+    def _switch_session(self, kind: str, argument: str) -> None:
+        directory = getattr(self, "_directory", None)
+        if directory is None:
+            raise RuntimeError("this process has no session directory")
+        from ..interaction import InteractionHub
+
+        hub = InteractionHub()
+        if kind == "new":
+            opened = directory.open(
+                environment=argument or "local",
+                interaction_broker=hub,
+            )
+        else:
+            opened = directory.open(
+                resume=argument,
+                interaction_broker=hub,
+                resume_chooser=getattr(self, "_resume_chooser", None),
+            )
+        previous_publisher = getattr(self._service, "publisher", None)
+        previous_hub = self._hub
+        self._service = opened.service
+        self._agent_idle = opened.runtime.agent_idle
+        self._hub = hub
+        if previous_hub is not None and previous_hub is not hub and hasattr(previous_hub, "bind_collector"):
+            previous_hub.bind_collector(interrupt=lambda: None)
+        hub.bind_collector(interrupt=self.interrupt_main_prompt)
+        if previous_publisher is not None and self._listener_id and hasattr(previous_publisher, "remove_listener"):
+            previous_publisher.remove_listener(self._listener_id)
+            self._listener_id = None
+        renderer = self._renderer
+        if renderer is not None:
+            from ..rendering.attach import attach_renderer
+
+            self._listener_id = attach_renderer(
+                opened.publisher, renderer, session=opened.runtime.session_state,
+            )
+            if getattr(opened.runtime, "resumed", False):
+                renderer.render_session_history(opened.runtime.session_state)
+            renderer.on_system_notice(
+                f"viewing {opened.session_id} ({opened.runtime.session_state.environment})"
+            )
 
     def read_main_input(self, *, queueing: bool = False) -> str | None:
         if self._read_main is not None:
@@ -130,13 +220,7 @@ class CliInputController:
                     if request is not None:
                         self.fulfill(request)
                         continue
-                    if not self._agent_idle.is_set():
-                        hub.wait_for_idle_or_request(self._agent_idle)
-                        continue
-                elif not self._agent_idle.is_set():
-                    self._agent_idle.wait()
-                    continue
-                value = self.read_main_input()
+                value = self.read_main_input(queueing=not self._agent_idle.is_set())
                 if value is PROMPT_INTERRUPTED:
                     continue
                 if value is None or value in {"/exit", "/quit"}:
@@ -145,9 +229,11 @@ class CliInputController:
                     else:
                         self._service.put(("EXIT", None))
                     return
+                if value and self._dispatch_control(value):
+                    continue
                 if value:
-                    # 先清 idle，避免主线程还没开始跑就又画出第二个「你的指令」。
-                    self._agent_idle.clear()
+                    if self._agent_idle.is_set():
+                        self._agent_idle.clear()
                     if hasattr(self._service, "submit"):
                         self._service.submit(value)
                     else:

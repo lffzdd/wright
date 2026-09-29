@@ -113,14 +113,23 @@ async def handle_session_stream(
                             isinstance(item, str) for item in document_ids
                         ):
                             raise RuntimeManagerError("document_ids must be a string array")
+                        references = command.get("references", [])
+                        if not isinstance(references, list) or not all(
+                            isinstance(item, dict) and isinstance(item.get("path"), str)
+                            for item in references
+                        ):
+                            raise RuntimeManagerError("references must be objects with a path")
                         handle.submit(
                             str(command.get("prompt", "")),
                             command_id,
                             attachment_ids,
                             document_ids,
+                            references,
                         )
                     elif command_type == "turn.cancel":
                         handle.cancel(command_id)
+                    elif command_type == "turn.cancel_all":
+                        handle.cancel_all(command_id)
                     elif command_type == "turn.cancel_queued":
                         handle.cancel_queued(
                             command_id,

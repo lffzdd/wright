@@ -14,9 +14,19 @@ from ..i18n import t
 def tui_slash_commands() -> tuple[SlashCommand, ...]:
     """Commands for the fullscreen host, in the active interface language."""
     return (
-        SlashCommand("/new", t("tui.command.new"), "/new"),
+        SlashCommand("/new", t("tui.command.new"), "/new [local|worktree]"),
         SlashCommand("/resume", t("tui.command.resume"), "/resume [session_id]"),
+        SlashCommand("/close", t("tui.command.close"), "/close"),
+        SlashCommand("/stop", t("tui.command.stop"), "/stop"),
+        SlashCommand("/stop-all", t("tui.command.stop_all"), "/stop-all"),
+        SlashCommand("/cancel", t("tui.command.cancel"), "/cancel COMMAND_ID"),
+        SlashCommand("/status", t("tui.command.status"), "/status"),
         SlashCommand("/model", t("tui.command.model"), "/model [name]"),
+        SlashCommand("/mode", t("tui.command.mode"), "/mode agent|plan|ask"),
+        SlashCommand("/permission", t("tui.command.permission"), "/permission default|acceptEdits|plan|bypass"),
+        SlashCommand("/ref", t("tui.command.ref"), "/ref PATH"),
+        SlashCommand("/doc", t("tui.command.doc"), "/doc PATH"),
+        SlashCommand("/env", t("tui.command.env"), "/env"),
         SlashCommand("/language", t("tui.command.language"), "/language [en|zh-CN]"),
         SlashCommand("/clear", t("tui.command.clear"), "/clear"),
         SlashCommand("/exit", t("tui.command.exit"), "/exit"),

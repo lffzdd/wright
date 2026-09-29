@@ -95,6 +95,12 @@ def parse_cli_args() -> argparse.Namespace:
         help=t("cli.help.trust_mcp"),
     )
     parser.add_argument(
+        "--environment",
+        choices=("local", "worktree"),
+        default=None,
+        help=t("cli.help.environment"),
+    )
+    parser.add_argument(
         "--mode",
         choices=("coding", "general"),
         default="coding",

@@ -21,7 +21,6 @@ from ...application.session.service import (
 )
 from ...core.logger import get_logger
 from ..i18n import language_label, set_locale, t
-from ..cli.args import runtime_config_from_args
 from ..cli.resume_select import choose_resume_session
 from ..interaction import InteractionRequest
 from .blocks import (
@@ -51,11 +50,7 @@ from .messages import (
 )
 from .modals import AskUserModal, ModelModal, PermissionModal, ResumeModal
 from .renderer import TUIRenderer
-from .session_control import (
-    SessionControlRequest,
-    available_models,
-    runtime_args_for_transition,
-)
+from .session_control import available_models
 from .slash import SlashCompletion, tui_help_text
 from .styles import APP_CSS
 from .view_models import ToolView
@@ -101,6 +96,7 @@ class WrightTUI(App):
         Binding("ctrl+q", "quit", "Quit"),
         Binding("ctrl+c", "quit", "Quit", show=False),
         Binding("ctrl+x", "stop_turn", "Stop", priority=True),
+        Binding("ctrl+shift+x", "stop_all", "Stop all", priority=True),
         Binding("ctrl+e", "toggle_tools", "Toggle tools", show=False),
         Binding("ctrl+l", "scroll_end", "Scroll to bottom", show=False),
     ]
@@ -111,9 +107,13 @@ class WrightTUI(App):
         *,
         renderer: TUIRenderer | None = None,
         service: SessionService | None = None,
+        directory: Any = None,
+        listener_id: str | None = None,
     ) -> None:
         super().__init__()
         self.rt = rt
+        self.directory = directory
+        self._listener_id = listener_id
         selected = renderer if renderer is not None else getattr(rt, "renderer", None)
         if not isinstance(selected, TUIRenderer):
             raise TypeError("TUI host requires TUIRenderer")
@@ -130,6 +130,8 @@ class WrightTUI(App):
         self._active_request: InteractionRequest | None = None
         self._scroll_pending = False
         self._slash_completion = SlashCompletion()
+        self._mentions: list[dict[str, Any]] = []
+        self._mention_index = 0
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="status"):
@@ -164,7 +166,7 @@ class WrightTUI(App):
 
     def on_unmount(self) -> None:
         self.renderer.detach()
-        if self.service is not None:
+        if self.directory is None and self.service is not None:
             self.service.close(wait_timeout=0)
 
     def _seed_history(self) -> None:
@@ -497,14 +499,48 @@ class WrightTUI(App):
         if value == "/help":
             self.renderer.on_system_notice(tui_help_text())
             return
-        if value == "/new":
-            self._transition(SessionControlRequest.new())
+        from ...application.session.controls import apply_control, interpret_control
+
+        action = interpret_control(value)
+        if action is not None and action.name == "new":
+            self._open_other(environment=action.argument or "local")
             return
-        if value == "/resume":
-            self.run_worker(self._choose_resume(), group="session-control")
+        if action is not None and action.name == "resume":
+            if action.argument:
+                self._open_other(resume=action.argument)
+            else:
+                self.run_worker(self._choose_resume(), group="session-control")
             return
-        if value.startswith("/resume "):
-            self._transition(SessionControlRequest.resume(value.removeprefix("/resume ").strip()))
+        if action is not None and action.name == "close":
+            self._close_viewed()
+            return
+        if action is not None and action.name == "exit":
+            self._request_quit()
+            return
+        if action is not None and action.name not in {"exit"}:
+            try:
+                assert self.service is not None
+                result = apply_control(self.service, action)
+            except (SessionServiceError, ValueError, OSError) as exc:
+                self.renderer.on_system_notice(str(exc))
+                return
+            if action.name == "status":
+                session = result.get("session", {})
+                subs = result.get("subagents") or []
+                self.renderer.on_system_notice(
+                    "  ".join(
+                        part for part in (
+                            str(session.get("execution") or ""),
+                            str(session.get("queue_reason") or ""),
+                            str(session.get("environment") or ""),
+                            str(session.get("execution_root") or ""),
+                            f"subagents={len(subs)}" if subs else "",
+                        ) if part
+                    )
+                )
+            elif action.name == "model" and action.argument:
+                self.renderer.on_system_notice(t("tui.model_changed", current="", model=action.argument))
+            self._refresh_status()
             return
         if value == "/model":
             self.run_worker(self._choose_model(), group="session-control")
@@ -555,32 +591,79 @@ class WrightTUI(App):
         except Exception:
             pass
 
-    def _control_available(self) -> bool:
-        if self.service is not None:
-            idle = self.service.summary().get("execution") == "idle"
-        else:
-            idle_event = getattr(self.rt, "agent_idle", None)
-            idle = idle_event is None or idle_event.is_set()
-        if idle:
-            return True
-        self.renderer.on_system_notice(t("tui.controls_idle"))
-        return False
+    def _open_other(self, *, environment: str | None = None, resume: str | None = None) -> None:
+        """Open or resume a session and show it. The previous session stays open."""
 
-    def _transition(self, request: SessionControlRequest) -> None:
-        if not self._control_available():
+        directory = self.directory
+        if directory is None or self.service is None:
+            self.renderer.on_system_notice(t("tui.no_sessions"))
             return
-        if self.service is not None:
-            try:
-                self.service.persist()
-            except SessionServiceError as exc:
-                self.renderer.on_system_notice(str(exc))
-                return
-            self.service.close(wait_timeout=0)
-        self.exit(result=request)
+        from ..interaction import InteractionHub
+
+        try:
+            opened = directory.open(
+                environment=environment,
+                resume=resume,
+                model=str(self.service.summary().get("model") or "") or None,
+                interaction_broker=InteractionHub(),
+            )
+        except Exception as exc:
+            self.renderer.on_system_notice(str(exc))
+            return
+        self._show(opened)
+        self.renderer.on_system_notice(
+            f"{opened.session_id}  {opened.runtime.session_state.environment}"
+        )
+
+    def _show(self, opened: Any) -> None:
+        previous = self.rt
+        publisher = getattr(previous, "publisher", None)
+        if self._listener_id and publisher is not None and hasattr(publisher, "remove_listener"):
+            publisher.remove_listener(self._listener_id)
+            self._listener_id = None
+        hub = getattr(previous, "interaction_broker", None)
+        if hub is not None and hasattr(hub, "bind_collector"):
+            hub.bind_collector(interrupt=lambda: None)
+        self.rt = opened.runtime
+        self.service = opened.service
+        from ..rendering.attach import attach_renderer
+
+        self._listener_id = attach_renderer(
+            opened.publisher, self.renderer, session=opened.runtime.session_state,
+        )
+        viewed = getattr(self.rt, "interaction_broker", None)
+        if viewed is not None and hasattr(viewed, "bind_collector"):
+            viewed.bind_collector(interrupt=self._interrupt_for_interaction)
+        try:
+            self.query_one("#transcript", VerticalScroll).remove_children()
+        except Exception:
+            pass
+        self._draft = None
+        self._reasoning = None
+        self._tools = {}
+        self._seed_history()
+        self._refresh_status()
+        if viewed is not None and getattr(viewed, "has_pending", lambda: False)():
+            self.post_message(InteractionNeeded())
+
+    def _close_viewed(self) -> None:
+        directory = self.directory
+        if directory is None or self.service is None:
+            self._request_quit()
+            return
+        current = self.service.session_id
+        directory.close(current)
+        self.renderer.on_system_notice(t("tui.session_closed", session_id=current))
+        active = [
+            item for item in directory.list_sessions()
+            if item.get("active") and item.get("session_id") != current
+        ]
+        if active:
+            self._show(directory.get(str(active[0]["session_id"])))
+            return
+        self._open_other(environment="local")
 
     async def _choose_resume(self) -> None:
-        if not self._control_available():
-            return
         if self.service is None:
             self.renderer.on_system_notice(t("tui.no_sessions"))
             return
@@ -590,18 +673,24 @@ class WrightTUI(App):
             return
         session_id = await self.push_screen_wait(ResumeModal(sessions))
         if session_id:
-            self._transition(SessionControlRequest.resume(session_id))
+            self._open_other(resume=str(session_id))
 
     async def _choose_model(self) -> None:
-        if not self._control_available():
+        if not self._model_change_available():
             return
         current = str(self.service.summary()["model"]) if self.service is not None else str(self.rt.llm.model)
         model = await self.push_screen_wait(ModelModal(available_models(current), current))
         if model:
             self._set_model(model)
 
+    def _model_change_available(self) -> bool:
+        if self.service is not None and self.service.summary().get("execution") != "idle":
+            self.renderer.on_system_notice(t("tui.controls_idle"))
+            return False
+        return True
+
     def _set_model(self, model: str) -> None:
-        if not self._control_available() or not model:
+        if not self._model_change_available() or not model:
             return
         current = (
             str(self.service.summary()["model"])
@@ -622,18 +711,52 @@ class WrightTUI(App):
     def on_multiline_composer_slash_changed(
         self, event: MultilineComposer.SlashChanged,
     ) -> None:
+        from ...application.workspace.references import active_mention_query
+
+        query = active_mention_query(event.text)
+        directory = self.directory
+        if query is not None and directory is not None:
+            self._mentions = list(directory.search_references(query))[:8]
+            self._mention_index = min(self._mention_index, max(0, len(self._mentions) - 1))
+            self._slash_completion.update("")
+            self._render_mention_suggestions()
+            return
+        self._mentions = []
         self._slash_completion.update(event.text)
         self._render_slash_suggestions()
 
     def on_multiline_composer_slash_navigate(
         self, event: MultilineComposer.SlashNavigate,
     ) -> None:
+        if self._mentions:
+            self._mention_index = (self._mention_index + event.offset) % len(self._mentions)
+            self._render_mention_suggestions()
+            return
         self._slash_completion.move(event.offset)
         self._render_slash_suggestions()
 
     def on_multiline_composer_slash_complete(
         self, _event: MultilineComposer.SlashComplete,
     ) -> None:
+        if self._mentions and self.service is not None:
+            chosen = self._mentions[self._mention_index]
+            try:
+                self.service.stage_reference(str(chosen.get("path") or ""))
+            except SessionServiceError as exc:
+                self.renderer.on_system_notice(str(exc))
+                return
+            composer = self.query_one("#composer", MultilineComposer)
+            from ...application.workspace.references import active_mention_query
+
+            text = composer.text
+            query = active_mention_query(text) or ""
+            trimmed = text[: len(text) - len(query) - 1].rstrip()
+            composer.load_text(trimmed)
+            self._mentions = []
+            self._render_slash_suggestions()
+            self._refresh_status()
+            composer.focus()
+            return
         command = self._slash_completion.selected
         if command is None:
             return
@@ -644,8 +767,23 @@ class WrightTUI(App):
     def on_multiline_composer_slash_dismissed(
         self, _event: MultilineComposer.SlashDismissed,
     ) -> None:
+        self._mentions = []
         self._slash_completion.update("")
         self._render_slash_suggestions()
+
+    def _render_mention_suggestions(self) -> None:
+        suggestions = self.query_one("#slash-suggestions", Static)
+        composer = self.query_one("#composer", MultilineComposer)
+        composer.set_slash_menu_open(bool(self._mentions))
+        suggestions.display = bool(self._mentions)
+        if not self._mentions:
+            suggestions.update("")
+            return
+        lines = []
+        for index, item in enumerate(self._mentions):
+            marker = "❯" if index == self._mention_index else " "
+            lines.append(f"{marker} {item.get('path')}")
+        suggestions.update("\n".join(lines))
 
     def _render_slash_suggestions(self) -> None:
         suggestions = self.query_one("#slash-suggestions", Static)
@@ -662,7 +800,7 @@ class WrightTUI(App):
         suggestions.update("\n".join(lines) + "\n  " + t("tui.slash_hint"))
 
     def _request_quit(self) -> None:
-        if self.service is not None:
+        if self.directory is None and self.service is not None:
             self.service.close(wait_timeout=0)
         self.exit()
 
@@ -674,13 +812,20 @@ class WrightTUI(App):
             self.renderer.on_system_notice(t("tui.nothing_to_stop"))
             return
         assert self.service is not None
-        self.service.cancel_current()
+        self.service.stop_current()
         screen = self.screen
         if isinstance(screen, PermissionModal):
             screen.dismiss("deny")
         elif isinstance(screen, AskUserModal):
             screen.dismiss(None)
         self.renderer.on_system_notice(t("tui.stopping"))
+        self._refresh_status()
+
+    def action_stop_all(self) -> None:
+        if self.service is None:
+            return
+        self.service.stop_all()
+        self.renderer.on_system_notice(t("tui.stopping_all"))
         self._refresh_status()
 
     def action_toggle_tools(self) -> None:
@@ -717,6 +862,7 @@ class WrightTUI(App):
                 model = str(view.get("model") or "")
                 ws_dir = view.get("workspace_dir")
                 pending = view.get("draft_attachments") or []
+                staged = view.get("staged_references") or []
                 queue_reason = str(view.get("queue_reason") or "")
             else:
                 idle_event = getattr(self.rt, "agent_idle", None)
@@ -729,6 +875,7 @@ class WrightTUI(App):
                 ws_dir = getattr(self.rt.session_state, "workspace_dir", None)
                 drafts = getattr(self.rt, "draft_attachments", None)
                 pending = drafts.summaries() if drafts is not None else []
+                staged = []
                 queue_reason = ""
             composer = self.query_one("#composer", MultilineComposer)
             composer.placeholder = t("tui.placeholder_idle") if idle else t("tui.placeholder_busy")
@@ -750,6 +897,7 @@ class WrightTUI(App):
                 "running": "⏳ " + t("tui.status.running"),
                 "queued": "⏳ " + t("tui.status.queued"),
                 "waiting_for_input": "⏳ " + t("tui.status.waiting_input"),
+                "cancelling": "⏳ " + t("tui.status.cancelling"),
                 "closing": "○ " + t("tui.status.closing"),
                 "closed": "○ " + t("tui.status.closed"),
             }
@@ -769,7 +917,14 @@ class WrightTUI(App):
                     for index, record in enumerate(pending, 1)
                     for filename, width, height in [_attached(record)]
                 )
-                attachment_bar.update(t("tui.attached", listing=listing))
+            else:
+                listing = ""
+            ref_listing = "  ".join(
+                f"@{item.get('path')}" for item in staged if isinstance(item, dict) and item.get("path")
+            )
+            shown = "  ".join(part for part in (listing, ref_listing) if part)
+            if shown:
+                attachment_bar.update(shown)
                 attachment_bar.display = True
             else:
                 attachment_bar.display = False
@@ -800,11 +955,10 @@ def _plan_brief(session_state: Any) -> str:
 
 def run_tui(args: Any) -> None:
     require_interactive_tty()
-    from ...application.session.directory import SessionDirectory
+    from ...application.session.directory import SessionDirectory, SessionDirectoryError
     from ..interaction import InteractionHub
     from ..rendering.attach import attach_renderer
 
-    active_args = args
     workspace = Path(getattr(args, "workspace", None) or Path.cwd()).expanduser().resolve()
     directory = SessionDirectory(
         workspace,
@@ -812,36 +966,31 @@ def run_tui(args: Any) -> None:
         base_args=args,
         assemble=assemble_runtime,
     )
+    renderer = TUIRenderer()
+    hub = InteractionHub()
     try:
-        while True:
-            config = runtime_config_from_args(active_args)
-            renderer = TUIRenderer()
-            hub = InteractionHub()
-            opened = directory.open(
-                model=getattr(config, "model", None),
-                resume_session_id=getattr(active_args, "resume", None) or None,
-                interaction_broker=hub,
-                workspace=config.workspace,
-                resume_chooser=choose_resume_session,
-            )
-            attach_renderer(opened.publisher, renderer, session=opened.runtime.session_state)
-            app = WrightTUI(opened.runtime, renderer=renderer, service=opened.service)
-            transition: SessionControlRequest | None = None
-            try:
-                result = app.run()
-                if isinstance(result, SessionControlRequest):
-                    transition = result
-                elif opened.runtime.agent.checkpoint_store:
-                    print(t("cli.session_saved", session_id=opened.session_id))
-            finally:
-                stopped = directory.close(opened.session_id).get("lifecycle") == "closed" or (
-                    app.service.closed if app.service is not None else True
-                )
-            if transition is not None and not stopped:
-                print(t("cli.session_closing"))
-                return
-            if transition is None:
-                return
-            active_args = runtime_args_for_transition(active_args, transition)
+        opened = directory.open(
+            environment=getattr(args, "environment", None),
+            model=getattr(args, "model", None),
+            resume=getattr(args, "resume", None),
+            continue_latest=bool(getattr(args, "continue_latest", False)),
+            interaction_broker=hub,
+            resume_chooser=choose_resume_session,
+        )
+    except SessionDirectoryError as exc:
+        directory.shutdown()
+        raise SystemExit(str(exc)) from exc
+    listener_id = attach_renderer(
+        opened.publisher, renderer, session=opened.runtime.session_state,
+    )
+    app = WrightTUI(
+        opened.runtime,
+        renderer=renderer,
+        service=opened.service,
+        directory=directory,
+        listener_id=listener_id,
+    )
+    try:
+        app.run()
     finally:
         directory.shutdown()

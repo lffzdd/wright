@@ -112,6 +112,7 @@ class SessionService:
         self._cancelled: set[str] = set()
         self._active_command: str | None = None
         self._active_attachment_ids: set[str] = set()
+        self._staged_references: list[dict[str, Any]] = []
         # A new process receives a unique consumer id.  SQLite is the arbiter;
         # this value only identifies the winner of a claim, never grants a
         # second right to execute work.
@@ -204,11 +205,16 @@ class SessionService:
                 self._queued[command_id] = {
                     "prompt": str(payload.get("prompt", "")),
                     "attachments": attachments,
+                    "references": list(payload.get("references") or []),
                 }
             self.runtime.event_queue.put((
                 "USER_INPUT",
-                {"prompt": str(payload.get("prompt", "")), "command_id": command_id,
-                 "attachment_ids": attachment_ids},
+                {
+                    "prompt": str(payload.get("prompt", "")),
+                    "command_id": command_id,
+                    "attachment_ids": attachment_ids,
+                    "references": list(payload.get("references") or []),
+                },
             ))
 
     def _require_accepting_input(self) -> None:
@@ -241,10 +247,22 @@ class SessionService:
         return record, fresh
 
     def _queue_input(
-        self, command_id: str, prompt: str, attachment_ids: list[str], attachments: list[dict[str, object]]
+        self,
+        command_id: str,
+        prompt: str,
+        attachment_ids: list[str],
+        attachments: list[dict[str, object]],
+        references: list[dict[str, Any]] | None = None,
     ) -> None:
+        references = list(references or [])
         store = getattr(self.runtime, "autonomy_store", None)
         if store is not None:
+            try:
+                before = store.get_command(self._command_scope, command_id)
+            except Exception as exc:
+                raise SessionServiceError(f"could not queue accepted command: {exc}") from exc
+            if str(before.get("status")) not in {"accepted"}:
+                return
             try:
                 record = store.queue_command(self._command_scope, command_id)
             except Exception as exc:
@@ -252,10 +270,23 @@ class SessionService:
             if record["status"] not in {"queued", "accepted"}:
                 return
         with self._lock:
-            self._queued[command_id] = {"prompt": prompt, "attachments": attachments}
+            already = command_id in self._queued
+            if not already:
+                self._queued[command_id] = {
+                    "prompt": prompt,
+                    "attachments": attachments,
+                    "references": references,
+                }
+        if already:
+            return
         self.runtime.event_queue.put((
             "USER_INPUT",
-            {"prompt": prompt, "command_id": command_id, "attachment_ids": attachment_ids},
+            {
+                "prompt": prompt,
+                "command_id": command_id,
+                "attachment_ids": attachment_ids,
+                "references": references,
+            },
         ))
 
     @staticmethod
@@ -346,18 +377,45 @@ class SessionService:
             except AttachmentError as exc:
                 raise SessionServiceError(str(exc)) from exc
 
+    def stage_reference(self, raw: str) -> dict[str, Any]:
+        """Remember a file identity on the draft. This does not read the file."""
+
+        self._require_accepting_input()
+        from pathlib import Path
+
+        from ..workspace.references import ReferenceError, identify_reference
+
+        settings = getattr(self.runtime, "permission_settings", None)
+        external = list(getattr(settings, "additional_directories", []) or [])
+        project = Path(
+            self.runtime.session_state.project_root or self.runtime.session_state.workspace_dir
+        )
+        try:
+            ref = identify_reference(project, raw, external_roots=external)
+        except ReferenceError as exc:
+            raise SessionServiceError(str(exc)) from exc
+        with self._lock:
+            self._staged_references.append(ref)
+        return ref
+
+    def staged_references(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return list(self._staged_references)
+
     def submit(
         self,
         prompt: str,
         command_id: str | None = None,
         attachment_ids: list[str] | None = None,
         document_ids: list[str] | None = None,
+        references: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         self._require_accepting_input()
         cleaned = prompt.strip()
         attachment_ids = list(attachment_ids or [])
         attachments = self._attachments(attachment_ids)
         from ..workspace.documents import DocumentError, render_documents
+        from ..workspace.references import ReferenceError, prepare_submission_references
 
         try:
             document_text = render_documents(self.runtime.session_state, list(document_ids or []))
@@ -365,16 +423,35 @@ class SessionService:
             raise SessionServiceError(str(exc)) from exc
         if document_text:
             cleaned = f"{cleaned}\n\n{document_text}".strip()
-        if not cleaned and not attachments:
+        project_root = self.runtime.session_state.project_root or self.runtime.session_state.workspace_dir
+        settings = getattr(self.runtime, "permission_settings", None)
+        external = list(getattr(settings, "additional_directories", []) or [])
+        with self._lock:
+            staged = list(self._staged_references)
+            if references is None:
+                supplied = staged
+            else:
+                supplied = list(references)
+        try:
+            prepared = prepare_submission_references(
+                project_root, supplied, cleaned, external_roots=external,
+            )
+        except ReferenceError as exc:
+            raise SessionServiceError(str(exc)) from exc
+        if not cleaned and not attachments and not prepared:
             raise SessionServiceError("prompt or attachment is required")
         command_id = command_id or uuid4().hex
         record, fresh = self._accept_command(command_id, {
             "command": "turn.submit", "prompt": cleaned,
             "attachment_ids": attachment_ids,
+            "references": prepared,
         })
         queued = not self.runtime.agent_idle.is_set() or not self.runtime.event_queue.empty()
-        if fresh or record.get("status") in {"accepted", "queued"}:
-            self._queue_input(command_id, cleaned, attachment_ids, attachments)
+        if fresh or record.get("status") == "accepted":
+            self._queue_input(command_id, cleaned, attachment_ids, attachments, prepared)
+            with self._lock:
+                if references is None:
+                    self._staged_references.clear()
         return self.publisher.publish(
             "command.accepted",
             {
@@ -382,18 +459,29 @@ class SessionService:
                 "command": "turn.submit",
                 "prompt": cleaned,
                 "attachments": attachments,
+                "references": prepared,
                 "queued": queued,
                 "duplicate": not fresh,
             },
         ).to_dict()
 
-    def cancel_current(
-        self, command_id: str | None = None, *, cancel_queued: bool = False
+    def stop_current(self, command_id: str | None = None) -> dict[str, Any]:
+        """Stop the turn that holds execution. Queued messages stay queued."""
+
+        return self._stop(command_id, cancel_queued=False, command="turn.cancel")
+
+    def stop_all(self, command_id: str | None = None) -> dict[str, Any]:
+        """Stop the current turn and cancel every message that has not started."""
+
+        return self._stop(command_id, cancel_queued=True, command="turn.cancel_all")
+
+    def _stop(
+        self, command_id: str | None, *, cancel_queued: bool, command: str,
     ) -> dict[str, Any]:
         self._require_accepting_input()
         command_id = command_id or uuid4().hex
         _record, fresh = self._accept_command(command_id, {
-            "command": "turn.cancel", "cancel_queued": cancel_queued,
+            "command": command, "cancel_queued": cancel_queued,
         })
         cancelled_queued = 0
         if fresh:
@@ -423,7 +511,7 @@ class SessionService:
             "command.accepted",
             {
                 "command_id": command_id,
-                "command": "turn.cancel",
+                "command": command,
                 "duplicate": not fresh,
                 "cancelled_queued": cancelled_queued if fresh else 0,
             },
@@ -604,6 +692,8 @@ class SessionService:
         if self._interaction_snapshot():
             return "waiting_for_input", "waiting for permission or a reply"
         if not self.runtime.agent_idle.is_set():
+            if self.runtime.cancellation_event.is_set():
+                return "cancelling", "stopping the current turn"
             return "running", None
         return "idle", None
 
@@ -641,6 +731,7 @@ class SessionService:
             "context_limit": limit,
             "workspace_dir": str(getattr(state, "workspace_dir", "") or ""),
             "plan_brief": _plan_brief(state),
+            "staged_references": self.staged_references(),
             "draft_attachments": [
                 {
                     "filename": record.filename,
@@ -681,6 +772,27 @@ class SessionService:
             "pending_interactions": self._interaction_snapshot(),
             "models": list(available_models(str(self.runtime.session_state.model_name or ""))),
         }
+
+    def activity(self) -> dict[str, Any]:
+        """Canonical execution projection for every interface.
+
+        Display widgets may fold or scroll this. They do not invent the status.
+        """
+
+        from ..workspace.timeline import (
+            project_accessed_files,
+            project_subagents,
+            project_timeline,
+        )
+
+        snap = self.snapshot()
+        state = self.runtime.session_state
+        snap["timeline"] = project_timeline(state, snap["pending_interactions"])
+        snap["subagents"] = project_subagents(state)
+        snap["accessed_files"] = project_accessed_files(state)
+        snap["plan"] = _plan_brief(state)
+        snap["staged_references"] = self.staged_references()
+        return snap
 
     def close(self, *, wait_timeout: float | None = None) -> bool:
         if self.runner.state == "closed":

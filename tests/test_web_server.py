@@ -289,7 +289,7 @@ def test_real_socket_delivers_a_scripted_turn_without_mixing_child_events(tmp_pa
     publisher = manager.handle.publisher
     seen: set[str] = set()
 
-    def submit(prompt, command_id, attachment_ids=None, document_ids=None):
+    def submit(prompt, command_id, attachment_ids=None, document_ids=None, references=None):
         duplicate = command_id in seen
         seen.add(command_id)
         publisher.publish("command.accepted", {
