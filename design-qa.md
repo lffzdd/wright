@@ -1,60 +1,40 @@
-# Wright Web reference-design QA
+# Wright Web reference design QA
 
-**Source visual truth**
+## Target and evidence
 
-- HTML: `/Users/williamlao/Documents/Temp4Agent/agent_ui_designs/index.html`
-- Source screenshot: `/Users/williamlao/Documents/Temp4Agent/agent_ui_designs/preview.png`
-- Normalized source: `/Users/williamlao/Project/wright/web/qa/reference-1440x960.png`
+- Source visual truth: `/Users/williamlao/Documents/Temp4Agent/agent_ui_designs/index.html`
+- Dark source: `web/qa/reference-current-1440x960.png`
+- Dark implementation: `web/qa/implementation-after-1440x960.png`
+- Light source: `web/qa/reference-light-1440x960.png`
+- Light implementation: `web/qa/implementation-after-light-1440x960.png`
+- Narrow implementation: `web/qa/implementation-after-900x800.png` and `web/qa/implementation-after-390x800.png`
+- Focused dark comparisons: `web/qa/reference-focus-center.png` versus `web/qa/implementation-focus-center.png`, and `web/qa/reference-focus-inspector.png` versus `web/qa/implementation-focus-inspector.png`.
+- Earlier comparison artifacts remain at `web/qa/reference-1440x960.png`, `web/qa/implementation-1440x960.png`, and `web/qa/comparison-*.png`. The source's supplied `preview.png` was 2880 × 1920 and the earlier report normalized it to 1440 × 960; this pass captured the live HTML directly at 1×.
+- Capture: Chromium, 1440 × 960 CSS pixels and image pixels, device scale factor 1. Narrow captures are 900 × 800 and 390 × 800 at the same density.
+- State: English, task with a failed Shell call, file edit, pending permission, Task inspector tab, dark and light themes. Wright uses its deterministic visual fixture; the reference uses its built-in sample data.
 
-**Implementation evidence**
+## Comparison history
 
-- Route: `http://127.0.0.1:4173/?visual=fixture`
-- Browser-rendered screenshot: `/Users/williamlao/Project/wright/web/qa/implementation-1440x960.png`
-- Full comparison, reference left and implementation right: `/Users/williamlao/Project/wright/web/qa/comparison-reference-left-implementation-right.png`
-- Center timeline comparison: `/Users/williamlao/Project/wright/web/qa/comparison-focus-center.png`
-- Inspector comparison: `/Users/williamlao/Project/wright/web/qa/comparison-focus-inspector.png`
-- Difference image: `/Users/williamlao/Project/wright/web/qa/comparison-difference.png`
+1. Initial comparison: Wright's reasoning, tool, and permission cards began at x=276 while the source began at x=246. The permission card began near y=475 instead of y=494. The top branch group began near x=372 instead of x=425. The composer and Inspector plan were vertically compressed.
+   An earlier project QA pass had already replaced generic three-column chrome with the current reference-specific components; this pass evaluates and repairs that result.
+2. First repair: Removed the extra timeline indent and matched the source's 38px top bar, 230px rail, 380px inspector, and top navigation spacing. Adjusted message, tool, diff, and permission-card line heights and padding.
+3. Second repair: Grouped the Inspector plan heading with its steps, matched step density, aligned the composer, refined sidebar markers and weights, and made the light theme's dark tool surfaces readable.
+4. Final dark capture: branch x=425 versus source x≈425; permission card x=246, y≈493, width=798, height=207 versus source x=246, y≈494, width=798, height=207; first plan step y≈225 and composer x=240, y≈837 match the source within one CSS pixel. The final images above provide the full-view comparison and focused evidence for the timeline, permission card, composer, and inspector.
 
-**Normalization and state**
+## Fidelity assessment
 
-- Viewport: 1440 x 960 CSS px.
-- Source: 2880 x 1920 px at 2x, downsampled to 1440 x 960 for comparison.
-- Implementation: 1440 x 960 px browser capture at 1x.
-- State: dark theme, active rate-limiter task, failed shell test, file edit, waiting permission, Task inspector tab, inspector open, read-directory card collapsed.
-- Responsive checks: 1280 x 800 and 1024 x 768.
+- Typography: The source font stacks and compact type scale are present. Some wording and text length come from Wright's real state, so wrapping can differ with live data.
+- Spacing and layout: The default 1440 × 960 dark layout matches the principal region and card boundaries. At 900 and 390 pixels, the page has no horizontal overflow; side panels become overlays.
+- Colors: Dark palette tokens match the source. The light variant retains dark tool, permission, and composer surfaces while giving their text sufficient contrast; the reference's light screenshot has several low-contrast labels.
+- Images and icons: The source has no raster imagery to migrate. Wright keeps its existing Phosphor icon library, so a few glyph silhouettes differ from the reference's inline icons.
+- Copy and content: Wright branding, real model names, file counts, permission choices, and session data remain dynamic. The reference's decorative audit checkbox and sample `/benchmark` chip are not fabricated in the product. The fixture therefore shows `More grants` and the actual attached file chip.
 
-**Findings**
+## Verification and remaining polish
 
-- No actionable P0, P1, or P2 fidelity findings remain.
-- Fonts and typography: the implementation uses the source system/Geist-style fallback stack, compact 9.5-12.5 px hierarchy, monospace metadata, matching truncation, and the same dense line rhythm. The 1x browser capture is slightly less crisp than the source's downsampled 2x capture; this is density normalization, not a CSS mismatch.
-- Spacing and layout: the 38 px top bar, 230 px session rail, flexible center workspace, 380 px inspector, 46 px task header, timeline indents, tool-card density, approval grid, and bottom composer align with the source. At 1280 px the rail and inspector contract while controls remain usable; at 1024 px they become off-canvas panels and the center workflow remains usable.
-- Colors and visual tokens: dark and light palettes, accent, border, terminal, success, warning, danger, and muted tokens match the reference treatment. Waiting-permission state remains visually dominant.
-- Image quality and assets: the source contains no raster product imagery. UI icons use the existing Phosphor icon set rather than custom SVG or placeholder glyph art. The source preview remains the only raster reference.
-- Copy and content: the deterministic fixture reproduces the reference task, branch, prompt reference, tool outcomes, diff counts, plan, files, subagent, and approval semantics. Production-facing Wright branding and real backend values intentionally replace the mock Nexus identity and static values.
-- Interactions and accessibility: verified tool expand/collapse, Task/Files inspector tabs, inspector show/hide, theme toggle, semantic buttons/tabs/labels, keyboard focus styling, and reduced-motion handling. The responsive production shell retains the session-rail trigger. A stale hot-reload console entry from an intermediate missing icon import was observed; after correction and full reload the complete accessibility tree rendered and the final build/tests were clean.
-
-**Comparison history**
-
-1. Initial baseline: blocked by P1 structural drift. The top bar omitted reference chrome and status controls; generic tool cards, the approval surface, the left footer, and inspector density did not reproduce the selected design.
-2. First implementation pass: fixed the three-region shell, top chrome, session rail, event-specific read/shell/edit cards, command approval with Reason/Scope/Risk, composer, and Task inspector. P2 findings remained in tool metadata, context formatting, inspector vertical rhythm, and task-header wrapping.
-3. Second implementation pass: added real edit counts, compact token formatting, file/subagent density, pending-permission tab styling, deterministic reference content, responsive/light checks, and task-heading truncation. Post-fix full and focused comparisons show no remaining P0/P1/P2 differences.
-
-**Primary interactions tested**
-
-- Expand and collapse the directory-read tool card.
-- Switch Task and Files inspector tabs.
-- Hide and restore the inspector.
-- Toggle dark and light themes.
-- Render at 1440 x 960, 1280 x 800, and 1024 x 768.
-
-**Validation**
-
-- `npm run build`: passed.
-- `npm test -- --run`: 5 files, 35 tests passed.
-
-**Follow-up polish**
-
-- P3: the production composer intentionally keeps a visible Send action beside Stop so Wright's queued-instruction capability remains discoverable; the static reference shows Stop only.
-- P3: real production task/session counts and available controls can differ from the deterministic fixture while retaining the reference structure.
+- `npm test -- --run`: 46 tests passed.
+- `npm run build`: production bundle generated successfully.
+- Browser check: Shell disclosure closed and reopened, Files tab selected, Inspector closed and reopened, theme toggled; no page errors.
+- P3: Shell failure output uses the real unmodified text instead of the reference's custom line-by-line coloring; some icons and dynamic copy differ.
+- Limit: Screenshots use a deterministic fixture, not a live backend session. Existing component tests cover the affected components, but this pass does not establish visual equality for every possible live state.
 
 final result: passed

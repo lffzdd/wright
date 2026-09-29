@@ -43,6 +43,7 @@ export const api = {
   references: (projectId: string, q: string) => json<{ results: Array<Record<string, unknown>> }>(`/api/v1/workspaces/${projectId}/references?q=${encodeURIComponent(q)}`),
   close: (id: string) => json(`/api/v1/sessions/${id}/close`, { method: "POST", body: "{}" }),
   archive: (id: string) => json(`/api/v1/sessions/${id}/archive`, { method: "POST", body: "{}" }),
+  relabel: (id: string, label: string) => json(`/api/v1/sessions/${id}/label`, { method: "POST", body: JSON.stringify({ label }) }),
   setModel: (id: string, model: string) => json(`/api/v1/sessions/${id}/model`, { method: "POST", body: JSON.stringify({ model }) }),
   commandStatus: (id: string, commandId: string) => json<{ command_id: string; status: string }>(`/api/v1/sessions/${id}/commands/${commandId}`),
   uploadAttachment: async (id: string, file: File) => {

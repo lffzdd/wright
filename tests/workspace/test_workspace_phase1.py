@@ -508,6 +508,17 @@ def test_timeline_projects_reasoning_apart_from_assistant_text():
     assert timeline[2]["text"] == "I can read files."
 
 
+def test_checkpoint_relabel_updates_the_display_name(tmp_path: Path):
+    from wright.infrastructure.persistence.session.repository import FileSessionRepository
+
+    store = FileSessionRepository(tmp_path)
+    path = tmp_path / "sess01ab.json"
+    path.write_text('{"session": {"session_id": "sess01ab", "session_label": "old"}, "saved_at": "2026-09-29T12:00:00"}', encoding="utf-8")
+    result = store.relabel("sess01ab", "Harden Redis rate limiter")
+    assert result["user_goal"] == "Harden Redis rate limiter"
+    assert '"session_label": "Harden Redis rate limiter"' in path.read_text(encoding="utf-8")
+
+
 def test_documents_inline_without_entering_the_workspace(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "home"))
     project = tmp_path / "project"

@@ -44,6 +44,10 @@ class SessionRequest(BaseModel):
     permission_mode: str | None = None
 
 
+class LabelRequest(BaseModel):
+    label: str
+
+
 class ModelRequest(BaseModel):
     model: str
 
@@ -79,7 +83,7 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
     def exchange(body: BootstrapRequest, response: Response) -> dict[str, bool]:
         session_token = auth.exchange(body.token)
         if session_token is None:
-            raise HTTPException(status_code=401, detail="invalid or already-used bootstrap token")
+            raise HTTPException(status_code=401, detail="invalid bootstrap token")
         response.set_cookie(
             COOKIE_NAME,
             session_token,
@@ -278,6 +282,14 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
             return manager.close(session_id)
         except RuntimeManagerError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.post("/sessions/{session_id}/label")
+    def relabel_session(session_id: str, body: LabelRequest, request: Request) -> dict[str, Any]:
+        _require_auth(request, auth)
+        try:
+            return manager.relabel(session_id, body.label)
+        except RuntimeManagerError as exc:
+            raise HTTPException(status_code=exc.status_code or 409, detail=str(exc)) from exc
 
     @router.post("/sessions/{session_id}/archive")
     def archive_session(session_id: str, request: Request) -> dict[str, Any]:

@@ -1,5 +1,5 @@
 import {
-  Archive, Check, Circle, DotsThreeVertical, FileCode, Paperclip, PaperPlaneRight, Plus, SpinnerGap, Square, Warning, X,
+  Archive, Check, Circle, DotsThreeVertical, FileCode, Folder, Paperclip, PaperPlaneRight, Plus, SpinnerGap, Square, Warning, X,
 } from "@phosphor-icons/react";
 import { FormEvent, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { DiffViewer } from "../DiffViewer";
@@ -117,7 +117,7 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }:
     setStuck(near);
   };
   useEffect(() => {
-    if (stick.current) scroller.current?.scrollTo({ top: scroller.current.scrollHeight });
+    if (stick.current) scroller.current?.scrollTo?.({ top: scroller.current.scrollHeight });
   }, [state.history.length, state.active_turn?.content, state.active_turn?.tools.length, state.timeline?.length, state.pending_interactions.length]);
   const timeline = state.timeline ?? [];
   const known = new Set(timeline.map((item) => item.id));
@@ -161,7 +161,7 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }:
     {pending.map((item) => <InteractionCard key={item.request_id} interaction={item} respond={respond} />)}
     {state.queued_commands.map((item) => <div className="queue-item" key={item.command_id}><span>{item.prompt}</span><button type="button" className="button" onClick={() => cancelQueued(item.command_id)}>{tr("web.remove_queued")}</button></div>)}
     {state.notices.slice(-5).map((notice) => <div className="system-notice" role="status" key={notice.id}>{present(notice.code, notice.params, notice.text)}</div>)}
-    {!stuck && <button type="button" className="button jump" onClick={() => { stick.current = true; setStuck(true); scroller.current?.scrollTo({ top: scroller.current.scrollHeight }); }}>{tr("web.jump_bottom")}</button>}
+    {!stuck && <button type="button" className="button jump" onClick={() => { stick.current = true; setStuck(true); scroller.current?.scrollTo?.({ top: scroller.current.scrollHeight }); }}>{tr("web.jump_bottom")}</button>}
   </div>;
 }
 
@@ -473,8 +473,10 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
         <p>{state.plan.objective || state.session.user_goal || tr("web.no_plan")}</p>
         {steps.length ? <div className="progress"><i style={{ width: `${Math.round((completedSteps / steps.length) * 100)}%` }} /></div> : null}
       </section>
-      <div className="section-label"><span>{tr("web.execution_plan")} {steps.length ? `(${completedSteps}/${steps.length})` : ""}</span>{currentStep >= 0 && <span>Step {currentStep + 1} active</span>}</div>
-      <div className="step-list">{steps.map((step) => <article key={step.id} className={`step-card ${step.status}`}>{step.status === "completed" ? <Check size={15} weight="bold" /> : ["in_progress", "running", "active"].includes(step.status) ? <SpinnerGap size={15} className="spin" /> : <Circle size={15} />}<div><strong>{step.title}</strong><small>{step.status}{step.note ? ` · ${step.note}` : ""}</small></div>{["in_progress", "running", "active"].includes(step.status) && <span className="current-step">Current</span>}</article>)}</div>
+      <div className="inspector-plan">
+        <div className="section-label"><span>{tr("web.execution_plan")} {steps.length ? `(${completedSteps}/${steps.length})` : ""}</span>{currentStep >= 0 && <span>Step {currentStep + 1} active</span>}</div>
+        <div className="step-list">{steps.map((step) => <article key={step.id} className={`step-card ${step.status}`}>{step.status === "completed" ? <Check size={15} weight="bold" /> : ["in_progress", "running", "active"].includes(step.status) ? <SpinnerGap size={15} className="spin" /> : <Circle size={15} />}<div><strong>{step.title}</strong><small>{step.status}{step.note ? ` · ${step.note}` : ""}</small></div>{["in_progress", "running", "active"].includes(step.status) && <span className="current-step">Current</span>}</article>)}</div>
+      </div>
       {!state.plan.steps?.length && <p className="empty-small">{tr("web.no_plan")}</p>}
       <section className="goal-card">
         <div className="card-kicker"><span>{tr("web.accessed_files")}</span><span>{(state.accessed_files ?? []).length}</span></div>
@@ -535,7 +537,28 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
   </aside>;
 }
 
-export function SessionRail({ sessions, selected, onSelect, onCreate, open, children, footer = "", selectedProgress }: {
+type WorkspaceRow = { project_id: string; name: string; selected?: boolean };
+
+function SessionMenu({ session, onRename, onArchive }: {
+  session: SessionSummary;
+  onRename?: (session: SessionSummary) => void;
+  onArchive?: (session: SessionSummary) => void;
+}) {
+  const tr = useT();
+  const [open, setOpen] = useState(false);
+  if (!onRename && !onArchive) return null;
+  return <div className="session-actions">
+    <button type="button" className="icon-button" aria-label={tr("web.session_actions")} onClick={(event) => { event.stopPropagation(); setOpen((value) => !value); }}>
+      <DotsThreeVertical size={12} weight="bold" />
+    </button>
+    {open && <div className="session-menu" role="menu">
+      {onRename && <button type="button" role="menuitem" onClick={(event) => { event.stopPropagation(); setOpen(false); onRename(session); }}>{tr("web.rename")}</button>}
+      {onArchive && <button type="button" role="menuitem" onClick={(event) => { event.stopPropagation(); setOpen(false); onArchive(session); }}>{tr("web.archive")}</button>}
+    </div>}
+  </div>;
+}
+
+export function SessionRail({ sessions, selected, onSelect, onCreate, open, children, footer = "", selectedProgress, workspaces = [], onSelectWorkspace, onRename, onArchive }: {
   sessions: SessionSummary[];
   selected: string | null;
   onSelect: (session: SessionSummary) => void;
@@ -544,6 +567,10 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
   children?: ReactNode;
   footer?: string;
   selectedProgress?: string;
+  workspaces?: WorkspaceRow[];
+  onSelectWorkspace?: (projectId: string) => void;
+  onRename?: (session: SessionSummary) => void;
+  onArchive?: (session: SessionSummary) => void;
 }) {
   const tr = useT();
   const active = sessions.filter((item) => item.active);
@@ -554,32 +581,50 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
     if (session.active && execution === "idle") return tr("web.status.paused");
     return tr(`web.status.${execution}`);
   };
+  const renderActive = () => <>
+    <div className="section-label"><span>{tr("web.active_tasks")}</span>{active.length > 0 && <span className="live-dot" />}</div>
+    {active.map((session) => {
+      const title = sessionTitle(session, tr);
+      const current = selected === session.session_id;
+      const execution = session.execution || session.status;
+      const when = formatAgo(session.saved_at) || (session.environment === "worktree" ? tr("web.isolated_option") : "");
+      return <div className="session-entry" key={session.session_id}>
+        <button className={current ? "task-card" : "task-row"} onClick={() => onSelect(session)}>
+          {current ? <>
+            <span className="task-card-top"><span><span className={`status-dot ${execution}`} /><span className="task-id">{taskCode(session.session_id)}</span></span><span className="task-step">{selectedProgress || tr(`web.status.${execution}`)}</span></span>
+            <span className="task-title">{title}</span>
+            <span className="task-meta"><span className={session.pending_interactions ? "waiting-copy" : ""}>{session.pending_interactions ? <><Warning size={11} weight="bold" />{tr("web.awaiting_permission")}</> : statusLabel(session)}</span><span>{when}</span></span>
+          </> : <>
+            <span className={`status-dot ${execution}`} /><span className="task-id">{taskCode(session.session_id, true)}</span><span className="task-title">{title}</span><span className="task-meta">{statusLabel(session)}</span>
+          </>}
+        </button>
+        <SessionMenu session={session} onRename={onRename} onArchive={onArchive} />
+      </div>;
+    })}
+    {!active.length && <p className="empty-small">{tr("web.no_active")}</p>}
+  </>;
+  const renderHistory = () => <>
+    <div className="section-label"><span>{tr("web.recent_tasks")}</span></div>
+    {history.map((session) => <div className="session-entry" key={session.session_id}>
+      <button className="recent-row" onClick={() => onSelect(session)}>{session.status === "failed" ? <X className="recent-mark fail" size={12} weight="bold" /> : <Check className="recent-mark ok" size={12} weight="bold" />}{sessionTitle(session, tr)}</button>
+      <SessionMenu session={session} onRename={onRename} onArchive={onArchive} />
+    </div>)}
+  </>;
   return <aside className={`sidebar ${open ? "responsive-open" : ""}`}>
     <div className="sidebar-scroll">
       <button className="primary-action" onClick={onCreate} aria-label={tr("web.new_session")}><span><Plus size={14} /> {tr("web.new_task")}</span><kbd>⌘N</kbd></button>
-      <div>
-        <div className="section-label"><span>{tr("web.active_tasks")}</span>{active.length > 0 && <span className="live-dot" />}</div>
-        {active.map((session) => {
-          const title = sessionTitle(session, tr);
-          const current = selected === session.session_id;
-          const execution = session.execution || session.status;
-          const when = formatAgo(session.saved_at) || (session.environment === "worktree" ? tr("web.isolated_option") : "");
-          return <button key={session.session_id} className={current ? "task-card" : "task-row"} onClick={() => onSelect(session)}>
-            {current ? <>
-              <span className="task-card-top"><span><span className={`status-dot ${execution}`} /><span className="task-id">{taskCode(session.session_id)}</span></span><span className="task-step">{selectedProgress || tr(`web.status.${execution}`)}</span></span>
-              <span className="task-title">{title}</span>
-              <span className="task-meta"><span className={session.pending_interactions ? "waiting-copy" : ""}>{session.pending_interactions ? <><Warning size={11} weight="bold" />{tr("web.awaiting_permission")}</> : statusLabel(session)}</span><span>{when}</span></span>
-            </> : <>
-              <span className={`status-dot ${execution}`} /><span className="task-id">{taskCode(session.session_id, true)}</span><span className="task-title">{title}</span><span className="task-meta">{statusLabel(session)}</span>
-            </>}
-          </button>;
-        })}
-        {!active.length && <p className="empty-small">{tr("web.no_active")}</p>}
-      </div>
-      <div>
-        <div className="section-label"><span>{tr("web.recent_tasks")}</span></div>
-        {history.map((session) => <button key={session.session_id} className="recent-row" onClick={() => onSelect(session)}><span className={session.status === "failed" ? "recent-mark fail" : "recent-mark ok"} />{sessionTitle(session, tr)}</button>)}
-      </div>
+      {workspaces.length ? <div>
+        <div className="section-label"><span>{tr("web.workspaces")}</span></div>
+        {workspaces.map((workspace) => <div className="workspace-block" key={workspace.project_id}>
+          <button type="button" className={`nav-row ${workspace.selected ? "selected" : ""}`} onClick={() => onSelectWorkspace?.(workspace.project_id)}>
+            <Folder size={14} />{workspace.name}
+          </button>
+          {workspace.selected && <div className="workspace-sessions">{renderActive()}{renderHistory()}</div>}
+        </div>)}
+      </div> : <>
+        <div>{renderActive()}</div>
+        <div>{renderHistory()}</div>
+      </>}
       {children}
     </div>
     {footer && <div className="sidebar-foot"><span className="profile-avatar">W</span><span className="profile-copy"><strong>Wright</strong><small>{footer}</small></span><span className="connection-latency" title={tr("web.connection.connected")}><i /></span></div>}

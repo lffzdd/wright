@@ -347,9 +347,24 @@ class SessionDirectory:
 
         turn_ids, run_ids = seed_ids(saved)
         execution_root = Path(saved.workspace_dir)
+        from ..workspace.timeline import (
+            project_accessed_files,
+            project_subagents,
+            project_timeline,
+        )
+
+        plan = {}
+        manager = getattr(saved, "plan_manager", None)
+        snapshot = getattr(manager, "snapshot", None)
+        if callable(snapshot):
+            plan = snapshot() or {}
         return {
             "view_only": True,
             "history": project_history(saved, turn_ids, run_ids),
+            "timeline": project_timeline(saved, []),
+            "subagents": project_subagents(saved),
+            "accessed_files": project_accessed_files(saved),
+            "plan": plan,
             "session": {
                 "session_id": saved.session_id,
                 "lifecycle": "closed",
@@ -436,6 +451,23 @@ class SessionDirectory:
             raise SessionDirectoryError("durable run not found", kind="not_found") from exc
         finally:
             store.close()
+
+    def relabel(self, session_id: str, label: str) -> dict[str, Any]:
+        """Rename a live or closed session without starting execution."""
+
+        cleaned = label.strip()
+        if not cleaned:
+            raise SessionDirectoryError("label is required")
+        with self._lock:
+            opened = self._sessions.get(session_id)
+        if opened is not None:
+            opened.runtime.session_state.session_label = cleaned
+            opened.service.persist()
+            return opened.service.summary()
+        try:
+            return self.checkpoints.relabel(session_id, cleaned)
+        except CheckpointError as exc:
+            raise SessionDirectoryError(str(exc), kind="not_found") from exc
 
     def archive(self, session_id: str) -> ArchiveResult:
         with self._lock:

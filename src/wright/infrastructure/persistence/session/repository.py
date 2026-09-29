@@ -77,6 +77,39 @@ class FileSessionRepository(ISessionRepository):
             raise
         return path
 
+    def relabel(self, session_id: str, label: str) -> dict[str, Any]:
+        """Write a display name onto a checkpoint without requiring a live workspace."""
+
+        path = self.path_for(session_id)
+        with self._save_lock:
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except FileNotFoundError as exc:
+                raise _CheckpointError(f"checkpoint 不存在: {session_id}") from exc
+            except (OSError, json.JSONDecodeError) as exc:
+                raise _CheckpointError(f"checkpoint 无法读取: {exc}") from exc
+            session = data.setdefault("session", {})
+            if not isinstance(session, dict):
+                raise _CheckpointError(f"checkpoint 无法读取: {session_id}")
+            session["session_label"] = label
+            fd, temporary_name = tempfile.mkstemp(
+                prefix=f".{session_id}.",
+                suffix=".tmp",
+                dir=self.directory,
+            )
+            temporary = Path(temporary_name)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    json.dump(data, handle, ensure_ascii=False, indent=2)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.chmod(temporary, 0o600)
+                os.replace(temporary, path)
+            except Exception:
+                temporary.unlink(missing_ok=True)
+                raise
+        return {"session_id": session_id, "user_goal": label, "active": False}
+
     def load(self, session_id: str) -> Session:
         path = self.path_for(session_id)
         try:

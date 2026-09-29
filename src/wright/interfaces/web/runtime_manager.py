@@ -545,7 +545,7 @@ class RuntimeManager:
     def close(self, session_id: str) -> dict[str, Any]:
         with self._lock:
             handle = self._handles.get(session_id)
-        directory = getattr(handle, "owner", self.directory) if handle is not None else self.directory
+        directory = getattr(handle, "owner", None) or self._ui_directory()
         if handle is None:
             return directory.close(session_id)
         summary = directory.close(session_id)
@@ -557,7 +557,7 @@ class RuntimeManager:
     def archive(self, session_id: str) -> ArchiveResult:
         with self._lock:
             handle = self._handles.get(session_id)
-        directory = getattr(handle, "owner", self.directory) if handle is not None else self.directory
+        directory = getattr(handle, "owner", None) or self._ui_directory()
         try:
             return directory.archive(session_id)
         except SessionDirectoryError as exc:
@@ -637,14 +637,33 @@ class RuntimeManager:
                 directories[registered_id] = found
             return found
 
+    def _ui_directory(self) -> SessionDirectory:
+        selected = self.workspaces().get("selected_project_id")
+        if isinstance(selected, str) and selected:
+            return self._directory_for(selected)
+        return self.directory
+
     def workspace_sessions(self, registered_id: str) -> list[dict[str, Any]]:
         return self._directory_for(registered_id).list_sessions()
 
     def preview(self, session_id: str) -> dict[str, Any]:
         try:
-            return self.directory.preview(session_id)
+            return self._ui_directory().preview(session_id)
         except SessionDirectoryError as exc:
-            status = 404 if exc.kind == "not_found" else None
+            try:
+                return self.directory.preview(session_id)
+            except SessionDirectoryError:
+                status = 404 if exc.kind == "not_found" else None
+                raise RuntimeManagerError(str(exc), status_code=status) from exc
+
+    def relabel(self, session_id: str, label: str) -> dict[str, Any]:
+        with self._lock:
+            handle = self._handles.get(session_id)
+        directory = getattr(handle, "owner", None) or self._ui_directory()
+        try:
+            return directory.relabel(session_id, label)
+        except SessionDirectoryError as exc:
+            status = 404 if exc.kind == "not_found" else 400
             raise RuntimeManagerError(str(exc), status_code=status) from exc
 
     def search_references(self, query: str) -> list[dict[str, Any]]:

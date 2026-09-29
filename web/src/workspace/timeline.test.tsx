@@ -57,9 +57,9 @@ describe("real timeline projection", () => {
     state = emit(state, "reasoning.delta", { piece: "Inspecting the input" });
     state = emit(state, "content.final", { content: "Finished checking" });
     render(transcript(state));
-    expect(screen.getByText("Inspecting the input").closest(".summary-row")).toBeTruthy();
-    fireEvent.click(screen.getByText("Inspecting the input").closest(".summary-row")!.querySelector("button")!);
-    expect(screen.getByText("Inspecting the input").closest(".summary-row")?.classList.contains("open")).toBe(true);
+    expect(screen.getByText("Inspecting the input").closest(".reasoning-block")).toBeTruthy();
+    fireEvent.click(screen.getByText("Inspecting the input").closest(".reasoning-block")!.querySelector("button")!);
+    expect(screen.getByText("Inspecting the input").closest(".reasoning-block")?.classList.contains("open")).toBe(true);
     expect(screen.getByText("Finished checking").closest(".msg-card")).toBeTruthy();
     expect(screen.queryByText("Finished checking")?.closest(".summary-row")).toBeNull();
   });

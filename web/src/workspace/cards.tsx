@@ -46,6 +46,32 @@ function describeRisk(flag: string): string {
   return label === key ? flag.replace(/_/g, " ") : label;
 }
 
+function directoryTree(text: string): string {
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0) return text;
+  if (lines.some((line) => line.startsWith("├") || line.startsWith("└") || line.startsWith("//"))) return text;
+  return lines.map((line, index) => `${index === lines.length - 1 ? "└──" : "├──"} ${line}`).join("\n");
+}
+
+function compactToolBody(name: string, body: string, result?: Record<string, unknown> | null): string {
+  const trimmed = body.trim();
+  if (/directory/i.test(name)) return directoryTree(trimmed);
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return body;
+  const source = result && typeof result === "object" ? result : (() => {
+    try { return JSON.parse(trimmed) as Record<string, unknown>; } catch { return null; }
+  })();
+  if (!source) return body;
+  if (typeof source.objective === "string") return source.objective || "No active plan";
+  if (Array.isArray(source.tasks)) return source.tasks.length ? `${source.tasks.length} tasks` : "No tasks";
+  if (Array.isArray(source.schedules)) return source.schedules.length ? `${source.schedules.length} schedules` : "No schedules";
+  if (Array.isArray(source.memories) || Array.isArray(source.results)) {
+    const count = (source.memories as unknown[] | undefined)?.length ?? (source.results as unknown[] | undefined)?.length ?? 0;
+    return count ? `${count} memories` : "No memories";
+  }
+  if (typeof source.count === "number") return `${source.count} results`;
+  return body;
+}
+
 function exitCode(result: Record<string, unknown> | null | undefined, data: unknown): number | null {
   const source = result ?? (data && typeof data === "object" ? data as Record<string, unknown> : null);
   if (!source) return null;
@@ -94,18 +120,16 @@ export function AssistantMessage({ text }: { text: string }) {
 export function SummaryRow({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   const tr = useT();
-  return <div className="tl-indent">
-    <div className={`summary-row ${open ? "open" : ""}`}>
-      <div className="summary-head">
-        <div className="summary-copy">
-          <Lightning className="summary-mark" size={14} weight="fill" aria-hidden="true" />
-          <span className="reasoning-label">{tr("web.reasoning")}</span>
-          {!open && <strong>{text}</strong>}
-        </div>
-        <button type="button" className="text-button summary-toggle" onClick={() => setOpen((value) => !value)}>{open ? tr("web.hide") : tr("web.steps")}<CaretDown size={12} className={open ? "" : "collapsed"} /></button>
+  return <div className={`tl-indent reasoning-block ${open ? "open" : ""}`}>
+    <div className="summary-row">
+      <div className="summary-copy">
+        <Lightning className="summary-mark" size={14} weight="fill" aria-hidden="true" />
+        <span className="reasoning-label">{tr("web.reasoning")}:</span>
+        {!open && <strong>{text}</strong>}
       </div>
-      {open && <p className="summary-body">{text}</p>}
+      <button type="button" className="text-button summary-toggle" onClick={() => setOpen((value) => !value)}>{open ? tr("web.hide") : tr("web.steps")}<CaretDown size={12} className={open ? "" : "collapsed"} /></button>
     </div>
+    {open && <p className="summary-body">{text}</p>}
   </div>;
 }
 
@@ -127,11 +151,12 @@ export function ToolCard({
 }) {
   const tr = useT();
   const family = toolFamily(name, kind);
-  const [open, setOpen] = useState(family === "shell" || family === "edit" || phase === "failed");
+  const [open, setOpen] = useState(phase === "failed" || phase === "running" || family === "edit");
   const command = arg(args, ["command", "cmd"]);
   const path = arg(args, ["path", "file", "file_path", "target"]);
   const code = family === "shell" ? exitCode(result, data) : null;
-  const body = output || (result ? JSON.stringify(result, null, 2) : "");
+  const raw = output || (result ? (typeof result.output === "string" ? result.output : JSON.stringify(result, null, 2)) : "");
+  const body = compactToolBody(name, raw, result);
   const badge = family === "shell" ? "SHELL" : family === "edit" ? "FILE EDIT" : family === "read" ? "TOOL" : "TOOL";
   const bodyLines = body.split("\n").filter(Boolean);
   const metricSource = result ?? (data && typeof data === "object" ? data as Record<string, unknown> : null);

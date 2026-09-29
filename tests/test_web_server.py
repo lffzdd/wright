@@ -83,18 +83,26 @@ def _authenticated_client(tmp_path):
     return client, auth
 
 
-def test_bootstrap_token_is_single_use_and_cookie_is_http_only(tmp_path):
+def test_bootstrap_token_allows_multiple_sessions_and_cookie_is_http_only(tmp_path):
     client, _auth = _authenticated_client(tmp_path)
 
-    second = client.post(
+    second_client = TestClient(client.app)
+    second = second_client.post(
         "/api/v1/auth/exchange",
         json={"token": "bootstrap-secret"},
         headers={"origin": "http://testserver"},
     )
+    assert second.status_code == 200
+    assert COOKIE_NAME in second_client.cookies
+    assert second_client.cookies.get(COOKIE_NAME) != client.cookies.get(COOKIE_NAME)
+    assert second_client.get("/api/v1/project").status_code == 200
 
-    assert second.status_code == 401
-    original = client.cookies.get(COOKIE_NAME)
-    assert original
+    invalid = client.post(
+        "/api/v1/auth/exchange",
+        json={"token": "wrong-secret"},
+        headers={"origin": "http://testserver"},
+    )
+    assert invalid.status_code == 401
 
 
 def test_api_requires_cookie_origin_and_sets_security_headers(tmp_path):

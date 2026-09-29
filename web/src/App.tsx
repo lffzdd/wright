@@ -1,4 +1,4 @@
-import { Archive, Brain, Clock, Folder, Gear, GitBranch, MagnifyingGlass, Moon, Scroll, SidebarSimple, Sun, Warning, X } from "@phosphor-icons/react";
+import { Archive, Brain, Clock, Gear, GitBranch, MagnifyingGlass, Moon, PencilSimple, Scroll, SidebarSimple, Sun, Warning, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, bootstrap } from "./api";
 import { getLocale, setLocale, useT } from "./i18n";
@@ -152,15 +152,21 @@ export default function App() {
       }
       const items = await refreshSessions();
       if (cancelled) return;
-      const projectKey = String(projectData.project_id ?? "");
-      const remembered = localStorage.getItem(`wright.viewed.${projectKey}`);
-      const match = items.find((item) => item.session_id === remembered);
-      if (match?.active) {
-        setBrowsing("live");
-        setSelected(match.session_id);
-      } else if (match) {
-        setBrowsing("preview");
-        setSelected(match.session_id);
+      const storageKey = String(workspaceId.current || projectData.project_id || "");
+      const remembered = storageKey ? localStorage.getItem(`wright.viewed.${storageKey}`) : null;
+      const byId = items.find((item) => item.session_id === remembered);
+      const latest = [...items].sort((left, right) => String(right.saved_at || "").localeCompare(String(left.saved_at || "")))[0];
+      const match = byId ?? latest;
+      if (match) {
+        const key = String(workspaceId.current || projectData.project_id || "");
+        if (key) localStorage.setItem(`wright.viewed.${key}`, match.session_id);
+        if (match.active) {
+          setBrowsing("live");
+          setSelected(match.session_id);
+        } else {
+          setBrowsing("preview");
+          setSelected(match.session_id);
+        }
       } else {
         setBrowsing("draft");
         setSelected(null);
@@ -282,15 +288,16 @@ export default function App() {
     socket.current?.close();
     api.preview(sessionId).then((preview) => {
       if (epoch.current !== generation) return;
-      const body = preview as unknown as { session: Snapshot["session"]; history?: Snapshot["history"] };
+      const body = preview as unknown as { session: Snapshot["session"]; history?: Snapshot["history"]; timeline?: Snapshot["timeline"]; plan?: Snapshot["plan"]; subagents?: Snapshot["subagents"]; accessed_files?: Snapshot["accessed_files"] };
       setState({
         ...initialView({
           stream_id: "preview",
           last_seq: 0,
           session: { ...body.session, active: false },
           history: body.history ?? [],
+          timeline: body.timeline ?? [],
           active_turn: null,
-          plan: {},
+          plan: body.plan ?? {},
           pending_interactions: [],
           notices: [],
           queued_commands: [],
@@ -300,8 +307,10 @@ export default function App() {
             request_prompt_tokens: null, request_completion_tokens: null, request_total_tokens: null,
             context_tokens: null, context_limit: null,
           },
+          subagents: body.subagents,
+          accessed_files: body.accessed_files,
         }),
-        connection: "closed",
+        connection: "connected",
       });
     }).catch((error) => { if (epoch.current === generation) setFatal(String(error)); });
     return () => { epoch.current += 1; };
@@ -405,13 +414,29 @@ export default function App() {
       if (epoch.current === generation) setFatal(String(error));
     }
   };
-  const archiveSession = async () => {
-    if (!state) return;
-    if (!window.confirm(`Archive ${state.session.user_goal || state.session.session_id}? A clean isolated worktree may be removed. The project directory stays.`)) return;
-    await api.archive(state.session.session_id);
-    setSelected(null);
-    setState(null);
+  const archiveSession = async (sessionId?: string) => {
+    const id = sessionId || state?.session.session_id;
+    if (!id) return;
+    const label = sessions.find((item) => item.session_id === id)?.user_goal || state?.session.user_goal || id;
+    if (!window.confirm(`Archive ${label}? A clean isolated worktree may be removed. The project directory stays.`)) return;
+    await api.archive(id);
+    if (selected === id) {
+      remember(null);
+      setSelected(null);
+      setState(null);
+      setBrowsing("draft");
+    }
     await refreshSessions();
+  };
+  const renameSession = async (session: { session_id: string; user_goal?: string }) => {
+    const current = sessionTitle(session, tr);
+    const next = window.prompt(tr("web.rename_prompt"), current);
+    if (!next || !next.trim() || next.trim() === current) return;
+    await api.relabel(session.session_id, next.trim());
+    setSessions((items) => items.map((item) => item.session_id === session.session_id ? { ...item, user_goal: next.trim() } : item));
+    setState((currentState) => currentState && currentState.session.session_id === session.session_id
+      ? { ...currentState, session: { ...currentState.session, user_goal: next.trim() } }
+      : currentState);
   };
   const selectSession = async (session: SessionSummary) => {
     remember(session.session_id);
@@ -446,7 +471,7 @@ export default function App() {
   const execution = state?.session.execution ?? state?.session.status;
   const running = execution === "running" || execution === "waiting_for_input";
   const directoryQueued = execution === "queued";
-  const composerOwner = browsing === "live" && selected ? selected : draftKey;
+  const composerOwner = selected && browsing !== "draft" ? selected : draftKey;
   const draft = drafts[composerOwner] ?? emptyDraft();
   const activeCount = sessions.filter((item) => item.active).length;
   const branch = String(state?.session.branch_name ?? project?.branch ?? "");
@@ -502,14 +527,24 @@ export default function App() {
       </div>
     </header>
     <div className="workspace-grid">
-      <SessionRail sessions={sessions} selected={selected} onSelect={(session) => selectSession(session).catch((error) => setFatal(String(error)))} onCreate={() => { setBrowsing("draft"); setSelected(null); setState(null); }} open={railOpen} selectedProgress={selectedProgress} footer={state?.session.model ?? ""}>
+      <SessionRail
+        sessions={sessions}
+        selected={selected}
+        onSelect={(session) => selectSession(session).catch((error) => setFatal(String(error)))}
+        onCreate={() => { setBrowsing("draft"); setSelected(null); setState(null); remember(null); }}
+        open={railOpen}
+        selectedProgress={selectedProgress}
+        footer={state?.session.model ?? ""}
+        workspaces={workspaces}
+        onSelectWorkspace={(projectId) => {
+          workspaceId.current = projectId;
+          setWorkspaces((current) => current.map((row) => ({ ...row, selected: row.project_id === projectId })));
+          api.selectWorkspace(projectId).then(() => refreshSessions()).catch((error) => setFatal(String(error)));
+        }}
+        onRename={(session) => renameSession(session).catch((error) => setFatal(String(error)))}
+        onArchive={(session) => archiveSession(session.session_id).catch((error) => setFatal(String(error)))}
+      >
         <div>
-          <div className="section-label"><span>{tr("web.workspaces")}</span></div>
-          {workspaces.map((item) => <button type="button" key={item.project_id} className={`nav-row ${item.selected ? "selected" : ""}`} onClick={() => {
-            workspaceId.current = item.project_id;
-            setWorkspaces((current) => current.map((row) => ({ ...row, selected: row.project_id === item.project_id })));
-            api.selectWorkspace(item.project_id).then(() => refreshSessions()).catch((error) => setFatal(String(error)));
-          }}><Folder size={14} />{item.name}</button>)}
           {!workspaces.length && <p className="empty-small">{tr("web.launch_project")}</p>}
           <button type="button" className="nav-row" onClick={() => {
             const path = window.prompt("Project directory to register. Files stay on disk, and a running task keeps its execution root.");
@@ -548,6 +583,7 @@ export default function App() {
                 <span className="figures"><span>{compactTokens(breakdown.total)} / {compactTokens(breakdown.limit)}</span><span className="muted">{contextWidth}% context</span></span>
                 <span className="meter slim"><i style={{ width: `${contextWidth}%` }} /></span>
               </div>}
+              <button className="icon-button" title={tr("web.rename")} aria-label={tr("web.rename")} onClick={() => renameSession(state.session).catch((error) => setFatal(String(error)))}><PencilSimple size={14} /></button>
               <button className="icon-button" title={tr("web.archive")} aria-label={tr("web.archive")} onClick={() => archiveSession().catch((error) => setFatal(String(error)))}><Archive size={14} /></button>
               <button className="icon-button" title={tr("web.close_session")} aria-label={tr("web.close_session")} onClick={() => {
                 if (!window.confirm(`Close ${state.session.user_goal || state.session.session_id}? The task stops and the checkpoint stays.`)) return;
@@ -583,10 +619,10 @@ export default function App() {
               running={Boolean(running || directoryQueued)}
               models={Array.isArray(project?.models) ? project.models as string[] : []}
               currentModel={state.session.model ?? ""}
-              onModel={(model) => changeModel(model).catch((error) => setFatal(String(error)))}
+              onModel={browsing === "live" ? (model) => changeModel(model).catch((error) => setFatal(String(error))) : undefined}
               interactionMode={state.session.interaction_mode ?? "agent"}
               permissionMode={state.session.permission_mode ?? "default"}
-              onPolicy={async (body) => {
+              onPolicy={browsing === "live" ? async (body) => {
                 await api.policy(state.session.session_id, body);
                 setState((current) => {
                   if (!current || current.session.session_id !== state.session.session_id) return current;
@@ -601,7 +637,7 @@ export default function App() {
                     },
                   };
                 });
-              }}
+              } : undefined}
               submit={(commandId, prompt, attachmentIds, documentIds, references) => browsing === "live"
                 ? sendCommand({ type: "turn.submit", command_id: commandId, prompt, attachment_ids: attachmentIds, document_ids: documentIds ?? [], references: references ?? [] })
                 : beginTurn(composerOwner, commandId, prompt, attachmentIds, documentIds ?? [], references ?? [])}
