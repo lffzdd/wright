@@ -1,4 +1,8 @@
-"""Validated durable automation and concrete-run records."""
+"""Job definitions, triggers, and one persisted job run.
+
+``to_dict`` keeps the keys already stored and returned by the Web API.
+The tool adapter maps those records onto ``schedule_id`` and ``run_id``.
+"""
 
 from __future__ import annotations
 
@@ -10,13 +14,13 @@ from urllib.parse import urlparse
 TriggerType = Literal[
     "once", "interval", "file_change", "web_change", "event"
 ]
-AutomationStatus = Literal["active", "paused", "completed", "cancelled"]
+JobStatus = Literal["active", "paused", "completed", "cancelled"]
 RecoveryPolicy = Literal["manual", "retry"]
-DurableRunStatus = Literal[
+JobRunStatus = Literal[
     "queued", "dispatched", "running", "waiting_retry", "completed", "failed",
     "cancelled", "unknown",
 ]
-TERMINAL_DURABLE_RUN_STATUSES = frozenset({
+TERMINAL_JOB_RUN_STATUSES = frozenset({
     "completed", "failed", "cancelled", "unknown"
 })
 
@@ -99,13 +103,13 @@ class TriggerSpec:
 
 
 @dataclass(frozen=True)
-class AutomationRecord:
+class JobDefinition:
     id: str
     session_id: str
     name: str
     prompt: str
     trigger: TriggerSpec
-    status: AutomationStatus
+    status: JobStatus
     recovery_policy: RecoveryPolicy
     max_retries: int
     retry_delay_seconds: float
@@ -137,15 +141,15 @@ class AutomationRecord:
 
 
 @dataclass(frozen=True)
-class DurableRunRecord:
+class JobRun:
     id: str
-    automation_id: str
+    job_id: str
     session_id: str
-    automation_name: str
+    job_name: str
     prompt: str
     trigger_type: TriggerType
     trigger_payload: dict[str, Any]
-    status: DurableRunStatus
+    status: JobRunStatus
     attempt: int
     max_retries: int
     scheduled_for: float
@@ -163,14 +167,16 @@ class DurableRunRecord:
 
     @property
     def terminal(self) -> bool:
-        return self.status in TERMINAL_DURABLE_RUN_STATUSES
+        return self.status in TERMINAL_JOB_RUN_STATUSES
 
     def to_dict(self) -> dict[str, Any]:
+        # ``automation_id`` and ``automation_name`` are the stored and Web API
+        # names. Callers inside scheduling use ``job_id`` and ``job_name``.
         return {
             "id": self.id,
-            "automation_id": self.automation_id,
+            "automation_id": self.job_id,
             "session_id": self.session_id,
-            "automation_name": self.automation_name,
+            "automation_name": self.job_name,
             "prompt": self.prompt,
             "trigger_type": self.trigger_type,
             "trigger_payload": dict(self.trigger_payload),

@@ -65,7 +65,7 @@ def test_real_process_command_crash_windows_are_recovered_honestly(
         import os, queue, sys, threading, time
         from types import SimpleNamespace
         from wright.infrastructure.persistence.autonomy_store import AutonomyStore
-        from wright.domain.model.automation import TriggerSpec
+        from wright.domain.model.scheduling import TriggerSpec
         from wright.interfaces.interaction import InteractionBroker
         from wright.application.session.service import SessionService
         from wright.application.session.publisher import EventPublisher
@@ -178,7 +178,7 @@ def test_real_host_process_lock_is_released_for_takeover_after_crash(tmp_path):
         from pathlib import Path
         from wright.application.composition.host import ApplicationHost
         from wright.infrastructure.persistence.autonomy_store import AutonomyStore
-        from wright.domain.model.automation import TriggerSpec
+        from wright.domain.model.scheduling import TriggerSpec
         from wright.domain.policy import PermissionSettings
         class Fake:
             context_limit = 128000
@@ -236,7 +236,7 @@ def test_real_process_child_agent_side_effect_becomes_unknown_without_replay(tmp
         from pathlib import Path
         from wright.application.composition.host import ApplicationHost
         from wright.infrastructure.persistence.autonomy_store import AutonomyStore
-        from wright.domain.model.automation import TriggerSpec
+        from wright.domain.model.scheduling import TriggerSpec
         from wright.domain.policy import PermissionSettings
         from tests.responses import event, response
         from wright.infrastructure.tools.base import Tool
@@ -276,7 +276,7 @@ def test_real_process_child_agent_side_effect_becomes_unknown_without_replay(tmp
             return ToolResult.success("unreachable")
 
         store = AutonomyStore(db, session_id="source", workspace_dir=workspace)
-        store.create_automation(
+        store.create_job(
             name="child-crash", prompt="delegate child work",
             trigger=TriggerSpec(type="once", run_at=0),
             recovery_policy="retry", max_retries=1, now=0,

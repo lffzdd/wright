@@ -10,7 +10,7 @@ from collections.abc import Callable
 from typing import Literal
 
 from ...domain.model.agent import AgentControlError
-from ...infrastructure.persistence.autonomy_store import AutonomyNotFoundError
+from ..scheduling.contracts import JobNotFoundError
 
 ExecutionKind = Literal["agent", "command", "run", "schedule"]
 
@@ -99,7 +99,7 @@ def bind_identity(session, store=None) -> ExecutionIdentity:
             return False
         try:
             store.get_run(identifier)
-        except AutonomyNotFoundError:
+        except JobNotFoundError:
             return False
         return True
 
@@ -107,8 +107,8 @@ def bind_identity(session, store=None) -> ExecutionIdentity:
         if store is None:
             return False
         try:
-            store.get_automation(identifier)
-        except AutonomyNotFoundError:
+            store.get_job(identifier)
+        except JobNotFoundError:
             return False
         return True
 

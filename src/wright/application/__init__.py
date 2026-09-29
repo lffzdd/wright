@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
-from .autonomy import AutonomyScheduler, launch_durable_run
 from .dto import RunAgentRequest, StreamEventDTO
 from .memory import MemoryManager
+from .scheduling.runner import launch_job_run
+from .scheduling.scheduler import JobScheduler
 from .skills import SkillRegistry, catalog_reminder
 from .tool_execution.dispatch import ToolDispatchService
 
 __all__ = [
-    "AutonomyScheduler",
+    "JobScheduler",
     "MemoryManager",
     "RunAgentRequest",
     "SkillRegistry",
     "StreamEventDTO",
     "ToolDispatchService",
     "catalog_reminder",
-    "launch_durable_run",
+    "launch_job_run",
 ]

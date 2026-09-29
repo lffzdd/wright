@@ -1,7 +1,8 @@
-"""Isolated background execution for durable scheduled runs.
+"""Isolated background execution for one persisted job run.
 
-The REPL thread constructs the session and submits a worker; the scheduler
-thread still only writes the store and enqueues ``DURABLE_RUN_DUE``.
+The REPL thread constructs the session and submits a worker. The scheduler
+thread still only writes through its dispatch port and enqueues
+``DURABLE_RUN_DUE``.
 """
 
 from __future__ import annotations
@@ -15,8 +16,8 @@ from typing import Any
 from ...core.logger import get_logger
 from ...domain.model.agent import AgentProfile
 from ...domain.model.agent.control import AgentControlError, AgentControlPlane
-from ...domain.model.automation import DurableRunRecord
 from ...domain.model.llm import UsageRecord
+from ...domain.model.scheduling import JobRun
 from ...domain.model.session import Session
 from ...domain.policy import PermissionResolver, PermissionSettings
 from ...infrastructure.llm.llm import LLMClient, resolve_transport
@@ -41,24 +42,24 @@ from ..execution.identity import bind_identity
 from ..session.live_resources import RuntimeResources
 from ..session.publisher import open_session_events
 from ..tool_execution.capabilities import assemble_tool_capabilities
-from .scheduler import AutonomyScheduler
+from .contracts import RunExecution
+from .scheduler import JobScheduler
 
 logger = get_logger(__name__)
 
 
-class _DurableToolJournal:
-    """Adapter that makes durable tool calls transactional with the SQLite log."""
+class _RunJournal:
+    """Appends tool facts for one job run. It does not see the job catalog."""
 
     def __init__(
         self,
-        scheduler: AutonomyScheduler,
+        execution: RunExecution,
         run_id: str,
         *,
         agent_task_id: str = "",
         parent_agent_task_id: str = "",
     ) -> None:
-        self._scheduler = scheduler
-        self.store = scheduler.store
+        self._execution = execution
         self.run_id = run_id
         self.agent_task_id = agent_task_id
         self.parent_agent_task_id = parent_agent_task_id
@@ -77,23 +78,17 @@ class _DurableToolJournal:
             event_key=f"run-bound:{self.agent_task_id}:{self.session_run_id}",
         )
 
-    def child(self, agent_task_id: str, parent_agent_task_id: str = "") -> _DurableToolJournal:
-        return _DurableToolJournal(
-            self.store_scheduler,
+    def child(self, agent_task_id: str, parent_agent_task_id: str = "") -> _RunJournal:
+        return _RunJournal(
+            self._execution,
             self.run_id,
             agent_task_id=agent_task_id,
             parent_agent_task_id=parent_agent_task_id or self.agent_task_id,
         )
 
-    @property
-    def store_scheduler(self) -> AutonomyScheduler:
-        # The scheduler is kept separately instead of reconstructing a store
-        # from a path, preserving the ApplicationHost's ownership/lock.
-        return self._scheduler
-
     def record_intent(self, **value: Any) -> None:
         provider_call_id = str(value.get("call_id", ""))
-        execution_call_id = self.store.record_tool_intent(
+        execution_call_id = self._execution.record_tool_intent(
             run_id=self.run_id,
             agent_task_id=self.agent_task_id,
             session_run_id=self.session_run_id,
@@ -111,7 +106,7 @@ class _DurableToolJournal:
 
     def mark_started(self, call_id: str) -> None:
         execution_call_id = self._call_keys.get(call_id, call_id)
-        self.store.mark_tool_started(self.run_id, execution_call_id)
+        self._execution.mark_tool_started(self.run_id, execution_call_id)
         self.record_event(
             "tool_started",
             {"call_id": call_id, "execution_call_id": execution_call_id,
@@ -121,7 +116,7 @@ class _DurableToolJournal:
 
     def record_result(self, call_id: str, result: dict[str, Any], *, status: str) -> None:
         execution_call_id = self._call_keys.get(call_id, call_id)
-        self.store.record_tool_result(self.run_id, execution_call_id, result, status=status)
+        self._execution.record_tool_result(self.run_id, execution_call_id, result, status=status)
         self.record_event(
             "tool_result",
             {"call_id": call_id, "execution_call_id": execution_call_id,
@@ -132,7 +127,7 @@ class _DurableToolJournal:
     def record_event(
         self, event_type: str, payload: dict[str, Any] | None = None, *, event_key: str = ""
     ) -> str:
-        return self.store.record_run_event(
+        return self._execution.record_run_event(
             self.run_id,
             event_type,
             {
@@ -153,7 +148,7 @@ _UNATTENDED_DENY_NOTE = (
 
 
 @dataclass(frozen=True)
-class DurableLaunch:
+class JobLaunch:
     run_id: str
     task_id: str
     session: Session
@@ -168,7 +163,7 @@ def _durable_root_turn_id(run_id: str) -> str:
     return f"durable:{run_id}"
 
 
-def _user_prompt_for_run(scheduler: AutonomyScheduler, run_id: str) -> str:
+def _user_prompt_for_run(scheduler: JobScheduler, run_id: str) -> str:
     event = scheduler.runtime_event(run_id)
     task = event.get("task") if isinstance(event.get("task"), dict) else {}
     prompt = str(task.get("prompt") or task.get("name") or "durable task").strip()
@@ -195,9 +190,10 @@ def _fail_closed_resolver(settings: PermissionSettings) -> PermissionResolver:
     return PermissionResolver(settings=settings)
 
 
-def _commit_durable_run(
+def _commit_job_run(
     *,
-    scheduler: AutonomyScheduler,
+    scheduler: JobScheduler,
+    execution: RunExecution,
     control: AgentControlPlane,
     run_id: str,
     task_id: str,
@@ -205,8 +201,8 @@ def _commit_durable_run(
     final_answer: str | None,
     task_status: str,
     error: str,
-) -> DurableRunRecord:
-    current = scheduler.store.get_run(run_id)
+) -> JobRun:
+    current = execution.get_run(run_id)
     if current.terminal:
         finished = current
     else:
@@ -234,13 +230,14 @@ def _commit_durable_run(
     return finished
 
 
-def launch_durable_run(
+def launch_job_run(
     *,
     run_id: str,
+    execution: RunExecution,
     root_session: Session | None = None,
     workspace_dir=None,
     control_plane: AgentControlPlane | None = None,
-    scheduler: AutonomyScheduler,
+    scheduler: JobScheduler,
     llm: LLMClient,
     base_tools: Sequence[Tool],
     permission_settings: PermissionSettings,
@@ -251,34 +248,35 @@ def launch_durable_run(
     max_depth: int = DURABLE_MAX_DEPTH,
     directory_coordinator: Any = None,
     directory_lease: DirectoryLease | None = None,
-) -> DurableLaunch | None:
-    """Construct an isolated durable session on the REPL thread and return.
+) -> JobLaunch | None:
+    """Construct an isolated job-run session on the REPL thread and return.
 
-    The worker runs in the shared background pool.  Callers must not wait.
+    The worker runs in the shared background pool. Callers must not wait.
     A directory lease passed in stays held until that worker finishes.
+    ``execution`` is only the run log for this launch, not the job catalog.
     """
 
     def release_directory() -> None:
         if directory_lease is not None:
             directory_lease.release()
 
-    run = scheduler.store.get_run(run_id)
+    run = execution.get_run(run_id)
     if run.status != "dispatched":
         release_directory()
         return None
     configured_steps = run.run_config.get("max_steps")
     if configured_steps is not None:
         max_steps = int(configured_steps)
-    scheduler.store.start_run(run_id, owner_id=scheduler.host_id)
+    execution.start_run(run_id, owner_id=scheduler.host_id)
     root_turn_id = _durable_root_turn_id(run_id)
-    scheduler.store.set_run_root_turn(run_id, root_turn_id)
+    execution.set_run_root_turn(run_id, root_turn_id)
 
     if root_session is None and workspace_dir is None:
         raise ValueError("durable run requires workspace_dir when no source Session exists")
     control = control_plane or (
         root_session.control_plane if root_session is not None else AgentControlPlane()
     )
-    prompt = run.prompt.strip() or run.automation_name or "durable task"
+    prompt = run.prompt.strip() or run.job_name or "durable task"
     try:
         record = control.begin_task(
             root_turn_id=root_turn_id,
@@ -319,8 +317,8 @@ def launch_durable_run(
 
         return commit_authorization
 
-    root_journal = _DurableToolJournal(
-        scheduler, run_id, agent_task_id=record.id
+    root_journal = _RunJournal(
+        execution, run_id, agent_task_id=record.id
     )
 
     def child_journal_factory(agent_task_id: str, parent_agent_task_id: str):
@@ -334,7 +332,7 @@ def launch_durable_run(
         render_subagents=False,
         permission_resolver=permission_resolver,
         authorization_commit_factory=authorization_commit_factory,
-        enable_autonomy=False,
+        enable_scheduling=False,
     )
     child_session = Session.create(
         initial_goal=prompt,
@@ -351,9 +349,9 @@ def launch_durable_run(
     control.bind_child_session(record.id, child_session.session_id)
 
     def cancelled() -> bool:
-        if scheduler.store.is_cancel_requested(run_id):
+        if execution.is_cancel_requested(run_id):
             reason = (
-                scheduler.store.get_run(run_id).cancel_reason
+                execution.get_run(run_id).cancel_reason
                 or "durable run cancelled"
             )
             control.request_cancel(record.id, reason)
@@ -443,12 +441,12 @@ def launch_durable_run(
                 user_prompt, max_steps=record.step_budget
             )
             if (
-                scheduler.store.is_cancel_requested(run_id)
+                execution.is_cancel_requested(run_id)
                 or control.is_cancelled(record.id)
             ):
                 task_status = "cancelled"
                 error = (
-                    scheduler.store.get_run(run_id).cancel_reason
+                    execution.get_run(run_id).cancel_reason
                     or control.cancellation_reason(record.id)
                     or "durable run cancelled"
                 )
@@ -471,8 +469,9 @@ def launch_durable_run(
                 reset_directory_work(token)
             release_directory()
             durable_commands.close()
-            finished = _commit_durable_run(
+            finished = _commit_job_run(
                 scheduler=scheduler,
+                execution=execution,
                 control=control,
                 run_id=run_id,
                 task_id=record.id,
@@ -513,7 +512,7 @@ def launch_durable_run(
         scheduler.finish_run(run_id, status="failed", error=str(exc))
         raise
 
-    return DurableLaunch(
+    return JobLaunch(
         run_id=run_id,
         task_id=record.id,
         session=child_session,

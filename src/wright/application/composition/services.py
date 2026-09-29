@@ -12,13 +12,14 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ...infrastructure.persistence.autonomy_store import AutonomyStore
     from ..agent import AgentBackgroundRuntime
-    from ..autonomy.scheduler import AutonomyScheduler
+    from ..scheduling.scheduler import JobScheduler
     from ..session.loops import SessionLoopRegistry
 
 
 @dataclass
 class RuntimeServices:
     agent_background: AgentBackgroundRuntime | None = None
+    # Shared task database: job definitions, runs, commands, interactions, tool logs.
     durable_store: AutonomyStore | None = None
-    autonomy_scheduler: AutonomyScheduler | None = None
+    job_scheduler: JobScheduler | None = None
     loop_registry: SessionLoopRegistry | None = None

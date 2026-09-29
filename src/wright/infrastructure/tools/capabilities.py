@@ -1,7 +1,7 @@
 """Bounded operations exposed to one tool call.
 
 These objects are the operations a tool may invoke. They are not the session,
-the process registry, the autonomy store, or the scheduler.
+the process registry, the shared task store, or the job scheduler.
 """
 
 from __future__ import annotations
@@ -43,13 +43,17 @@ class AgentOperations:
 
 
 @dataclass(frozen=True)
-class AutonomyOperations:
-    create_schedule: Callable[..., Any]
-    get_schedule: Callable[..., Any]
-    list_schedules: Callable[..., Any]
-    pause_schedule: Callable[..., Any]
-    resume_schedule: Callable[..., Any]
-    cancel_schedule: Callable[..., Any]
+class SchedulingOperations:
+    """Schedule-shaped callables. The service underneath speaks in jobs."""
+
+    create_job: Callable[..., Any]
+    get_job: Callable[..., Any]
+    list_jobs: Callable[..., Any]
+    pause_job: Callable[..., Any]
+    resume_job: Callable[..., Any]
+    cancel_job: Callable[..., Any]
+    update_job: Callable[..., Any]
+    delete_job: Callable[..., Any]
     list_runs: Callable[..., Any]
     get_run: Callable[..., Any]
     wait_run: Callable[..., Any]
@@ -84,7 +88,7 @@ class ToolCapabilities:
     plan_manager: Any = None
     commands: CommandOperations | None = None
     agents: AgentOperations | None = None
-    autonomy: AutonomyOperations | None = None
+    scheduling: SchedulingOperations | None = None
     delegation: DelegationOperations | None = None
     loop_registry: LoopOperations | None = None
 
@@ -96,7 +100,7 @@ class ToolCapabilities:
             plan_manager=self.plan_manager if "plan" in required else None,
             commands=self.commands if "commands" in required else None,
             agents=self.agents if "agents" in required else None,
-            autonomy=self.autonomy if "autonomy" in required else None,
+            scheduling=self.scheduling if "scheduling" in required else None,
             delegation=self.delegation if "delegation" in required else None,
             loop_registry=self.loop_registry if "loop" in required else None,
         )
@@ -104,9 +108,9 @@ class ToolCapabilities:
 
 __all__ = [
     "AgentOperations",
-    "AutonomyOperations",
     "CommandOperations",
     "DelegationOperations",
     "RunScope",
+    "SchedulingOperations",
     "ToolCapabilities",
 ]

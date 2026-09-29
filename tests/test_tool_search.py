@@ -215,7 +215,7 @@ def test_web_memory_and_spawn_are_baseline():
             list(built_in_tools),
             depth=0,
             max_depth=1,
-            enable_autonomy=True,
+            enable_scheduling=True,
         ),
         *build_memory_tools(),
     ]

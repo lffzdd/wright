@@ -19,10 +19,10 @@ from ...infrastructure.tools.agent_tools import (
     agent_tools,
     public_agent_tree,
 )
-from ...infrastructure.tools.autonomy_tools import autonomy_tools
 from ...infrastructure.tools.base import Tool
 from ...infrastructure.tools.command.control import command_tools
 from ...infrastructure.tools.runtime import ToolRuntime
+from ...infrastructure.tools.schedule import schedule_tools
 from ..command.execution import CommandExecution
 from ..composition.roles import tools_for_role
 from ..execution.directory import current_directory_binding
@@ -454,7 +454,7 @@ def build_agent_tools(
     render_subagents: bool = True,
     permission_resolver: PermissionResolver | None = None,
     authorization_commit_factory=None,
-    enable_autonomy: bool = False,
+    enable_scheduling: bool = False,
     publisher: EventPublisher | None = None,
 ) -> list[Tool]:
     if depth < 0 or max_depth < 1 or depth > max_depth:
@@ -479,7 +479,7 @@ def build_agent_tools(
     if depth == 0:
         tools.extend(agent_tools)
         tools.extend(command_tools)
-        if enable_autonomy:
-            tools.extend(replace(tool, defer_to_model=True) for tool in autonomy_tools)
+        if enable_scheduling:
+            tools.extend(replace(tool, defer_to_model=True) for tool in schedule_tools)
         tools.append(get_agent_tree_tool)
     return tools

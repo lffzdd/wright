@@ -166,7 +166,7 @@ def test_execution_controls_are_root_only_and_history_does_not_restore_retired_n
     root_names = {
         tool.name
         for tool in build_agent_tools(
-            UnusedLLM(), [], depth=0, max_depth=1, enable_autonomy=True
+            UnusedLLM(), [], depth=0, max_depth=1, enable_scheduling=True
         )
     }
     child_names = {
@@ -201,7 +201,7 @@ def test_execution_controls_are_root_only_and_history_does_not_restore_retired_n
     prepared = prepare_model_tools(
         restored,
         build_agent_tools(
-            UnusedLLM(), [], depth=0, max_depth=1, enable_autonomy=True
+            UnusedLLM(), [], depth=0, max_depth=1, enable_scheduling=True
         ),
     )
     schema_names = {item["name"] for item in prepared.schemas}

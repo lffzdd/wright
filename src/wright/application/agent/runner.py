@@ -79,7 +79,7 @@ class Agent:
         on_run_started: Callable[[str], None] | None = None,
         authorization_commit: Callable[[AuthorizationChange], None] | None = None,
         authorization_commit_factory=None,
-        expose_autonomy: bool = False,
+        expose_scheduling: bool = False,
     ):
         self.llm = llm
         self.session_state = session_state
@@ -91,7 +91,7 @@ class Agent:
         self.runtime_resources = assembly.runtime_resources or runtime_resources
         if self.runtime_resources is None:
             self.runtime_resources = RuntimeResources(session_state.session_id)
-        self._expose_autonomy = expose_autonomy
+        self._expose_scheduling = expose_scheduling
         # 长期记忆协作者:只主 Agent 注入,子 Agent 传 None(保持纯净隔离上下文)。
         # Agent 只在主循环里喊它三声:构造时取指令、每轮注入召回、收口后提取落盘。
         self.memory = memory
@@ -422,7 +422,7 @@ class Agent:
             execution_backend=self.executor.backend,
             execution_journal_factory=self._execution_journal_factory,
             authorization_commit_factory=self._authorization_commit_factory,
-            expose_autonomy=self._expose_autonomy,
+            expose_scheduling=self._expose_scheduling,
         )
         self.executor.bind_run(
             assembly, authorization_commit=self._authorization_commit

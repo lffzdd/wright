@@ -1,4 +1,9 @@
-"""Connection and transaction ownership for the autonomy store."""
+"""Connection and transaction ownership for the shared task store.
+
+Scheduling errors live with the scheduling ports. This store also raises them
+for commands, interactions, and history so one SQLite transaction can fail
+closed without a second error hierarchy.
+"""
 
 from __future__ import annotations
 
@@ -9,13 +14,15 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-
-class AutonomyStoreError(ValueError):
-    pass
+from ....application.scheduling.contracts import JobNotFoundError, SchedulingError
 
 
-class AutonomyNotFoundError(AutonomyStoreError):
-    pass
+class AutonomyStoreError(SchedulingError):
+    """Shared-store failure. Scheduling callers catch :class:`SchedulingError`."""
+
+
+class AutonomyNotFoundError(JobNotFoundError, AutonomyStoreError):
+    """Missing row. Scheduling callers catch :class:`JobNotFoundError`."""
 
 
 class _StoreBase:

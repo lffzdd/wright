@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from ...application.composition.runtime import WrightRuntime
-from ..i18n import t
 from ...application.session.service import SessionService
+from ..i18n import t
 from .console_renderer import ConsoleRenderer
 from .input import CliInputController
 from .prompter import ConsolePrompter
@@ -24,7 +24,7 @@ class Repl:
         session_state = rt.session_state
         services = rt.services
         agent_idle = rt.agent_idle
-        if services.autonomy_scheduler is None or services.agent_background is None:
+        if services.job_scheduler is None or services.agent_background is None:
             raise RuntimeError("REPL requires autonomy scheduler and background runtime")
 
         if not isinstance(self.renderer, ConsoleRenderer):

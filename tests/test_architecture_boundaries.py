@@ -76,7 +76,7 @@ def test_shared_renderer_contract_does_not_load_console_toolkits() -> None:
 def test_application_execution_does_not_import_interface_rendering() -> None:
     roots = (
         PACKAGE_ROOT / "application/agent",
-        PACKAGE_ROOT / "application/autonomy",
+        PACKAGE_ROOT / "application/scheduling",
         PACKAGE_ROOT / "application/session",
         PACKAGE_ROOT / "application/tool_execution",
         PACKAGE_ROOT / "application/composition",
@@ -281,7 +281,7 @@ def test_session_repository_keeps_io_separate_from_codec() -> None:
 
 
 def test_tools_do_not_own_stores_schedulers_or_process_registries() -> None:
-    banned = ("AutonomyStore", "AutonomyScheduler", "ProcessRegistry", "TaskService")
+    banned = ("AutonomyStore", "JobScheduler", "AutonomyScheduler", "ProcessRegistry", "TaskService")
     offenders: list[str] = []
     for path in _py_files(PACKAGE_ROOT / "infrastructure/tools"):
         text = path.read_text(encoding="utf-8")
@@ -305,9 +305,12 @@ def test_domain_records_do_not_carry_runtime_callbacks() -> None:
     assert offenders == []
 
 
-def test_autonomy_tools_do_not_wake_the_scheduler() -> None:
-    text = (PACKAGE_ROOT / "infrastructure/tools/autonomy_tools.py").read_text(
-        encoding="utf-8"
+def test_schedule_tools_do_not_wake_the_scheduler() -> None:
+    root = PACKAGE_ROOT / "infrastructure/tools/schedule"
+    text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in root.rglob("*.py")
+        if "__pycache__" not in path.parts
     )
     assert "notify_changed" not in text
     assert "durable_store" not in text

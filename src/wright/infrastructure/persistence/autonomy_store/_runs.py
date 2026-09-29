@@ -6,13 +6,12 @@ import secrets
 import sqlite3
 import time
 from collections.abc import Iterable
-from dataclasses import dataclass
 from typing import Any
 
-from ....domain.model.automation import AutomationRecord, DurableRunRecord
+from ....application.scheduling.contracts import RecordPage, RunCancelResult
+from ....domain.model.scheduling import JobDefinition, JobRun, schedule_retry
 from ._base import AutonomyNotFoundError, AutonomyStoreError, _StoreBase
 from ._helpers import (
-    StorePage,
     _dump,
     _load_object,
     decode_page_cursor,
@@ -21,15 +20,8 @@ from ._helpers import (
 )
 
 
-@dataclass(frozen=True)
-class RunCancelResult:
-    run: DurableRunRecord
-    changed: bool
-    cooperative: bool
-
-
 class _RunsMixin(_StoreBase):
-    def get_run(self, run_id: str) -> DurableRunRecord:
+    def get_run(self, run_id: str) -> JobRun:
         with self._read():
             row = self._run_query("r.id = ?", (run_id,)).fetchone()
         if row is None:
@@ -38,17 +30,17 @@ class _RunsMixin(_StoreBase):
 
     def list_runs(
         self,
-        automation_id: str | None = None,
+        job_id: str | None = None,
         *,
         limit: int = 100,
         cursor: str | None = None,
-    ) -> StorePage:
+    ) -> RecordPage:
         """Return one stable page. The query itself is bounded by ``limit``."""
         limit = page_limit(limit)
-        if automation_id is not None:
-            self.get_automation(automation_id)
-        predicate = "1 = 1" if automation_id is None else "r.automation_id = ?"
-        parameters: tuple[Any, ...] = () if automation_id is None else (automation_id,)
+        if job_id is not None:
+            self.get_job(job_id)
+        predicate = "1 = 1" if job_id is None else "r.automation_id = ?"
+        parameters: tuple[Any, ...] = () if job_id is None else (job_id,)
         if cursor is not None:
             created_at, row_id = decode_page_cursor(cursor)
             predicate += " AND (r.created_at < ? OR (r.created_at = ? AND r.id < ?))"
@@ -69,11 +61,11 @@ class _RunsMixin(_StoreBase):
         if extra and records:
             last = records[-1]
             next_cursor = encode_page_cursor(last.created_at, last.id)
-        return StorePage(records, next_cursor)
+        return RecordPage(records, next_cursor)
 
     def claim_next_run(
         self, *, owner_id: str = "", now: float | None = None
-    ) -> DurableRunRecord | None:
+    ) -> JobRun | None:
         now = time.time() if now is None else float(now)
         with self._write():
             while True:
@@ -132,7 +124,7 @@ class _RunsMixin(_StoreBase):
 
     def start_run(
         self, run_id: str, *, owner_id: str = "", now: float | None = None
-    ) -> DurableRunRecord:
+    ) -> JobRun:
         now = time.time() if now is None else float(now)
         with self._write():
             cursor = self._conn.execute(
@@ -152,7 +144,7 @@ class _RunsMixin(_StoreBase):
                 )
         return self.get_run(run_id)
 
-    def set_run_root_turn(self, run_id: str, root_turn_id: str) -> DurableRunRecord:
+    def set_run_root_turn(self, run_id: str, root_turn_id: str) -> JobRun:
         self.get_run(run_id)
         with self._write():
             self._conn.execute(
@@ -222,7 +214,7 @@ class _RunsMixin(_StoreBase):
         error: str = "",
         owner_id: str = "",
         now: float | None = None,
-    ) -> DurableRunRecord:
+    ) -> JobRun:
         if status not in {"completed", "failed", "cancelled", "unknown"}:
             raise AutonomyStoreError(f"invalid terminal run status: {status}")
         now = time.time() if now is None else float(now)
@@ -237,7 +229,7 @@ class _RunsMixin(_StoreBase):
                 raise AutonomyStoreError(f"run {run_id} cannot finish from {current.status}")
             if owner_id and current.owner_id and current.owner_id != owner_id:
                 raise AutonomyStoreError("run is owned by another host")
-            automation = self.get_automation(current.automation_id)
+            job = self.get_job(current.job_id)
             effects = self._conn.execute(
                 "SELECT status FROM durable_tool_executions WHERE run_id = ?",
                 (run_id,),
@@ -257,11 +249,11 @@ class _RunsMixin(_StoreBase):
                 error = error or current.cancel_reason
             # Without a per-tool idempotency contract, repeating a whole Run
             # after any tool executed can repeat already committed effects.
-            should_retry = (
-                status == "failed"
-                and not any(row["status"] != "intended" for row in effects)
-                and automation.recovery_policy == "retry"
-                and current.attempt <= current.max_retries
+            should_retry = status == "failed" and schedule_retry(
+                recovery_policy=job.recovery_policy,
+                attempt=current.attempt,
+                max_retries=current.max_retries,
+                blocked_by_effects=any(row["status"] != "intended" for row in effects),
             )
             if should_retry:
                 self._conn.execute(
@@ -269,7 +261,7 @@ class _RunsMixin(_StoreBase):
                        SET status = 'waiting_retry', scheduled_for = ?,
                            started_at = NULL, ended_at = NULL, result = '', error = ?
                        WHERE id = ?""",
-                    (now + automation.retry_delay_seconds, str(error)[:4_000], run_id),
+                    (now + job.retry_delay_seconds, str(error)[:4_000], run_id),
                 )
             else:
                 self._conn.execute(
@@ -287,7 +279,7 @@ class _RunsMixin(_StoreBase):
         *,
         active_run_ids: Iterable[str] = (),
         now: float | None = None,
-    ) -> list[DurableRunRecord]:
+    ) -> list[JobRun]:
         """Recover orphaned running rows without blindly replaying side effects."""
         now = time.time() if now is None else float(now)
         protected = set(active_run_ids)
@@ -330,11 +322,11 @@ class _RunsMixin(_StoreBase):
                         run_id,
                     ),
                 ).rowcount
-                can_retry = (
-                    not started_effects
-                    and
-                    row["recovery_policy"] == "retry"
-                    and int(row["attempt"]) <= int(row["max_retries"])
+                can_retry = schedule_retry(
+                    recovery_policy=row["recovery_policy"],
+                    attempt=int(row["attempt"]),
+                    max_retries=int(row["max_retries"]),
+                    blocked_by_effects=bool(started_effects),
                 )
                 if can_retry:
                     self._conn.execute(
@@ -363,7 +355,7 @@ class _RunsMixin(_StoreBase):
 
     def _insert_run_locked(
         self,
-        automation: AutomationRecord,
+        automation: JobDefinition,
         *,
         scheduled_for: float,
         trigger_payload: dict[str, Any],
@@ -403,12 +395,12 @@ class _RunsMixin(_StoreBase):
         )
 
     @staticmethod
-    def _run_from_row(row: sqlite3.Row) -> DurableRunRecord:
-        return DurableRunRecord(
+    def _run_from_row(row: sqlite3.Row) -> JobRun:
+        return JobRun(
             id=str(row["id"]),
-            automation_id=str(row["automation_id"]),
+            job_id=str(row["automation_id"]),
             session_id=str(row["session_id"]),
-            automation_name=str(row["automation_name"]),
+            job_name=str(row["automation_name"]),
             prompt=str(row["prompt"]),
             trigger_type=row["trigger_type"],
             trigger_payload=_load_object(row["trigger_payload_json"]),

@@ -1,8 +1,8 @@
-"""Application-scoped owner for durable automation execution.
+"""Application-scoped owner for persisted job runs.
 
 Unlike ``SessionService``, this host has no conversation queue, renderer, or
-source Session.  A Session may create an Automation, but an already persisted
-Automation is subsequently executed by the host using its own control plane
+source Session. A session may create a job definition, but an already persisted
+definition is subsequently executed by the host using its own control plane
 and background supervisor.
 """
 
@@ -20,7 +20,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from ...domain.model.agent.control import AgentControlPlane
-from ...domain.model.automation import DurableRunRecord
+from ...domain.model.scheduling import JobRun
 from ...domain.policy import PermissionSettings
 from ...infrastructure.llm.llm import LLMClient
 from ...infrastructure.persistence.autonomy_store import AutonomyStore
@@ -31,14 +31,12 @@ from ...infrastructure.tools.mcp_client import (
     McpServerConfig,
 )
 from ..agent import AgentBackgroundRuntime
-from ..autonomy import (
-    AutonomyScheduler,
-    launch_durable_run,
-)
 from ..execution.directory import (
     DirectoryExecutionCoordinator,
     DirectoryWaitCancelled,
 )
+from ..scheduling.runner import launch_job_run
+from ..scheduling.scheduler import JobScheduler
 from .services import RuntimeServices
 
 
@@ -91,12 +89,13 @@ class ApplicationHost:
         self._stop = threading.Event()
         self._poll_interval = poll_interval
         self._host_id = f"host_{uuid4().hex}"
-        self._schedulers: dict[str, AutonomyScheduler] = {}
+        self._schedulers: dict[str, JobScheduler] = {}
+        self._stores: dict[str, AutonomyStore] = {}
         self.scheduler = self.scheduler_for(store)
         self.services = RuntimeServices(
             agent_background=self.background,
             durable_store=store,
-            autonomy_scheduler=self.scheduler,
+            job_scheduler=self.scheduler,
         )
 
     def bind_coordinator(self, coordinator: DirectoryExecutionCoordinator) -> None:
@@ -111,7 +110,7 @@ class ApplicationHost:
                     "application host already uses another directory coordinator"
                 )
 
-    def scheduler_for(self, store: AutonomyStore) -> AutonomyScheduler:
+    def scheduler_for(self, store: AutonomyStore) -> JobScheduler:
         """Retain source-session isolation under one execution-directory owner.
 
         The host takes ownership of the supplied store, including closing a
@@ -121,42 +120,57 @@ class ApplicationHost:
             if self._state not in {"new", "running"}:
                 raise RuntimeError("application host is closing")
             if store.workspace_dir != self.workspace_dir or store.path != self.store.path:
-                raise ValueError("automation store belongs to another execution environment")
+                raise ValueError("task store belongs to another execution environment")
             existing = self._schedulers.get(store.session_id)
             if existing is not None:
-                if store is not existing.store:
+                if store is not self._stores.get(store.session_id):
                     store.close()
                 return existing
-            scheduler = AutonomyScheduler(
+            scheduler = JobScheduler(
                 store, self.event_queue, poll_interval=self._poll_interval,
                 host_id=self._host_id,
                 dispatch_run=lambda run_id: self._dispatch(run_id, scheduler),
                 claim_run=lambda: self._claim_next_run(scheduler),
             )
+            self._stores[store.session_id] = store
             self._schedulers[store.session_id] = scheduler
             if self._state == "running":
                 try:
                     scheduler.start()
                 except Exception:
-                    self._schedulers.pop(store.session_id)
+                    self._schedulers.pop(store.session_id, None)
+                    self._stores.pop(store.session_id, None)
                     scheduler.close()
                     store.close()
                     raise
             return scheduler
 
-    def _claim_next_run(self, scheduler: AutonomyScheduler) -> DurableRunRecord | None:
+    def retained_store(self, session_id: str) -> AutonomyStore:
+        """Return the store connection this host kept for a source session.
+
+        ``scheduler_for`` may close a redundant connection when a session is
+        resumed. Callers that still need the shared task database use this,
+        not a store hanging off the scheduler.
+        """
+        with self._lock:
+            store = self._stores.get(session_id)
+            if store is None:
+                raise RuntimeError(f"application host has no task store for {session_id}")
+            return store
+
+    def _claim_next_run(self, scheduler: JobScheduler) -> JobRun | None:
         # Claim and the shared capacity check must be indivisible across all
         # source sessions: per-session limits alone allow concurrent writers.
         with self._lock:
             if self._state != "running" or self._active_runs() >= 1:
                 return None
-            return scheduler.store.claim_next_run(owner_id=self._host_id)
+            return scheduler.claim_next_run()
 
     def _active_runs(self) -> int:
         with self._lock:
             if self._state == "closed":
                 return 0
-            return sum(scheduler.store.count_active_runs() for scheduler in self._schedulers.values())
+            return sum(scheduler.count_active_runs() for scheduler in self._schedulers.values())
 
     def has_active_work(self) -> bool:
         with self._lock:
@@ -165,7 +179,7 @@ class ApplicationHost:
             if self._state == "closing":
                 return True
             return bool(self._active_runs()) or any(
-                scheduler.store.has_active_automation()
+                scheduler.has_active_job()
                 for scheduler in self._schedulers.values()
             )
 
@@ -234,7 +248,7 @@ class ApplicationHost:
         finally:
             os.close(fd)
 
-    def _dispatch(self, run_id: str, scheduler: AutonomyScheduler) -> None:
+    def _dispatch(self, run_id: str, scheduler: JobScheduler) -> None:
         """Launch a claimed run without borrowing a source Session resource."""
         with self._lock:
             if self._state != "running":
@@ -253,7 +267,7 @@ class ApplicationHost:
     def _launch_when_directory_free(
         self,
         run_id: str,
-        scheduler: AutonomyScheduler,
+        scheduler: JobScheduler,
         coordinator: DirectoryExecutionCoordinator,
     ) -> None:
         try:
@@ -261,13 +275,13 @@ class ApplicationHost:
                 self.workspace_dir,
                 kind="automation",
                 holder_id=run_id,
-                session_id=scheduler.store.session_id,
+                session_id=scheduler.session_id,
                 label=f"automation run {run_id}",
                 cancel=self._stop,
             )
         except DirectoryWaitCancelled:
             try:
-                scheduler.store.cancel_run(
+                self._stores[scheduler.session_id].cancel_run(
                     run_id, "application host closed before the run started",
                 )
             except Exception:
@@ -278,12 +292,14 @@ class ApplicationHost:
     def _launch(
         self,
         run_id: str,
-        scheduler: AutonomyScheduler,
+        scheduler: JobScheduler,
         lease: object | None = None,
     ) -> None:
+        store = self._stores[scheduler.session_id]
         try:
-            launch_durable_run(
+            launch_job_run(
                 run_id=run_id,
+                execution=store,
                 workspace_dir=self.workspace_dir,
                 control_plane=self.control_plane,
                 scheduler=scheduler,
@@ -292,7 +308,7 @@ class ApplicationHost:
                 permission_settings=self.permission_settings,
                 background_runtime=self.background,
                 services=replace(
-                    self.services, durable_store=scheduler.store, autonomy_scheduler=scheduler,
+                    self.services, durable_store=store, job_scheduler=scheduler,
                 ),
                 directory_coordinator=self._coordinator,
                 directory_lease=lease,
@@ -331,7 +347,7 @@ class ApplicationHost:
     def run_history(self, run_id: str) -> dict[str, object]:
         """Read a durable Run without requiring its source Session to exist."""
         with self._lock:
-            stores = tuple(scheduler.store for scheduler in self._schedulers.values())
+            stores = tuple(self._stores.values())
         for store in stores:
             try:
                 return store.run_history(run_id)
@@ -376,8 +392,8 @@ class ApplicationHost:
             thread.join(timeout=1)
         self.mcp_manager.shutdown()
         with self._lock:
-            for scheduler in self._schedulers.values():
-                scheduler.store.close()
+            for store in self._stores.values():
+                store.close()
             self._release_project_lock()
             self._state = "closed"
             self._closed.set()

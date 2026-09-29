@@ -1,7 +1,7 @@
 import queue
 import threading
 
-from wright.application.autonomy.scheduler import AutonomyScheduler
+from wright.application.scheduling.scheduler import JobScheduler
 from wright.application.composition.services import RuntimeServices
 from wright.application.session.loops import SessionLoopRegistry
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
@@ -10,7 +10,7 @@ from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall
 from wright.domain.policy import PermissionResolver, PermissionResponse
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
-from wright.infrastructure.tools.autonomy_tools import autonomy_tools
+from wright.infrastructure.tools.schedule import schedule_tools
 from wright.infrastructure.tools.loop_tools import manage_loop_tool
 
 
@@ -19,13 +19,13 @@ def test_registered_management_tools_work_through_capability_restriction(tmp_pat
     events = queue.Queue()
     idle = threading.Event()
     loops = SessionLoopRegistry(events, idle)
-    scheduler = AutonomyScheduler(store, events)
-    services = RuntimeServices(durable_store=store, autonomy_scheduler=scheduler, loop_registry=loops)
+    scheduler = JobScheduler(store, events)
+    services = RuntimeServices(durable_store=store, job_scheduler=scheduler, loop_registry=loops)
     session = Session.create("management", tmp_path, session_id="session")
     session.begin_user_turn("management")
     executor = ToolDispatchService(
-        {t.name: t for t in [*autonomy_tools, manage_loop_tool]},
-        assemble_tool_capabilities(session, services, None, expose_autonomy=True),
+        {t.name: t for t in [*schedule_tools, manage_loop_tool]},
+        assemble_tool_capabilities(session, services, None, expose_scheduling=True),
         session=session,
         permission_resolver=PermissionResolver(
             approval_handler=lambda _: PermissionResponse("allow_once"),

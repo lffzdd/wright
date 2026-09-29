@@ -12,19 +12,17 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ...core.logger import get_logger
-from ...infrastructure.persistence.autonomy_store import (
-    AutonomyStore,
-    AutonomyStoreError,
-)
+from ...infrastructure.persistence.autonomy_store import AutonomyStore
 from ...infrastructure.storage.attachments import AttachmentError
 from ..agent.operations import agent_completion_notice
-from ..autonomy import launch_durable_run
 from ..composition.runtime import WrightRuntime
 from ..execution.directory import (
     DirectoryWaitCancelled,
     bind_directory_work,
     reset_directory_work,
 )
+from ..scheduling.contracts import SchedulingError
+from ..scheduling.runner import launch_job_run
 from .history_projection import (
     current_run_id,
     latest_turn_history_id,
@@ -80,11 +78,11 @@ def _publish_execution(rt: WrightRuntime, execution: str, reason: str = "") -> N
     )
 
 
-def _render_durable_run_finished(store: AutonomyStore, run_id: str, rt: WrightRuntime) -> None:
+def _render_job_run_finished(store: AutonomyStore, run_id: str, rt: WrightRuntime) -> None:
     """只打一行摘要，不注入 root 上下文、不跑 Agent turn。"""
     try:
         run = store.get_run(run_id)
-    except AutonomyStoreError:
+    except SchedulingError:
         _notice(rt, f"durable run {run_id} finished")
         return
     preview = (run.result or run.error or "").replace("\n", " ").strip()
@@ -93,7 +91,7 @@ def _render_durable_run_finished(store: AutonomyStore, run_id: str, rt: WrightRu
     detail = f": {preview}" if preview else ""
     _notice(
         rt,
-        f"schedule run {run.automation_name} [{run.status}] run_id={run.id}{detail}",
+        f"schedule run {run.job_name} [{run.status}] run_id={run.id}{detail}",
     )
 
 
@@ -180,7 +178,7 @@ def _cmd_status(_text: str, rt: WrightRuntime) -> None:
 
 def _cmd_event(text: str, rt: WrightRuntime) -> None:
     event_name, event_payload = _parse_external_event_command(text)
-    scheduler = rt.services.autonomy_scheduler
+    scheduler = rt.services.job_scheduler
     if scheduler is None:
         raise RuntimeError("autonomy scheduler is not configured")
     event_id = scheduler.emit_event(event_name, event_payload)
@@ -334,7 +332,7 @@ def process_session_event(
     services = rt.services
     agent_idle = rt.agent_idle
     loop_registry = services.loop_registry
-    autonomy_scheduler = services.autonomy_scheduler
+    job_scheduler = services.job_scheduler
     background_runtime = services.agent_background
 
     if event_type == "USER_INPUT":
@@ -448,7 +446,7 @@ def process_session_event(
         return False
 
     if event_type == "DURABLE_RUN_DUE":
-        if autonomy_scheduler is None or background_runtime is None:
+        if job_scheduler is None or background_runtime is None or services.durable_store is None:
             logger.error("durable run dispatch missing scheduler/runtime: %s", payload)
             return False
         coordinator = getattr(rt, "directory_coordinator", None)
@@ -467,10 +465,11 @@ def process_session_event(
             except DirectoryWaitCancelled:
                 return False
         try:
-            launch_durable_run(
+            launch_job_run(
                 run_id=str(payload),
+                execution=services.durable_store,
                 root_session=session_state,
-                scheduler=autonomy_scheduler,
+                scheduler=job_scheduler,
                 llm=rt.llm,
                 base_tools=rt.assembled_base_tools,
                 permission_settings=rt.permission_settings,
@@ -485,7 +484,7 @@ def process_session_event(
         return False
 
     if event_type == "DURABLE_RUN_FINISHED":
-        _render_durable_run_finished(rt.autonomy_store, str(payload), rt)
+        _render_job_run_finished(rt.autonomy_store, str(payload), rt)
         return False
 
     if event_type == "LOOP_DUE":

@@ -1,18 +1,23 @@
-"""Automation lifecycle operations for the autonomy store."""
+"""Job definition lifecycle for the shared task store."""
 
 from __future__ import annotations
 
 import secrets
 import sqlite3
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ....domain.model.automation import AutomationRecord, TriggerSpec
+from ....application.scheduling.contracts import JobChange, RecordPage
+from ....domain.model.scheduling import (
+    JobDefinition,
+    TriggerSpec,
+    checked_recovery,
+    initial_next_run,
+    resume_next_run,
+)
 from ._base import AutonomyNotFoundError, AutonomyStoreError, _StoreBase
 from ._helpers import (
-    StorePage,
     _bounded,
     _dump,
     _load_object,
@@ -23,14 +28,15 @@ from ._helpers import (
 )
 
 
-@dataclass(frozen=True)
-class AutomationChange:
-    automation: AutomationRecord
-    changed: bool
+def _recovery(policy: str, max_retries: int, retry_delay_seconds: float):
+    try:
+        return checked_recovery(policy, max_retries, retry_delay_seconds)
+    except ValueError as exc:
+        raise AutonomyStoreError(str(exc)) from exc
 
 
 class _AutomationsMixin(_StoreBase):
-    def create_automation(
+    def create_job(
         self,
         *,
         name: str,
@@ -41,35 +47,21 @@ class _AutomationsMixin(_StoreBase):
         retry_delay_seconds: float = 30,
         run_config: dict[str, Any] | None = None,
         now: float | None = None,
-    ) -> AutomationRecord:
+    ) -> JobDefinition:
         name = _bounded(name, "name", 200)
         prompt = _bounded(prompt, "prompt", 8_000)
-        if recovery_policy not in {"manual", "retry"}:
-            raise AutonomyStoreError("recovery_policy must be manual or retry")
-        if (
-            isinstance(max_retries, bool)
-            or not isinstance(max_retries, int)
-            or not 0 <= max_retries <= 20
-        ):
-            raise AutonomyStoreError("max_retries must be between 0 and 20")
-        if (
-            isinstance(retry_delay_seconds, bool)
-            or not isinstance(retry_delay_seconds, (int, float))
-            or retry_delay_seconds < 0
-            or retry_delay_seconds > 86_400
-        ):
-            raise AutonomyStoreError(
-                "retry_delay_seconds must be between 0 and 86400"
-            )
+        recovery_policy, max_retries, retry_delay_seconds = _recovery(
+            recovery_policy, max_retries, retry_delay_seconds
+        )
         now = time.time() if now is None else float(now)
         config_json = _dump(_safe_run_config(run_config or {}))
         trigger = self._normalize_trigger(trigger)
-        next_run_at = self._initial_next_run(trigger, now)
+        next_run_at = initial_next_run(trigger, now)
         trigger_state = (
             self._file_snapshot(trigger.path)
             if trigger.type == "file_change" else {}
         )
-        automation_id = f"job_{secrets.token_hex(6)}"
+        job_id = f"job_{secrets.token_hex(6)}"
         with self._write():
             self._conn.execute(
                 """
@@ -81,27 +73,27 @@ class _AutomationsMixin(_StoreBase):
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    automation_id, self.session_id, name, prompt, trigger.type,
+                    job_id, self.session_id, name, prompt, trigger.type,
                     _dump(trigger.to_dict()), _dump(trigger_state), recovery_policy,
                     int(max_retries), float(retry_delay_seconds), now, now,
                     next_run_at, config_json,
                 ),
             )
-        return self.get_automation(automation_id)
+        return self.get_job(job_id)
 
-    def get_automation(self, automation_id: str) -> AutomationRecord:
+    def get_job(self, job_id: str) -> JobDefinition:
         with self._read():
             row = self._conn.execute(
                 "SELECT * FROM automations WHERE id = ? AND session_id = ?",
-                (automation_id, self.session_id),
+                (job_id, self.session_id),
             ).fetchone()
         if row is None:
-            raise AutonomyNotFoundError(f"Unknown schedule_id: {automation_id}")
-        return self._automation_from_row(row)
+            raise AutonomyNotFoundError(f"Unknown schedule_id: {job_id}")
+        return self._job_from_row(row)
 
-    def list_automations(
+    def list_jobs(
         self, *, limit: int = 100, cursor: str | None = None, status: str | None = None
-    ) -> StorePage:
+    ) -> RecordPage:
         limit = page_limit(limit)
         predicate = "session_id = ?"
         parameters: list[Any] = [self.session_id]
@@ -120,14 +112,14 @@ class _AutomationsMixin(_StoreBase):
             ).fetchall()
         extra = len(rows) > limit
         visible = rows[:limit]
-        records = tuple(self._automation_from_row(row) for row in visible)
+        records = tuple(self._job_from_row(row) for row in visible)
         next_cursor = None
         if extra and records:
             last = records[-1]
             next_cursor = encode_page_cursor(last.created_at, last.id)
-        return StorePage(records, next_cursor)
+        return RecordPage(records, next_cursor)
 
-    def list_project_automations(self, *, limit: int = 100) -> tuple:
+    def list_project_jobs(self, *, limit: int = 100) -> tuple:
         """Read every schedule in this project database, across session ids."""
 
         limit = page_limit(limit)
@@ -136,9 +128,9 @@ class _AutomationsMixin(_StoreBase):
                 "SELECT * FROM automations ORDER BY created_at DESC, id DESC LIMIT ?",
                 (limit,),
             ).fetchall()
-        return tuple(self._automation_from_row(row) for row in rows)
+        return tuple(self._job_from_row(row) for row in rows)
 
-    def has_active_automation(self) -> bool:
+    def has_active_job(self) -> bool:
         with self._read():
             row = self._conn.execute(
                 """SELECT 1 FROM automations
@@ -147,9 +139,9 @@ class _AutomationsMixin(_StoreBase):
             ).fetchone()
         return row is not None
 
-    def update_automation(
+    def update_job(
         self,
-        automation_id: str,
+        job_id: str,
         *,
         name: str | None = None,
         prompt: str | None = None,
@@ -158,37 +150,27 @@ class _AutomationsMixin(_StoreBase):
         max_retries: int | None = None,
         retry_delay_seconds: float | None = None,
         now: float | None = None,
-    ) -> AutomationChange:
+    ) -> JobChange:
         now = time.time() if now is None else float(now)
         with self._write():
-            current = self._automation_for_update(automation_id)
+            current = self._job_for_update(job_id)
             if current.status not in {"active", "paused"}:
                 raise AutonomyStoreError(
-                    f"schedule {automation_id} cannot be edited from {current.status}"
+                    f"schedule {job_id} cannot be edited from {current.status}"
                 )
             next_name = current.name if name is None else _bounded(name, "name", 200)
             next_prompt = current.prompt if prompt is None else _bounded(prompt, "prompt", 8_000)
             next_trigger = current.trigger if trigger is None else self._normalize_trigger(trigger)
-            next_policy = current.recovery_policy if recovery_policy is None else recovery_policy
-            if next_policy not in {"manual", "retry"}:
-                raise AutonomyStoreError("recovery_policy must be manual or retry")
-            next_retries = current.max_retries if max_retries is None else max_retries
-            if (
-                isinstance(next_retries, bool)
-                or not isinstance(next_retries, int)
-                or not 0 <= next_retries <= 20
-            ):
-                raise AutonomyStoreError("max_retries must be between 0 and 20")
-            next_delay = (
+            next_policy, next_retries, next_delay = _recovery(
+                current.recovery_policy if recovery_policy is None else recovery_policy,
+                current.max_retries if max_retries is None else max_retries,
                 current.retry_delay_seconds
                 if retry_delay_seconds is None
-                else float(retry_delay_seconds)
+                else retry_delay_seconds,
             )
-            if next_delay < 0 or next_delay > 86_400:
-                raise AutonomyStoreError("retry_delay_seconds must be between 0 and 86400")
             next_run = current.next_run_at
             if trigger is not None and current.status == "active":
-                next_run = self._initial_next_run(next_trigger, now)
+                next_run = initial_next_run(next_trigger, now)
             cursor = self._conn.execute(
                 """UPDATE automations
                    SET name = ?, prompt = ?, trigger_type = ?, trigger_json = ?,
@@ -198,34 +180,34 @@ class _AutomationsMixin(_StoreBase):
                 (
                     next_name, next_prompt, next_trigger.type, _dump(next_trigger.to_dict()),
                     next_policy, int(next_retries), float(next_delay), next_run, now,
-                    automation_id, self.session_id,
+                    job_id, self.session_id,
                 ),
             )
-            updated = self._automation_for_update(automation_id)
-            return AutomationChange(updated, changed=cursor.rowcount == 1)
+            updated = self._job_for_update(job_id)
+            return JobChange(updated, changed=cursor.rowcount == 1)
 
-    def delete_automation_if_unused(self, automation_id: str) -> bool:
+    def delete_job_if_unused(self, job_id: str) -> bool:
         """Remove a cancelled schedule that has no runs. History-bearing rows stay."""
 
         with self._write():
-            current = self._automation_for_update(automation_id)
+            current = self._job_for_update(job_id)
             if current.status != "cancelled":
                 return False
             row = self._conn.execute(
                 """SELECT 1 FROM durable_runs
                    WHERE automation_id = ? AND session_id = ? LIMIT 1""",
-                (automation_id, self.session_id),
+                (job_id, self.session_id),
             ).fetchone()
             if row is not None:
                 return False
             cursor = self._conn.execute(
                 """DELETE FROM automations
                    WHERE id = ? AND session_id = ? AND status = 'cancelled'""",
-                (automation_id, self.session_id),
+                (job_id, self.session_id),
             )
             return cursor.rowcount == 1
 
-    def pause_automation(self, automation_id: str) -> AutomationChange:
+    def pause_job(self, job_id: str) -> JobChange:
         """Stop materializing new runs; already queued runs may still execute.
 
         The status check and update share one immediate transaction, so a
@@ -233,30 +215,30 @@ class _AutomationsMixin(_StoreBase):
         """
         now = time.time()
         with self._write():
-            current = self._automation_for_update(automation_id)
+            current = self._job_for_update(job_id)
             if current.status != "active":
-                return AutomationChange(current, changed=False)
+                return JobChange(current, changed=False)
             cursor = self._conn.execute(
                 """UPDATE automations SET status = 'paused', updated_at = ?
                    WHERE id = ? AND session_id = ? AND status = 'active'""",
-                (now, automation_id, self.session_id),
+                (now, job_id, self.session_id),
             )
-            updated = self._automation_for_update(automation_id)
-            return AutomationChange(updated, changed=cursor.rowcount == 1)
+            updated = self._job_for_update(job_id)
+            return JobChange(updated, changed=cursor.rowcount == 1)
 
-    def resume_automation(
-        self, automation_id: str, *, now: float | None = None
-    ) -> AutomationChange:
+    def resume_job(
+        self, job_id: str, *, now: float | None = None
+    ) -> JobChange:
         now = time.time() if now is None else float(now)
         with self._write():
-            current = self._automation_for_update(automation_id)
+            current = self._job_for_update(job_id)
             if current.status == "active":
-                return AutomationChange(current, changed=False)
+                return JobChange(current, changed=False)
             if current.status != "paused":
                 raise AutonomyStoreError(
-                    f"schedule {automation_id} cannot resume from {current.status}"
+                    f"schedule {job_id} cannot resume from {current.status}"
                 )
-            next_run = self._resume_next_run(current.trigger, now)
+            next_run = resume_next_run(current.trigger, now)
             state = current.trigger_state
             if current.trigger.type == "file_change":
                 state = self._file_snapshot(current.trigger.path)
@@ -267,27 +249,27 @@ class _AutomationsMixin(_StoreBase):
                    SET status = 'active', updated_at = ?, next_run_at = ?,
                        trigger_state_json = ?
                    WHERE id = ? AND session_id = ? AND status = 'paused'""",
-                (now, next_run, _dump(state), automation_id, self.session_id),
+                (now, next_run, _dump(state), job_id, self.session_id),
             )
             if cursor.rowcount != 1:
-                current = self._automation_for_update(automation_id)
+                current = self._job_for_update(job_id)
                 if current.status == "active":
-                    return AutomationChange(current, changed=False)
+                    return JobChange(current, changed=False)
                 raise AutonomyStoreError(
-                    f"schedule {automation_id} cannot resume from {current.status}"
+                    f"schedule {job_id} cannot resume from {current.status}"
                 )
-            return AutomationChange(self._automation_for_update(automation_id), changed=True)
+            return JobChange(self._job_for_update(job_id), changed=True)
 
-    def cancel_automation(self, automation_id: str, reason: str) -> AutomationChange:
+    def cancel_job(self, job_id: str, reason: str) -> JobChange:
         now = time.time()
         reason = str(reason)[:1_000]
         with self._write():
-            current = self._automation_for_update(automation_id)
+            current = self._job_for_update(job_id)
             cursor = self._conn.execute(
                 """UPDATE automations
                    SET status = 'cancelled', updated_at = ?, next_run_at = NULL
                    WHERE id = ? AND session_id = ? AND status != 'cancelled'""",
-                (now, automation_id, self.session_id),
+                (now, job_id, self.session_id),
             )
             changed = cursor.rowcount == 1
             if changed:
@@ -297,27 +279,27 @@ class _AutomationsMixin(_StoreBase):
                            cancel_reason = ?
                        WHERE automation_id = ? AND session_id = ?
                          AND status IN ('queued', 'dispatched', 'waiting_retry')""",
-                    (now, reason, automation_id, self.session_id),
+                    (now, reason, job_id, self.session_id),
                 )
                 self._conn.execute(
                     """UPDATE durable_runs
                        SET cancel_requested = 1, cancel_reason = ?
                        WHERE automation_id = ? AND session_id = ? AND status = 'running'""",
-                    (reason, automation_id, self.session_id),
+                    (reason, job_id, self.session_id),
                 )
-            updated = self._automation_for_update(automation_id)
+            updated = self._job_for_update(job_id)
             if not changed and current.status == "cancelled":
-                return AutomationChange(updated, changed=False)
-            return AutomationChange(updated, changed=changed)
+                return JobChange(updated, changed=False)
+            return JobChange(updated, changed=changed)
 
-    def _automation_for_update(self, automation_id: str) -> AutomationRecord:
+    def _job_for_update(self, job_id: str) -> JobDefinition:
         row = self._conn.execute(
             "SELECT * FROM automations WHERE id = ? AND session_id = ?",
-            (automation_id, self.session_id),
+            (job_id, self.session_id),
         ).fetchone()
         if row is None:
-            raise AutonomyNotFoundError(f"Unknown schedule_id: {automation_id}")
-        return self._automation_from_row(row)
+            raise AutonomyNotFoundError(f"Unknown schedule_id: {job_id}")
+        return self._job_from_row(row)
 
     def emit_event(
         self,
@@ -354,42 +336,6 @@ class _AutomationsMixin(_StoreBase):
         relative = str(resolved.relative_to(self.workspace_dir))
         return TriggerSpec(type="file_change", path=relative or ".")
 
-    @staticmethod
-    def _initial_next_run(trigger: TriggerSpec, now: float) -> float | None:
-        # next_run_at is persisted as wall-clock epoch seconds. A backward
-        # clock step therefore delays every interval until wall time catches
-        # up; a monotonic clock cannot replace this without changing on-disk
-        # semantics.
-        if trigger.type == "once":
-            return float(trigger.run_at or 0)
-        if trigger.type == "interval":
-            return (
-                float(trigger.start_at)
-                if trigger.start_at is not None
-                else now + float(trigger.every_seconds or 0)
-            )
-        if trigger.type == "web_change":
-            return now
-        return None
-
-    @staticmethod
-    def _advance_interval(due: float, every_seconds: float, now: float) -> float:
-        next_run = float(due)
-        step = float(every_seconds)
-        while next_run <= now:
-            next_run += step
-        return next_run
-
-    @staticmethod
-    def _resume_next_run(trigger: TriggerSpec, now: float) -> float | None:
-        if trigger.type == "once":
-            return max(now, float(trigger.run_at or now))
-        if trigger.type == "interval":
-            return now + float(trigger.every_seconds or 0)
-        if trigger.type == "web_change":
-            return now
-        return None
-
     def _file_snapshot(self, relative_path: str) -> dict[str, Any]:
         path = (self.workspace_dir / relative_path).resolve()
         try:
@@ -403,17 +349,17 @@ class _AutomationsMixin(_StoreBase):
         except FileNotFoundError:
             return {"exists": False}
 
-    def _has_live_run_locked(self, automation_id: str) -> bool:
+    def _has_live_run_locked(self, job_id: str) -> bool:
         row = self._conn.execute(
             """SELECT 1 FROM durable_runs WHERE automation_id = ?
                AND status IN ('queued', 'dispatched', 'running', 'waiting_retry') LIMIT 1""",
-            (automation_id,),
+            (job_id,),
         ).fetchone()
         return row is not None
 
     def _note_pending_event_locked(
         self,
-        automation: AutomationRecord,
+        automation: JobDefinition,
         payload: dict[str, Any],
         now: float,
     ) -> None:
@@ -437,7 +383,7 @@ class _AutomationsMixin(_StoreBase):
             (self.session_id,),
         ).fetchall()
         for row in rows:
-            automation = self._automation_from_row(row)
+            automation = self._job_from_row(row)
             pending = automation.trigger_state.get("pending_event")
             if not isinstance(pending, dict) or not pending:
                 continue
@@ -464,8 +410,8 @@ class _AutomationsMixin(_StoreBase):
             )
 
     @staticmethod
-    def _automation_from_row(row: sqlite3.Row) -> AutomationRecord:
-        return AutomationRecord(
+    def _job_from_row(row: sqlite3.Row) -> JobDefinition:
+        return JobDefinition(
             id=str(row["id"]),
             session_id=str(row["session_id"]),
             name=str(row["name"]),

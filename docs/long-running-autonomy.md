@@ -1,12 +1,22 @@
-# Long-running Autonomy（第五阶段）
+# Job scheduling
 
-第四阶段在统一 Task Runtime 上增加了可持久化调度，但没有把 Scheduler、Agent 和 Shell
-合并成一个巨型状态机。SQLite 文件位于
+调度子系统按 Job Scheduling 理解，实现在 `application/scheduling`、
+`domain/model/scheduling` 和 `infrastructure/tools/schedule`。它没有把
+Scheduler、Agent 和 Shell 合并成一个巨型状态机。SQLite 文件位于
 `~/.wright/projects/<project-id>/tasks.sqlite3`。
+
+`AutonomyStore` 仍是这份库的共享实现：job 定义、job run、命令、交互、工具执行日志
+和运行历史都在同一个连接里。调度应用通过 `JobCatalog`、`JobRunLedger`、
+`JobDispatch` 和 `RunExecution` 使用其中与调度有关的部分。跨定义、运行和工具日志的
+写入仍是 store 方法内部的一个事务。
+
+表名、JSON 字段、事件名、Web 路由和 CLI 参数保持原样。模型工具继续使用
+`schedule_id` / `run_id`。`JobRun.to_dict()` 仍写出 `automation_id` 和
+`automation_name`，供已有 Web 响应使用。
 
 ## 两层持久化模型
 
-`AutomationRecord` 是“以后何时做什么”的定义：
+`JobDefinition` 是“以后何时做什么”的定义：
 
 ```text
 active ──pause──► paused ──resume──► active
@@ -15,7 +25,7 @@ active ──pause──► paused ──resume──► active
    └── cancel ────────────────► cancelled
 ```
 
-`DurableRunRecord` 是某次具体执行，也是 `TaskService` 中 `kind=durable` 的任务：
+`JobRun` 是某次具体执行。事件协议里它仍是 `kind=durable`：
 
 ```text
 queued → dispatched → running → completed
@@ -33,13 +43,13 @@ queued → dispatched → running → completed
 Scheduler 线程只做四件事：检查触发条件、写 durable run、原子 claim、投递已领取的
 `run_id`。它从不调用 `Agent.run`，也不修改 root transcript。
 
-`ApplicationHost` 是一个执行目录的应用级 owner：拥有 Scheduler、后台 worker、SQLite 连接、
+`ApplicationHost` 是一个执行目录的应用级 owner：拥有 `JobScheduler`、后台 worker、SQLite 连接、
 独立 MCP 连接和控制面。CLI、TUI、Web runtime 在装配时创建或复用它，不借用来源聊天的
 Renderer、队列或 MCP 连接。
 
 CLI/TUI 退出时关闭当前进程的宿主。Web 的 `RuntimeManager` 按执行目录保留宿主；同目录
-关闭后新建会话、恢复旧会话都复用它。每个已打开的来源 Session 保留自己的 AutonomyStore
-视图和 Scheduler，记录不会混入另一个会话。关闭会话不删除 Automation，也不停止已接收的后台任务。
+关闭后新建会话、恢复旧会话都复用它。每个已打开的来源 Session 保留自己的 `AutonomyStore`
+视图和 `JobScheduler`，记录不会混入另一个会话。关闭会话不删除 job 定义，也不停止已接收的后台任务。
 
 同一执行目录通过 OS 自动释放的 advisory file lock 保证只有一个 Host；另一进程不能把
 仍在运行的 owner 当作崩溃现场恢复。各来源 Scheduler 共享宿主的原子领取容量检查，合计
@@ -55,10 +65,10 @@ transcript、cwd、plan、status 或 memory。完成事件由宿主线程消费�
 ## Headless 宿主
 
 使用 `wright --ui headless --workspace DIR --automation-session SESSION_ID` 显式启动本地常驻宿主。
-`SESSION_ID` 是创建 Automation 时显示的来源 session id；它只用于查找已持久化定义，并不恢复、
+`SESSION_ID` 是创建 job 定义时记录的来源 session id；它只用于查找已持久化定义，并不恢复、
 启动或借用那个聊天 Session。它不会安装
 LaunchAgent/systemd、不会 daemonize、不会开放端口；进程仍在前台，Ctrl-C 即关闭。
-数据库中有 Automation 只表示任务已持久化，不表示没有一个存活宿主时它仍在执行。
+数据库中有 job 定义只表示任务已持久化，不表示没有一个存活宿主时它仍在执行。
 
 ## 触发器
 
@@ -70,7 +80,7 @@ LaunchAgent/systemd、不会 daemonize、不会开放端口；进程仍在前台
 - `event`：匹配持久化的命名外部事件。
 
 终端可用 `/event <name> [JSON object]` 注入事件。其他本地进程也可以打开同一数据库，
-使用 `AutonomyStore(...).emit_event(name, payload)`；Scheduler 最迟在下一 polling tick 发现。
+使用 `AutonomyStore(...).emit_event(name, payload)`；`JobScheduler` 最迟在下一 polling tick 发现。
 
 ## 重启与副作用安全
 

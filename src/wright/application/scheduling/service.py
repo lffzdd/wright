@@ -1,8 +1,7 @@
-"""Automation use cases.
+"""Job definition and job run use cases.
 
 The store performs the atomic transition. This service wakes the scheduler
-after a change and returns that transition's snapshot. Tools do not read the
-rule twice to guess whether it changed.
+after a change and returns that transition's snapshot.
 """
 
 from __future__ import annotations
@@ -11,33 +10,47 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from ...infrastructure.persistence.autonomy_store import AutonomyStore
-from ...infrastructure.persistence.autonomy_store._automations import AutomationChange
-from ...infrastructure.persistence.autonomy_store._runs import RunCancelResult
+from ...domain.model.scheduling import TriggerSpec
 from ..execution.identity import (
     ExecutionIdentity,
     ExecutionWaitCancelled,
 )
+from .contracts import (
+    JobCatalog,
+    JobChange,
+    JobRun,
+    JobRunLedger,
+    RecordPage,
+    RunCancelResult,
+)
+from .scheduler import JobScheduler
 
 
-class AutonomyService:
-    def __init__(self, store: AutonomyStore, identity: ExecutionIdentity, scheduler=None) -> None:
-        self._store = store
+class SchedulingService:
+    def __init__(
+        self,
+        catalog: JobCatalog,
+        runs: JobRunLedger,
+        identity: ExecutionIdentity,
+        scheduler: JobScheduler | None = None,
+    ) -> None:
+        self._catalog = catalog
+        self._runs = runs
         self._identity = identity
         self._scheduler = scheduler
 
-    def create_schedule(
+    def create_job(
         self,
         *,
         name: str,
         prompt: str,
-        trigger,
+        trigger: TriggerSpec,
         recovery_policy: str = "manual",
         max_retries: int = 0,
         retry_delay_seconds: float = 30,
         run_config: dict[str, Any] | None = None,
     ):
-        record = self._store.create_automation(
+        record = self._catalog.create_job(
             name=name,
             prompt=prompt,
             trigger=trigger,
@@ -49,47 +62,47 @@ class AutonomyService:
         self._wake(True)
         return record
 
-    def get_schedule(self, schedule_id: str):
-        self._identity.require(schedule_id, "schedule")
-        return self._store.get_automation(schedule_id)
+    def get_job(self, job_id: str):
+        self._identity.require(job_id, "schedule")
+        return self._catalog.get_job(job_id)
 
-    def list_schedules(
+    def list_jobs(
         self, *, status: str | None = None, limit: int = 100, cursor: str | None = None
-    ):
-        return self._store.list_automations(limit=limit, cursor=cursor, status=status)
+    ) -> RecordPage:
+        return self._catalog.list_jobs(limit=limit, cursor=cursor, status=status)
 
-    def pause_schedule(self, schedule_id: str) -> AutomationChange:
-        self._identity.require(schedule_id, "schedule")
-        result = self._store.pause_automation(schedule_id)
+    def pause_job(self, job_id: str) -> JobChange:
+        self._identity.require(job_id, "schedule")
+        result = self._catalog.pause_job(job_id)
         self._wake(result.changed)
         return result
 
-    def resume_schedule(self, schedule_id: str) -> AutomationChange:
-        self._identity.require(schedule_id, "schedule")
-        result = self._store.resume_automation(schedule_id)
+    def resume_job(self, job_id: str) -> JobChange:
+        self._identity.require(job_id, "schedule")
+        result = self._catalog.resume_job(job_id)
         self._wake(result.changed)
         return result
 
-    def cancel_schedule(self, schedule_id: str, reason: str) -> AutomationChange:
-        self._identity.require(schedule_id, "schedule")
-        result = self._store.cancel_automation(schedule_id, reason)
+    def cancel_job(self, job_id: str, reason: str) -> JobChange:
+        self._identity.require(job_id, "schedule")
+        result = self._catalog.cancel_job(job_id, reason)
         self._wake(result.changed)
         return result
 
-    def update_schedule(
+    def update_job(
         self,
-        schedule_id: str,
+        job_id: str,
         *,
         name: str | None = None,
         prompt: str | None = None,
-        trigger=None,
+        trigger: TriggerSpec | None = None,
         recovery_policy: str | None = None,
         max_retries: int | None = None,
         retry_delay_seconds: float | None = None,
-    ) -> AutomationChange:
-        self._identity.require(schedule_id, "schedule")
-        result = self._store.update_automation(
-            schedule_id,
+    ) -> JobChange:
+        self._identity.require(job_id, "schedule")
+        result = self._catalog.update_job(
+            job_id,
             name=name,
             prompt=prompt,
             trigger=trigger,
@@ -100,27 +113,27 @@ class AutonomyService:
         self._wake(result.changed)
         return result
 
-    def delete_schedule(self, schedule_id: str, *, confirm: bool, reason: str) -> dict[str, Any]:
-        """Cancel a schedule. A row with no runs is then removed.
+    def delete_job(self, job_id: str, *, confirm: bool, reason: str) -> dict[str, Any]:
+        """Cancel a job definition. A row with no runs is then removed.
 
-        A schedule that already has runs stays as ``cancelled`` so its history
+        A definition that already has runs stays ``cancelled`` so its history
         remains addressable. This does not delete the workspace.
         """
 
         if not confirm:
             raise ValueError("confirmation is required")
-        self._identity.require(schedule_id, "schedule")
-        current = self._store.get_automation(schedule_id)
+        self._identity.require(job_id, "schedule")
+        current = self._catalog.get_job(job_id)
         cancelled = current
         changed = False
         if current.status != "cancelled":
-            result = self._store.cancel_automation(schedule_id, reason)
-            cancelled = result.automation
+            result = self._catalog.cancel_job(job_id, reason)
+            cancelled = result.job
             changed = result.changed
             self._wake(changed)
-        removed = self._store.delete_automation_if_unused(schedule_id)
+        removed = self._catalog.delete_job_if_unused(job_id)
         return {
-            "id": schedule_id,
+            "id": job_id,
             "status": "deleted" if removed else cancelled.status,
             "deleted": removed,
             "cancelled": changed or cancelled.status == "cancelled",
@@ -129,18 +142,18 @@ class AutonomyService:
 
     def list_runs(
         self,
-        schedule_id: str | None = None,
+        job_id: str | None = None,
         *,
         limit: int = 100,
         cursor: str | None = None,
-    ):
-        if schedule_id is not None:
-            self._identity.require(schedule_id, "schedule")
-        return self._store.list_runs(schedule_id, limit=limit, cursor=cursor)
+    ) -> RecordPage:
+        if job_id is not None:
+            self._identity.require(job_id, "schedule")
+        return self._runs.list_runs(job_id, limit=limit, cursor=cursor)
 
-    def get_run(self, run_id: str):
+    def get_run(self, run_id: str) -> JobRun:
         self._identity.require(run_id, "run")
-        return self._store.get_run(run_id)
+        return self._runs.get_run(run_id)
 
     def wait_run(
         self,
@@ -148,13 +161,13 @@ class AutonomyService:
         *,
         timeout: float,
         cancellation_check: Callable[[], bool] | None = None,
-    ):
+    ) -> JobRun:
         if timeout < 0:
             raise ValueError("timeout must be >= 0")
         self._identity.require(run_id, "run")
         deadline = time.monotonic() + timeout
         while True:
-            run = self._store.get_run(run_id)
+            run = self._runs.get_run(run_id)
             if run.terminal:
                 return run
             if cancellation_check is not None and cancellation_check():
@@ -166,14 +179,14 @@ class AutonomyService:
 
     def cancel_run(self, run_id: str, reason: str) -> tuple[RunCancelResult, str]:
         self._identity.require(run_id, "run")
-        result = self._store.cancel_run(run_id, reason)
+        result = self._runs.cancel_run(run_id, reason)
         self._wake(result.changed)
-        schedule = self._store.get_automation(result.run.automation_id)
-        return result, schedule.status
+        job = self._catalog.get_job(result.run.job_id)
+        return result, job.status
 
     def _wake(self, changed: bool) -> None:
         if changed and self._scheduler is not None:
             self._scheduler.notify_changed()
 
 
-__all__ = ["AutonomyService"]
+__all__ = ["SchedulingService"]

@@ -3,8 +3,9 @@ import threading
 
 import pytest
 
-from wright.application.autonomy import AutonomyScheduler, probe_public_web_page
-from wright.domain.model.automation import TriggerSpec
+from wright.application.scheduling.scheduler import JobScheduler
+from wright.application.scheduling.triggers import probe_public_web_page
+from wright.domain.model.scheduling import TriggerSpec
 from wright.infrastructure.persistence.autonomy_store import (
     AutonomyStore,
     AutonomyStoreError,
@@ -23,7 +24,7 @@ def _store(tmp_path, session_id="session"):
 
 def test_once_trigger_materializes_one_durable_run(tmp_path):
     store = _store(tmp_path)
-    automation = store.create_automation(
+    automation = store.create_job(
         name="once",
         prompt="do once",
         trigger=TriggerSpec(type="once", run_at=100),
@@ -34,7 +35,7 @@ def test_once_trigger_materializes_one_durable_run(tmp_path):
     run_ids = store.materialize_due(now=100)
     assert len(run_ids) == 1
     assert store.materialize_due(now=200) == []
-    assert store.get_automation(automation.id).status == "completed"
+    assert store.get_job(automation.id).status == "completed"
 
     claimed = store.claim_next_run(now=100)
     assert claimed is not None
@@ -52,7 +53,7 @@ def test_once_trigger_materializes_one_durable_run(tmp_path):
 
 def test_definitions_and_pending_external_events_survive_reopen(tmp_path):
     store = _store(tmp_path)
-    automation = store.create_automation(
+    automation = store.create_job(
         name="persistent event",
         prompt="handle after restart",
         trigger=TriggerSpec(type="event", event_name="wake"),
@@ -62,7 +63,7 @@ def test_definitions_and_pending_external_events_survive_reopen(tmp_path):
     store.close()
 
     reopened = _store(tmp_path)
-    assert reopened.get_automation(automation.id).prompt == "handle after restart"
+    assert reopened.get_job(automation.id).prompt == "handle after restart"
     run_ids = reopened.materialize_due(now=2)
     assert len(run_ids) == 1
     assert reopened.get_run(run_ids[0]).trigger_payload["payload"] == {"value": 1}
@@ -71,7 +72,7 @@ def test_definitions_and_pending_external_events_survive_reopen(tmp_path):
 
 def test_interval_coalesces_while_previous_run_is_live(tmp_path):
     store = _store(tmp_path)
-    automation = store.create_automation(
+    automation = store.create_job(
         name="interval",
         prompt="repeat",
         trigger=TriggerSpec(type="interval", every_seconds=10, start_at=100),
@@ -83,7 +84,7 @@ def test_interval_coalesces_while_previous_run_is_live(tmp_path):
     assert first is not None and first.id == first_id
     store.start_run(first.id, now=100)
     assert store.materialize_due(now=120) == []
-    assert store.get_automation(automation.id).next_run_at == 130
+    assert store.get_job(automation.id).next_run_at == 130
     store.finish_run(first_id, status="completed", now=121)
     assert store.materialize_due(now=129) == []
     assert len(store.materialize_due(now=130)) == 1
@@ -93,13 +94,13 @@ def test_interval_coalesces_while_previous_run_is_live(tmp_path):
 def test_file_change_and_external_event_triggers(tmp_path):
     store = _store(tmp_path)
     workspace = tmp_path / "workspace"
-    file_job = store.create_automation(
+    file_job = store.create_job(
         name="watch",
         prompt="inspect change",
         trigger=TriggerSpec(type="file_change", path="watched.txt"),
         now=1,
     )
-    event_job = store.create_automation(
+    event_job = store.create_job(
         name="webhook",
         prompt="handle event",
         trigger=TriggerSpec(type="event", event_name="deploy.finished"),
@@ -110,13 +111,13 @@ def test_file_change_and_external_event_triggers(tmp_path):
     (workspace / "watched.txt").write_text("new", encoding="utf-8")
     file_runs = store.materialize_due(now=3)
     assert len(file_runs) == 1
-    assert store.get_run(file_runs[0]).automation_id == file_job.id
+    assert store.get_run(file_runs[0]).job_id == file_job.id
 
     event_id = store.emit_event("deploy.finished", {"sha": "abc"}, now=4)
     event_runs = store.materialize_due(now=5)
     assert len(event_runs) == 1
     event_run = store.get_run(event_runs[0])
-    assert event_run.automation_id == event_job.id
+    assert event_run.job_id == event_job.id
     assert event_run.trigger_payload == {
         "event_id": event_id,
         "event_name": "deploy.finished",
@@ -131,7 +132,7 @@ def test_file_change_during_live_run_is_coalesced_not_lost(tmp_path):
     workspace = tmp_path / "workspace"
     path = workspace / "watched.txt"
     path.write_text("baseline", encoding="utf-8")
-    store.create_automation(
+    store.create_job(
         name="watch",
         prompt="inspect",
         trigger=TriggerSpec(type="file_change", path="watched.txt"),
@@ -151,7 +152,7 @@ def test_file_change_during_live_run_is_coalesced_not_lost(tmp_path):
 
 def test_web_change_baselines_then_dispatches_only_on_fingerprint_change(tmp_path):
     store = _store(tmp_path)
-    automation = store.create_automation(
+    automation = store.create_job(
         name="watch web",
         prompt="summarize page change",
         trigger=TriggerSpec(
@@ -184,7 +185,7 @@ def test_scheduler_dispatches_web_change_with_injected_probe(tmp_path):
         {"sha256": "first"},
         {"sha256": "second"},
     ])
-    store.create_automation(
+    store.create_job(
         name="watch web",
         prompt="handle change",
         trigger=TriggerSpec(
@@ -193,7 +194,7 @@ def test_scheduler_dispatches_web_change_with_injected_probe(tmp_path):
             every_seconds=0.03,
         ),
     )
-    scheduler = AutonomyScheduler(
+    scheduler = JobScheduler(
         store,
         events,
         poll_interval=0.01,
@@ -217,7 +218,7 @@ def test_web_probe_rejects_private_network_targets():
 
 def test_manual_recovery_marks_unknown_but_retry_policy_requeues(tmp_path):
     store = _store(tmp_path)
-    store.create_automation(
+    store.create_job(
         name="manual",
         prompt="unsafe work",
         trigger=TriggerSpec(type="once", run_at=0),
@@ -229,7 +230,7 @@ def test_manual_recovery_marks_unknown_but_retry_policy_requeues(tmp_path):
     assert manual_run is not None
     manual_run = store.start_run(manual_run.id, now=0)
 
-    retry = store.create_automation(
+    retry = store.create_job(
         name="retry",
         prompt="idempotent work",
         trigger=TriggerSpec(type="once", run_at=1),
@@ -242,7 +243,7 @@ def test_manual_recovery_marks_unknown_but_retry_policy_requeues(tmp_path):
     # manual_run still occupies no scheduler slot at the store layer; claiming
     # directly is allowed and useful for recovery-state tests.
     retry_run = store.claim_next_run(now=1)
-    assert retry_run is not None and retry_run.automation_id == retry.id
+    assert retry_run is not None and retry_run.job_id == retry.id
     retry_run = store.start_run(retry_run.id, now=1)
 
     recovered = {run.id: run for run in store.recover_interrupted(now=10)}
@@ -259,7 +260,7 @@ def test_manual_recovery_marks_unknown_but_retry_policy_requeues(tmp_path):
 
 def test_dispatched_but_not_started_run_is_safely_requeued(tmp_path):
     store = _store(tmp_path)
-    store.create_automation(
+    store.create_job(
         name="dispatch",
         prompt="not started yet",
         trigger=TriggerSpec(type="once", run_at=0),
@@ -280,7 +281,7 @@ def test_dispatched_but_not_started_run_is_safely_requeued(tmp_path):
 
 def test_checkpoint_owned_running_run_is_protected_from_store_recovery(tmp_path):
     store = _store(tmp_path)
-    store.create_automation(
+    store.create_job(
         name="resume",
         prompt="continue transcript",
         trigger=TriggerSpec(type="once", run_at=0),
@@ -301,7 +302,7 @@ def test_checkpoint_owned_running_run_is_protected_from_store_recovery(tmp_path)
 
 def test_failed_run_retries_only_within_explicit_budget(tmp_path):
     store = _store(tmp_path)
-    store.create_automation(
+    store.create_job(
         name="retry failure",
         prompt="idempotent",
         trigger=TriggerSpec(type="once", run_at=0),
@@ -329,7 +330,7 @@ def test_failed_run_retries_only_within_explicit_budget(tmp_path):
 
 def test_task_service_projects_and_cancels_durable_runs(tmp_path):
     store = _store(tmp_path)
-    automation = store.create_automation(
+    automation = store.create_job(
         name="pending",
         prompt="later",
         trigger=TriggerSpec(type="once", run_at=0),
@@ -338,31 +339,31 @@ def test_task_service_projects_and_cancels_durable_runs(tmp_path):
     run_id = store.materialize_due(now=0)[0]
     run = store.get_run(run_id)
     assert run.status == "queued"
-    assert run.automation_id == automation.id
-    schedule_before = store.get_automation(automation.id).status
+    assert run.job_id == automation.id
+    schedule_before = store.get_job(automation.id).status
     cancelled = store.cancel_run(run_id, "not needed")
     assert cancelled.run.status == "cancelled"
     assert cancelled.run.cancel_reason == "not needed"
-    assert store.get_automation(automation.id).status == schedule_before
+    assert store.get_job(automation.id).status == schedule_before
     store.close()
 
 
 def test_scheduler_dispatches_one_run_and_stops_until_finished(tmp_path):
     store = _store(tmp_path)
     events = queue.Queue()
-    first = store.create_automation(
+    first = store.create_job(
         name="first",
         prompt="first",
         trigger=TriggerSpec(type="once", run_at=0),
         now=0,
     )
-    second = store.create_automation(
+    second = store.create_job(
         name="second",
         prompt="second",
         trigger=TriggerSpec(type="once", run_at=0),
         now=0,
     )
-    scheduler = AutonomyScheduler(store, events, poll_interval=0.01)
+    scheduler = JobScheduler(store, events, poll_interval=0.01)
     scheduler.start()
 
     event_type, first_run_id = events.get(timeout=1)
@@ -375,8 +376,8 @@ def test_scheduler_dispatches_one_run_and_stops_until_finished(tmp_path):
     assert first_run_id != second_run_id
     store.start_run(str(second_run_id))
     assert {
-        store.get_run(str(first_run_id)).automation_id,
-        store.get_run(str(second_run_id)).automation_id,
+        store.get_run(str(first_run_id)).job_id,
+        store.get_run(str(second_run_id)).job_id,
     } == {first.id, second.id}
     scheduler.finish_run(str(second_run_id), status="completed", result="ok")
     scheduler.close()
@@ -386,19 +387,19 @@ def test_scheduler_dispatches_one_run_and_stops_until_finished(tmp_path):
 def test_cancelled_dispatched_run_does_not_block_later_dispatch(tmp_path):
     store = _store(tmp_path)
     events = queue.Queue()
-    store.create_automation(
+    store.create_job(
         name="first",
         prompt="first",
         trigger=TriggerSpec(type="once", run_at=0),
         now=0,
     )
-    store.create_automation(
+    store.create_job(
         name="second",
         prompt="second",
         trigger=TriggerSpec(type="once", run_at=0),
         now=0,
     )
-    scheduler = AutonomyScheduler(store, events, poll_interval=0.01)
+    scheduler = JobScheduler(store, events, poll_interval=0.01)
     scheduler.start()
 
     event_type, first_run_id = events.get(timeout=1)
@@ -420,19 +421,19 @@ def test_cancelled_dispatched_run_does_not_block_later_dispatch(tmp_path):
 def test_finish_run_exception_releases_dispatch_gate(tmp_path):
     store = _store(tmp_path)
     events = queue.Queue()
-    store.create_automation(
+    store.create_job(
         name="first",
         prompt="first",
         trigger=TriggerSpec(type="once", run_at=0),
         now=0,
     )
-    store.create_automation(
+    store.create_job(
         name="second",
         prompt="second",
         trigger=TriggerSpec(type="once", run_at=0),
         now=0,
     )
-    scheduler = AutonomyScheduler(store, events, poll_interval=0.01)
+    scheduler = JobScheduler(store, events, poll_interval=0.01)
     scheduler.start()
 
     _, first_run_id = events.get(timeout=1)
@@ -459,7 +460,7 @@ def test_finish_run_exception_releases_dispatch_gate(tmp_path):
 
 def test_event_trigger_coalesces_while_live_and_replays_after(tmp_path):
     store = _store(tmp_path)
-    job = store.create_automation(
+    job = store.create_job(
         name="webhook",
         prompt="handle",
         trigger=TriggerSpec(type="event", event_name="deploy.finished"),
@@ -492,7 +493,7 @@ def test_event_trigger_coalesces_while_live_and_replays_after(tmp_path):
 
 def test_interval_next_run_at_does_not_drift_with_late_polls(tmp_path):
     store = _store(tmp_path)
-    automation = store.create_automation(
+    automation = store.create_job(
         name="interval",
         prompt="repeat",
         trigger=TriggerSpec(type="interval", every_seconds=10, start_at=100),
@@ -500,40 +501,40 @@ def test_interval_next_run_at_does_not_drift_with_late_polls(tmp_path):
     )
     created = store.materialize_due(now=100.4)
     assert len(created) == 1
-    assert store.get_automation(automation.id).next_run_at == 110
+    assert store.get_job(automation.id).next_run_at == 110
     claimed = store.claim_next_run(now=100.4)
     assert claimed is not None
     store.start_run(claimed.id, now=100.4)
     store.finish_run(claimed.id, status="completed", now=100.5)
 
     store.materialize_due(now=110.4)
-    assert store.get_automation(automation.id).next_run_at == 120
+    assert store.get_job(automation.id).next_run_at == 120
     claimed = store.claim_next_run(now=110.4)
     assert claimed is not None
     store.start_run(claimed.id, now=110.4)
     store.finish_run(claimed.id, status="completed", now=110.5)
 
     store.materialize_due(now=120.4)
-    assert store.get_automation(automation.id).next_run_at == 130
+    assert store.get_job(automation.id).next_run_at == 130
     store.close()
 
 
 def test_interval_skipped_ticks_do_not_update_last_run_at(tmp_path):
     store = _store(tmp_path)
-    automation = store.create_automation(
+    automation = store.create_job(
         name="interval",
         prompt="repeat",
         trigger=TriggerSpec(type="interval", every_seconds=10, start_at=100),
         now=0,
     )
     store.materialize_due(now=100)
-    assert store.get_automation(automation.id).last_run_at == 100
+    assert store.get_job(automation.id).last_run_at == 100
     claimed = store.claim_next_run(now=100)
     assert claimed is not None
     store.start_run(claimed.id, now=100)
 
     assert store.materialize_due(now=120) == []
-    skipped = store.get_automation(automation.id)
+    skipped = store.get_job(automation.id)
     assert skipped.next_run_at == 130
     assert skipped.last_run_at == 100
     store.close()
@@ -548,7 +549,7 @@ def test_hanging_web_probe_does_not_block_other_dispatch(tmp_path):
         released.wait(timeout=5)
         return {"sha256": "hung"}
 
-    store.create_automation(
+    store.create_job(
         name="watch web",
         prompt="hang",
         trigger=TriggerSpec(
@@ -558,13 +559,13 @@ def test_hanging_web_probe_does_not_block_other_dispatch(tmp_path):
         ),
         now=0,
     )
-    store.create_automation(
+    store.create_job(
         name="once",
         prompt="run now",
         trigger=TriggerSpec(type="once", run_at=0),
         now=0,
     )
-    scheduler = AutonomyScheduler(
+    scheduler = JobScheduler(
         store,
         events,
         poll_interval=0.01,

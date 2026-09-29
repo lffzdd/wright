@@ -95,10 +95,10 @@ the execution directory. Archiving removes a worktree only when it is clean and
 has no commits after its recorded base; otherwise Wright retains the branch and
 path for manual review. The Changes inspector is read-only and Git-only.
 
-### Durable automations and recovery
+### Job scheduling and recovery
 
 `wright --ui headless --workspace <project>` explicitly starts the local
-ApplicationHost for persisted automations; it does not install a service or
+ApplicationHost for persisted job definitions; it does not install a service or
 leave a background process behind. Closing a chat session does not cancel an
 already accepted durable run, while stopping the host stops new scheduling and
 waits for workers before closing MCP connections and SQLite.
@@ -127,7 +127,7 @@ artifacts produce an explicit unavailable-image note; base64 never enters the
 checkpoint. Context estimates reserve an image budget for these references.
 
 Web sessions sharing an execution directory reuse one ApplicationHost while
-retaining separate automation records. Their schedulers share a single dispatch
+retaining separate job definitions. Their schedulers share a single dispatch
 slot. A tool whose result cannot be committed makes its durable Run `unknown`;
 that Run is never automatically retried, even with a retry policy. Whole-run
 retries are limited to failures before any tool executed.
@@ -176,7 +176,7 @@ RAG package. Wright does not vendor that stack.
 | Path | Role |
 |------|------|
 | cwd / `--workspace` | Project files the agent may edit |
-| `~/.wright/projects/<id>/` | Sessions, traces, autonomy task DB |
+| `~/.wright/projects/<id>/` | Sessions, traces, shared task DB |
 | `~/.wright/worktrees/<id>/<session-id>/` | Isolated Web-session worktrees |
 | `~/.wright/memory/` | Long-term memory |
 | `~/.wright/mcp.json` | User MCP servers |

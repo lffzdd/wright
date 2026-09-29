@@ -5,18 +5,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any
 
 from ._base import AutonomyStoreError
-
-_T = TypeVar("_T")
-
-
-@dataclass(frozen=True)
-class StorePage:
-    records: tuple[Any, ...]
-    next_cursor: str | None
 
 
 def page_limit(limit: int) -> int:

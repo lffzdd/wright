@@ -372,7 +372,7 @@ def test_project_exposes_configured_models_not_a_hardcoded_default(monkeypatch, 
 def test_closed_local_session_can_be_replaced_without_losing_its_schedules(monkeypatch, tmp_path):
     from tests.responses import response
     from wright.application.composition import runtime as assembly
-    from wright.domain.model.automation import TriggerSpec
+    from wright.domain.model.scheduling import TriggerSpec
 
     class Model:
         model = "offline"
@@ -397,7 +397,7 @@ def test_closed_local_session_can_be_replaced_without_losing_its_schedules(monke
         first_id = first.runtime.session_state.session_id
         host = first.runtime.application_host
         first_store = first.runtime.autonomy_store
-        auto = first_store.create_automation(
+        auto = first_store.create_job(
             name="retained", prompt="work", trigger=TriggerSpec(type="once", run_at=time.time() + 3600),
         )
         manager.close(first_id)
@@ -405,14 +405,14 @@ def test_closed_local_session_can_be_replaced_without_losing_its_schedules(monke
         second_id = second.runtime.session_state.session_id
         assert second.runtime.application_host is host
         assert second.runtime.autonomy_store.session_id == second_id
-        assert second.runtime.autonomy_store.list_automations().records == ()
-        assert first_store.get_automation(auto.id).session_id == first_id
+        assert second.runtime.autonomy_store.list_jobs().records == ()
+        assert first_store.get_job(auto.id).session_id == first_id
         second_store = second.runtime.autonomy_store
         manager.close(second_id)
         restored = manager.create(resume_session_id=first_id)
         assert restored.runtime.application_host is host
         assert restored.runtime.autonomy_store is first_store
-        assert restored.runtime.autonomy_store.list_automations().records[0].id == auto.id
+        assert restored.runtime.autonomy_store.list_jobs().records[0].id == auto.id
         assert len(manager.directory._hosts) == 1
     finally:
         manager.shutdown()

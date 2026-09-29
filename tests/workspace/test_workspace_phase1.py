@@ -14,8 +14,6 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from wright.application.autonomy.service import AutonomyService
-from wright.application.execution.identity import bind_identity
 from wright.application.memory.memory_service import MemoryService
 from wright.application.workspace.catalog import WorkspaceCatalog
 from wright.application.workspace.context_usage import classify_context
@@ -388,7 +386,7 @@ def test_schedule_survives_reopen_and_delete_keeps_history(tmp_path: Path, monke
     runtime = SimpleNamespace(
         autonomy_store=store,
         session_state=Closed(),
-        services=SimpleNamespace(autonomy_scheduler=None),
+        services=SimpleNamespace(job_scheduler=None),
     )
     created = create_schedule(
         runtime,
@@ -421,12 +419,11 @@ def test_schedule_survives_reopen_and_delete_keeps_history(tmp_path: Path, monke
         prompt="run",
         trigger={"type": "once", "run_at": 10},
     )
-    service = AutonomyService(history, bind_identity(runtime.session_state, history), None)
-    service._store.materialize_due(now=10)
+    history.materialize_due(now=10)
     retained = delete_schedule(runtime, again["id"], confirm=True)
     assert retained["deleted"] is False
     assert retained["retained_for_history"] is True
-    assert history.get_automation(again["id"]).status == "cancelled"
+    assert history.get_job(again["id"]).status == "cancelled"
     history.close()
     parked = AutonomyStore(task_db_path(project), session_id="session-a", workspace_dir=project)
     runtime.autonomy_store = parked

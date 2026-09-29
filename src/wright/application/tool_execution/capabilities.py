@@ -18,15 +18,15 @@ from ...infrastructure.runtime import (
 )
 from ...infrastructure.tools.capabilities import (
     AgentOperations,
-    AutonomyOperations,
     CommandOperations,
     DelegationOperations,
     RunScope,
+    SchedulingOperations,
     ToolCapabilities,
 )
 from ..agent.operations import AgentExecution
-from ..autonomy.service import AutonomyService
 from ..execution.identity import bind_identity
+from ..scheduling.service import SchedulingService
 from ..session.live_resources import RuntimeResources
 
 if TYPE_CHECKING:
@@ -57,7 +57,7 @@ def assemble_tool_capabilities(
     authorization_commit_factory: (
         Callable[[Session], Callable[[AuthorizationChange], None]] | None
     ) = None,
-    expose_autonomy: bool = False,
+    expose_scheduling: bool = False,
 ) -> CapabilityAssembly:
     """Build explicit capabilities at the application boundary."""
 
@@ -101,22 +101,25 @@ def assemble_tool_capabilities(
         tree=lambda root: session.control_plane.tree_summary(root),
         limits=lambda: session.control_plane.config.to_dict(),
     )
-    autonomy = None
+    scheduling = None
     if (
-        expose_autonomy
+        expose_scheduling
         and services is not None
         and services.durable_store is not None
     ):
-        service = AutonomyService(
-            services.durable_store, identity, services.autonomy_scheduler
+        store = services.durable_store
+        service = SchedulingService(
+            store, store, identity, services.job_scheduler
         )
-        autonomy = AutonomyOperations(
-            create_schedule=service.create_schedule,
-            get_schedule=service.get_schedule,
-            list_schedules=service.list_schedules,
-            pause_schedule=service.pause_schedule,
-            resume_schedule=service.resume_schedule,
-            cancel_schedule=service.cancel_schedule,
+        scheduling = SchedulingOperations(
+            create_job=service.create_job,
+            get_job=service.get_job,
+            list_jobs=service.list_jobs,
+            pause_job=service.pause_job,
+            resume_job=service.resume_job,
+            cancel_job=service.cancel_job,
+            update_job=service.update_job,
+            delete_job=service.delete_job,
             list_runs=service.list_runs,
             get_run=service.get_run,
             wait_run=service.wait_run,
@@ -129,7 +132,7 @@ def assemble_tool_capabilities(
             plan_manager=session.plan_manager,
             commands=commands,
             agents=agents,
-            autonomy=autonomy,
+            scheduling=scheduling,
             delegation=_delegation(
                 session.control_plane,
                 services,

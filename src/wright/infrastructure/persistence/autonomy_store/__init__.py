@@ -1,4 +1,10 @@
-"""SQLite-backed durable autonomy store."""
+"""Shared SQLite store for job scheduling, commands, interactions, and tool logs.
+
+Scheduling application code depends on the ports in
+``application.scheduling.contracts``. This class is the one adapter that
+implements those ports and the command ledger together, so a definition, a
+run, and its tool log can still commit in one transaction.
+"""
 
 from __future__ import annotations
 
@@ -24,7 +30,7 @@ class AutonomyStore(
     _RunsMixin,
     _StoreBase,
 ):
-    """SQLite-backed store for durable automations, runs, and commands."""
+    """SQLite store shared by job scheduling, commands, interactions, and history."""
 
 
 __all__ = [

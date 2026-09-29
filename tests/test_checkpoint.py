@@ -194,6 +194,7 @@ def test_checkpoint_does_not_restore_live_autonomy_handles(tmp_path):
 
     assert "durable_task_store" not in text
     assert "autonomy_scheduler" not in text
+    assert "job_scheduler" not in text
     assert "loop_registry" not in text
     assert "agent_background" not in text
     assert "durable_store" not in text

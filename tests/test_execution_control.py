@@ -16,7 +16,7 @@ from wright.domain.model.tool import ToolCall
 from wright.domain.policy import PermissionPolicy, PermissionSettings
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 from wright.infrastructure.tools.agent_tools import agent_tools
-from wright.infrastructure.tools.autonomy_tools import autonomy_tools
+from wright.infrastructure.tools.schedule import schedule_tools
 from wright.infrastructure.tools.command import execute_command_tool
 from wright.infrastructure.tools.command.control import command_tools
 
@@ -32,13 +32,13 @@ def _executor(session, services=None):
     return ToolDispatchService(
         {
             tool.name: tool
-            for tool in [*agent_tools, *command_tools, *autonomy_tools, execute_command_tool]
+            for tool in [*agent_tools, *command_tools, *schedule_tools, execute_command_tool]
         },
         assemble_tool_capabilities(
             session,
             services,
             resources,
-            expose_autonomy=store is not None,
+            expose_scheduling=store is not None,
         ),
         session=session,
         permission_policy=PermissionPolicy(PermissionSettings(mode="bypass")),
@@ -250,7 +250,7 @@ def test_cross_type_ids_fail_before_any_control(tmp_path):
     assert _call(executor, "get_command", command_id=command_id).data["status"] == "running"
     assert session.control_plane.get(agent.id).cancel_requested is False
     assert store.get_run(run_id).status == "queued"
-    assert store.get_automation(schedule_id).status == "active"
+    assert store.get_job(schedule_id).status == "active"
 
     paused = _call(executor, "pause_schedule", schedule_id=schedule_id)
     assert paused.ok and paused.data["status"] == "paused"
@@ -259,7 +259,7 @@ def test_cross_type_ids_fail_before_any_control(tmp_path):
     assert cancelled_run.ok
     assert cancelled_run.data["status"] == "cancelled"
     assert cancelled_run.data["schedule_changed"] is False
-    assert store.get_automation(schedule_id).status == "paused"
+    assert store.get_job(schedule_id).status == "paused"
 
     fresh = _call(
         executor,

@@ -8,7 +8,7 @@ from wright.application.agent import create_agent
 from wright.application.composition.host import ApplicationHost
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
-from wright.domain.model.automation import TriggerSpec
+from wright.domain.model.scheduling import TriggerSpec
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.domain.policy import (
@@ -80,7 +80,7 @@ def test_pending_interaction_is_explicitly_terminated_after_restart(tmp_path):
 
 def test_recovery_marks_started_tool_effect_unknown_without_replay(tmp_path):
     _workspace, store = _store(tmp_path)
-    automation = store.create_automation(
+    automation = store.create_job(
         name="once", prompt="work", trigger=TriggerSpec(type="once", run_at=0), now=0
     )
     run_id = store.materialize_due(now=0)[0]
@@ -98,13 +98,13 @@ def test_recovery_marks_started_tool_effect_unknown_without_replay(tmp_path):
     recovered = reopened.recover_interrupted(now=2)
     assert recovered[0].status == "unknown"
     assert reopened.list_tool_executions(run_id)[0]["status"] == "unknown"
-    assert reopened.get_automation(automation.id).id == automation.id
+    assert reopened.get_job(automation.id).id == automation.id
     reopened.close()
 
 
 def test_recovery_does_not_retry_a_run_with_an_unconfirmed_effect(tmp_path):
     _workspace, store = _store(tmp_path)
-    store.create_automation(
+    store.create_job(
         name="retry", prompt="write", trigger=TriggerSpec(type="once", run_at=0),
         recovery_policy="retry", max_retries=2, now=0,
     )
@@ -129,7 +129,7 @@ def test_recovery_does_not_retry_a_run_with_an_unconfirmed_effect(tmp_path):
 
 def test_application_host_runs_persisted_automation_without_source_session(tmp_path):
     workspace, store = _store(tmp_path)
-    automation = store.create_automation(
+    automation = store.create_job(
         name="headless", prompt="finish unattended", trigger=TriggerSpec(type="once", run_at=0),
         run_config={"max_steps": 3, "profile": "durable"}, now=0,
     )
@@ -158,11 +158,11 @@ def test_application_host_runs_persisted_automation_without_source_session(tmp_p
 def test_run_config_is_a_constrained_snapshot_not_a_permission_grant(tmp_path):
     _workspace, store = _store(tmp_path)
     with pytest.raises(AutonomyStoreError, match="only support the durable profile"):
-        store.create_automation(
+        store.create_job(
             name="bad", prompt="work", trigger=TriggerSpec(type="once", run_at=0),
             run_config={"profile": "main"}, now=0,
         )
-    automation = store.create_automation(
+    automation = store.create_job(
         name="configured", prompt="work", trigger=TriggerSpec(type="once", run_at=0),
         run_config={"profile": "durable", "model": "fake", "max_steps": 2}, now=0,
     )
@@ -303,7 +303,7 @@ def test_host_does_not_retry_unknown_effect_even_with_retry_policy(tmp_path, mon
     from wright.domain.model.tool import ToolResult
 
     workspace, store = _store(tmp_path)
-    automation = store.create_automation(
+    automation = store.create_job(
         name="effect", prompt="append once", trigger=TriggerSpec(type="once", run_at=0),
         recovery_policy="retry", max_retries=1, retry_delay_seconds=0, now=0,
     )
@@ -358,7 +358,7 @@ def test_host_does_not_retry_unknown_effect_even_with_retry_policy(tmp_path, mon
 def test_run_with_uncommitted_effect_cannot_finish_or_retry(tmp_path, requested_status, effect_status):
     _workspace, store = _store(tmp_path)
     try:
-        store.create_automation(
+        store.create_job(
             name="effect", prompt="work", trigger=TriggerSpec(type="once", run_at=0),
             recovery_policy="retry", max_retries=1, retry_delay_seconds=0, now=0,
         )
@@ -414,10 +414,10 @@ def test_sessions_sharing_host_share_dispatch_capacity(tmp_path):
         permission_settings=PermissionSettings(mode="bypass"), poll_interval=0.01, on_event=completed,
     )
     try:
-        first.create_automation(name="first", prompt="work", trigger=TriggerSpec(type="once", run_at=0))
+        first.create_job(name="first", prompt="work", trigger=TriggerSpec(type="once", run_at=0))
         host.start()
         assert entered.wait(3)
-        second.create_automation(name="second", prompt="work", trigger=TriggerSpec(type="once", run_at=0))
+        second.create_job(name="second", prompt="work", trigger=TriggerSpec(type="once", run_at=0))
         scheduler = host.scheduler_for(second)
         second.materialize_due()
         assert host._claim_next_run(scheduler) is None
@@ -435,7 +435,7 @@ def test_sessions_sharing_host_share_dispatch_capacity(tmp_path):
 def test_old_retry_records_with_effects_are_not_claimed(tmp_path, queued_status):
     _workspace, store = _store(tmp_path)
     try:
-        store.create_automation(name="legacy", prompt="work", trigger=TriggerSpec(type="once", run_at=0))
+        store.create_job(name="legacy", prompt="work", trigger=TriggerSpec(type="once", run_at=0))
         run_id = store.materialize_due(now=0)[0]
         store.claim_next_run(owner_id="old-host", now=0)
         store.start_run(run_id, owner_id="old-host", now=0)

@@ -189,7 +189,7 @@ def create_agent(
     authorization_commit_factory=None,
     assembly: CapabilityAssembly | None = None,
     role_instruction: str = "",
-    expose_autonomy: bool = False,
+    expose_scheduling: bool = False,
 ) -> Agent:
     """Prepare tools, the system prompt, and events, then build an Agent.
 
@@ -205,7 +205,7 @@ def create_agent(
             resources,
             execution_journal_factory=execution_journal_factory,
             authorization_commit_factory=authorization_commit_factory,
-            expose_autonomy=expose_autonomy,
+            expose_scheduling=expose_scheduling,
         )
         runtime_resources = assembly.runtime_resources or resources
     if authorization_commit is None and authorization_commit_factory is not None:
@@ -257,7 +257,7 @@ def create_agent(
         on_run_started=on_run_started,
         authorization_commit=authorization_commit,
         authorization_commit_factory=authorization_commit_factory,
-        expose_autonomy=expose_autonomy,
+        expose_scheduling=expose_scheduling,
     )
     bind_root_checkpoint(agent)
     return agent

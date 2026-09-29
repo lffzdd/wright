@@ -13,7 +13,7 @@ from wright.application.command.execution import CommandExecution
 from wright.application.execution.identity import bind_identity
 from wright.application.session.live_resources import RuntimeResources
 from wright.application.tool_execution.runtime import tool_runtime_for_session
-from wright.domain.model.automation import TriggerSpec
+from wright.domain.model.scheduling import TriggerSpec
 from wright.domain.model.session import Session
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 from wright.infrastructure.tools.command import execute_command
@@ -114,7 +114,7 @@ def test_output_pages_keep_a_prefix_and_mark_truncation(tmp_path):
 
 def test_cancel_waits_for_the_running_transition(tmp_path):
     store = AutonomyStore(tmp_path / "tasks.db", session_id="s", workspace_dir=tmp_path)
-    store.create_automation(
+    store.create_job(
         name="race",
         prompt="race",
         trigger=TriggerSpec(type="once", run_at=0),
@@ -153,7 +153,7 @@ def test_cancel_waits_for_the_running_transition(tmp_path):
 
 def test_start_does_not_overwrite_a_committed_cancel(tmp_path):
     store = AutonomyStore(tmp_path / "tasks.db", session_id="s", workspace_dir=tmp_path)
-    store.create_automation(
+    store.create_job(
         name="race",
         prompt="race",
         trigger=TriggerSpec(type="once", run_at=0),

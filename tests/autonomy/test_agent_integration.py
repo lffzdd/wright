@@ -7,12 +7,12 @@ from wright.application.agent import (
     build_agent_tools,
     create_agent,
 )
-from wright.application.autonomy.runner import _DurableToolJournal, launch_durable_run
-from wright.application.autonomy.scheduler import AutonomyScheduler
+from wright.application.scheduling.runner import _RunJournal, launch_job_run
+from wright.application.scheduling.scheduler import JobScheduler
 from wright.application.composition.services import RuntimeServices
 from wright.application.skills import SkillRegistry
 from wright.domain.model.agent import AgentProfile
-from wright.domain.model.automation import TriggerSpec
+from wright.domain.model.scheduling import TriggerSpec
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolResult
 from wright.domain.policy import (
@@ -22,7 +22,7 @@ from wright.domain.policy import (
 )
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 from wright.infrastructure.storage.skills import write_skill
-from wright.infrastructure.tools.autonomy_tools import autonomy_tools
+from wright.infrastructure.tools.schedule import schedule_tools
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.human_input import ask_user_tool
 from wright.infrastructure.tools.knowledge import build_knowledge_tools
@@ -68,17 +68,17 @@ def _runtime(tmp_path):
     session = Session.create("interactive", workspace)
     session.session_id = "session"
     background = AgentBackgroundRuntime(events, max_workers=1)
-    scheduler = AutonomyScheduler(store, events, poll_interval=1)
+    scheduler = JobScheduler(store, events, poll_interval=1)
     services = RuntimeServices(
         agent_background=background,
         durable_store=store,
-        autonomy_scheduler=scheduler,
+        job_scheduler=scheduler,
     )
     return workspace, store, session, scheduler, events, background, services
 
 
 def _claim_run(store, prompt="review the repository", name="daily review"):
-    store.create_automation(
+    store.create_job(
         name=name,
         prompt=prompt,
         trigger=TriggerSpec(type="once", run_at=0),
@@ -113,8 +113,9 @@ def test_durable_run_leaves_root_session_untouched(tmp_path):
     ]
 
     run_id = _claim_run(store)
-    launch = launch_durable_run(
+    launch = launch_job_run(
         run_id=run_id,
+        execution=store,
         root_session=session,
         scheduler=scheduler,
         llm=ScriptLLM(["autonomous result"]),
@@ -151,8 +152,9 @@ def test_durable_run_does_not_block_root_user_input(tmp_path):
     _workspace, store, session, scheduler, events, background, services = _runtime(tmp_path)
     run_id = _claim_run(store, prompt="slow work")
     started = time.monotonic()
-    launch = launch_durable_run(
+    launch = launch_job_run(
         run_id=run_id,
+        execution=store,
         root_session=session,
         scheduler=scheduler,
         llm=SlowLLM("autonomous result"),
@@ -180,7 +182,7 @@ def test_durable_run_does_not_block_root_user_input(tmp_path):
     store.close()
 
 
-def test_durable_session_omits_ask_user_and_autonomy_tools(tmp_path):
+def test_durable_session_omits_ask_user_and_schedule_tools(tmp_path):
     _workspace, store, session, scheduler, events, background, services = _runtime(tmp_path)
     run_id = _claim_run(store)
     memory_tools = build_memory_tools(tmp_path / "memory")
@@ -196,14 +198,15 @@ def test_durable_session_omits_ask_user_and_autonomy_tools(tmp_path):
         def search(self, query, top_k):
             return []
 
-    launch = launch_durable_run(
+    launch = launch_job_run(
         run_id=run_id,
+        execution=store,
         root_session=session,
         scheduler=scheduler,
         llm=ScriptLLM(["done"]),
         base_tools=[
             ask_user_tool,
-            *autonomy_tools,
+            *schedule_tools,
             *memory_tools,
             *build_knowledge_tools(FakeKnowledge()),
             *build_skill_tools(SkillRegistry(tmp_path / "skills")),
@@ -243,8 +246,9 @@ def test_cancelled_dispatched_run_is_not_started(tmp_path):
     _workspace, store, session, scheduler, _events, background, services = _runtime(tmp_path)
     run_id = _claim_run(store, prompt="should not execute", name="cancel me")
     store.cancel_run(run_id, "external cancellation")
-    launch = launch_durable_run(
+    launch = launch_job_run(
         run_id=run_id,
+        execution=store,
         root_session=session,
         scheduler=scheduler,
         llm=ScriptLLM([]),
@@ -265,7 +269,7 @@ def test_cancelled_dispatched_run_is_not_started(tmp_path):
 def test_durable_run_persists_history_and_child_side_effect_identity(tmp_path):
     """A background Run remains queryable after its source Session disappears."""
     workspace, store, session, scheduler, _events, background, services = _runtime(tmp_path)
-    store.create_automation(
+    store.create_job(
         name="parent-child", prompt="delegate", trigger=TriggerSpec(type="once", run_at=0), now=0
     )
     run_id = store.materialize_due(now=0)[0]
@@ -292,7 +296,7 @@ def test_durable_run_persists_history_and_child_side_effect_identity(tmp_path):
             yield event(self.responses.pop(0))
 
     llm = Script()
-    root_journal = _DurableToolJournal(scheduler, run_id, agent_task_id="root-task")
+    root_journal = _RunJournal(store, run_id, agent_task_id="root-task")
     permission_resolver = PermissionResolver(
         PermissionPolicy(PermissionSettings(mode="bypass"))
     )

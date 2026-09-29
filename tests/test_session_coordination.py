@@ -72,7 +72,7 @@ def _runtime(session_id: str, root: Path, coordinator, agent_run, *, store=None)
         directory_coordinator=coordinator,
         agent=SimpleNamespace(checkpoint_store=None, run=agent_run),
         services=SimpleNamespace(
-            loop_registry=None, autonomy_scheduler=None, agent_background=None,
+            loop_registry=None, job_scheduler=None, agent_background=None,
         ),
         event_renderer=SimpleNamespace(on_system_notice=lambda _text: None),
         draft_attachments=None,
@@ -379,7 +379,7 @@ def test_automation_waits_behind_an_interactive_lease(tmp_path, monkeypatch):
             lease.release()
 
     monkeypatch.setattr(
-        "wright.application.composition.host.launch_durable_run", fake_launch,
+        "wright.application.composition.host.launch_job_run", fake_launch,
     )
     host = ApplicationHost(
         workspace_dir=workspace,

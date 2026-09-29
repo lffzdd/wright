@@ -389,7 +389,8 @@ def assemble_runtime(
     # scheduler/owner merely to reconstruct a conversation runtime.
     if application_host is not None:
         try:
-            autonomy_store = application_host.scheduler_for(autonomy_store).store
+            scheduler = application_host.scheduler_for(autonomy_store)
+            autonomy_store = application_host.retained_store(scheduler.session_id)
         except Exception:
             autonomy_store.close()
             raise
@@ -600,7 +601,7 @@ def assemble_runtime(
         max_depth=1,
         permission_resolver=permission_resolver,
         authorization_commit_factory=authorization_commit_factory,
-        enable_autonomy=True,
+        enable_scheduling=True,
         publisher=publisher,
     )
 
@@ -646,14 +647,14 @@ def assemble_runtime(
     else:
         constructed_application_host.bind_coordinator(coordinator)
     command_execution.attach_directory(coordinator)
-    services.autonomy_scheduler = constructed_application_host.scheduler_for(autonomy_store)
+    services.job_scheduler = constructed_application_host.scheduler_for(autonomy_store)
     assembly = assemble_tool_capabilities(
         session_state,
         services,
         runtime_resources,
         workspace_dir=workspace_dir,
         authorization_commit_factory=authorization_commit_factory,
-        expose_autonomy=True,
+        expose_scheduling=True,
     )
 
     prepared = prepare_model_tools(session_state, tools)
@@ -693,7 +694,7 @@ def assemble_runtime(
         runtime_resources=runtime_resources,
         authorization_commit=commit_authorization,
         authorization_commit_factory=authorization_commit_factory,
-        expose_autonomy=True,
+        expose_scheduling=True,
     )
     bind_root_checkpoint(agent)
 

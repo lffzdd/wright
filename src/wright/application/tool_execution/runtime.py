@@ -50,7 +50,7 @@ def tool_runtime_for_session(
         workspace_dir=workspace_dir,
         cwd_provider=cwd_provider,
         execution_backend=execution_backend,
-        expose_autonomy=getattr(services, "durable_store", None) is not None,
+        expose_scheduling=getattr(services, "durable_store", None) is not None,
     )
     capabilities = assembly.capabilities
     backend = assembly.backend

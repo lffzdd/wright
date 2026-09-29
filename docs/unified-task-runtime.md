@@ -16,7 +16,7 @@ Model
               │
               ├── AgentTaskBackend ──► AgentControlPlane
               ├── ShellTaskBackend ──► Session.background_tasks + ProcessRegistry
-              └── DurableTaskBackend ──► AutonomyStore
+              └── DurableTaskBackend ──► AutonomyStore（共享库；调度经 JobDispatch）
 ```
 
 `RuntimeTask` 仍是 UI、事件和诊断用的只读投影，不是另一套状态机。模型看到的是
