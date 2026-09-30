@@ -22,6 +22,7 @@ export async function bootstrap(): Promise<void> {
 }
 
 export const api = {
+  health: () => json<{ ok: boolean }>("/api/v1/health", { cache: "no-store" }),
   preferences: () => json<{
     interface_language: string;
     supported: Array<{ id: string; label: string }>;

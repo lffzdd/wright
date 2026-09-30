@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { useT } from "../i18n";
+import { getLocale, useT } from "../i18n";
 
 type Notice = { tone: "idle" | "busy" | "ok" | "error"; text: string };
 
@@ -245,7 +245,7 @@ export function SettingsDialog({
 }) {
   const tr = useT();
   const [notice, setNotice] = useState<Notice>({ tone: "idle", text: "" });
-  const apply = async (patch: { theme?: "dark" | "light"; inspector_open?: boolean }) => {
+  const apply = async (patch: { theme?: "dark" | "light"; inspector_open?: boolean; interface_language?: string }) => {
     setNotice({ tone: "busy", text: tr("web.saving") });
     try { await save(patch); setNotice({ tone: "ok", text: tr("web.saved") }); }
     catch (error) { setNotice(noteOf(error)); }
@@ -254,6 +254,7 @@ export function SettingsDialog({
     <h2 id="settings-title">{tr("web.settings")}</h2>
     {notice.text && <p role={notice.tone === "error" ? "alert" : "status"} className={notice.tone === "error" ? "form-error" : "hint"}>{notice.text}</p>}
     <label>{tr("web.theme")}<select aria-label={tr("web.theme")} value={theme} onChange={(event) => apply({ theme: event.target.value as "dark" | "light" })}><option value="dark">{tr("web.theme.dark")}</option><option value="light">{tr("web.theme.light")}</option></select></label>
+    <label>{tr("web.language_label")}<select aria-label={tr("web.language_label")} title={tr("web.language_note")} value={getLocale()} onChange={(event) => apply({ interface_language: event.target.value })}><option value="en">EN</option><option value="zh-CN">中文</option></select></label>
     <label><input type="checkbox" checked={inspectorOpen} onChange={(event) => apply({ inspector_open: event.target.checked })} /> {tr("web.inspector_open")}</label>
     <p className="hint">{tr("web.settings_hint")}</p>
     <button type="button" className="button" onClick={close}>{tr("web.close")}</button>

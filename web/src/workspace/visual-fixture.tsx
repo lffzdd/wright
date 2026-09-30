@@ -40,7 +40,7 @@ const state: ViewState = {
     kind: "permission",
     tool_name: "execute_command",
     subject: "build",
-    reason: "Clean generated build caches and compile native bindings.",
+    reason: "Clean generated build caches and compile native C++/Rust token-bucket FFI bindings.",
     grant_summary: "./build, ./dist",
     preview: "rm -rf ./build ./dist && pnpm run build:native",
     command: "rm -rf ./build ./dist && pnpm run build:native",
@@ -74,10 +74,10 @@ const state: ViewState = {
     note: "Estimated with the local character tokenizer. Provider billing usage is separate.",
   },
   timeline: [
-    { id: "user", kind: "text", role: "user", text: "We're seeing intermittent 429 bypasses during flash traffic spikes. Replace the current in-memory counter in @src/middleware/rate-limiter.ts with an atomic Redis leaky-bucket implementation using Lua scripting. Confirm the bug with tests and rebuild native bindings." },
-    { id: "reason", kind: "reasoning", text: "Identified a concurrency race in separate GET/SET calls. Designed an atomic Lua token-bucket script." },
+    { id: "user", kind: "text", role: "user", text: "We're seeing intermittent 429 bypasses during flash traffic spikes. Replace the current in-memory counter in @src/middleware/rate-limiter.ts with an atomic Redis leaky-bucket implementation using Lua scripting. Confirm bug with tests and rebuild native bindings." },
+    { id: "reason", kind: "reasoning", duration_ms: 11400, text: "Identified concurrency race condition in separate GET/SET. Designed atomic Lua token-bucket script." },
     { id: "read", kind: "tool", name: "read_directory", phase: "succeeded", arguments: { path: "src/middleware/" }, duration_ms: 24, result: { output: "auth.ts\nrate-limiter.ts\nsession.ts\ntelemetry.ts\nconfig.ts" } },
-    { id: "shell", kind: "shell", name: "execute_command", phase: "failed", arguments: { command: "pnpm test -- --grep rate-limiter" }, duration_ms: 1400, result: { returncode: 1, output: "tests/rate-limiter.test.ts > RateLimiter > atomic burst concurrency test (380ms)\nAssertionError: expected status 429, received 200 OK (50 requests leaked)\nTests: 1 failed, 2 passed (3 total)" } },
+    { id: "shell", kind: "shell", name: "execute_command", phase: "failed", arguments: { command: 'pnpm test -- --grep "rate-limiter"' }, duration_ms: 1400, result: { returncode: 1, output: "tests/rate-limiter.test.ts > RateLimiter > atomic burst concurrency test (380ms)\nAssertionError: expected status 429 Too Many Requests, received 200 OK (50 requests leaked)\nTests: 1 failed, 2 passed (3 total)" } },
     { id: "edit", kind: "edit", name: "write_file", phase: "succeeded", arguments: { path: "src/middleware/rate-limiter.ts" }, result: { additions: 38, deletions: 14, output: "- const count = await this.redis.get(`rate:${clientId}`); // Race condition\n+ const LUA_TOKEN_BUCKET = `local cur = redis.call('get', KEYS[1]); if not cur or tonumber(cur)>0 then redis.call('decr', KEYS[1]); return 1; end; return 0;`;\n+ const allowed = await this.redis.eval(LUA_TOKEN_BUCKET, 1, `rate:${clientId}`);" } },
     { id: "perm-visual", kind: "approval", phase: "pending", interaction: undefined },
   ],
@@ -99,7 +99,7 @@ state.timeline = state.timeline?.map((item) => item.id === "perm-visual" ? { ...
 const sessions: SessionSummary[] = [
   session,
   { session_id: "task101zz", status: "idle", execution: "idle", user_goal: "Benchmark gRPC pool", active: true, environment: "local" },
-  { session_id: "done01", status: "idle", user_goal: "Fix Redis connection leak", active: false },
+  { session_id: "done01", status: "idle", user_goal: "Fix Redis connection leak", active: false, saved_at: new Date().toISOString() },
   { session_id: "done02", status: "idle", user_goal: "Migrate JWT to Rust FFI", active: false },
   { session_id: "done03", status: "idle", user_goal: "Generate OpenAPI 3.1 spec", active: false },
   { session_id: "fail01", status: "failed", user_goal: "Docker compose e2e cluster", active: false },
@@ -153,7 +153,11 @@ export function VisualFixture() {
           <Composer
             sessionId={session.session_id}
             connection="connected"
-            draft={{ ...emptyDraft(), documents: [{ id: "rate", filename: "src/middleware/rate-limiter.ts" }] }}
+            draft={{
+              ...emptyDraft(),
+              references: [{ kind: "file", path: "src/middleware/rate-limiter.ts", name: "rate-limiter.ts", project_id: "api-gateway" }],
+              command: "/benchmark",
+            }}
             updateDraft={() => undefined}
             running
             models={["deterministic-preview"]}

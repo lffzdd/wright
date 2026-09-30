@@ -47,10 +47,12 @@ async def handle_session_stream(
 ) -> None:
     """Handle real-time bidirectional WebSocket event stream for a session."""
     host = websocket.url.hostname
-    expected_origin = f"http://{websocket.headers.get('host', '')}"
+    host_header = websocket.headers.get("host", "")
+    origin = websocket.headers.get("origin", "")
+    expected_origins = {f"http://{host_header}", f"https://{host_header}"}
     if (
         host not in {"127.0.0.1", "localhost", "testserver"}
-        or websocket.headers.get("origin") != expected_origin
+        or origin not in expected_origins
         or not auth.valid(websocket.cookies.get(COOKIE_NAME))
     ):
         await websocket.close(code=1008)

@@ -1,5 +1,5 @@
 import {
-  Archive, Check, Circle, DotsThreeVertical, FileCode, Folder, Paperclip, PaperPlaneRight, Plus, SpinnerGap, Square, Warning, X,
+  Archive, Check, Circle, DotsThreeVertical, Folder, Image, Paperclip, PaperPlaneRight, Plus, Square, Warning, X,
 } from "@phosphor-icons/react";
 import { FormEvent, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { DiffViewer } from "../DiffViewer";
@@ -15,6 +15,7 @@ export type Draft = {
   attachments: Attachment[];
   documents?: Array<{ id: string; filename: string }>;
   references?: FileReference[];
+  command?: string | null;
   mentions?: string[];
   commandId: string | null;
   clientRequestId?: string | null;
@@ -26,7 +27,7 @@ export type Draft = {
 };
 
 export const emptyDraft = (): Draft => ({
-  prompt: "", attachments: [], documents: [], references: [], mentions: [], commandId: null,
+  prompt: "", attachments: [], documents: [], references: [], command: null, mentions: [], commandId: null,
   clientRequestId: null, boundSessionId: null, environment: "local", localFiles: [], phase: "idle", reason: "",
 });
 
@@ -45,6 +46,15 @@ export function formatAgo(iso?: string): string {
   if (delta < 3_600_000) return `${Math.max(1, Math.round(delta / 60_000))}m`;
   if (delta < 86_400_000) return `${Math.max(1, Math.round(delta / 3_600_000))}h`;
   return `${Math.max(1, Math.round(delta / 86_400_000))}d`;
+}
+
+function isToday(iso?: string): boolean {
+  if (!iso) return false;
+  const timestamp = Date.parse(iso);
+  if (!Number.isFinite(timestamp)) return false;
+  const date = new Date(timestamp);
+  const now = new Date();
+  return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
 }
 
 export function sessionTitle(session: { session_id: string; user_goal?: string }, tr: typeof t): string {
@@ -129,7 +139,7 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }:
     {timeline.length > 0 ? <>
       {timeline.map((item) => {
         if (item.kind === "text" && item.role === "user") return <UserMessage key={item.id} text={item.text || ""} userLabel={userLabel} timestamp={timestamp} />;
-        if (item.kind === "reasoning") return <ReasoningRow key={item.id} text={item.text || ""} />;
+        if (item.kind === "reasoning") return <ReasoningRow key={item.id} text={item.text || ""} durationMs={item.duration_ms} />;
         if (item.kind === "text") return <AssistantMessage key={item.id} text={item.text || ""} />;
         if (item.kind === "approval" && item.interaction) {
           const stillPending = state.pending_interactions.some((entry) => entry.request_id === item.interaction?.request_id);
@@ -154,7 +164,7 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }:
         {state.active_turn.prompt && <UserMessage text={state.active_turn.prompt} />}
         {state.active_turn.tools.map((tool) => toolCardFromState(tool))}
         {state.active_turn.reasoning && <ReasoningRow text={state.active_turn.reasoning} />}
-        {state.active_turn.content ? <AssistantMessage text={state.active_turn.content} /> : <p className="empty-small">Working…</p>}
+        {state.active_turn.content ? <AssistantMessage text={state.active_turn.content} /> : <p className="empty-small">{tr("web.working")}</p>}
       </div>}
     </>}
     {(state.agents ?? []).map((agent) => <section className="agent-progress" key={agent.task_id}><strong>Subagent {agent.task_id} · {agent.status}</strong>{agent.content && <MarkdownContent content={agent.content} />}</section>)}
@@ -233,12 +243,14 @@ export function Composer({
     event?.preventDefault();
     if (sending.current || draft.phase === "awaiting") return;
     const current = draft;
-    if (!current.prompt.trim() && !current.attachments.length && !(current.documents ?? []).length && !(current.references ?? []).length && !(current.localFiles ?? []).length) return;
+    if (!current.prompt.trim() && !current.command && !current.attachments.length && !(current.documents ?? []).length && !(current.references ?? []).length && !(current.localFiles ?? []).length) return;
     sending.current = true;
     try {
       const commandId = current.commandId && current.phase !== "rejected" ? current.commandId : crypto.randomUUID();
+      const commandPrefix = current.command ? `/${current.command.replace(/^\/+/, "")}` : "";
+      const prompt = [commandPrefix, current.prompt.trim()].filter(Boolean).join(" ");
       updateDraft(sessionId, (item) => ({ ...item, commandId, phase: "awaiting", reason: "" }));
-      const outcome = await submit(commandId, current.prompt.trim(), current.attachments.map((item) => item.id), (current.documents ?? []).map((item) => item.id), current.references ?? []);
+      const outcome = await submit(commandId, prompt, current.attachments.map((item) => item.id), (current.documents ?? []).map((item) => item.id), current.references ?? []);
       const next = commandAfter(outcome === "accepted" ? "accepted" : outcome === "rejected" ? "rejected" : "disconnected");
       if (next.phase === "accepted") updateDraft(sessionId, (item) => item.commandId === commandId ? emptyDraft() : item);
       else updateDraft(sessionId, (item) => ({
@@ -246,8 +258,8 @@ export function Composer({
         commandId: next.keepId ? commandId : null,
         phase: next.phase,
         reason: next.phase === "rejected"
-          ? "The server rejected this command. Edit it and send again to start a new one. Acceptance only means the command was received."
-          : "Not confirmed. Retry keeps this command id and does not start a second one.",
+          ? tr("web.command_rejected_hint")
+          : tr("web.command_unknown_hint"),
       }));
     } finally {
       sending.current = false;
@@ -295,18 +307,18 @@ export function Composer({
         references: [...(current.references ?? []).filter((ref) => ref.path !== item.reference?.path), item.reference as FileReference],
       }));
     } else {
-      const before = value.slice(0, caret).replace(/(^|\s)([@/])([^\s]*)$/, `$1${item.insert} `);
-      updateDraft(sessionId, (current) => ({ ...current, prompt: before + value.slice(caret) }));
+      const before = value.slice(0, caret).replace(/(^|\s)([@/])([^\s]*)$/, "$1");
+      updateDraft(sessionId, (current) => ({ ...current, prompt: before + value.slice(caret), command: item.insert }));
     }
     setMenu(null);
     node?.focus();
   };
   const offline = connection === "disconnected" || connection === "reconnecting" || connection === "closed";
   return <form className="composer" onSubmit={(event) => { send(event).catch((reason) => updateDraft(sessionId, (item) => ({ ...item, phase: "unknown", reason: String(reason) }))); }}>
-    <input ref={imageInput} className="file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => { if (event.target.files) upload(event.target.files, true); event.target.value = ""; }} />
-    <input ref={fileInput} className="file-input" type="file" multiple onChange={(event) => { if (event.target.files) upload(event.target.files, false); event.target.value = ""; }} />
+    <input ref={imageInput} className="file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple tabIndex={-1} aria-hidden="true" onChange={(event) => { if (event.target.files) upload(event.target.files, true); event.target.value = ""; }} />
+    <input ref={fileInput} className="file-input" type="file" multiple tabIndex={-1} aria-hidden="true" onChange={(event) => { if (event.target.files) upload(event.target.files, false); event.target.value = ""; }} />
     {chooseEnvironment && <EnvironmentChoice sessionId={sessionId} draft={draft} updateDraft={updateDraft} git={git} workLabel={workLabel} compact />}
-    {(draft.attachments.length > 0 || (draft.documents ?? []).length > 0 || (draft.references ?? []).length > 0 || (draft.localFiles ?? []).length > 0) && <div className="chips">
+    {(draft.attachments.length > 0 || (draft.documents ?? []).length > 0 || (draft.references ?? []).length > 0 || (draft.localFiles ?? []).length > 0 || draft.command) && <div className="chips">
       {draft.attachments.map((attachment) => <span className="chip" key={attachment.id}>{attachment.filename}<button type="button" aria-label={tr("web.remove", { name: attachment.filename })} onClick={() => {
         const owner = sessionId;
         api.deleteAttachment(owner, attachment.id).then(() => {
@@ -314,10 +326,10 @@ export function Composer({
         }).catch((error) => updateDraft(owner, (current) => ({ ...current, reason: String(error) })));
       }}><X size={10} /></button></span>)}
       {(draft.documents ?? []).map((document) => <span className="chip" key={document.id}>{document.filename}<button type="button" aria-label={tr("web.remove", { name: document.filename })} onClick={() => updateDraft(sessionId, (current) => ({ ...current, documents: (current.documents ?? []).filter((item) => item.id !== document.id) }))}><X size={10} /></button></span>)}
-      {(draft.references ?? []).map((reference) => <span className="chip" key={reference.path}>{reference.path}<button type="button" aria-label={tr("web.remove", { name: reference.name })} onClick={() => updateDraft(sessionId, (current) => ({ ...current, references: (current.references ?? []).filter((item) => item.path !== reference.path) }))}><X size={10} /></button></span>)}
+      {(draft.references ?? []).map((reference) => <span className="chip reference-chip" key={reference.path} title={tr("web.capture_hint")}><span className="chip-marker">@</span>{reference.path}<button type="button" aria-label={tr("web.remove", { name: reference.name })} onClick={() => updateDraft(sessionId, (current) => ({ ...current, references: (current.references ?? []).filter((item) => item.path !== reference.path) }))}><X size={10} /></button></span>)}
       {(draft.localFiles ?? []).map((file, index) => <span className="chip" key={`${file.name}-${index}`}>{file.name}<button type="button" aria-label={tr("web.remove", { name: file.name })} onClick={() => updateDraft(sessionId, (current) => ({ ...current, localFiles: (current.localFiles ?? []).filter((_, item) => item !== index) }))}><X size={10} /></button></span>)}
+      {draft.command && <span className="chip command-chip"><span className="chip-marker">/</span>{draft.command.replace(/^\/+/, "")}<button type="button" aria-label={tr("web.remove", { name: draft.command })} onClick={() => updateDraft(sessionId, (current) => ({ ...current, command: null }))}><X size={10} /></button></span>}
     </div>}
-    {(draft.references ?? []).length > 0 && <p className="hint">{tr("web.capture_hint")}</p>}
     <textarea ref={box} aria-label={tr("web.message")} rows={2} value={draft.prompt} placeholder={running ? tr("web.queue_placeholder") : tr("web.message_placeholder")} onChange={(event) => {
       const value = event.target.value;
       updateDraft(sessionId, (item) => ({ ...item, prompt: value }));
@@ -336,27 +348,27 @@ export function Composer({
     }} />
     {menu && <div className="mention-menu" role="listbox">
       {menuError && <p className="form-error" role="alert">{menuError}</p>}
-      {!results.length && !menuError && <p className="empty-small">No matches</p>}
+      {!results.length && !menuError && <p className="empty-small">{tr("web.no_matches")}</p>}
       {results.map((item, index) => <button type="button" role="option" aria-selected={index === menu.index} key={item.id} onMouseDown={(event) => { event.preventDefault(); applyMenu(item); }}>{item.label}</button>)}
     </div>}
     <div className="composer-actions">
       <div className="row-actions">
-        <button type="button" className="icon-button" title={tr("web.attach")} onClick={() => imageInput.current?.click()}><Paperclip size={14} /></button>
-        <button type="button" className="icon-button" title={tr("web.attach_file")} aria-label={tr("web.attach_file")} onClick={() => fileInput.current?.click()}><FileCode size={14} /></button>
-        <button type="button" className="icon-button" title="Reference file" onClick={() => { updateDraft(sessionId, (item) => ({ ...item, prompt: `${item.prompt}@` })); setMenu({ kind: "file", query: "", index: 0 }); box.current?.focus(); }}>@</button>
-        <button type="button" className="icon-button" title="Commands" onClick={() => { updateDraft(sessionId, (item) => ({ ...item, prompt: `${item.prompt}/` })); setMenu({ kind: "command", query: "", index: 0 }); box.current?.focus(); }}>/</button>
-        <span className="hint">{draft.reason || (uploading ? "Uploading…" : "") || (draft.phase === "awaiting" ? "Waiting for the server to accept this command." : "") || (offline ? "Offline. The draft stays here until this command is confirmed." : "")}</span>
+        <button type="button" className="icon-button" title={tr("web.attach_file")} aria-label={tr("web.attach_file")} onClick={() => fileInput.current?.click()}><Paperclip size={14} /></button>
+        <button type="button" className="icon-button" title={tr("web.attach")} aria-label={tr("web.attach")} onClick={() => imageInput.current?.click()}><Image size={14} /></button>
+        <button type="button" className="icon-button" title={tr("web.reference_file")} onClick={() => { updateDraft(sessionId, (item) => ({ ...item, prompt: `${item.prompt}@` })); setMenu({ kind: "file", query: "", index: 0 }); box.current?.focus(); }}>@</button>
+        <button type="button" className="icon-button" title={tr("web.commands_title")} onClick={() => { updateDraft(sessionId, (item) => ({ ...item, prompt: `${item.prompt}/` })); setMenu({ kind: "command", query: "", index: 0 }); box.current?.focus(); }}>/</button>
+        <span className="hint">{draft.reason || (uploading ? tr("web.uploading") : "") || (draft.phase === "awaiting" ? tr("web.awaiting_accept") : "") || (offline ? tr("web.offline_hint") : "")}</span>
       </div>
       <div className="row-actions">
-        <select className="select" aria-label={tr("web.interaction_mode")} value={interactionMode} onChange={(event) => onPolicy?.({ interaction_mode: event.target.value }).catch((error) => updateDraft(sessionId, (item) => ({ ...item, reason: String(error) })))}>
-          <option value="agent">{tr("web.mode.agent")}</option>
-          <option value="plan">{tr("web.mode.plan")}</option>
-          <option value="ask">{tr("web.mode.ask")}</option>
+        <select className="select select-mode" aria-label={tr("web.interaction_mode")} value={interactionMode} onChange={(event) => onPolicy?.({ interaction_mode: event.target.value }).catch((error) => updateDraft(sessionId, (item) => ({ ...item, reason: String(error) })))}>
+          <option value="agent">⚡ {tr("web.mode.agent")}</option>
+          <option value="plan">📐 {tr("web.mode.plan")}</option>
+          <option value="ask">💬 {tr("web.mode.ask")}</option>
         </select>
-        <select className="select" aria-label={tr("web.model")} value={currentModel} onChange={(event) => onModel?.(event.target.value)}>
+        <select className="select select-model" aria-label={tr("web.model")} value={currentModel} onChange={(event) => onModel?.(event.target.value)}>
           {visibleModels(models, currentModel).map((model) => <option key={model} value={model}>{model}</option>)}
         </select>
-        <select className="select" aria-label={tr("web.permission_mode")} value={permissionMode || "default"} onChange={(event) => onPolicy?.({ permission_mode: event.target.value }).catch((error) => updateDraft(sessionId, (item) => ({ ...item, reason: String(error) })))}>
+        <select className="select select-permissions" aria-label={tr("web.permission_mode")} value={permissionMode || "default"} onChange={(event) => onPolicy?.({ permission_mode: event.target.value }).catch((error) => updateDraft(sessionId, (item) => ({ ...item, reason: String(error) })))}>
           <option value="default">{tr("web.perm.default")}</option>
           <option value="acceptEdits">{tr("web.perm.acceptEdits")}</option>
           <option value="plan">{tr("web.perm.plan")}</option>
@@ -364,7 +376,7 @@ export function Composer({
         </select>
         {running && <button type="button" className="button stop" onClick={() => { cancel().catch(() => undefined); }}><Square size={11} weight="fill" />{tr("web.stop")}<kbd>⌘.</kbd></button>}
         {running && cancelAll && <button type="button" className="button stop" onClick={() => { cancelAll().catch(() => undefined); }}>{tr("web.stop_all")}</button>}
-        {(!running || draft.prompt.trim()) && <button className="button primary" disabled={uploading || draft.phase === "awaiting" || (!draft.prompt.trim() && !draft.attachments.length && !(draft.documents ?? []).length && !(draft.references ?? []).length && !(draft.localFiles ?? []).length)}><PaperPlaneRight size={13} />{draft.phase === "unknown" ? tr("web.retry") : tr("web.send")}</button>}
+        {(!running || draft.prompt.trim()) && <button className="button primary" disabled={uploading || draft.phase === "awaiting" || (!draft.prompt.trim() && !draft.command && !draft.attachments.length && !(draft.documents ?? []).length && !(draft.references ?? []).length && !(draft.localFiles ?? []).length)}><PaperPlaneRight size={13} />{draft.phase === "unknown" ? tr("web.retry") : tr("web.send")}</button>}
       </div>
     </div>
   </form>;
@@ -447,7 +459,7 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
   };
   const act = async (action: "accept" | "revert", paths: string[]) => {
     const unique = [...new Set(paths)];
-    if (!unique.length) { setReviewNote("Nothing is ready for this action."); return; }
+    if (!unique.length) { setReviewNote(tr("web.nothing_ready")); return; }
     setReviewNote("");
     try {
       const result = await api.reviewAction(sessionId, action, unique);
@@ -462,6 +474,22 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
   const currentStep = steps.findIndex((step) => ["in_progress", "running", "active"].includes(step.status));
   const changedLines = (state.accessed_files ?? []).reduce((sum, file) => sum + Number(/\+(\d+)/.exec(file.access ?? "")?.[1] ?? 0), 0);
   const tabCount = (item: InspectorTab) => item === "files" ? files.length || (state.accessed_files ?? []).length : item === "changes" ? changedLines || changes?.length || 0 : 0;
+  const sessionDirectories = (grants?.session_directories as string[] | undefined) ?? [];
+  const persistentDirectories = (grants?.persistent_directories as string[] | undefined) ?? [];
+  const boundaries = (grants?.boundaries as string[] | undefined) ?? [];
+  const formatTokens = (value: number | null | undefined) => value == null ? tr("web.unknown") : new Intl.NumberFormat().format(value);
+  const contextCategoryLabel = (id: string) => {
+    const key = `web.context_category.${id}`;
+    const translated = tr(key);
+    return translated === key ? id.replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) : translated;
+  };
+  const stepMeta = (status: string, note?: string) => {
+    const label = status.replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+    const detail = note?.trim();
+    if (!detail) return label;
+    if (detail.toLowerCase().startsWith(label.toLowerCase())) return detail[0].toUpperCase() + detail.slice(1);
+    return `${label} · ${detail}`;
+  };
   return <aside className={`inspector ${open ? "" : "is-closed"} ${narrow ? "narrow-open" : ""}`}>
     <div className="inspector-tabs" role="tablist">
       {tabs.map((item) => <button key={item} className={item === "permissions" && state.pending_interactions.length ? "pending-tab" : ""} role="tab" aria-selected={tab === item} onClick={() => setTab(item)}><span>{tr(`web.tab.${item}`)}</span>{tabCount(item) > 0 && <small className={item === "changes" ? "tab-positive" : ""}>{item === "changes" ? `(+${tabCount(item)})` : `(${tabCount(item)})`}</small>}</button>)}
@@ -469,21 +497,24 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
     </div>
     {tab === "task" && <div className="inspector-body">
       <section className="goal-card">
-        <div className="card-kicker"><span>{tr("web.goal")}</span>{steps.length ? <span className="goal-progress-copy">{completedSteps} of {steps.length} steps completed</span> : null}</div>
+        <div className="card-kicker"><span>{tr("web.goal")}</span>{steps.length ? <span className="goal-progress-copy">{tr("web.steps_completed", { done: completedSteps, total: steps.length })}</span> : null}</div>
         <p>{state.plan.objective || state.session.user_goal || tr("web.no_plan")}</p>
         {steps.length ? <div className="progress"><i style={{ width: `${Math.round((completedSteps / steps.length) * 100)}%` }} /></div> : null}
       </section>
       <div className="inspector-plan">
-        <div className="section-label"><span>{tr("web.execution_plan")} {steps.length ? `(${completedSteps}/${steps.length})` : ""}</span>{currentStep >= 0 && <span>Step {currentStep + 1} active</span>}</div>
-        <div className="step-list">{steps.map((step) => <article key={step.id} className={`step-card ${step.status}`}>{step.status === "completed" ? <Check size={15} weight="bold" /> : ["in_progress", "running", "active"].includes(step.status) ? <SpinnerGap size={15} className="spin" /> : <Circle size={15} />}<div><strong>{step.title}</strong><small>{step.status}{step.note ? ` · ${step.note}` : ""}</small></div>{["in_progress", "running", "active"].includes(step.status) && <span className="current-step">Current</span>}</article>)}</div>
+        <div className="section-label"><span>{tr("web.execution_plan")} {steps.length ? `(${completedSteps}/${steps.length})` : ""}</span>{currentStep >= 0 && <span>{tr("web.step_active", { step: currentStep + 1 })}</span>}</div>
+        <div className="step-list">{steps.map((step) => {
+          const metadata = stepMeta(step.status, step.note);
+          return <article key={step.id} className={`step-card ${step.status}`}>{step.status === "completed" ? <Check size={15} weight="bold" /> : ["in_progress", "running", "active"].includes(step.status) ? <span className="step-spinner" aria-hidden="true" /> : <Circle size={15} />}<div><strong title={step.title}>{step.title}</strong><small title={metadata}>{metadata}</small></div>{["in_progress", "running", "active"].includes(step.status) && <span className="current-step">Current</span>}</article>;
+        })}</div>
       </div>
       {!state.plan.steps?.length && <p className="empty-small">{tr("web.no_plan")}</p>}
       <section className="goal-card">
-        <div className="card-kicker"><span>{tr("web.accessed_files")}</span><span>{(state.accessed_files ?? []).length}</span></div>
-        {(state.accessed_files ?? []).map((file) => <div className="file-stat" key={`${file.call_id}-${file.path}`}><span>{file.path}</span><span>{file.access || ""}</span></div>)}
+        <div className="card-kicker"><span>{tr("web.accessed_files")}</span><span>{tr("web.files_count", { count: (state.accessed_files ?? []).length })}</span></div>
+        {(state.accessed_files ?? []).slice(0, 3).map((file) => <div className={`file-stat${/\+\d+/.test(file.access ?? "") ? " changed" : ""}`} key={`${file.call_id}-${file.path}`}><span>{file.path}</span><span>{file.access || ""}</span></div>)}
       </section>
       <section className="goal-card">
-        <div className="card-kicker"><span>{tr("web.subagents")}</span><span>{(state.subagents ?? []).length}</span></div>
+        <div className="card-kicker"><span>{tr("web.subagents")}</span><span>{(state.subagents ?? []).length ? tr("web.spawned_count", { count: (state.subagents ?? []).length }) : 0}</span></div>
         {(state.subagents ?? []).map((agent) => <div className="subagent-row" key={agent.task_id}><span className="status-dot" /><span>{agent.task || agent.task_id}</span><span>{agent.status}</span></div>)}
         {!(state.subagents ?? []).length && <p className="empty-small">{tr("web.no_subagents")}</p>}
       </section>
@@ -492,7 +523,7 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
       <div className="section-label"><span>{tr("web.workspace_resources")}</span></div>
       {panelError && <p className="form-error" role="alert">{panelError}</p>}
       {files.map((entry) => <button className="resource-row" key={entry.path} onClick={() => api.file(sessionId, entry.path).then((file) => setFileText(file.binary ? "Binary file" : file.content)).catch((error) => setPanelError(String(error)))}><b>{entry.kind === "dir" ? "DIR" : "FILE"}</b><span>{entry.path}</span></button>)}
-      {!files.length && <p className="empty-small">This directory is empty.</p>}
+      {!files.length && <p className="empty-small">{tr("web.dir_empty")}</p>}
       {fileText && <pre className="term-body">{fileText}</pre>}
     </div>}
     {tab === "changes" && <div className="inspector-body">
@@ -504,14 +535,14 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
         <button type="button" className="button accept" onClick={() => act("accept", review.filter((item) => item.state === "task").map((item) => item.path))}>{tr("web.accept_ready")}</button>
         <button type="button" className="button revert" onClick={() => {
           const paths = review.filter((item) => item.state === "task" || item.state === "accepted").map((item) => item.path);
-          if (!paths.length) { setReviewNote("Nothing is ready to revert."); return; }
-          if (window.confirm(`Revert ${paths.join(", ")}? Bytes return to the version from before this task first changed each file. A conflict rejects the whole batch.`)) act("revert", paths);
+          if (!paths.length) { setReviewNote(tr("web.nothing_to_revert")); return; }
+          if (window.confirm(tr("web.revert_confirm", { paths: paths.join(", ") }))) act("revert", paths);
         }}>{tr("web.revert_ready")}</button>
       </div>
       <div className="change-list">{(changes ?? []).map((change) => <button key={change.path} className={selected === change.path ? "change-card selected" : "change-card"} onClick={() => openPatch(change.path)}><b>{change.status}</b><span>{change.path}</span></button>)}</div>
       {review.map((item) => <div className="queue-item" key={`review-${item.path}`}><span>{item.display_kind === "rename" ? `rename ${item.kind === "delete" ? item.path : item.rename_with} → ${item.kind === "delete" ? item.rename_with : item.path}` : item.path} · {item.state}</span>
         <button type="button" className="button" onClick={() => act("accept", paired(item.path))}>{tr("web.accept_review")}</button>
-        <button type="button" className="button" onClick={() => { const paths = paired(item.path); if (window.confirm(`Revert ${paths.join(", ")}? Bytes return to the version from before this task first changed the file.`)) act("revert", paths); }}>{tr("web.revert_change")}</button>
+        <button type="button" className="button" onClick={() => { const paths = paired(item.path); if (window.confirm(tr("web.revert_single_confirm", { paths: paths.join(", ") }))) act("revert", paths); }}>{tr("web.revert_change")}</button>
       </div>)}
       {selected && <div className="patch">{patch ? <DiffViewer patch={patch} filename={selected} /> : null}<button type="button" className="button" onClick={() => setWide(true)}>{tr("web.expand_diff")}</button></div>}
       {changes && !changes.length && !changesError && <p className="empty-small">{tr("web.tree_clean")}</p>}
@@ -521,18 +552,25 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
       <div className="section-label"><span>{tr("web.security_policy")}</span></div>
       {panelError && <p className="form-error" role="alert">{panelError}</p>}
       <article className="policy-card"><div><strong>{tr("web.permission_mode")}</strong><span>{String(grants?.permission_mode ?? state.session.permission_mode ?? "default")}</span></div><small>{String(grants?.interaction_mode ?? state.session.interaction_mode ?? "agent")}</small></article>
-      {((grants?.boundaries as string[] | undefined) ?? []).map((item) => <article className="policy-card" key={item}><div><strong>{item}</strong></div></article>)}
-      {((grants?.session_rules as Array<{ id: string }> | undefined) ?? []).map((rule) => <article className="policy-card" key={rule.id}><div><strong>{rule.id}</strong><button type="button" className="text-button" onClick={() => api.revokeGrant(sessionId, rule.id).then(() => api.grants(sessionId).then(setGrants)).catch((error) => setPanelError(String(error)))}>Revoke</button></div><small>session</small></article>)}
-      {((grants?.persistent_rules as Array<{ id: string }> | undefined) ?? []).map((rule) => <article className="policy-card warn" key={rule.id}><div><strong>{rule.id}</strong><button type="button" className="text-button" onClick={() => api.revokeGrant(sessionId, rule.id).then(() => api.grants(sessionId).then(setGrants)).catch((error) => setPanelError(String(error)))}>Revoke</button></div><small>persistent</small></article>)}
+      {(sessionDirectories.length > 0 || persistentDirectories.length > 0) && <section className="policy-group">
+        <div className="card-kicker"><span>{tr("web.additional_directories")}</span><span>{sessionDirectories.length + persistentDirectories.length}</span></div>
+        {[...sessionDirectories.map((path) => ({ path, scope: "session" })), ...persistentDirectories.map((path) => ({ path, scope: "persistent" }))].map(({ path, scope }) => <article className="policy-card policy-directory" key={`${scope}:${path}`}><div><strong className="mono">{path}</strong><span className={scope === "persistent" ? "policy-scope persistent" : "policy-scope"}>{scope === "persistent" ? tr("web.user_scope") : tr("web.session_scope")}</span></div></article>)}
+      </section>}
+      {boundaries.length > 0 && <section className="policy-group">
+        <div className="card-kicker"><span>{tr("web.enforced_boundaries")}</span></div>
+        {boundaries.map((item) => <article className="policy-card policy-boundary" key={item}><span className="policy-check"><Check size={12} weight="bold" /></span><span>{item}</span></article>)}
+      </section>}
+      {((grants?.session_rules as Array<{ id: string }> | undefined) ?? []).map((rule) => <article className="policy-card" key={rule.id}><div><strong>{rule.id}</strong><button type="button" className="text-button" onClick={() => api.revokeGrant(sessionId, rule.id).then(() => api.grants(sessionId).then(setGrants)).catch((error) => setPanelError(String(error)))}>{tr("web.revoke")}</button></div><small>session</small></article>)}
+      {((grants?.persistent_rules as Array<{ id: string }> | undefined) ?? []).map((rule) => <article className="policy-card warn" key={rule.id}><div><strong>{rule.id}</strong><button type="button" className="text-button" onClick={() => api.revokeGrant(sessionId, rule.id).then(() => api.grants(sessionId).then(setGrants)).catch((error) => setPanelError(String(error)))}>{tr("web.revoke")}</button></div><small>persistent</small></article>)}
     </div>}
     {tab === "context" && <div className="inspector-body">
       <div className="section-label"><span>{tr("web.token_breakdown")}</span></div>
       <section className="stat-card">
-        {(breakdown?.categories ?? []).map((item) => <div className="stat-row" key={item.id}><span>{item.id}</span><span>{item.tokens} tok{typeof item.share === "number" ? ` (${Math.round(item.share * 100)}%)` : ""}</span></div>)}
-        <div className="stat-total"><span>{tr("web.estimate")}</span><span>{breakdown?.total ?? "unknown"} / {breakdown?.limit ?? "unknown"}</span></div>
+        {(breakdown?.categories ?? []).map((item) => <div className="stat-row" key={item.id}><span>{contextCategoryLabel(item.id)}</span><span>{formatTokens(item.tokens)} tok{typeof item.share === "number" ? ` (${Math.round(item.share * 100)}%)` : ""}</span></div>)}
+        <div className="stat-total"><span>{tr("web.estimate")}</span><span>{formatTokens(breakdown?.total)} / {formatTokens(breakdown?.limit)}</span></div>
       </section>
       {breakdown?.note && <p className="hint">{breakdown.note}</p>}
-      <p className="hint">Billing {state.usage.total_tokens ?? "unknown"} total tokens</p>
+      <p className="hint">{tr("web.billing_tokens", { count: String(state.usage.total_tokens ?? tr("web.unknown")) })}</p>
     </div>}
   </aside>;
 }
@@ -558,7 +596,7 @@ function SessionMenu({ session, onRename, onArchive }: {
   </div>;
 }
 
-export function SessionRail({ sessions, selected, onSelect, onCreate, open, children, footer = "", selectedProgress, workspaces = [], onSelectWorkspace, onRename, onArchive }: {
+export function SessionRail({ sessions, selected, onSelect, onCreate, open, children, footer = "", connectionLatency = null, selectedProgress, workspaces = [], onSelectWorkspace, onRegisterWorkspace, onUnregisterWorkspace, onRename, onArchive }: {
   sessions: SessionSummary[];
   selected: string | null;
   onSelect: (session: SessionSummary) => void;
@@ -566,15 +604,30 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
   open: boolean;
   children?: ReactNode;
   footer?: string;
+  connectionLatency?: number | null;
   selectedProgress?: string;
   workspaces?: WorkspaceRow[];
   onSelectWorkspace?: (projectId: string) => void;
+  onRegisterWorkspace?: () => void;
+  onUnregisterWorkspace?: () => void;
   onRename?: (session: SessionSummary) => void;
   onArchive?: (session: SessionSummary) => void;
 }) {
   const tr = useT();
+  const [showAllHistory, setShowAllHistory] = useState(false);
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const workspaceMenuRef = useRef<HTMLDivElement>(null);
   const active = sessions.filter((item) => item.active);
   const history = sessions.filter((item) => !item.active);
+  const visibleHistory = showAllHistory ? history : history.slice(0, 4);
+  useEffect(() => {
+    if (!workspaceMenuOpen) return;
+    const closeOnOutsidePress = (event: PointerEvent) => {
+      if (!workspaceMenuRef.current?.contains(event.target as Node)) setWorkspaceMenuOpen(false);
+    };
+    window.addEventListener("pointerdown", closeOnOutsidePress);
+    return () => window.removeEventListener("pointerdown", closeOnOutsidePress);
+  }, [workspaceMenuOpen]);
   const statusLabel = (session: SessionSummary) => {
     const execution = session.execution || session.status;
     if (session.pending_interactions) return tr("web.awaiting_permission");
@@ -598,41 +651,49 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
             <span className={`status-dot ${execution}`} /><span className="task-id">{taskCode(session.session_id, true)}</span><span className="task-title">{title}</span><span className="task-meta">{statusLabel(session)}</span>
           </>}
         </button>
-        <SessionMenu session={session} onRename={onRename} onArchive={onArchive} />
+        {!current && <SessionMenu session={session} onRename={onRename} onArchive={onArchive} />}
       </div>;
     })}
     {!active.length && <p className="empty-small">{tr("web.no_active")}</p>}
   </>;
   const renderHistory = () => <>
-    <div className="section-label"><span>{tr("web.recent_tasks")}</span></div>
-    {history.map((session) => <div className="session-entry" key={session.session_id}>
+    <div className="section-label"><span>{tr("web.recent_tasks")}</span>{history.some((session) => isToday(session.saved_at)) && <span>{tr("web.today")}</span>}</div>
+    {visibleHistory.map((session) => <div className="session-entry" key={session.session_id}>
       <button className="recent-row" onClick={() => onSelect(session)}>{session.status === "failed" ? <X className="recent-mark fail" size={12} weight="bold" /> : <Check className="recent-mark ok" size={12} weight="bold" />}{sessionTitle(session, tr)}</button>
-      <SessionMenu session={session} onRename={onRename} onArchive={onArchive} />
+      {selected !== session.session_id && <SessionMenu session={session} onRename={onRename} onArchive={onArchive} />}
     </div>)}
+    {!showAllHistory && history.length > visibleHistory.length && <button type="button" className="recent-more" onClick={() => setShowAllHistory(true)}>{tr("web.show_all_tasks", { count: history.length - visibleHistory.length })}</button>}
+    {showAllHistory && history.length > 4 && <button type="button" className="recent-more" onClick={() => setShowAllHistory(false)}>{tr("web.show_recent_tasks")}</button>}
   </>;
   return <aside className={`sidebar ${open ? "responsive-open" : ""}`}>
     <div className="sidebar-scroll">
-      <button className="primary-action" onClick={onCreate} aria-label={tr("web.new_session")}><span><Plus size={14} /> {tr("web.new_task")}</span><kbd>⌘N</kbd></button>
-      {workspaces.length ? <div>
-        <div className="section-label"><span>{tr("web.workspaces")}</span></div>
+      <button className="primary-action" onClick={onCreate} aria-label={tr("web.new_session")}><span className="primary-action-label"><Plus size={14} weight="bold" /><span>{tr("web.new_task")}</span></span><kbd>⌘N</kbd></button>
+      <div>{renderActive()}</div>
+      <div>{renderHistory()}</div>
+      {workspaces.length > 0 && <div>
+        <div className="section-label workspace-heading"><span>{tr("web.workspaces")}</span>
+          <div className="workspace-actions" ref={workspaceMenuRef}>
+            <button type="button" className="icon-button workspace-actions-trigger" aria-label={tr("web.workspaces")} aria-expanded={workspaceMenuOpen} onClick={() => setWorkspaceMenuOpen((value) => !value)}><DotsThreeVertical size={13} weight="bold" /></button>
+            {workspaceMenuOpen && <div className="session-menu workspace-actions-menu" role="menu">
+              {onRegisterWorkspace && <button type="button" role="menuitem" onClick={() => { setWorkspaceMenuOpen(false); onRegisterWorkspace(); }}>{tr("web.register_workspace")}</button>}
+              {onUnregisterWorkspace && <button type="button" role="menuitem" onClick={() => { setWorkspaceMenuOpen(false); onUnregisterWorkspace(); }}>{tr("web.unregister_selected")}</button>}
+            </div>}
+          </div>
+        </div>
         {workspaces.map((workspace) => <div className="workspace-block" key={workspace.project_id}>
           <button type="button" className={`nav-row ${workspace.selected ? "selected" : ""}`} onClick={() => onSelectWorkspace?.(workspace.project_id)}>
-            <Folder size={14} />{workspace.name}
+            <Folder size={14} />{workspace.name}{workspace.selected && <span className="workspace-selected-dot" aria-hidden="true" />}
           </button>
-          {workspace.selected && <div className="workspace-sessions">{renderActive()}{renderHistory()}</div>}
         </div>)}
-      </div> : <>
-        <div>{renderActive()}</div>
-        <div>{renderHistory()}</div>
-      </>}
+      </div>}
       {children}
     </div>
-    {footer && <div className="sidebar-foot"><span className="profile-avatar">W</span><span className="profile-copy"><strong>Wright</strong><small>{footer}</small></span><span className="connection-latency" title={tr("web.connection.connected")}><i /></span></div>}
+    {footer && <div className="sidebar-foot"><span className="profile-avatar">W</span><span className="profile-copy"><strong>Wright</strong><small>{footer}</small></span><span className={`connection-latency${connectionLatency == null ? " offline" : ""}`} title={connectionLatency == null ? tr("web.connection.disconnected") : tr("web.connection.connected")} aria-label={connectionLatency == null ? tr("web.connection.disconnected") : `${connectionLatency} ms`}><i />{connectionLatency != null && <span>{connectionLatency}ms</span>}</span></div>}
   </aside>;
 }
 
 export function archiveConfirm(): boolean {
-  return window.confirm("Archive this session? A clean isolated worktree may be removed. The project directory stays.");
+  return window.confirm(t("web.archive_confirm_generic"));
 }
 
 export { Archive };

@@ -1,7 +1,7 @@
-import { Archive, Brain, Clock, Gear, GitBranch, MagnifyingGlass, Moon, PencilSimple, Scroll, SidebarSimple, Sun, Warning, X } from "@phosphor-icons/react";
+import { Brain, Clock, DotsThreeVertical, Gear, GitBranch, MagnifyingGlass, Moon, Scroll, SidebarSimple, Sun, Warning, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, bootstrap } from "./api";
-import { getLocale, setLocale, useT } from "./i18n";
+import { setLocale, useT } from "./i18n";
 import { parseEvent } from "./protocol";
 import { applyEvent } from "./reducer";
 import type { SessionSummary, Snapshot, ViewState } from "./types";
@@ -28,6 +28,7 @@ const initialView = (snapshot: Snapshot): ViewState => ({
 });
 
 type WorkspaceRow = { project_id: string; name: string; root: string; selected?: boolean; exists?: boolean };
+type CapabilityCounts = { memory: number | null; rules: number | null; schedules: number | null };
 type Panel = null | "search" | "memory" | "rules" | "schedules" | "settings";
 
 const compactTokens = (value: number | null | undefined) => typeof value === "number"
@@ -40,14 +41,22 @@ export default function App() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [state, setState] = useState<ViewState | null>(null);
+  const stateRef = useRef<ViewState | null>(null);
+  stateRef.current = state;
   const [browsing, setBrowsing] = useState<"draft" | "preview" | "live">("draft");
+  const browsingRef = useRef(browsing);
+  browsingRef.current = browsing;
   const [fatal, setFatal] = useState("");
   const [railOpen, setRailOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [narrowInspector, setNarrowInspector] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [serverLatency, setServerLatency] = useState<number | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceRow[]>([]);
+  const [capabilityCounts, setCapabilityCounts] = useState<CapabilityCounts>({ memory: null, rules: null, schedules: null });
   const [panel, setPanel] = useState<Panel>(null);
+  const [sessionActionsOpen, setSessionActionsOpen] = useState(false);
+  const sessionActionsRef = useRef<HTMLDivElement>(null);
   const [focusPath, setFocusPath] = useState<string | null>(null);
   const [booted, setBooted] = useState(false);
   const socket = useRef<WebSocket | null>(null);
@@ -78,6 +87,63 @@ export default function App() {
     setSessions(items);
     return items;
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    let pending = false;
+    const measure = async () => {
+      if (pending) return;
+      pending = true;
+      const startedAt = performance.now();
+      try {
+        const result = await api.health();
+        if (mounted && result.ok) setServerLatency(Math.round(performance.now() - startedAt));
+        else if (mounted) setServerLatency(null);
+      } catch {
+        if (mounted) setServerLatency(null);
+      } finally {
+        pending = false;
+      }
+    };
+    void measure();
+    const timer = window.setInterval(() => void measure(), 10_000);
+    return () => { mounted = false; window.clearInterval(timer); };
+  }, []);
+
+  const selectedProjectId = String(workspaceId.current || project?.project_id || "");
+  useEffect(() => {
+    if (!selected || panel !== null) {
+      if (!selected) {
+        setCapabilityCounts({ memory: null, rules: null, schedules: null });
+      }
+      return;
+    }
+    let current = true;
+    setCapabilityCounts({ memory: null, rules: null, schedules: null });
+    const loadCounts = async () => {
+      const [memoryResult, rulesResult, schedulesResult] = await Promise.allSettled([
+        api.memory(selected),
+        api.rules(selected),
+        selectedProjectId ? api.projectSchedules(selectedProjectId) : Promise.reject(new Error("No selected project")),
+      ]);
+      if (!current) return;
+      const memory = memoryResult.status === "fulfilled" ? memoryResult.value : null;
+      const core = memory?.core && typeof memory.core === "object" ? memory.core as Record<string, unknown> : {};
+      const semantic = Array.isArray(memory?.semantic) ? memory.semantic : [];
+      const episodes = Array.isArray(memory?.episodes) ? memory.episodes : [];
+      setCapabilityCounts({
+        memory: memoryResult.status === "fulfilled"
+          ? [core.persona, core.human_profile, core.project_anchor].filter((value) => typeof value === "string" && value.trim().length > 0).length + semantic.length + episodes.length
+          : null,
+        rules: rulesResult.status === "fulfilled"
+          ? rulesResult.value.rules.filter((rule) => typeof rule.id === "string" && rule.id.length > 0).length
+          : null,
+        schedules: schedulesResult.status === "fulfilled" ? schedulesResult.value.length : null,
+      });
+    };
+    void loadCounts();
+    return () => { current = false; };
+  }, [selected, selectedProjectId, panel]);
 
   const applyTheme = (next: "dark" | "light") => {
     setTheme(next);
@@ -113,14 +179,38 @@ export default function App() {
           return next;
         });
       } else if (event.key === "Escape") {
+        setSessionActionsOpen(false);
+        const interaction = stateRef.current?.pending_interactions.find((item) => item.kind === "permission");
+        if (interaction && browsingRef.current === "live" && interaction.choices?.some((choice) => choice.id === "deny")) {
+          event.preventDefault();
+          event.stopPropagation();
+          respondToInteraction(interaction.request_id, "deny");
+          return;
+        }
         setPanel(null);
         setRailOpen(false);
         setNarrowInspector(false);
+      } else if (event.altKey && event.key === "Enter") {
+        const interaction = stateRef.current?.pending_interactions.find((item) => item.kind === "permission");
+        if (interaction && browsingRef.current === "live" && interaction.choices?.some((choice) => choice.id === "allow_once")) {
+          event.preventDefault();
+          event.stopPropagation();
+          respondToInteraction(interaction.request_id, "allow_once");
+        }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
+
+  useEffect(() => {
+    if (!sessionActionsOpen) return;
+    const closeOnOutsidePress = (event: PointerEvent) => {
+      if (!sessionActionsRef.current?.contains(event.target as Node)) setSessionActionsOpen(false);
+    };
+    window.addEventListener("pointerdown", closeOnOutsidePress);
+    return () => window.removeEventListener("pointerdown", closeOnOutsidePress);
+  }, [sessionActionsOpen]);
 
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get("visual") === "fixture") {
@@ -331,6 +421,15 @@ export default function App() {
       socket.current?.send(JSON.stringify(payload));
     });
   };
+  const respondToInteraction = (requestId: string, answer: unknown) => {
+    const existing = respondIds.current.get(requestId);
+    const id = existing ?? crypto.randomUUID();
+    respondIds.current.set(requestId, id);
+    return sendCommand({ type: "interaction.respond", command_id: id, request_id: requestId, answer }).then((outcome) => {
+      if (outcome === "accepted" || outcome === "rejected") respondIds.current.delete(requestId);
+      return outcome === "accepted";
+    });
+  };
   const projectKey = () => String(workspaceId.current || launchId.current || "");
   const draftKey = projectKey() ? `draft:${projectKey()}` : "draft:local";
   const remember = (sessionId: string | null) => {
@@ -418,7 +517,7 @@ export default function App() {
     const id = sessionId || state?.session.session_id;
     if (!id) return;
     const label = sessions.find((item) => item.session_id === id)?.user_goal || state?.session.user_goal || id;
-    if (!window.confirm(`Archive ${label}? A clean isolated worktree may be removed. The project directory stays.`)) return;
+    if (!window.confirm(tr("web.archive_confirm", { label }))) return;
     await api.archive(id);
     if (selected === id) {
       remember(null);
@@ -489,10 +588,22 @@ export default function App() {
   if (visual === "empty") return <EmptyFixture />;
   if (fatal && !project) return <main className="fatal"><Warning size={28} /><h1>{tr("web.fatal_title")}</h1><p>{fatal}</p><button className="button primary" onClick={() => location.reload()}>{tr("web.reload")}</button></main>;
   const connection = state?.connection ?? (booted ? "idle" : "connecting");
-  const statusClass = execution === "waiting_for_input" ? "waiting" : execution === "failed" ? "failed" : running ? "running" : "";
+  const agentStatus = state?.session.agent_status;
+  const statusClass = state?.pending_interactions.length
+    ? "waiting"
+    : execution === "waiting_for_input" ? "waiting-input"
+      : execution === "queued" ? "queued"
+        : execution === "cancelling" ? "cancelling"
+          : execution === "failed" || agentStatus === "failed" || agentStatus === "interrupted" ? "failed"
+            : execution === "cancelled" || agentStatus === "cancelled" ? "cancelled"
+              : execution === "completed" || agentStatus === "completed" ? "completed"
+                : running ? "running" : "";
+  const statusPulse = running || statusClass === "waiting";
+  const terminalAgentStatus = agentStatus === "completed" || agentStatus === "failed" || agentStatus === "cancelled" || agentStatus === "interrupted";
+  const displayStatus = execution === "idle" && terminalAgentStatus ? agentStatus : execution;
   const statusText = state?.pending_interactions.length
     ? tr("web.permission_required")
-    : execution ? tr(`web.status.${execution}`) : tr(`web.connection.${connection}`);
+    : displayStatus ? tr(`web.status.${displayStatus}`) : tr(`web.connection.${connection}`);
   const capacity = typeof project?.capacity === "number" ? project.capacity as number : null;
   const breakdown = state?.context_breakdown;
   const contextWidth = breakdown?.limit ? Math.min(100, Math.round(((breakdown.total ?? 0) / breakdown.limit) * 100)) : 0;
@@ -508,20 +619,13 @@ export default function App() {
         <span className="crumb" title={String(project?.project_root ?? "")}>{projectName}</span>
       </div>
       <div className="top-center">
-        {branch && <div className="branch-pill"><GitBranch size={12} /><span>{branch}</span>{dirty > 0 ? <span className="dirty">{dirty} uncommitted</span> : null}</div>}
+        {branch && <div className="branch-pill"><GitBranch size={12} /><span>{branch}</span>{dirty > 0 ? <span className="dirty">{tr("web.uncommitted", { count: dirty })}</span> : null}</div>}
         <button type="button" className="search-trigger" onClick={() => setPanel("search")}><MagnifyingGlass size={14} /><span>{tr("web.search")}</span><kbd className="kbd">⌘K</kbd></button>
       </div>
       <div className="top-status">
         <span className="top-status-label">Active</span>
-        <span className={`top-agent-state ${statusClass}`}><span className={`dot ${running ? "pulse" : ""}`} />{statusText}</span>
+        <span className={`top-agent-state ${statusClass}`}><span className={`dot ${statusPulse ? "pulse" : ""}`} />{statusText}</span>
         <span className="active-count">{tr("web.active", { count: capacity === null ? `${activeCount}` : `${activeCount}/${capacity}` })}</span>
-        <select aria-label={tr("web.language_label")} title={tr("web.language_note")} value={getLocale()} onChange={(event) => {
-          const next = setLocale(event.target.value);
-          api.setPreference({ interface_language: next }).catch(() => undefined);
-        }}>
-          <option value="en">EN</option>
-          <option value="zh-CN">中文</option>
-        </select>
         <button type="button" className="icon-button" title={tr("web.theme")} onClick={() => savePreference({ theme: theme === "dark" ? "light" : "dark" }).catch((error) => setFatal(String(error)))}>{theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}</button>
         {state && selected ? <button type="button" className="icon-button" aria-label={tr("web.open_inspector")} onClick={() => { setInspectorOpen(true); setNarrowInspector(true); }}><SidebarSimple size={14} /></button> : null}
       </div>
@@ -534,39 +638,38 @@ export default function App() {
         onCreate={() => { setBrowsing("draft"); setSelected(null); setState(null); remember(null); }}
         open={railOpen}
         selectedProgress={selectedProgress}
-        footer={state?.session.model ?? ""}
+        footer={state?.session.model ?? String(project?.default_model ?? "")}
+        connectionLatency={serverLatency}
         workspaces={workspaces}
         onSelectWorkspace={(projectId) => {
           workspaceId.current = projectId;
           setWorkspaces((current) => current.map((row) => ({ ...row, selected: row.project_id === projectId })));
           api.selectWorkspace(projectId).then(() => refreshSessions()).catch((error) => setFatal(String(error)));
         }}
+        onRegisterWorkspace={() => {
+          const path = window.prompt(tr("web.register_prompt"));
+          if (!path) return;
+          api.registerWorkspace(path).then(() => api.workspaces()).then((registry) => setWorkspaces(registry.projects)).catch((error) => setFatal(String(error)));
+        }}
+        onUnregisterWorkspace={() => {
+          const current = workspaces.find((item) => item.selected) ?? workspaces[0];
+          if (!current) return;
+          if (!window.confirm(tr("web.unregister_confirm", { name: current.name }))) return;
+          api.unregisterWorkspace(current.project_id).then(() => api.workspaces()).then((registry) => {
+            setWorkspaces(registry.projects);
+            workspaceId.current = registry.selected_project_id;
+            return refreshSessions();
+          }).catch((error) => setFatal(String(error)));
+        }}
         onRename={(session) => renameSession(session).catch((error) => setFatal(String(error)))}
         onArchive={(session) => archiveSession(session.session_id).catch((error) => setFatal(String(error)))}
       >
-        <div>
-          {!workspaces.length && <p className="empty-small">{tr("web.launch_project")}</p>}
-          <button type="button" className="nav-row" onClick={() => {
-            const path = window.prompt("Project directory to register. Files stay on disk, and a running task keeps its execution root.");
-            if (!path) return;
-            api.registerWorkspace(path).then(() => api.workspaces()).then((registry) => setWorkspaces(registry.projects)).catch((error) => setFatal(String(error)));
-          }}>{tr("web.register_workspace")}</button>
-          {workspaces.length > 0 && <button type="button" className="nav-row" onClick={() => {
-            const current = workspaces.find((item) => item.selected) ?? workspaces[0];
-            if (!current) return;
-            if (!window.confirm(`Unregister ${current.name}? This removes it from the list only. Files and task data stay.`)) return;
-            api.unregisterWorkspace(current.project_id).then(() => api.workspaces()).then((registry) => {
-              setWorkspaces(registry.projects);
-              workspaceId.current = registry.selected_project_id;
-              return refreshSessions();
-            }).catch((error) => setFatal(String(error)));
-          }}>{tr("web.unregister_selected")}</button>}
-        </div>
+        {!workspaces.length && <p className="empty-small">{tr("web.launch_project")}</p>}
         <div>
           <div className="section-label"><span>{tr("web.capabilities")}</span></div>
-          <button type="button" className="nav-row" onClick={() => setPanel("memory")}><Brain size={14} />{tr("web.memory")}</button>
-          <button type="button" className="nav-row" onClick={() => setPanel("rules")}><Scroll size={14} />{tr("web.rules")}</button>
-          <button type="button" className="nav-row" onClick={() => setPanel("schedules")}><Clock size={14} />{tr("web.schedules")}</button>
+          <button type="button" className="nav-row" onClick={() => setPanel("memory")}><Brain size={14} />{tr("web.memory")}{capabilityCounts.memory !== null && capabilityCounts.memory > 0 && <span className="nav-count">{capabilityCounts.memory}</span>}</button>
+          <button type="button" className="nav-row" onClick={() => setPanel("rules")}><Scroll size={14} />{tr("web.rules")}{capabilityCounts.rules !== null && capabilityCounts.rules > 0 && <span className="nav-count">{capabilityCounts.rules}</span>}</button>
+          <button type="button" className="nav-row" onClick={() => setPanel("schedules")}><Clock size={14} />{tr("web.schedules")}{capabilityCounts.schedules !== null && capabilityCounts.schedules > 0 && <span className="nav-count">{capabilityCounts.schedules}</span>}</button>
           <button type="button" className="nav-row" onClick={() => setPanel("settings")}><Gear size={14} />{tr("web.settings")}</button>
         </div>
       </SessionRail>
@@ -578,30 +681,35 @@ export default function App() {
               <h1>{sessionTitle(state.session, tr)}</h1>
             </div>
             <div className="task-status">
-              <span className={`status-badge ${statusClass}`}><span className={`dot ${running ? "pulse" : ""}`} />{statusText}</span>
+              <span className={`status-badge ${statusClass}`}><span className={`dot ${statusPulse ? "pulse" : ""}`} />{statusText}</span>
               {typeof breakdown?.total === "number" && <div className="context-meter" title={tr("web.estimate")}>
                 <span className="figures"><span>{compactTokens(breakdown.total)} / {compactTokens(breakdown.limit)}</span><span className="muted">{contextWidth}% context</span></span>
-                <span className="meter slim"><i style={{ width: `${contextWidth}%` }} /></span>
+                <span className="meter slim context-meter-segments">
+                  {breakdown?.categories?.length ? breakdown.categories.map((category) => {
+                    const segment = category.id === "system_prompt" ? "prompt" : category.id === "history" ? "history" : "tools";
+                    return <i key={category.id} className={`context-segment ${segment}`} style={{ width: `${Math.max(0, category.share * 100)}%` }} />;
+                  }) : <i className="context-segment prompt" style={{ width: `${contextWidth}%` }} />}
+                </span>
               </div>}
-              <button className="icon-button" title={tr("web.rename")} aria-label={tr("web.rename")} onClick={() => renameSession(state.session).catch((error) => setFatal(String(error)))}><PencilSimple size={14} /></button>
-              <button className="icon-button" title={tr("web.archive")} aria-label={tr("web.archive")} onClick={() => archiveSession().catch((error) => setFatal(String(error)))}><Archive size={14} /></button>
-              <button className="icon-button" title={tr("web.close_session")} aria-label={tr("web.close_session")} onClick={() => {
-                if (!window.confirm(`Close ${state.session.user_goal || state.session.session_id}? The task stops and the checkpoint stays.`)) return;
-                api.close(state.session.session_id).then(() => { setSelected(null); setState(null); refreshSessions(); }).catch((error) => setFatal(String(error)));
-              }}><X size={14} /></button>
+              <div className="conversation-actions" ref={sessionActionsRef}>
+                <button type="button" className="icon-button" aria-label={tr("web.session_actions")} aria-expanded={sessionActionsOpen} onClick={() => setSessionActionsOpen((open) => !open)}><DotsThreeVertical size={14} weight="bold" /></button>
+                {sessionActionsOpen && <div className="session-menu conversation-menu" role="menu">
+                  <button type="button" role="menuitem" onClick={() => { setSessionActionsOpen(false); renameSession(state.session).catch((error) => setFatal(String(error))); }}>{tr("web.rename")}</button>
+                  <button type="button" role="menuitem" onClick={() => { setSessionActionsOpen(false); archiveSession().catch((error) => setFatal(String(error))); }}>{tr("web.archive")}</button>
+                  <button type="button" role="menuitem" onClick={() => {
+                    setSessionActionsOpen(false);
+                    if (!window.confirm(tr("web.close_confirm", { label: state.session.user_goal || state.session.session_id }))) return;
+                    api.close(state.session.session_id).then(() => { setSelected(null); setState(null); refreshSessions(); }).catch((error) => setFatal(String(error)));
+                  }}>{tr("web.close_session")}</button>
+                </div>}
+              </div>
             </div>
           </div>
           <Timeline
             key={state.session.session_id}
             state={state}
             respond={(requestId, answer) => {
-              const existing = respondIds.current.get(requestId);
-              const id = existing ?? crypto.randomUUID();
-              respondIds.current.set(requestId, id);
-              return sendCommand({ type: "interaction.respond", command_id: id, request_id: requestId, answer }).then((outcome) => {
-                if (outcome === "accepted" || outcome === "rejected") respondIds.current.delete(requestId);
-                return outcome === "accepted";
-              });
+              return respondToInteraction(requestId, answer);
             }}
             cancelQueued={(targetCommandId) => {
               const id = crypto.randomUUID();

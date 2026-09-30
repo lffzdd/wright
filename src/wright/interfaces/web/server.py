@@ -74,14 +74,25 @@ def create_app(
 
         @app.get("/{path:path}")
         def frontend(path: str) -> FileResponse:
+            def index_response() -> FileResponse:
+                # The HTML shell points at content-hashed assets. Revalidate the
+                # shell on each navigation so rebuilds cannot leave browsers on
+                # an old UI.
+                return FileResponse(
+                    assets / "index.html",
+                    headers={"Cache-Control": "no-cache, must-revalidate"},
+                )
+
             requested = (assets / path).resolve()
             try:
                 requested.relative_to(assets)
             except ValueError:
                 requested = assets / "index.html"
             if path and requested.is_file():
+                if requested.name == "index.html":
+                    return index_response()
                 return FileResponse(requested)
-            return FileResponse(assets / "index.html")
+            return index_response()
 
     return app
 

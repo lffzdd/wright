@@ -40,6 +40,21 @@ function looksLikeTestFailure(output: string): boolean {
   return /AssertionError|Tests:\s*\d+\s*failed/i.test(output);
 }
 
+function TestFailureOutput({ text }: { text: string }) {
+  const lines = text.split(/\r?\n/);
+  return <pre className="term-body failed test-failure-output" aria-label={text}>{lines.map((line, index) => {
+    const testLocation = /(?:^|\s)[^\s>]+\.(?:test|spec)\.[cm]?[jt]sx?(?:\s*>|:)/i.test(line);
+    const assertion = /AssertionError|expected.+received|received.+expected/i.test(line);
+    const summary = /Tests:\s*\d+\s+failed,\s*\d+\s+passed/i.test(line);
+    const parts = summary ? line.split(/(\d+\s+failed|\d+\s+passed)/gi) : [line];
+    return <span className={`term-line${testLocation ? " test-location" : ""}${assertion ? " assertion" : ""}${summary ? " test-summary" : ""}`} key={index}>{parts.map((part, partIndex) => {
+      const failed = /^\d+\s+failed$/i.test(part);
+      const passed = /^\d+\s+passed$/i.test(part);
+      return failed || passed ? <span className={failed ? "test-count-failed" : "test-count-passed"} key={partIndex}>{part}</span> : part;
+    })}</span>;
+  })}</pre>;
+}
+
 function describeRisk(flag: string): string {
   const key = `web.risk_flag.${flag}`;
   const label = t(key);
@@ -117,14 +132,14 @@ export function AssistantMessage({ text }: { text: string }) {
   </div>;
 }
 
-export function SummaryRow({ text }: { text: string }) {
+export function SummaryRow({ text, durationMs }: { text: string; durationMs?: number | null }) {
   const [open, setOpen] = useState(false);
   const tr = useT();
   return <div className={`tl-indent reasoning-block ${open ? "open" : ""}`}>
     <div className="summary-row">
       <div className="summary-copy">
         <Lightning className="summary-mark" size={14} weight="fill" aria-hidden="true" />
-        <span className="reasoning-label">{tr("web.reasoning")}:</span>
+        <span className="reasoning-label">{tr("web.reasoning")}{typeof durationMs === "number" ? ` (${formatDuration(durationMs)})` : ""}:</span>
         {!open && <strong>{text}</strong>}
       </div>
       <button type="button" className="text-button summary-toggle" onClick={() => setOpen((value) => !value)}>{open ? tr("web.hide") : tr("web.steps")}<CaretDown size={12} className={open ? "" : "collapsed"} /></button>
@@ -133,8 +148,8 @@ export function SummaryRow({ text }: { text: string }) {
   </div>;
 }
 
-export function ReasoningRow({ text }: { text: string }) {
-  return <SummaryRow text={text} />;
+export function ReasoningRow({ text, durationMs }: { text: string; durationMs?: number | null }) {
+  return <SummaryRow text={text} durationMs={durationMs} />;
 }
 
 export function ToolCard({
@@ -178,13 +193,13 @@ export function ToolCard({
         </span>
         <span className="tool-meta">
           {family === "read" && phase === "succeeded" && <span className="read-success"><Check size={12} weight="bold" />{directoryCount > 0 ? tr("web.n_files", { count: directoryCount }) : phase}{directoryCount > 0 && durationLabel ? ` (${durationLabel})` : ""}</span>}
-          {family === "edit" && phase === "succeeded" && <span className="muted edit-summary">Applied</span>}
+          {family === "edit" && phase === "succeeded" && <span className="muted edit-summary">{t("web.applied")}</span>}
           {code !== null && <span className={code === 0 ? "ok-pill" : "fail-pill"}>Exit {code}{testFailed ? ` (${tr("web.bug_confirmed")})` : ""}</span>}
           {durationLabel && directoryCount === 0 && <span className="mono muted">{durationLabel}</span>}
           <CaretDown size={12} className={open ? "" : "collapsed"} />
         </span>
       </button>
-      {open && body && (family === "edit" ? <DiffBody text={body} /> : <pre className={`term-body ${code !== null && code !== 0 ? "failed" : ""}`}>{body}</pre>)}
+      {open && body && (family === "edit" ? <DiffBody text={body} /> : testFailed ? <TestFailureOutput text={body} /> : <pre className={`term-body ${code !== null && code !== 0 ? "failed" : ""}`}>{body}</pre>)}
     </section>
   </div>;
 }
@@ -262,7 +277,7 @@ export function InteractionCard({ interaction, respond }: {
   const choiceButton = (choice: { id: string; label: string }, tone: "primary" | "session" | "deny") => (
     <button key={choice.id} type="button" className={`perm-choice ${tone}`} disabled={Boolean(submitting)} onClick={() => choose(choice.id)}>
       {tone === "primary" && <Check size={13} weight="bold" />}{tone === "deny" && <X size={12} weight="bold" />}
-      {submitting === choice.id ? tr("web.submitting") : choice.label}
+      {submitting === choice.id ? tr("web.submitting") : choice.id === "allow_once" ? tr("web.allow_once") : choice.label}
       {tone === "primary" && <kbd>⌥↵</kbd>}{tone === "deny" && <kbd>Esc</kbd>}
     </button>
   );
@@ -295,22 +310,22 @@ export function InteractionCard({ interaction, respond }: {
       <div className="perm-body">
         <div>
           <div className="perm-kicker">{tr("web.agent_wants")}</div>
-          <div className="perm-command"><span className="muted">$</span><span>{command}</span><button type="button" className="copy-command" onClick={() => navigator.clipboard?.writeText(command).catch(() => undefined)}>Copy</button></div>
+          <div className="perm-command"><span className="muted">$</span><span>{command}</span><button type="button" className="copy-command" onClick={() => navigator.clipboard?.writeText(command).catch(() => undefined)}>{t("web.copy")}</button></div>
         </div>
         <div className="perm-grid">
           <div>
-            <span className="perm-label">Reason</span>
+            <span className="perm-label">{tr("web.reason_label")}</span>
             <span className="sr-only">{reason ? tr("web.reason", { value: reason }) : tr("web.reason_missing")}</span>
             <span>{reason || tr("web.reason_missing")}</span>
           </div>
           <div>
-            <span className="perm-label">Scope</span>
+            <span className="perm-label">{tr("web.scope_label")}</span>
             <span className="sr-only">{grant ? tr("web.grant", { value: grant }) : (visible[0]?.scope || tr("web.scope_missing"))}</span>
             <span className="mono scope-value">{grant || visible[0]?.scope || tr("web.scope_missing")}</span>
             {scopeDetail ? <small>{scopeDetail}</small> : null}
           </div>
           <div>
-            <span className="perm-label">Risk level</span>
+            <span className="perm-label">{tr("web.risk_label")}</span>
             <span className="risk-level"><i />{riskLevel}</span>
             <small>{riskNote}</small>
           </div>

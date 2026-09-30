@@ -1,0 +1,1222 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nexus Agent — Autonomous Developer Workspace</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    :root {
+      --font-sans: -apple-system, BlinkMacSystemFont, "Geist", "Inter", "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+      --font-mono: "Geist Mono", "JetBrains Mono", "Fira Code", Menlo, Monaco, Consolas, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      margin: 0;
+      padding: 0;
+      background-color: #07080a;
+      color: #e5e7eb;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    code, pre, .font-mono {
+      font-family: var(--font-mono);
+    }
+
+    /* Custom thin scrollbar */
+    ::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.2);
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(148, 163, 184, 0.35);
+    }
+
+    /* Theme colors */
+    .dark {
+      --bg-app: #0e1015;
+      --bg-sidebar: #13161d;
+      --bg-main: #0e1015;
+      --bg-panel: #13161d;
+      --bg-card: #181c25;
+      --bg-card-hover: #1e232f;
+      --bg-card-secondary: #141720;
+      --border-subtle: #232834;
+      --border-strong: #2f3646;
+      --text-primary: #f3f5f8;
+      --text-secondary: #9aa5b6;
+      --text-muted: #64748b;
+      --accent: #5e6ad2;
+      --accent-hover: #717ff5;
+      --accent-subtle: rgba(94, 106, 210, 0.12);
+      --term-bg: #090b0e;
+    }
+
+    .light {
+      --bg-app: #f5f6f9;
+      --bg-sidebar: #eceef3;
+      --bg-main: #ffffff;
+      --bg-panel: #f7f8fb;
+      --bg-card: #ffffff;
+      --bg-card-hover: #f8fafc;
+      --bg-card-secondary: #f1f3f7;
+      --border-subtle: #e2e8f0;
+      --border-strong: #cbd5e1;
+      --text-primary: #0f172a;
+      --text-secondary: #475569;
+      --text-muted: #94a3b8;
+      --accent: #4f46e5;
+      --accent-hover: #6366f1;
+      --accent-subtle: rgba(79, 70, 229, 0.08);
+      --term-bg: #1e293b;
+    }
+
+    .app-viewport {
+      width: 1440px;
+      height: 960px;
+      background: var(--bg-app);
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 25px 65px -15px rgba(0, 0, 0, 0.7), 0 0 0 1px var(--border-subtle);
+      border-radius: 8px;
+      margin: 0 auto;
+    }
+
+    @keyframes subtle-pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.55; transform: scale(0.96); }
+    }
+    .pulse-amber {
+      animation: subtle-pulse 2s infinite ease-in-out;
+    }
+    .pulse-blue {
+      animation: subtle-pulse 1.8s infinite ease-in-out;
+    }
+
+    .diff-add {
+      background-color: rgba(16, 185, 129, 0.12);
+      color: #34d399;
+    }
+    .diff-del {
+      background-color: rgba(239, 68, 68, 0.12);
+      color: #f87171;
+    }
+  </style>
+</head>
+<body class="flex items-center justify-center min-h-screen bg-[#060709] p-0 m-0">
+
+  <!-- 1440x960 DESKTOP APPLICATION VIEWPORT -->
+  <div id="appContainer" class="app-viewport text-[12.5px] leading-normal antialiased">
+    
+    <!-- ==================================================================== -->
+    <!-- TOP macOS & APPLICATION NAVIGATION BAR (Height: 38px)                -->
+    <!-- ==================================================================== -->
+    <header class="h-[38px] border-b border-[var(--border-subtle)] bg-[var(--bg-sidebar)] flex items-center justify-between px-3 shrink-0 select-none z-30">
+      
+      <!-- Left: macOS Traffic Lights & Project Navigator -->
+      <div class="flex items-center space-x-3 shrink-0">
+        <div class="flex items-center space-x-2 pl-0.5">
+          <div class="w-3 h-3 rounded-full bg-[#ff5f56] border border-[#e0443e]"></div>
+          <div class="w-3 h-3 rounded-full bg-[#ffbd2e] border border-[#dea123]"></div>
+          <div class="w-3 h-3 rounded-full bg-[#27c93f] border border-[#1aab29]"></div>
+        </div>
+
+        <div class="h-3.5 w-[1px] bg-[var(--border-subtle)]"></div>
+
+        <div class="flex items-center space-x-2">
+          <div class="w-4 h-4 rounded-[4px] bg-gradient-to-br from-[#5e6ad2] to-[#3b82f6] flex items-center justify-center text-white font-bold text-[9px] shadow-sm">
+            N
+          </div>
+          <span class="font-semibold text-[var(--text-primary)] text-xs tracking-tight">Nexus Agent</span>
+          <span class="text-[var(--text-muted)] text-[11px] font-mono">/</span>
+          <span class="font-medium text-[var(--text-secondary)] text-[11px]">api-gateway</span>
+        </div>
+      </div>
+
+      <!-- Center: Git Branch Badge & Global Quick Search -->
+      <div class="flex items-center space-x-2.5">
+        <!-- Git Branch Pill -->
+        <div class="flex items-center space-x-1.5 px-2 py-0.5 rounded-[5px] bg-[var(--bg-card)] border border-[var(--border-subtle)] text-[var(--text-secondary)] text-[11px] font-mono">
+          <svg class="w-3 h-3 text-[var(--text-muted)]" viewBox="0 0 16 16" fill="currentColor">
+            <path fill-rule="evenodd" d="M11.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.492 2.492 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25zM4.25 12a.75.75 0 100 1.5.75.75 0 000-1.5zM3.5 3.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0z"/>
+          </svg>
+          <span class="font-medium text-[var(--text-primary)]">feat/rate-limit-redis</span>
+          <span class="text-[10px] text-amber-400 font-semibold px-1 py-0.2 rounded bg-amber-400/10">3 uncommitted</span>
+        </div>
+
+        <!-- Global Search / Command Bar trigger -->
+        <button class="flex items-center space-x-2 px-2.5 py-0.5 rounded-[5px] bg-[var(--bg-card)] border border-[var(--border-subtle)] hover:border-[var(--border-strong)] text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors w-[270px] text-left">
+          <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+          <span class="text-[11px] truncate flex-1">Search files, tasks, symbols...</span>
+          <span class="text-[9px] font-mono px-1 py-0.2 rounded bg-[var(--bg-sidebar)] border border-[var(--border-subtle)]">⌘K</span>
+        </button>
+      </div>
+
+      <!-- Right: Agent State Interactive Simulator & Window Controls -->
+      <div class="flex items-center space-x-2">
+        <div class="flex items-center space-x-1.5">
+          <span class="text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-semibold">Simulate:</span>
+          <select id="stateSelector" onchange="changeAgentState(this.value)" class="text-[11px] font-medium bg-[var(--bg-card)] border border-[var(--border-subtle)] text-[var(--text-primary)] rounded-[4px] px-1.5 py-0.5 cursor-pointer focus:outline-none focus:border-[var(--accent)]">
+            <option value="waiting-permission" selected>⚠️ Waiting for Permission</option>
+            <option value="thinking">🧠 Thinking</option>
+            <option value="planning">📋 Planning</option>
+            <option value="executing">⚡ Executing</option>
+            <option value="waiting-input">💬 Waiting for Input</option>
+            <option value="completed">✓ Completed</option>
+            <option value="failed">✕ Failed</option>
+            <option value="cancelled">⊘ Cancelled</option>
+          </select>
+        </div>
+
+        <div class="h-3.5 w-[1px] bg-[var(--border-subtle)] mx-1"></div>
+
+        <!-- Theme Toggle -->
+        <button onclick="toggleTheme()" class="p-1 rounded hover:bg-[var(--bg-card)] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors" title="Toggle Theme">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 9h-1m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+          </svg>
+        </button>
+
+        <!-- Inspector Toggle -->
+        <button onclick="toggleInspector()" class="p-1 rounded hover:bg-[var(--bg-card)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors" title="Toggle Inspector Panel">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M14 18h6" />
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- ==================================================================== -->
+    <!-- MAIN THREE-REGION WORKSPACE LAYOUT (Height: 922px)                    -->
+    <!-- ==================================================================== -->
+    <div class="flex-1 flex overflow-hidden">
+
+      <!-- ========================================================== -->
+      <!-- REGION 1: LEFT SIDEBAR (Width: 230px, Compact Dev Tool)    -->
+      <!-- ========================================================== -->
+      <aside class="w-[230px] border-r border-[var(--border-subtle)] bg-[var(--bg-sidebar)] flex flex-col justify-between shrink-0 select-none">
+        
+        <div class="flex-1 flex flex-col overflow-y-auto pt-2.5 px-2 space-y-3.5">
+          
+          <!-- New Agent Task Action -->
+          <button class="w-full flex items-center justify-between px-2.5 py-1.5 rounded-[5px] bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white font-medium text-xs shadow-sm transition-all">
+            <div class="flex items-center space-x-1.5">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/>
+              </svg>
+              <span>New Task</span>
+            </div>
+            <kbd class="text-[9px] bg-black/20 px-1 py-0.2 rounded font-mono">⌘N</kbd>
+          </button>
+
+          <!-- ACTIVE TASKS SECTION -->
+          <div>
+            <div class="flex items-center justify-between px-1.5 pb-1 text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">
+              <span>Active Tasks</span>
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+            </div>
+            
+            <div class="space-y-1">
+              <!-- Active Task 1 (Current Session) -->
+              <div class="p-2 rounded-[5px] bg-[var(--bg-card)] border border-[var(--border-strong)] text-[var(--text-primary)] cursor-pointer">
+                <div class="flex items-center justify-between mb-0.5">
+                  <div class="flex items-center space-x-1">
+                    <span class="w-1.5 h-1.5 rounded-full bg-amber-400 pulse-amber"></span>
+                    <span class="font-mono text-[9px] text-amber-400 font-bold">TASK-104</span>
+                  </div>
+                  <span class="text-[9px] font-mono text-[var(--text-muted)]">Step 4/5</span>
+                </div>
+                <div class="text-[11.5px] font-medium leading-tight truncate">Harden Redis rate limiter</div>
+                <div class="mt-1 flex items-center justify-between text-[10px] text-[var(--text-secondary)]">
+                  <span class="flex items-center text-amber-400 text-[10px]">
+                    <svg class="w-2.5 h-2.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                    </svg>
+                    Awaiting permission
+                  </span>
+                  <span class="font-mono text-[9px]">Just now</span>
+                </div>
+              </div>
+
+              <!-- Active Task 2 (Paused) -->
+              <div class="px-2 py-1 rounded-[5px] hover:bg-[var(--bg-card-hover)] text-[var(--text-secondary)] cursor-pointer transition-colors flex items-center justify-between">
+                <div class="flex items-center space-x-1.5 truncate">
+                  <span class="w-1.5 h-1.5 rounded-full bg-[var(--text-muted)]"></span>
+                  <span class="font-mono text-[9px] text-[var(--text-muted)]">#101</span>
+                  <span class="text-[11px] truncate">Benchmark gRPC pool</span>
+                </div>
+                <span class="text-[9px] font-mono text-[var(--text-muted)]">Paused</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- RECENT HISTORY -->
+          <div>
+            <div class="px-1.5 pb-1 text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider flex items-center justify-between">
+              <span>Recent Tasks</span>
+              <span class="text-[9px] text-[var(--text-muted)] font-mono">Today</span>
+            </div>
+            
+            <div class="space-y-0.5">
+              <div class="px-2 py-1 rounded-[4px] hover:bg-[var(--bg-card-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer flex items-center space-x-1.5 text-[11px]">
+                <svg class="w-3 h-3 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                <span class="truncate">Fix Redis connection leak</span>
+              </div>
+              <div class="px-2 py-1 rounded-[4px] hover:bg-[var(--bg-card-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer flex items-center space-x-1.5 text-[11px]">
+                <svg class="w-3 h-3 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                <span class="truncate">Migrate JWT to Rust FFI</span>
+              </div>
+              <div class="px-2 py-1 rounded-[4px] hover:bg-[var(--bg-card-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer flex items-center space-x-1.5 text-[11px]">
+                <svg class="w-3 h-3 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                <span class="truncate">Generate OpenAPI 3.1 spec</span>
+              </div>
+              <div class="px-2 py-1 rounded-[4px] hover:bg-[var(--bg-card-hover)] text-[var(--text-muted)] cursor-pointer flex items-center space-x-1.5 text-[11px]">
+                <svg class="w-3 h-3 text-rose-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                <span class="truncate">Docker compose e2e cluster</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- WORKSPACES -->
+          <div>
+            <div class="px-1.5 pb-1 text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">
+              <span>Workspaces</span>
+            </div>
+            <div class="space-y-0.5">
+              <div class="px-2 py-1 rounded-[4px] bg-[var(--accent-subtle)] text-[var(--accent)] font-medium flex items-center justify-between text-[11px]">
+                <div class="flex items-center space-x-1.5">
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                  <span>api-gateway</span>
+                </div>
+                <span class="w-1.5 h-1.5 rounded-full bg-[var(--accent)]"></span>
+              </div>
+              <div class="px-2 py-1 rounded-[4px] text-[var(--text-secondary)] hover:bg-[var(--bg-card-hover)] cursor-pointer flex items-center space-x-1.5 text-[11px]">
+                <svg class="w-3 h-3 text-[var(--text-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                <span class="truncate">auth-service</span>
+              </div>
+              <div class="px-2 py-1 rounded-[4px] text-[var(--text-secondary)] hover:bg-[var(--bg-card-hover)] cursor-pointer flex items-center space-x-1.5 text-[11px]">
+                <svg class="w-3 h-3 text-[var(--text-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                <span class="truncate">infra-terraform</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- CAPABILITIES & SETTINGS -->
+          <div>
+            <div class="px-1.5 pb-1 text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">
+              <span>Capabilities</span>
+            </div>
+            <div class="space-y-0.5">
+              <div class="px-2 py-1 rounded-[4px] text-[var(--text-secondary)] hover:bg-[var(--bg-card-hover)] cursor-pointer flex items-center justify-between text-[11px]">
+                <div class="flex items-center space-x-1.5">
+                  <svg class="w-3 h-3 text-[var(--text-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                  <span>Memory & Rules</span>
+                </div>
+                <span class="text-[9px] font-mono text-[var(--text-muted)] bg-[var(--bg-card)] px-1 rounded border border-[var(--border-subtle)]">18</span>
+              </div>
+
+              <div class="px-2 py-1 rounded-[4px] text-[var(--text-secondary)] hover:bg-[var(--bg-card-hover)] cursor-pointer flex items-center justify-between text-[11px]">
+                <div class="flex items-center space-x-1.5">
+                  <svg class="w-3 h-3 text-[var(--text-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                  <span>Scheduled Tasks</span>
+                </div>
+                <span class="text-[9px] font-mono text-[var(--text-muted)] bg-[var(--bg-card)] px-1 rounded border border-[var(--border-subtle)]">2</span>
+              </div>
+
+              <div class="px-2 py-1 rounded-[4px] text-[var(--text-secondary)] hover:bg-[var(--bg-card-hover)] cursor-pointer flex items-center space-x-1.5 text-[11px]">
+                <svg class="w-3 h-3 text-[var(--text-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                <span>Settings</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sidebar Bottom Footer -->
+        <div class="p-2 border-t border-[var(--border-subtle)] bg-[var(--bg-sidebar)]">
+          <div class="flex items-center justify-between p-1 rounded-[5px] hover:bg-[var(--bg-card)] cursor-pointer">
+            <div class="flex items-center space-x-2">
+              <div class="w-6 h-6 rounded-full bg-slate-700 border border-slate-600 flex items-center justify-center text-[10px] font-semibold text-white">
+                WL
+              </div>
+              <div class="flex flex-col">
+                <span class="text-[11.5px] font-medium text-[var(--text-primary)] leading-tight">William Lao</span>
+                <span class="text-[9.5px] text-[var(--text-muted)] font-mono">claude-3-7-sonnet</span>
+              </div>
+            </div>
+            <div class="flex items-center space-x-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+              <span class="text-[9.5px] font-mono text-[var(--text-muted)]">34ms</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- ========================================================== -->
+      <!-- REGION 2: MAIN AGENT WORKSPACE (Center, Width: ~840px)     -->
+      <!-- ========================================================== -->
+      <main class="flex-1 flex flex-col bg-[var(--bg-main)] min-w-0 relative">
+        
+        <!-- TOP WORKSPACE HEADER: Goal, Status, Context meter (Height: 46px) -->
+        <div class="h-[46px] border-b border-[var(--border-subtle)] px-3.5 flex items-center justify-between shrink-0 bg-[var(--bg-main)] z-10">
+          
+          <!-- Current Task Pill & Goal Title -->
+          <div class="flex items-center space-x-2 min-w-0 pr-4">
+            <span class="font-mono text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-[var(--bg-card)] border border-[var(--border-subtle)] text-[var(--text-secondary)] shrink-0">TASK-104</span>
+            <div class="flex items-center space-x-1.5 min-w-0">
+              <h1 class="text-xs font-semibold text-[var(--text-primary)] truncate">Implement atomic Redis leaky-bucket rate limiting in auth middleware</h1>
+              <span class="text-[11px] text-[var(--text-muted)] hidden md:inline shrink-0">•</span>
+              <span class="text-[11px] text-[var(--text-muted)] font-mono hidden md:inline shrink-0">PR #342</span>
+            </div>
+          </div>
+
+          <!-- Status Badge & Context Meter -->
+          <div class="flex items-center space-x-2.5 shrink-0">
+            <!-- Dynamic Agent Status Badge -->
+            <div id="statusBadge" class="flex items-center space-x-1.5 px-2.5 py-0.5 rounded-[5px] bg-amber-500/10 border border-amber-500/30 text-amber-400 font-medium text-xs">
+              <span class="w-1.5 h-1.5 rounded-full bg-amber-400 pulse-amber"></span>
+              <span id="statusBadgeText" class="font-semibold text-[11px]">Waiting for Permission</span>
+            </div>
+
+            <div class="h-3.5 w-[1px] bg-[var(--border-subtle)]"></div>
+
+            <!-- Context Token Usage Indicator -->
+            <div class="flex items-center space-x-1.5" title="Context Token Window: 48,620 used out of 128,000 tokens (38%)">
+              <div class="flex flex-col items-end text-[9.5px] leading-tight font-mono">
+                <span class="text-[var(--text-secondary)] font-medium">48.6k / 128k</span>
+                <span class="text-[var(--text-muted)] text-[8.5px]">38% context</span>
+              </div>
+              <div class="w-12 h-1.5 rounded-full bg-[var(--bg-card)] border border-[var(--border-subtle)] overflow-hidden flex">
+                <div class="bg-[var(--accent)] h-full" style="width: 25%"></div>
+                <div class="bg-blue-500 h-full" style="width: 8%"></div>
+                <div class="bg-amber-400 h-full" style="width: 5%"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- MAIN EXECUTION TIMELINE (Precisely Budgeted for 1440x960 Density) -->
+        <div id="timelineContainer" class="flex-1 overflow-y-auto px-4 py-2.5 space-y-2.5">
+          
+          <!-- ============================================== -->
+          <!-- ITEM 1: USER INSTRUCTION (Compact)             -->
+          <!-- ============================================== -->
+          <div class="flex items-start space-x-2.5">
+            <div class="w-5 h-5 rounded-full bg-slate-700 border border-slate-600 flex items-center justify-center text-white text-[9.5px] font-semibold shrink-0 mt-0.5">
+              WL
+            </div>
+            <div class="flex-1 bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-[6px] px-3 py-2 text-[12px] shadow-sm">
+              <div class="flex items-center justify-between pb-1 mb-1 border-b border-[var(--border-subtle)] text-[10.5px]">
+                <div class="flex items-center space-x-1.5">
+                  <span class="font-semibold text-[var(--text-primary)]">William Lao</span>
+                  <span class="text-[var(--text-muted)]">User instruction</span>
+                </div>
+                <span class="text-[var(--text-muted)] font-mono text-[9.5px]">10:42 AM</span>
+              </div>
+              <p class="text-[var(--text-primary)] leading-relaxed">
+                We're seeing intermittent 429 bypasses during flash traffic spikes. Replace the current in-memory counter in <span class="px-1.5 py-0.2 rounded bg-[var(--bg-sidebar)] border border-[var(--border-subtle)] font-mono text-[10.5px] text-[var(--accent)]">@src/middleware/rate-limiter.ts</span> with an atomic Redis leaky-bucket implementation using Lua scripting. Confirm bug with tests and rebuild native bindings.
+              </p>
+            </div>
+          </div>
+
+          <!-- ============================================== -->
+          <!-- ITEM 2: REASONING SUMMARY (Compact Pill/Card)  -->
+          <!-- ============================================== -->
+          <div class="flex items-center space-x-2 pl-7.5">
+            <div class="flex-1 flex items-center justify-between px-2.5 py-1 rounded-[5px] bg-[var(--bg-card)] border border-purple-500/20 text-xs">
+              <div class="flex items-center space-x-2">
+                <svg class="w-3.5 h-3.5 text-purple-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                </svg>
+                <span class="font-medium text-[var(--text-primary)] text-[11.5px]">Reasoning (11.4s):</span>
+                <span class="text-[var(--text-secondary)] text-[11px] truncate max-w-[480px]">Identified concurrency race condition in separate GET/SET. Designed atomic Lua token-bucket script.</span>
+              </div>
+              <button onclick="toggleCollapse('reasoningDetails')" class="text-[10px] text-purple-400 hover:text-purple-300 font-mono flex items-center space-x-0.5">
+                <span>steps</span>
+                <svg id="reasoningDetails-chevron" class="w-3 h-3 transform transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div id="reasoningDetails" class="hidden pl-8 pr-1 py-1 text-[11px] text-[var(--text-secondary)] space-y-1 font-mono bg-[var(--term-bg)] rounded-[5px] border border-[var(--border-subtle)]">
+            <div>[1] In-memory sliding window allows race conditions during parallel worker executions.</div>
+            <div>[2] Redis EVALSHA ensures atomic token decrements on the primary node.</div>
+            <div>[3] Sub-2ms SLA requires recompiling native FFI addon token-bucket-native.</div>
+          </div>
+
+          <!-- ============================================== -->
+          <!-- ITEM 3: TOOL CALL 1 (Inspecting repo files)     -->
+          <!-- ============================================== -->
+          <div class="pl-7.5">
+            <div class="bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-[6px] overflow-hidden text-xs">
+              <div onclick="toggleCollapse('toolInspectBlock')" class="px-2.5 py-1.5 flex items-center justify-between bg-[var(--bg-card-secondary)] hover:bg-[var(--bg-card-hover)] cursor-pointer select-none transition-colors border-b border-[var(--border-subtle)]">
+                <div class="flex items-center space-x-2">
+                  <span class="px-1.5 py-0.2 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 font-mono text-[9.5px] font-semibold">TOOL</span>
+                  <span class="font-medium text-[var(--text-primary)] text-[11.5px]">read_directory</span>
+                  <span class="font-mono text-[11px] text-[var(--text-muted)]">src/middleware/</span>
+                </div>
+                <div class="flex items-center space-x-2">
+                  <span class="text-[10px] font-mono text-emerald-400 flex items-center">
+                    <svg class="w-3 h-3 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                    5 files (24ms)
+                  </span>
+                  <svg id="toolInspectBlock-chevron" class="w-3 h-3 text-[var(--text-muted)] transform -rotate-90 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                </div>
+              </div>
+
+              <!-- Collapsed Content -->
+              <div id="toolInspectBlock" class="hidden p-2 font-mono text-[10.5px] bg-[var(--term-bg)] text-slate-300 space-y-0.5">
+                <div class="text-[var(--text-muted)]">// Invocation parameters: { path: "src/middleware", depth: 1 }</div>
+                <div class="pl-2">├── auth.ts (14.2 KB)</div>
+                <div class="pl-2 text-emerald-400 font-semibold">├── rate-limiter.ts (8.9 KB) &lt;-- target identified</div>
+                <div class="pl-2">├── session.ts (6.1 KB)</div>
+                <div class="pl-2">└── telemetry.ts (3.4 KB)</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ============================================== -->
+          <!-- ITEM 4: SHELL COMMAND 2 (Running shell command) -->
+          <!-- ============================================== -->
+          <div class="pl-7.5">
+            <div class="bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-[6px] overflow-hidden text-xs">
+              <div onclick="toggleCollapse('shellRunBlock')" class="px-2.5 py-1.5 flex items-center justify-between bg-[var(--bg-card-secondary)] hover:bg-[var(--bg-card-hover)] cursor-pointer select-none transition-colors border-b border-[var(--border-subtle)]">
+                <div class="flex items-center space-x-2">
+                  <span class="px-1.5 py-0.2 rounded bg-slate-500/10 text-slate-300 border border-slate-500/20 font-mono text-[9.5px] font-semibold">SHELL</span>
+                  <span class="font-mono text-[11px] text-[var(--text-primary)] font-medium">$ pnpm test -- --grep "rate-limiter"</span>
+                </div>
+                <div class="flex items-center space-x-2">
+                  <span class="px-1.5 py-0.2 rounded bg-rose-500/10 border border-rose-500/20 text-rose-400 font-mono text-[9.5px] font-medium">Exit 1 (Bug Confirmed)</span>
+                  <span class="text-[10px] font-mono text-[var(--text-muted)]">1.4s</span>
+                  <svg id="shellRunBlock-chevron" class="w-3 h-3 text-[var(--text-muted)] transform transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                </div>
+              </div>
+
+              <!-- Terminal Output Box (Compact preview) -->
+              <div id="shellRunBlock" class="p-2 font-mono text-[10.5px] bg-[var(--term-bg)] text-slate-300 space-y-0.5 leading-snug">
+                <div class="text-rose-400 font-semibold">✕ tests/rate-limiter.test.ts &gt; RateLimiter &gt; atomic burst concurrency test (380ms)</div>
+                <div class="text-rose-400/90 pl-2 border-l-2 border-rose-500 text-[10px]">
+                  AssertionError: expected status 429 Too Many Requests, received 200 OK (50 requests leaked)
+                </div>
+                <div class="text-[var(--text-muted)] text-[9.5px]">Tests: <span class="text-rose-400">1 failed</span>, <span class="text-emerald-400">2 passed</span> (3 total)</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ============================================== -->
+          <!-- ITEM 5: FILE EDIT 3 (Editing one file)         -->
+          <!-- ============================================== -->
+          <div class="pl-7.5">
+            <div class="bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-[6px] overflow-hidden text-xs">
+              <div onclick="toggleCollapse('fileEditBlock')" class="px-2.5 py-1.5 flex items-center justify-between bg-[var(--bg-card-secondary)] hover:bg-[var(--bg-card-hover)] cursor-pointer select-none transition-colors border-b border-[var(--border-subtle)]">
+                <div class="flex items-center space-x-2">
+                  <span class="px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono text-[9.5px] font-semibold">FILE EDIT</span>
+                  <span class="font-mono text-[11px] text-[var(--text-primary)] font-semibold">src/middleware/rate-limiter.ts</span>
+                  <span class="font-mono text-[9.5px] text-emerald-400">+38</span>
+                  <span class="font-mono text-[9.5px] text-rose-400">-14</span>
+                </div>
+                <div class="flex items-center space-x-2">
+                  <span class="text-[10px] text-[var(--text-muted)]">Applied Lua atomic script</span>
+                  <svg id="fileEditBlock-chevron" class="w-3 h-3 text-[var(--text-muted)] transform transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                </div>
+              </div>
+
+              <!-- Compact Unified Diff Snippet -->
+              <div id="fileEditBlock" class="font-mono text-[10.5px] bg-[var(--term-bg)] divide-y divide-black/20">
+                <div class="flex diff-del px-2.5 py-0.5">
+                  <span class="w-6 select-none text-[var(--text-muted)] opacity-60">42</span>
+                  <span class="w-3 select-none">-</span>
+                  <span class="truncate">const count = await this.redis.get(`rate:${clientId}`); // Race condition</span>
+                </div>
+                <div class="flex diff-add px-2.5 py-0.5">
+                  <span class="w-6 select-none text-[var(--text-muted)] opacity-60">42</span>
+                  <span class="w-3 select-none">+</span>
+                  <span class="truncate">const LUA_TOKEN_BUCKET = `local cur = redis.call('get', KEYS[1]); if not cur or tonumber(cur)>0 then redis.call('decr', KEYS[1]); return 1; end; return 0;`;</span>
+                </div>
+                <div class="flex diff-add px-2.5 py-0.5">
+                  <span class="w-6 select-none text-[var(--text-muted)] opacity-60">43</span>
+                  <span class="w-3 select-none">+</span>
+                  <span class="truncate">const allowed = await this.redis.eval(LUA_TOKEN_BUCKET, 1, `rate:${clientId}`);</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ============================================== -->
+          <!-- ITEM 6: PERMISSION REQUEST CARD 4              -->
+          <!-- (ACTIVE INTERACTIVE STEP IN TIMELINE)          -->
+          <!-- ============================================== -->
+          <div class="pl-7.5" id="permissionRequestContainer">
+            <div id="permissionCard" class="bg-[var(--bg-card)] border-2 border-amber-500/70 rounded-[6px] overflow-hidden text-xs shadow-md transition-all">
+              
+              <!-- Card Header -->
+              <div class="px-3 py-1.5 bg-gradient-to-r from-amber-500/15 via-amber-500/5 to-transparent border-b border-amber-500/20 flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                  <div class="w-4 h-4 rounded-[3px] bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                    </svg>
+                  </div>
+                  <span class="font-bold text-[var(--text-primary)] text-[12px] tracking-tight">Permission Required</span>
+                  <span class="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-400 text-[9.5px] font-semibold border border-amber-500/30">Action Blocked</span>
+                </div>
+                <div class="flex items-center space-x-1.5">
+                  <span class="text-[9.5px] text-[var(--text-muted)] font-mono">Agent paused</span>
+                  <span class="w-2 h-2 rounded-full bg-amber-400 pulse-amber"></span>
+                </div>
+              </div>
+
+              <!-- Card Body -->
+              <div class="p-2.5 space-y-2">
+                
+                <div>
+                  <div class="text-[10px] text-[var(--text-muted)] uppercase tracking-wider font-semibold mb-0.5">
+                    The Agent wants to run:
+                  </div>
+                  <!-- Command Box -->
+                  <div class="flex items-center justify-between px-2 py-1 rounded-[4px] bg-[var(--term-bg)] border border-[var(--border-subtle)] font-mono text-[11px] text-amber-200">
+                    <div class="flex items-center space-x-1.5 truncate">
+                      <span class="text-[var(--text-muted)] select-none">$</span>
+                      <span class="font-semibold text-white truncate">rm -rf ./build ./dist && pnpm run build:native</span>
+                    </div>
+                    <button class="text-[9.5px] text-[var(--text-muted)] hover:text-white ml-2 shrink-0">Copy</button>
+                  </div>
+                </div>
+
+                <!-- Structured Metadata Grid: Reason, Scope, Risk -->
+                <div class="grid grid-cols-3 gap-2 px-2.5 py-1.5 rounded-[4px] bg-[var(--bg-card-secondary)] border border-[var(--border-subtle)] text-[10.5px]">
+                  
+                  <!-- Reason -->
+                  <div class="border-r border-[var(--border-subtle)] pr-1.5">
+                    <span class="text-[var(--text-muted)] text-[9.5px] block font-semibold uppercase">Reason</span>
+                    <span class="text-[var(--text-primary)] leading-snug block mt-0.5">
+                      Clean generated build caches and compile native C++/Rust token-bucket FFI bindings.
+                    </span>
+                  </div>
+
+                  <!-- Scope -->
+                  <div class="border-r border-[var(--border-subtle)] px-1.5">
+                    <span class="text-[var(--text-muted)] text-[9.5px] block font-semibold uppercase">Scope</span>
+                    <span class="font-mono text-[10px] text-blue-400 block mt-0.5 truncate" title="./build, ./dist">
+                      ./build, ./dist
+                    </span>
+                    <span class="text-[9px] text-[var(--text-muted)] block">Directory purge outside git tracking</span>
+                  </div>
+
+                  <!-- Risk -->
+                  <div class="pl-1.5">
+                    <span class="text-[var(--text-muted)] text-[9.5px] block font-semibold uppercase">Risk Level</span>
+                    <div class="flex items-center space-x-1 mt-0.5">
+                      <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                      <span class="font-semibold text-amber-400 text-[10.5px]">Medium</span>
+                    </div>
+                    <span class="text-[9px] text-[var(--text-muted)] block">Recursive deletion in workspace</span>
+                  </div>
+                </div>
+
+                <!-- Action Buttons: Allow Once / Allow for Session / Deny -->
+                <div class="flex items-center justify-between pt-0.5">
+                  <div class="flex items-center space-x-1.5">
+                    <!-- Allow Once -->
+                    <button onclick="resolvePermission('approved_once')" class="flex items-center space-x-1.5 px-3 py-1 rounded-[5px] bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white font-medium text-xs shadow-sm transition-all">
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
+                      </svg>
+                      <span>Allow Once</span>
+                      <kbd class="text-[9px] bg-black/20 px-1 py-0.2 rounded font-mono ml-0.5">⌥↵</kbd>
+                    </button>
+
+                    <!-- Allow for Session -->
+                    <button onclick="resolvePermission('approved_session')" class="flex items-center space-x-1 px-2.5 py-1 rounded-[5px] bg-[var(--bg-card)] hover:bg-[var(--bg-card-hover)] border border-[var(--border-subtle)] text-[var(--text-primary)] font-medium text-xs transition-all">
+                      <span>Allow for Session</span>
+                    </button>
+
+                    <!-- Deny -->
+                    <button onclick="resolvePermission('denied')" class="flex items-center space-x-1 px-2.5 py-1 rounded-[5px] hover:bg-rose-500/10 border border-transparent hover:border-rose-500/20 text-rose-400 text-xs font-medium transition-all">
+                      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                      </svg>
+                      <span>Deny</span>
+                      <kbd class="text-[8.5px] font-mono ml-0.5">Esc</kbd>
+                    </button>
+                  </div>
+
+                  <label class="flex items-center space-x-1.5 text-[9.5px] text-[var(--text-muted)] cursor-pointer select-none">
+                    <input type="checkbox" checked class="rounded border-[var(--border-subtle)] bg-[var(--bg-card)] text-[var(--accent)]">
+                    <span>Audit to session log</span>
+                  </label>
+                </div>
+
+              </div>
+
+            </div>
+          </div>
+
+          <!-- Dynamic toast for permission action -->
+          <div id="actionToast" class="hidden pl-7.5">
+            <div class="px-3 py-1.5 rounded-[5px] bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs flex items-center justify-between">
+              <span id="toastMessage">✓ Permission granted. Compiling native bindings...</span>
+              <span class="font-mono text-[9.5px] text-[var(--text-muted)]">Now</span>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- ============================================== -->
+        <!-- BOTTOM INPUT COMPOSER (Developer Control Area) -->
+        <!-- ============================================== -->
+        <div class="p-2.5 border-t border-[var(--border-subtle)] bg-[var(--bg-sidebar)] shrink-0">
+          <div class="rounded-[6px] bg-[var(--bg-card)] border border-[var(--border-strong)] focus-within:border-[var(--accent)] transition-all shadow-sm">
+            
+            <!-- Quick context chips -->
+            <div class="flex items-center space-x-1.5 px-2.5 pt-1.5">
+              <span class="inline-flex items-center space-x-1 px-1.5 py-0.2 rounded bg-[var(--accent-subtle)] text-[var(--accent)] text-[9.5px] font-mono border border-[var(--accent)]/20">
+                <span>@</span>
+                <span>src/middleware/rate-limiter.ts</span>
+                <button class="hover:text-white ml-0.5">×</button>
+              </span>
+              <span class="inline-flex items-center space-x-1 px-1.5 py-0.2 rounded bg-[var(--bg-sidebar)] text-[var(--text-secondary)] text-[9.5px] font-mono border border-[var(--border-subtle)]">
+                <span>/</span>
+                <span>benchmark</span>
+              </span>
+            </div>
+
+            <!-- Input Textarea -->
+            <textarea 
+              rows="2" 
+              placeholder="Instruct the agent or ask a question... (Type / for commands, @ for files)" 
+              class="w-full bg-transparent px-2.5 py-1 text-xs text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none resize-none font-sans leading-relaxed"
+            ></textarea>
+
+            <!-- Bottom Toolbar: Attachments, Modes, Model Selector, Send/Stop -->
+            <div class="px-2 pb-1.5 flex items-center justify-between border-t border-[var(--border-subtle)] pt-1">
+              
+              <!-- Left: File / Image / Mention attachments -->
+              <div class="flex items-center space-x-1 text-[var(--text-muted)]">
+                <button class="p-1 rounded hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)] transition-colors" title="Attach file">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
+                  </svg>
+                </button>
+                <button class="p-1 rounded hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)] transition-colors" title="Attach image / screenshot">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                  </svg>
+                </button>
+                <button class="p-1 rounded hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)] transition-colors text-[11px] font-mono font-medium" title="Reference file (@)">
+                  @
+                </button>
+                <button class="p-1 rounded hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)] transition-colors text-[11px] font-mono font-medium" title="Slash commands (/)">
+                  /
+                </button>
+              </div>
+
+              <!-- Right: Mode Selector, Model, Permissions, Action -->
+              <div class="flex items-center space-x-1.5">
+                
+                <!-- Agent Mode Selector -->
+                <select class="text-[10.5px] font-medium bg-[var(--bg-sidebar)] border border-[var(--border-subtle)] text-[var(--text-secondary)] rounded-[4px] px-1.5 py-0.5 cursor-pointer focus:outline-none">
+                  <option selected>⚡ Agent</option>
+                  <option>📐 Plan</option>
+                  <option>💬 Ask</option>
+                </select>
+
+                <!-- Model Selector -->
+                <select class="text-[10.5px] font-medium bg-[var(--bg-sidebar)] border border-[var(--border-subtle)] text-[var(--text-secondary)] rounded-[4px] px-1.5 py-0.5 cursor-pointer focus:outline-none">
+                  <option selected>Claude 3.7 Sonnet (Thinking)</option>
+                  <option>GPT-4o (Omni)</option>
+                  <option>Gemini 2.0 Flash</option>
+                </select>
+
+                <!-- Permission Mode Selector -->
+                <select class="text-[10.5px] font-medium bg-[var(--bg-sidebar)] border border-[var(--border-subtle)] text-[var(--text-secondary)] rounded-[4px] px-1.5 py-0.5 cursor-pointer focus:outline-none">
+                  <option selected>Default (Confirm risky)</option>
+                  <option>Auto-approve edits</option>
+                  <option>Plan only</option>
+                  <option>Full access</option>
+                </select>
+
+                <!-- Stop / Send Action -->
+                <button id="mainActionButton" onclick="stopTask()" class="flex items-center space-x-1 px-2.5 py-0.5 rounded-[4px] bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-400 font-medium text-xs transition-colors">
+                  <span class="w-1.5 h-1.5 rounded-sm bg-rose-400"></span>
+                  <span>Stop</span>
+                  <kbd class="text-[8.5px] font-mono text-rose-400/80">⌘.</kbd>
+                </button>
+              </div>
+
+            </div>
+
+          </div>
+        </div>
+
+      </main>
+
+      <!-- ========================================================== -->
+      <!-- REGION 3: RIGHT CONTEXT PANEL (Width: 380px Inspector)    -->
+      <!-- ========================================================== -->
+      <aside id="inspectorPanel" class="w-[380px] border-l border-[var(--border-subtle)] bg-[var(--bg-panel)] flex flex-col shrink-0 select-none">
+        
+        <!-- Inspector Tabs Header (Height: 38px) -->
+        <div class="h-[38px] border-b border-[var(--border-subtle)] px-2 flex items-center justify-between shrink-0 bg-[var(--bg-panel)]">
+          <div class="flex items-center space-x-1 overflow-x-auto">
+            <button onclick="switchTab('task')" id="tab-btn-task" class="px-2 py-0.5 rounded-[4px] font-medium text-[11px] bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--border-subtle)] transition-colors">
+              Task
+            </button>
+            <button onclick="switchTab('files')" id="tab-btn-files" class="px-2 py-0.5 rounded-[4px] font-medium text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">
+              Files <span class="text-[9.5px] font-mono text-[var(--text-muted)]">(4)</span>
+            </button>
+            <button onclick="switchTab('changes')" id="tab-btn-changes" class="px-2 py-0.5 rounded-[4px] font-medium text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">
+              Changes <span class="text-[9.5px] font-mono text-emerald-400">(+38)</span>
+            </button>
+            <button onclick="switchTab('permissions')" id="tab-btn-permissions" class="px-2 py-0.5 rounded-[4px] font-medium text-[11px] text-amber-400 hover:text-amber-300 transition-colors">
+              Permissions
+            </button>
+            <button onclick="switchTab('context')" id="tab-btn-context" class="px-2 py-0.5 rounded-[4px] font-medium text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">
+              Context
+            </button>
+          </div>
+
+          <button class="p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)]">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"/></svg>
+          </button>
+        </div>
+
+        <!-- TAB CONTENT 1: TASK (Plan, Checklist & Progress) -->
+        <div id="tab-content-task" class="flex-1 overflow-y-auto p-3 space-y-3.5">
+          
+          <!-- Overall Goal Card -->
+          <div class="p-2.5 rounded-[5px] bg-[var(--bg-card)] border border-[var(--border-subtle)] space-y-1.5">
+            <div class="flex items-center justify-between text-[10px] text-[var(--text-muted)] font-semibold uppercase tracking-wider">
+              <span>Goal</span>
+              <span class="text-emerald-400 font-mono text-[9.5px]">3 of 5 steps completed</span>
+            </div>
+            <p class="text-[11.5px] text-[var(--text-primary)] font-medium leading-snug">
+              Harden rate limiter against burst race conditions by integrating Redis Lua atomicity and compiling native bindings.
+            </p>
+            <!-- Progress Bar -->
+            <div class="w-full h-1.5 rounded-full bg-[var(--bg-sidebar)] overflow-hidden">
+              <div class="h-full bg-emerald-500 rounded-full transition-all duration-500" style="width: 60%"></div>
+            </div>
+          </div>
+
+          <!-- Execution Plan Checklist -->
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider px-1">
+              <span>Execution Plan (3/5)</span>
+              <span class="text-[9.5px] font-mono text-[var(--text-muted)]">Step 4 active</span>
+            </div>
+
+            <div class="space-y-1 font-sans text-xs">
+              
+              <!-- Step 1: Complete -->
+              <div class="p-2 rounded-[5px] bg-[var(--bg-card)] border border-[var(--border-subtle)] flex items-start space-x-2">
+                <svg class="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                </svg>
+                <div class="flex-1 min-w-0">
+                  <div class="text-[var(--text-primary)] text-[11.5px] font-medium">Inspect rate limit config & codebase</div>
+                  <div class="text-[9.5px] text-[var(--text-muted)] font-mono">Completed • 2m ago (24ms)</div>
+                </div>
+              </div>
+
+              <!-- Step 2: Complete -->
+              <div class="p-2 rounded-[5px] bg-[var(--bg-card)] border border-[var(--border-subtle)] flex items-start space-x-2">
+                <svg class="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                </svg>
+                <div class="flex-1 min-w-0">
+                  <div class="text-[var(--text-primary)] text-[11.5px] font-medium">Run baseline tests to reproduce 429 bug</div>
+                  <div class="text-[9.5px] text-[var(--text-muted)] font-mono">Completed • 1m ago (Exit code 1)</div>
+                </div>
+              </div>
+
+              <!-- Step 3: Complete -->
+              <div class="p-2 rounded-[5px] bg-[var(--bg-card)] border border-[var(--border-subtle)] flex items-start space-x-2">
+                <svg class="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                </svg>
+                <div class="flex-1 min-w-0">
+                  <div class="text-[var(--text-primary)] text-[11.5px] font-medium">Implement atomic Lua token bucket</div>
+                  <div class="text-[9.5px] text-[var(--text-muted)] font-mono">Completed • 40s ago (+38 -14 lines)</div>
+                </div>
+              </div>
+
+              <!-- Step 4: Active / Waiting for permission -->
+              <div id="step4Card" class="p-2 rounded-[5px] bg-amber-500/10 border border-amber-500/30 flex items-start space-x-2">
+                <div class="w-3.5 h-3.5 rounded-full border-2 border-amber-400 border-t-transparent animate-spin shrink-0 mt-0.5"></div>
+                <div class="flex-1 min-w-0">
+                  <div class="text-amber-300 font-semibold text-[11.5px] flex items-center justify-between">
+                    <span>Rebuild native bindings</span>
+                    <span class="text-[8.5px] uppercase px-1 py-0.2 rounded bg-amber-500/20 text-amber-400">Current</span>
+                  </div>
+                  <div class="text-[10.5px] text-[var(--text-secondary)] mt-0.5">Awaiting user confirmation for <code class="font-mono text-[9.5px]">rm -rf ./build</code></div>
+                </div>
+              </div>
+
+              <!-- Step 5: Pending -->
+              <div class="p-2 rounded-[5px] bg-[var(--bg-card-secondary)] border border-[var(--border-subtle)] opacity-70 flex items-start space-x-2">
+                <div class="w-3.5 h-3.5 rounded-full border border-[var(--text-muted)] shrink-0 mt-0.5"></div>
+                <div class="flex-1 min-w-0">
+                  <div class="text-[var(--text-muted)] text-[11.5px] font-medium">Verify burst tests & benchmark latency</div>
+                  <div class="text-[9.5px] text-[var(--text-muted)] font-mono">Pending step 4</div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- Files Touched Mini Summary -->
+          <div class="p-2.5 rounded-[5px] bg-[var(--bg-card)] border border-[var(--border-subtle)] space-y-1.5">
+            <div class="flex items-center justify-between text-[10px] text-[var(--text-muted)] font-semibold uppercase tracking-wider">
+              <span>Files Accessed</span>
+              <span class="text-[9.5px] font-mono text-[var(--text-secondary)]">4 files</span>
+            </div>
+            <div class="space-y-1 font-mono text-[10.5px]">
+              <div class="flex items-center justify-between text-emerald-400">
+                <span class="truncate">src/middleware/rate-limiter.ts</span>
+                <span>+38 -14</span>
+              </div>
+              <div class="flex items-center justify-between text-[var(--text-secondary)]">
+                <span class="truncate">src/middleware/auth.ts</span>
+                <span class="text-[var(--text-muted)]">READ</span>
+              </div>
+              <div class="flex items-center justify-between text-[var(--text-secondary)]">
+                <span class="truncate">tests/rate-limiter.test.ts</span>
+                <span class="text-[var(--text-muted)]">READ</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Sub-agent Delegation Card -->
+          <div class="p-2.5 rounded-[5px] bg-[var(--bg-card)] border border-[var(--border-subtle)] space-y-1.5">
+            <div class="flex items-center justify-between text-[10px] text-[var(--text-muted)] font-semibold uppercase tracking-wider">
+              <span>Sub-Agents</span>
+              <span class="text-[9.5px] font-mono text-emerald-400">1 spawned</span>
+            </div>
+            <div class="flex items-center justify-between p-1.5 rounded bg-[var(--bg-sidebar)] border border-[var(--border-subtle)]">
+              <div class="flex items-center space-x-1.5">
+                <span class="w-1.5 h-1.5 rounded-full bg-slate-500"></span>
+                <span class="font-mono text-[11px] text-[var(--text-primary)]">test-runner-worker</span>
+              </div>
+              <span class="text-[9.5px] text-[var(--text-muted)] font-mono">Idle (Waiting)</span>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- TAB CONTENT 2: FILES -->
+        <div id="tab-content-files" class="hidden flex-1 overflow-y-auto p-3 space-y-2">
+          <div class="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">
+            Workspace Resources
+          </div>
+
+          <div class="space-y-1 font-mono text-[11px]">
+            <div class="p-2 rounded bg-[var(--bg-card)] border border-[var(--border-subtle)] flex items-center justify-between">
+              <div class="flex items-center space-x-2 truncate">
+                <span class="text-emerald-400 font-bold">MOD</span>
+                <span class="text-[var(--text-primary)] truncate">src/middleware/rate-limiter.ts</span>
+              </div>
+              <span class="text-[9.5px] text-emerald-400">+38 -14</span>
+            </div>
+
+            <div class="p-2 rounded bg-[var(--bg-card)] border border-[var(--border-subtle)] flex items-center justify-between">
+              <div class="flex items-center space-x-2 truncate">
+                <span class="text-blue-400 font-bold">READ</span>
+                <span class="text-[var(--text-primary)] truncate">src/middleware/auth.ts</span>
+              </div>
+              <span class="text-[9.5px] text-[var(--text-muted)]">14.2 KB</span>
+            </div>
+
+            <div class="p-2 rounded bg-[var(--bg-card)] border border-[var(--border-subtle)] flex items-center justify-between">
+              <div class="flex items-center space-x-2 truncate">
+                <span class="text-blue-400 font-bold">READ</span>
+                <span class="text-[var(--text-primary)] truncate">tests/rate-limiter.test.ts</span>
+              </div>
+              <span class="text-[9.5px] text-[var(--text-muted)]">6.4 KB</span>
+            </div>
+
+            <div class="p-2 rounded bg-[var(--bg-card)] border border-[var(--border-subtle)] flex items-center justify-between">
+              <div class="flex items-center space-x-2 truncate">
+                <span class="text-blue-400 font-bold">READ</span>
+                <span class="text-[var(--text-primary)] truncate">config/redis.json</span>
+              </div>
+              <span class="text-[9.5px] text-[var(--text-muted)]">1.8 KB</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB CONTENT 3: CHANGES (Git-style Diff Inspector) -->
+        <div id="tab-content-changes" class="hidden flex-1 overflow-y-auto p-3 space-y-2">
+          <div class="flex items-center justify-between">
+            <div class="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">
+              Working Tree Changes
+            </div>
+            <div class="flex items-center space-x-1.5">
+              <button class="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 text-[9.5px] font-medium border border-emerald-500/30">Accept All</button>
+              <button class="px-2 py-0.5 rounded bg-rose-500/15 text-rose-400 text-[9.5px] font-medium border border-rose-500/30">Revert</button>
+            </div>
+          </div>
+
+          <div class="p-2 rounded bg-[var(--bg-card)] border border-[var(--border-subtle)] space-y-1.5">
+            <div class="flex items-center justify-between font-mono text-xs">
+              <span class="font-semibold text-[var(--text-primary)]">rate-limiter.ts</span>
+              <span class="text-emerald-400 text-[10.5px]">+38 / -14</span>
+            </div>
+            <div class="text-[11px] text-[var(--text-muted)]">
+              Implemented atomic EVALSHA caching with Redis cluster fallback.
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB CONTENT 4: PERMISSIONS TAB -->
+        <div id="tab-content-permissions" class="hidden flex-1 overflow-y-auto p-3 space-y-2">
+          <div class="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">
+            Active Security Policy
+          </div>
+
+          <div class="space-y-1.5 text-xs">
+            <div class="p-2 rounded bg-[var(--bg-card)] border border-[var(--border-subtle)] space-y-0.5">
+              <div class="flex items-center justify-between font-medium">
+                <span class="text-[var(--text-primary)] text-[11px]">File Read</span>
+                <span class="text-emerald-400 font-mono text-[9.5px]">Workspace Scope</span>
+              </div>
+              <div class="text-[9.5px] text-[var(--text-muted)]">Unrestricted read in api-gateway workspace</div>
+            </div>
+
+            <div class="p-2 rounded bg-[var(--bg-card)] border border-[var(--border-subtle)] space-y-0.5">
+              <div class="flex items-center justify-between font-medium">
+                <span class="text-[var(--text-primary)] text-[11px]">File Write</span>
+                <span class="text-emerald-400 font-mono text-[9.5px]">Scoped (src/**)</span>
+              </div>
+              <div class="text-[9.5px] text-[var(--text-muted)]">Allowed in src and tests directories</div>
+            </div>
+
+            <div class="p-2 rounded bg-amber-500/10 border border-amber-500/30 space-y-0.5">
+              <div class="flex items-center justify-between font-medium">
+                <span class="text-amber-300 text-[11px]">Shell Execution</span>
+                <span class="text-amber-400 font-mono text-[9.5px]">Confirm Risky</span>
+              </div>
+              <div class="text-[9.5px] text-amber-200/80">Destructive commands (rm, sudo, curl | sh) prompt user</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB CONTENT 5: CONTEXT TAB -->
+        <div id="tab-content-context" class="hidden flex-1 overflow-y-auto p-3 space-y-2">
+          <div class="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">
+            Token Context Breakdown
+          </div>
+
+          <div class="p-2.5 rounded bg-[var(--bg-card)] border border-[var(--border-subtle)] space-y-2 text-xs font-mono">
+            <div class="flex items-center justify-between">
+              <span class="text-[var(--text-secondary)]">System Prompt</span>
+              <span class="text-[var(--text-primary)]">14,200 tok (11%)</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-[var(--text-secondary)]">Code Repositories</span>
+              <span class="text-[var(--text-primary)]">22,400 tok (17%)</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-[var(--text-secondary)]">Tool & Shell outputs</span>
+              <span class="text-[var(--text-primary)]">8,620 tok (7%)</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-[var(--text-secondary)]">Active History</span>
+              <span class="text-[var(--text-primary)]">3,400 tok (3%)</span>
+            </div>
+            <div class="border-t border-[var(--border-subtle)] pt-1.5 flex items-center justify-between font-bold">
+              <span class="text-[var(--text-primary)]">Total Active</span>
+              <span class="text-[var(--accent)]">48,620 / 128,000</span>
+            </div>
+          </div>
+        </div>
+
+      </aside>
+
+    </div>
+
+  </div>
+
+  <!-- Interactive JavaScript Logic -->
+  <script>
+    function switchTab(tabName) {
+      const tabs = ['task', 'files', 'changes', 'permissions', 'context'];
+      tabs.forEach(t => {
+        const content = document.getElementById('tab-content-' + t);
+        const btn = document.getElementById('tab-btn-' + t);
+        if (t === tabName) {
+          content.classList.remove('hidden');
+          btn.classList.add('bg-[var(--bg-card)]', 'text-[var(--text-primary)]', 'border', 'border-[var(--border-subtle)]');
+          btn.classList.remove('text-[var(--text-secondary)]');
+        } else {
+          content.classList.add('hidden');
+          btn.classList.remove('bg-[var(--bg-card)]', 'text-[var(--text-primary)]', 'border', 'border-[var(--border-subtle)]');
+          btn.classList.add('text-[var(--text-secondary)]');
+        }
+      });
+    }
+
+    function toggleCollapse(id) {
+      const el = document.getElementById(id);
+      const chevron = document.getElementById(id + '-chevron');
+      if (el.classList.contains('hidden')) {
+        el.classList.remove('hidden');
+        if (chevron) chevron.classList.remove('-rotate-90');
+      } else {
+        el.classList.add('hidden');
+        if (chevron) chevron.classList.add('-rotate-90');
+      }
+    }
+
+    function toggleInspector() {
+      const p = document.getElementById('inspectorPanel');
+      p.classList.toggle('hidden');
+    }
+
+    function toggleTheme() {
+      const html = document.documentElement;
+      if (html.classList.contains('dark')) {
+        html.classList.remove('dark');
+        html.classList.add('light');
+        document.body.style.backgroundColor = '#d8dbe2';
+      } else {
+        html.classList.remove('light');
+        html.classList.add('dark');
+        document.body.style.backgroundColor = '#060709';
+      }
+    }
+
+    function resolvePermission(decision) {
+      const permCard = document.getElementById('permissionCard');
+      const toast = document.getElementById('actionToast');
+      const toastMsg = document.getElementById('toastMessage');
+      const step4 = document.getElementById('step4Card');
+      const badge = document.getElementById('statusBadge');
+      const badgeText = document.getElementById('statusBadgeText');
+      const selector = document.getElementById('stateSelector');
+
+      if (decision === 'approved_once' || decision === 'approved_session') {
+        permCard.classList.remove('border-amber-500/70');
+        permCard.classList.add('border-emerald-500/50', 'opacity-80');
+        toast.classList.remove('hidden');
+        toastMsg.innerHTML = '✓ <strong>Permission granted.</strong> Compiling native bindings: <code class="font-mono text-xs">rm -rf ./build ./dist && pnpm run build:native</code> running (PID: 38291)...';
+        
+        badge.className = 'flex items-center space-x-1.5 px-2.5 py-0.5 rounded-[5px] bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-medium text-xs';
+        badgeText.innerText = 'Executing (PID: 38291)';
+        selector.value = 'executing';
+
+        step4.className = 'p-2 rounded-[5px] bg-emerald-500/10 border border-emerald-500/30 flex items-start space-x-2';
+        step4.innerHTML = `
+          <div class="w-3.5 h-3.5 rounded-full border-2 border-emerald-400 border-t-transparent animate-spin shrink-0 mt-0.5"></div>
+          <div class="flex-1 min-w-0">
+            <div class="text-emerald-300 font-semibold text-[11.5px] flex items-center justify-between">
+              <span>Compiling native bindings...</span>
+              <span class="text-[8.5px] uppercase px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-400">Running</span>
+            </div>
+            <div class="text-[10.5px] text-[var(--text-secondary)] mt-0.5">Shell command approved. Build in progress...</div>
+          </div>
+        `;
+      } else if (decision === 'denied') {
+        permCard.classList.remove('border-amber-500/70');
+        permCard.classList.add('border-rose-500/50', 'opacity-70');
+        toast.classList.remove('hidden');
+        toast.firstElementChild.className = 'px-3 py-1.5 rounded-[5px] bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center justify-between';
+        toastMsg.innerHTML = '✕ <strong>Command denied by user.</strong> Agent is evaluating alternative pure-JS fallback.';
+        
+        badge.className = 'flex items-center space-x-1.5 px-2.5 py-0.5 rounded-[5px] bg-rose-500/10 border border-rose-500/30 text-rose-400 font-medium text-xs';
+        badgeText.innerText = 'Waiting for input';
+        selector.value = 'waiting-input';
+      }
+    }
+
+    function changeAgentState(state) {
+      const badge = document.getElementById('statusBadge');
+      const badgeText = document.getElementById('statusBadgeText');
+
+      switch(state) {
+        case 'waiting-permission':
+          badge.className = 'flex items-center space-x-1.5 px-2.5 py-0.5 rounded-[5px] bg-amber-500/10 border border-amber-500/30 text-amber-400 font-medium text-xs';
+          badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-amber-400 pulse-amber"></span><span id="statusBadgeText" class="font-semibold text-[11px]">Waiting for Permission</span>';
+          break;
+        case 'thinking':
+          badge.className = 'flex items-center space-x-1.5 px-2.5 py-0.5 rounded-[5px] bg-purple-500/10 border border-purple-500/30 text-purple-400 font-medium text-xs';
+          badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-purple-400 pulse-amber"></span><span id="statusBadgeText" class="font-semibold text-[11px]">Thinking...</span>';
+          break;
+        case 'planning':
+          badge.className = 'flex items-center space-x-1.5 px-2.5 py-0.5 rounded-[5px] bg-blue-500/10 border border-blue-500/30 text-blue-400 font-medium text-xs';
+          badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-blue-400 pulse-amber"></span><span id="statusBadgeText" class="font-semibold text-[11px]">Planning Tasks</span>';
+          break;
+        case 'executing':
+          badge.className = 'flex items-center space-x-1.5 px-2.5 py-0.5 rounded-[5px] bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-medium text-xs';
+          badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-amber"></span><span id="statusBadgeText" class="font-semibold text-[11px]">Executing Tools</span>';
+          break;
+        case 'waiting-input':
+          badge.className = 'flex items-center space-x-1.5 px-2.5 py-0.5 rounded-[5px] bg-sky-500/10 border border-sky-500/30 text-sky-400 font-medium text-xs';
+          badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-sky-400"></span><span id="statusBadgeText" class="font-semibold text-[11px]">Waiting for User Input</span>';
+          break;
+        case 'completed':
+          badge.className = 'flex items-center space-x-1.5 px-2.5 py-0.5 rounded-[5px] bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-medium text-xs';
+          badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span id="statusBadgeText" class="font-semibold text-[11px]">Completed</span>';
+          break;
+        case 'failed':
+          badge.className = 'flex items-center space-x-1.5 px-2.5 py-0.5 rounded-[5px] bg-rose-500/10 border border-rose-500/30 text-rose-400 font-medium text-xs';
+          badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-rose-400"></span><span id="statusBadgeText" class="font-semibold text-[11px]">Execution Failed</span>';
+          break;
+        case 'cancelled':
+          badge.className = 'flex items-center space-x-1.5 px-2.5 py-0.5 rounded-[5px] bg-slate-500/10 border border-slate-500/30 text-slate-400 font-medium text-xs';
+          badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span><span id="statusBadgeText" class="font-semibold text-[11px]">Cancelled</span>';
+          break;
+      }
+    }
+
+    function stopTask() {
+      changeAgentState('cancelled');
+      const toast = document.getElementById('actionToast');
+      const toastMsg = document.getElementById('toastMessage');
+      if (toast && toastMsg) {
+        toast.classList.remove('hidden');
+        toast.firstElementChild.className = 'px-3 py-1.5 rounded-[5px] bg-slate-500/10 border border-slate-500/30 text-slate-300 text-xs flex items-center justify-between';
+        toastMsg.innerHTML = '⏹ <strong>Task halted by user (⌘.).</strong> Execution safely stopped at checkpoint.';
+      }
+    }
+
+    document.addEventListener('keydown', (e) => {
+      // Stop Task: ⌘. or Ctrl+.
+      if ((e.metaKey || e.ctrlKey) && (e.key === '.' || e.code === 'Period')) {
+        e.preventDefault();
+        stopTask();
+      }
+      // Deny: Esc (when permission prompt is active)
+      if (e.key === 'Escape') {
+        const permCard = document.getElementById('permissionCard');
+        if (permCard && !permCard.classList.contains('opacity-70') && !permCard.classList.contains('opacity-80')) {
+          resolvePermission('denied');
+        }
+      }
+      // Allow Once: Option + Enter
+      if (e.altKey && e.key === 'Enter') {
+        e.preventDefault();
+        resolvePermission('approved_once');
+      }
+    });
+  </script>
+</body>
+</html>
