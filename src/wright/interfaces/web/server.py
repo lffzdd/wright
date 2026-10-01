@@ -25,7 +25,7 @@ def _origin_for(request: Request) -> str:
 def default_static_dir() -> Path:
     """Directory Vite writes and this process serves."""
 
-    return Path(__file__).resolve().parents[2] / "web" / "static"
+    return Path(__file__).resolve().parent / "static"
 
 
 def create_app(

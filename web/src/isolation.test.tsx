@@ -39,6 +39,29 @@ function jsonResponse(body: unknown, ok = true) {
 }
 
 describe("session isolation", () => {
+  it("opens inspector directories through the tree API and files through the file API", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      calls.push(path);
+      if (path.endsWith("/tree?path=")) return jsonResponse({ entries: [{ name: "web", path: "web", kind: "dir" }] });
+      if (path.endsWith("/tree?path=web")) return jsonResponse({ entries: [{ name: "example.html", path: "web/example.html", kind: "file" }] });
+      if (path.includes("/file?")) return jsonResponse({ content: "Reference design source", binary: false });
+      return jsonResponse({ changes: [], local_warning: false });
+    }));
+    render(<Inspector state={view("session-a")} sessionId="session-a" open close={() => undefined} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Files" }));
+    fireEvent.click(screen.getByRole("button", { name: "Browse workspace" }));
+    fireEvent.click(await screen.findByRole("button", { name: /DIR\s*web/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /FILE\s*web\/example.html/ }));
+    expect(await screen.findByText("Reference design source")).toBeTruthy();
+    expect(calls).toContain("/api/v1/sessions/session-a/tree?path=web");
+    expect(calls.some((path) => path.includes("/file?path=web") && !path.includes("example.html"))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: ".. / web" }));
+    expect(await screen.findByRole("button", { name: /DIR\s*web/ })).toBeTruthy();
+    expect(screen.queryByText("Reference design source")).toBeNull();
+  });
+
   it("does not show a failed changes request as a clean worktree", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ detail: "diff failed" }, false)));
     render(<Inspector state={view("session-a")} sessionId="session-a" open close={() => undefined} />);

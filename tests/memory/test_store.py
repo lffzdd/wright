@@ -1,5 +1,6 @@
 """store.py 的纯文件操作单测(不碰 LLM)。"""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -133,7 +134,8 @@ def test_semantic_memory_crud_keeps_stable_unicode_id_and_index(tmp_path: Path):
     assert created.id.startswith("mem-")
     assert created.id != "用户偏好"
     assert created.scope == "global"
-    assert created.path.stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":  # Windows chmod only controls the read-only flag.
+        assert created.path.stat().st_mode & 0o777 == 0o600
 
     again = create_memory("用户偏好", "重复", "user", "另一条正文", tmp_path, scope="global")
     assert again.id != created.id

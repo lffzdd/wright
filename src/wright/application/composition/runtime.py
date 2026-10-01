@@ -516,6 +516,10 @@ def assemble_runtime(
         session_id=session_state.session_id,
     )
     opened.publisher = publisher
+    if interaction_target is not None:
+        from ..planning.projection import bind_plan_events
+
+        bind_plan_events(publisher, session_state, interaction_target)
     event_renderer = SessionEvents(
         publisher,
         runtime_resources=runtime_resources,
@@ -558,6 +562,8 @@ def assemble_runtime(
                     None if config.no_session_persistence else checkpoint_store.save
                 ),
             )
+            if target_session is session_state and change != AuthorizationChange():
+                publisher.publish("session.policy_updated", {})
 
         return commit_authorization
 

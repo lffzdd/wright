@@ -109,7 +109,7 @@ describe("InteractionCard", () => {
     expect(screen.getByText("Grant: Adds file root /tmp/project/nested")).toBeDefined();
     expect(screen.getByText("hello <script>alert(1)</script>")).toBeDefined();
     expect(container.querySelector("script")).toBeNull();
-    const allow = screen.getByRole("button", { name: /Allow once/ });
+    const allow = screen.getByRole("button", { name: /Allow once/i });
     fireEvent.click(allow);
     fireEvent.click(allow);
     expect(respond).toHaveBeenCalledTimes(1);
@@ -119,9 +119,9 @@ describe("InteractionCard", () => {
   it("keeps the selected choice when the decision is not accepted", async () => {
     const respond = vi.fn(async () => false);
     render(<InteractionCard interaction={interaction} respond={respond} />);
-    fireEvent.click(screen.getByRole("button", { name: /Allow once/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Allow once/i }));
     expect(await screen.findByText(/Kept choice: allow_once/)).toBeDefined();
-    expect(screen.getByRole("button", { name: /Allow once/ })).toBeDefined();
+    expect(screen.getByRole("button", { name: /Allow once/i })).toBeDefined();
   });
 
   it("does not dump grant scopes into a truncated summary row", () => {

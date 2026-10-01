@@ -13,6 +13,7 @@ import threading
 from pathlib import Path
 
 from ....core.paths import project_id, workspace_registry_path
+from ...file_lock import FileLock
 
 _LOCK = threading.RLock()
 
@@ -41,28 +42,22 @@ def save_registry(data: dict, path: Path | None = None) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     lock_path = target.with_name(f"{target.name}.lock")
     with _LOCK:
-        import fcntl
-
-        with lock_path.open("a+") as lock_handle:
-            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        with FileLock(lock_path):
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+            )
+            temporary = Path(temporary_name)
             try:
-                descriptor, temporary_name = tempfile.mkstemp(
-                    prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
-                )
-                temporary = Path(temporary_name)
-                try:
-                    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                        json.dump(data, handle, ensure_ascii=False, indent=2)
-                        handle.write("\n")
-                        handle.flush()
-                        os.fsync(handle.fileno())
-                    os.chmod(temporary, 0o600)
-                    os.replace(temporary, target)
-                except Exception:
-                    temporary.unlink(missing_ok=True)
-                    raise
-            finally:
-                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                    json.dump(data, handle, ensure_ascii=False, indent=2)
+                    handle.write("\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.chmod(temporary, 0o600)
+                os.replace(temporary, target)
+            except Exception:
+                temporary.unlink(missing_ok=True)
+                raise
 
 
 def identity_for(root: Path) -> str:

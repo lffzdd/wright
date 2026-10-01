@@ -10,7 +10,8 @@ import hashlib
 import json
 from typing import Any
 
-from ...domain.policy.permission.scope import resolve_root
+from ...domain.policy.permission.resolver import PermissionPolicy
+from ...domain.policy.permission.scope import AccessScope, resolve_root
 from ...domain.policy.permission.settings import PermissionRule
 from ...infrastructure.config.permission_store import (
     append_additional_directory,
@@ -44,6 +45,13 @@ def list_grants(session: Any, settings: Any) -> dict[str, Any]:
         })
     directories = [str(path) for path in getattr(session, "additional_working_directories", []) or []]
     extra = list(getattr(settings, "additional_directories", []) or [])
+    root = getattr(session, "workspace_dir", None)
+    roots = [str(path) for path in AccessScope(
+        resolve_root(root), tuple(resolve_root(path) for path in directories),
+    ).roots] if root else []
+    parsed_rules = tuple(
+        PermissionRule.from_persistent(item["rule"]) for item in session_rules
+    )
     return {
         "permission_mode": getattr(session, "permission_mode", None) or getattr(settings, "mode", "default"),
         "interaction_mode": getattr(session, "interaction_mode", "agent"),
@@ -51,6 +59,11 @@ def list_grants(session: Any, settings: Any) -> dict[str, Any]:
         "persistent_rules": persistent,
         "session_directories": directories,
         "persistent_directories": extra,
+        "effective_policy": PermissionPolicy(settings).summarize(
+            roots=roots, session_rules=parsed_rules,
+            interaction_mode=getattr(session, "interaction_mode", "agent"),
+            permission_mode=getattr(session, "permission_mode", None),
+        ),
         "boundaries": [
             "deny rules still win",
             "protected permission files stay blocked",

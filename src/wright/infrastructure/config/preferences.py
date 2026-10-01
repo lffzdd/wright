@@ -13,6 +13,7 @@ import threading
 from pathlib import Path
 
 from ...core.paths import user_preferences_path
+from ..file_lock import FileLock
 
 _LOCK = threading.RLock()
 _KEY = "interface_language"
@@ -49,30 +50,24 @@ def _update(update, path: Path | None) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     lock_path = target.with_name(f"{target.name}.lock")
     with _LOCK:
-        with lock_path.open("a+") as lock_handle:
-            import fcntl
-
-            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        with FileLock(lock_path):
+            data = load_preferences(target)
+            update(data)
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+            )
+            temporary = Path(temporary_name)
             try:
-                data = load_preferences(target)
-                update(data)
-                descriptor, temporary_name = tempfile.mkstemp(
-                    prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
-                )
-                temporary = Path(temporary_name)
-                try:
-                    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                        json.dump(data, handle, ensure_ascii=False, indent=2)
-                        handle.write("\n")
-                        handle.flush()
-                        os.fsync(handle.fileno())
-                    os.chmod(temporary, 0o600)
-                    os.replace(temporary, target)
-                except Exception:
-                    temporary.unlink(missing_ok=True)
-                    raise
-            finally:
-                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                    json.dump(data, handle, ensure_ascii=False, indent=2)
+                    handle.write("\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.chmod(temporary, 0o600)
+                os.replace(temporary, target)
+            except Exception:
+                temporary.unlink(missing_ok=True)
+                raise
 
 
 __all__ = ["load_preferences", "preference_value", "save_preference"]

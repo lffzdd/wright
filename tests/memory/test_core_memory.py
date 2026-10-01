@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from wright.application.memory.memory_service import MemoryService
@@ -126,7 +127,8 @@ def test_file_core_memory_store_defaults_are_empty_and_scoped(tmp_path: Path):
     global_payload = json.loads(store.file_path.read_text(encoding="utf-8"))
     assert "project_anchor" not in global_payload
     assert "unassigned_project_anchor" not in global_payload
-    assert (store.file_path.stat().st_mode & 0o777) == 0o600
+    if os.name != "nt":  # Windows chmod only controls the read-only flag.
+        assert (store.file_path.stat().st_mode & 0o777) == 0o600
     assert (tmp_path / ".core_memory.lock").is_file()
 
     global_bytes = store.file_path.read_bytes()

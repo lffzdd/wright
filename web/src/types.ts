@@ -179,6 +179,28 @@ export type ReviewChange = {
   current_sha256?: string | null;
 };
 
+export type WaitReason = { kind: "permission" | "ask_user" | "user_input" | "blocked"; request_ids: string[]; detail?: string };
+export type PlanStep = {
+  id: string; title: string; status: string; note?: string;
+  started_at: number | null; ended_at: number | null; elapsed_ms?: number; wait_reason?: WaitReason;
+};
+export type PlanView = { objective?: string; status?: string; revision?: number; observed_at?: number; steps?: PlanStep[]; wait_reason?: WaitReason };
+export type PolicyDefault = { decision: "allow" | "ask" | "deny"; source: string; reason_code: string; reason_params: Record<string, string> };
+export type EffectivePolicy = {
+  operation: "file_read" | "file_write" | "shell";
+  defaults: { in_scope: PolicyDefault; outside_scope: PolicyDefault };
+  directories: string[];
+  rules: Array<{ effect: "allow" | "ask" | "deny"; scope: "session" | "persistent"; rule: Record<string, unknown>; description: string; conditional: boolean; inactive: boolean }>;
+  constraints: string[]; precedence: string[];
+};
+export type Grants = {
+  permission_mode?: string; interaction_mode?: string;
+  session_directories?: string[]; persistent_directories?: string[]; boundaries?: string[];
+  session_rules?: Array<{ id: string; rule?: Record<string, unknown> }>;
+  persistent_rules?: Array<{ id: string; rule?: Record<string, unknown> }>;
+  effective_policy: EffectivePolicy[];
+};
+
 export type Snapshot = {
   stream_id: string;
   last_seq: number;
@@ -186,7 +208,7 @@ export type Snapshot = {
   history: HistoryTurn[];
   active_turn: ActiveTurn | null;
   agents?: AgentView[];
-  plan: { objective?: string; status?: string; steps?: Array<{ id: string; title: string; status: string; note?: string }> };
+  plan: PlanView;
   pending_interactions: Interaction[];
   notices: Notice[];
   queued_commands: QueuedCommand[];
@@ -221,6 +243,7 @@ export type UiEvent = {
 };
 
 export type ViewState = Snapshot & {
+  permissions_revision?: number;
   seen: string[];
   connection: "connecting" | "connected" | "reconnecting" | "disconnected" | "closed";
   resync?: boolean;

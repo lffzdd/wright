@@ -24,6 +24,8 @@
     "system.checkpoint_error",
     "command.accepted",
     "command.rejected",
-    "session.history_requested"
+    "session.history_requested",
+    "plan.updated",
+    "session.policy_updated"
   ]
 }

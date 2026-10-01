@@ -1,4 +1,4 @@
-import type { SessionSummary, Snapshot } from "./types";
+import type { Grants, SessionSummary, Snapshot } from "./types";
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -75,7 +75,7 @@ export const api = {
   file: (sessionId: string, path: string) => json<{ path: string; content: string; binary: boolean; line_count?: number }>(`/api/v1/sessions/${sessionId}/file?path=${encodeURIComponent(path)}`),
   workspaceInfo: (sessionId: string) => json<Record<string, unknown>>(`/api/v1/sessions/${sessionId}/workspace`),
   policy: (sessionId: string, body: { interaction_mode?: string; permission_mode?: string }) => json<Record<string, unknown>>(`/api/v1/sessions/${sessionId}/policy`, { method: "POST", body: JSON.stringify(body) }),
-  grants: (sessionId: string) => json<Record<string, unknown>>(`/api/v1/sessions/${sessionId}/grants`),
+  grants: (sessionId: string) => json<Grants>(`/api/v1/sessions/${sessionId}/grants`),
   revokeGrant: (sessionId: string, ruleId: string) => json<Record<string, unknown>>(`/api/v1/sessions/${sessionId}/grants/${ruleId}/revoke`, { method: "POST", body: JSON.stringify({ confirm: true }) }),
   addGrant: (sessionId: string, rule: Record<string, unknown>) => json<Record<string, unknown>>(`/api/v1/sessions/${sessionId}/grants`, { method: "POST", body: JSON.stringify({ confirm: true, rule }) }),
   review: (sessionId: string) => json<{ changes: Array<Record<string, unknown>>; semantics?: Record<string, string> }>(`/api/v1/sessions/${sessionId}/review`),

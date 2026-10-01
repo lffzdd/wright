@@ -12,6 +12,7 @@ from ...application.composition.runtime import (
     WrightRuntime,
     shutdown_runtime,
 )
+from ...application.planning.projection import project_plan
 from ...application.session.directory import (
     SessionDirectory,
     SessionDirectoryError,
@@ -302,7 +303,10 @@ class SessionHandle:
                 ),
                 "active_turn": active,
                 "agents": view["agents"],
-                "plan": state.plan_manager.snapshot(),
+                "plan": project_plan(
+                    state.plan_manager.snapshot(), service_snapshot["pending_interactions"],
+                    owner_task_id=state.agent_task_id or "", owner_session_id=state.session_id,
+                ),
                 "pending_interactions": service_snapshot["pending_interactions"],
                 "notices": notices,
                 "queued_commands": queued_commands,

@@ -131,7 +131,9 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
   if (child && event.type !== "interaction.requested" && event.type !== "interaction.resolved") {
     return applyAgent(next, event, child);
   }
-  if (event.type === "turn.started") {
+  if (event.type === "plan.updated") {
+    if (event.payload.plan && typeof event.payload.plan === "object") next.plan = event.payload.plan as ViewState["plan"];
+  } else if (event.type === "turn.started") {
     next.active_turn = {
       turn_id: event.turn_id,
       run_id: typeof event.payload.run_id === "string" ? event.payload.run_id : undefined,
@@ -163,13 +165,6 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
       ...next.active_turn,
       tools: upsertTool(next.active_turn.tools, { ...event.payload, ...(phase ? { phase } : {}) }),
     };
-    if (
-      event.type === "tool.finished" &&
-      ["create_plan", "update_plan", "replan", "get_plan"].includes(String(event.payload.name ?? "")) &&
-      event.payload.data && typeof event.payload.data === "object"
-    ) {
-      next.plan = event.payload.data as ViewState["plan"];
-    }
   } else if (["turn.completed", "turn.failed", "turn.cancelled"].includes(event.type)) {
     if (next.active_turn) {
       const status = event.type === "turn.completed" ? "completed" : event.type === "turn.cancelled" ? "cancelled" : "failed";
@@ -187,8 +182,9 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
       }];
     }
     const finished = next.active_turn?.content ?? "";
-    if (finished && next.timeline && !next.timeline.some((item) => item.role === "assistant" && item.turn_id === event.turn_id)) {
-      next.timeline = [...next.timeline, { id: `${event.turn_id || event.event_id}:assistant`, turn_id: event.turn_id, kind: "text", role: "assistant", text: finished }];
+    const turnId = next.active_turn?.turn_id || event.turn_id;
+    if (finished && next.timeline && !next.timeline.some((item) => item.role === "assistant" && item.turn_id === turnId)) {
+      next.timeline = [...next.timeline, { id: `${turnId || event.event_id}:assistant`, turn_id: turnId, kind: "text", role: "assistant", text: finished }];
     }
     next.active_turn = null;
     next.session = { ...next.session, status: "idle", agent_status: event.type.split(".")[1] };
@@ -245,6 +241,15 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
     next = addNotice(next, event);
   } else if (["system.notice", "system.checkpoint_error", "task.updated"].includes(event.type)) {
     next = addNotice(next, event);
+  } else if (event.type === "session.policy_updated") {
+    const interaction = event.payload.interaction_mode;
+    const permission = event.payload.permission_mode;
+    next.permissions_revision = event.seq;
+    next.session = {
+      ...next.session,
+      ...(interaction === "agent" || interaction === "plan" || interaction === "ask" ? { interaction_mode: interaction } : {}),
+      ...(permission === "default" || permission === "acceptEdits" || permission === "bypass" || permission === "plan" ? { permission_mode: permission } : {}),
+    };
   } else if (event.type === "session.status_changed") {
     const model = event.payload.model;
     const execution = event.payload.execution;
@@ -281,8 +286,9 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
   }
   if (next.timeline && event.type === "content.final") {
     const text = String(event.payload.content ?? "");
-    const id = `${event.turn_id || event.event_id}:assistant`;
-    const item = { id, turn_id: event.turn_id, kind: "text" as const, role: "assistant", text };
+    const turnId = next.active_turn?.turn_id || event.turn_id;
+    const id = `${turnId || event.event_id}:assistant`;
+    const item = { id, turn_id: turnId, kind: "text" as const, role: "assistant", text };
     next.timeline = next.timeline.some((old) => old.id === id)
       ? next.timeline.map((old) => old.id === id ? item : old)
       : [...next.timeline, item];

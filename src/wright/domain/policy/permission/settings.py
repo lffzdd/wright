@@ -166,14 +166,15 @@ def relative_to_root(path: str, root: str) -> str | None:
     if not path or not root:
         return None
     try:
-        if os.path.commonpath((path, root)) != root:
+        path, root = os.path.normpath(path), os.path.normpath(root)
+        if os.path.normcase(os.path.commonpath((path, root))) != os.path.normcase(root):
             return None
     except ValueError:
         return None
     relative = os.path.relpath(path, root)
     if relative == "." or relative.startswith(".."):
         return None
-    return PurePosixPath(relative).as_posix()
+    return PurePosixPath(relative.replace(os.sep, "/")).as_posix()
 
 
 def component_match(pattern: str, relative: str) -> bool:

@@ -6,7 +6,6 @@ use and replaces it without a partial write.
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import tempfile
@@ -16,6 +15,7 @@ from pathlib import Path
 
 from ...core.paths import user_permission_settings_path
 from ...domain.policy.permission.settings import PermissionSettings
+from ..file_lock import FileLock
 
 _CONFIG_LOCK = threading.RLock()
 
@@ -147,7 +147,7 @@ def remove_additional_directory(directory: str, path: Path | None = None) -> Non
 def _update_settings(update: Callable[[dict], None], path: Path | None) -> None:
     """Read, merge and atomically replace settings.
 
-    ``fcntl.flock`` is the cross-process critical section. The in-process
+    The cross-platform file lock is the cross-process critical section. The in-process
     lock only keeps threads from opening the lock file twice. Neither lock
     is a transaction by itself; the exclusive lock plus one ``os.replace``
     is what keeps a concurrent update from being lost.
@@ -157,36 +157,32 @@ def _update_settings(update: Callable[[dict], None], path: Path | None) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     lock_path = target.with_name(f"{target.name}.lock")
     with _CONFIG_LOCK:
-        with lock_path.open("a+") as lock_handle:
-            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        with FileLock(lock_path):
+            if target.is_file():
+                data = json.loads(target.read_text(encoding="utf-8"))
+            elif path is None and _packaged_path().is_file():
+                data = json.loads(_packaged_path().read_text(encoding="utf-8"))
+            else:
+                data = {"mode": "default", "permissions": {"allow": [], "deny": []}}
+            before = json.dumps(data, ensure_ascii=False, sort_keys=True)
+            update(data)
+            if json.dumps(data, ensure_ascii=False, sort_keys=True) == before:
+                return
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+            )
+            temporary = Path(temporary_name)
             try:
-                if target.is_file():
-                    data = json.loads(target.read_text(encoding="utf-8"))
-                elif path is None and _packaged_path().is_file():
-                    data = json.loads(_packaged_path().read_text(encoding="utf-8"))
-                else:
-                    data = {"mode": "default", "permissions": {"allow": [], "deny": []}}
-                before = json.dumps(data, ensure_ascii=False, sort_keys=True)
-                update(data)
-                if json.dumps(data, ensure_ascii=False, sort_keys=True) == before:
-                    return
-                descriptor, temporary_name = tempfile.mkstemp(
-                    prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
-                )
-                temporary = Path(temporary_name)
-                try:
-                    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                        json.dump(data, handle, ensure_ascii=False, indent=2)
-                        handle.write("\n")
-                        handle.flush()
-                        os.fsync(handle.fileno())
-                    os.chmod(temporary, 0o600)
-                    os.replace(temporary, target)
-                except Exception:
-                    temporary.unlink(missing_ok=True)
-                    raise
-            finally:
-                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                    json.dump(data, handle, ensure_ascii=False, indent=2)
+                    handle.write("\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.chmod(temporary, 0o600)
+                os.replace(temporary, target)
+            except Exception:
+                temporary.unlink(missing_ok=True)
+                raise
 
 
 def _env_path() -> Path | None:

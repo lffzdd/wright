@@ -7,7 +7,7 @@ import { MarkdownContent } from "../Markdown";
 import { api } from "../api";
 import { present, t, useT } from "../i18n";
 import { commandAfter } from "../protocol";
-import type { Attachment, FileReference, ReviewChange, SessionSummary, ViewState } from "../types";
+import type { Attachment, FileReference, Grants, PlanStep, ReviewChange, SessionSummary, ViewState, WaitReason } from "../types";
 import { InteractionCard, ReasoningRow, AssistantMessage, UserMessage, toolCardFromState, toolCardFromTimeline } from "./cards";
 
 export type Draft = {
@@ -384,7 +384,7 @@ export function Composer({
 
 type InspectorTab = "task" | "files" | "changes" | "permissions" | "context";
 
-export function Inspector({ state, sessionId, open, narrow = false, focusPath = null, close, staticData = null }: { state: ViewState; sessionId: string; open: boolean; narrow?: boolean; focusPath?: string | null; close: () => void; staticData?: { files: Array<{ name: string; path: string; kind: string }>; changes: Array<{ path: string; status: string }>; review: ReviewChange[] } | null }) {
+export function Inspector({ state, sessionId, open, narrow = false, focusPath = null, close }: { state: ViewState; sessionId: string; open: boolean; narrow?: boolean; focusPath?: string | null; close: () => void }) {
   const tr = useT();
   const [tab, setTab] = useState<InspectorTab>("task");
   const [changes, setChanges] = useState<Array<{ path: string; status: string }> | null>(null);
@@ -396,20 +396,29 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
   const [review, setReview] = useState<ReviewChange[]>([]);
   const [reviewNote, setReviewNote] = useState("");
   const [files, setFiles] = useState<Array<{ name: string; path: string; kind: string }>>([]);
+  const [directory, setDirectory] = useState("");
+  const [browseWorkspace, setBrowseWorkspace] = useState(false);
+  const [recentFileMeta, setRecentFileMeta] = useState<Record<string, { size?: number; additions?: number; deletions?: number }>>({});
+  const [filePath, setFilePath] = useState("");
   const [fileText, setFileText] = useState("");
-  const [grants, setGrants] = useState<Record<string, unknown> | null>(null);
+  const [grants, setGrants] = useState<Grants | null>(null);
+  const [clockNow, setClockNow] = useState(Date.now);
+  const execution = state.session.execution ?? state.session.status;
+  const livePlan = state.session.active && state.connection === "connected" && ["running", "waiting_for_input"].includes(execution);
+  useEffect(() => {
+    setClockNow(Date.now());
+    if (!livePlan || !state.plan.observed_at || !state.plan.steps?.some((step) => step.started_at !== null && step.ended_at === null)) return;
+    const timer = window.setInterval(() => setClockNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [livePlan, state.plan]);
   const [panelError, setPanelError] = useState("");
   const generation = useRef(0);
   useEffect(() => {
     setSelected(null); setPatch(""); setChanges(null); setChangesError(""); setReview([]);
+    setDirectory(""); setBrowseWorkspace(false); setRecentFileMeta({}); setFilePath(""); setFileText(""); setFiles([]); setPanelError("");
+    setGrants(null);
   }, [sessionId]);
   const refresh = useCallback(() => {
-    if (staticData) {
-      setChanges(staticData.changes);
-      setReview(staticData.review);
-      setChangesError("");
-      return;
-    }
     const request = ++generation.current;
     const owner = sessionId;
     api.changes(owner).then((result) => {
@@ -426,20 +435,71 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
       if (generation.current !== request) return;
       setReview((result.changes ?? []) as ReviewChange[]);
     }).catch(() => { if (generation.current === request) setReview([]); });
-  }, [sessionId, staticData]);
+  }, [sessionId]);
   useEffect(() => { refresh(); }, [refresh, state.session.status]);
   useEffect(() => {
+    let current = true;
+    setPanelError("");
     if (tab === "files") {
-      if (staticData) { setFiles(staticData.files); return; }
-      api.tree(sessionId).then((result) => setFiles(result.entries)).catch((error) => setPanelError(String(error)));
+      if (browseWorkspace) {
+        setFiles([]);
+        api.tree(sessionId, directory).then((result) => { if (current) setFiles(result.entries); }).catch((error) => { if (current) setPanelError(String(error)); });
+      }
     }
-    if (tab === "permissions" && !staticData) api.grants(sessionId).then(setGrants).catch((error) => setPanelError(String(error)));
-  }, [tab, sessionId, staticData]);
+    return () => { current = false; };
+  }, [tab, sessionId, directory, browseWorkspace]);
+  useEffect(() => {
+    let current = true;
+    if (tab === "permissions") {
+      api.grants(sessionId).then((result) => {
+        if (current) { setGrants(result); setPanelError(""); }
+      }).catch((error) => { if (current) setPanelError(String(error)); });
+    }
+    return () => { current = false; };
+  }, [tab, sessionId, state.session.permission_mode, state.session.interaction_mode, state.permissions_revision, state.connection, state.pending_interactions]);
+  useEffect(() => {
+    let current = true;
+    const accessed = (state.accessed_files ?? []).slice(-8);
+    const folders = [...new Set(accessed.map((item) => {
+      const path = item.path.replace(/\\/g, "/");
+      return path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+    }))];
+    const writePaths = new Set((changes ?? []).map((item) => item.path));
+    const sizeRequest = Promise.all(folders.map((folder) => api.tree(sessionId, folder).catch(() => null)));
+    const diffRequest = Promise.all(accessed.filter((item) => item.access === "write" && writePaths.has(item.path)).map(async (item) => {
+      try {
+        const result = await api.patch(sessionId, item.path);
+        const lines = result.patch.split(/\r?\n/);
+        return [item.path, {
+          additions: lines.filter((line) => line.startsWith("+") && !line.startsWith("+++")).length,
+          deletions: lines.filter((line) => line.startsWith("-") && !line.startsWith("---")).length,
+        }] as const;
+      } catch { return [item.path, {}] as const; }
+    }));
+    void Promise.all([sizeRequest, diffRequest]).then(([treeResults, diffResults]) => {
+      if (!current) return;
+      const metadata: Record<string, { size?: number; additions?: number; deletions?: number }> = {};
+      for (const tree of treeResults) for (const entry of tree?.entries ?? []) {
+        if (entry.kind === "file" && typeof entry.size === "number") metadata[entry.path] = { size: entry.size };
+      }
+      for (const [path, diff] of diffResults) metadata[path] = { ...metadata[path], ...diff };
+      setRecentFileMeta(metadata);
+    });
+    return () => { current = false; };
+  }, [sessionId, JSON.stringify(state.accessed_files ?? []), changes]);
   useEffect(() => {
     if (!focusPath) return;
     setTab("files");
-    api.file(sessionId, focusPath).then((file) => setFileText(file.binary ? "Binary file" : file.content)).catch((error) => setPanelError(String(error)));
+    setFilePath(focusPath);
   }, [focusPath, sessionId]);
+  useEffect(() => {
+    let current = true;
+    setFileText("");
+    if (filePath) api.file(sessionId, filePath).then((file) => {
+      if (current) setFileText(file.binary ? "Binary file" : file.content);
+    }).catch((error) => { if (current) setPanelError(String(error)); });
+    return () => { current = false; };
+  }, [filePath, sessionId]);
   const openPatch = (path: string) => {
     const request = ++generation.current;
     setSelected(path);
@@ -470,10 +530,11 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
   const breakdown = state.context_breakdown;
   const tabs: InspectorTab[] = ["task", "files", "changes", "permissions", "context"];
   const steps = state.plan.steps ?? [];
+  const accessedFiles = state.accessed_files ?? [];
   const completedSteps = steps.filter((step) => step.status === "completed").length;
   const currentStep = steps.findIndex((step) => ["in_progress", "running", "active"].includes(step.status));
-  const changedLines = (state.accessed_files ?? []).reduce((sum, file) => sum + Number(/\+(\d+)/.exec(file.access ?? "")?.[1] ?? 0), 0);
-  const tabCount = (item: InspectorTab) => item === "files" ? files.length || (state.accessed_files ?? []).length : item === "changes" ? changedLines || changes?.length || 0 : 0;
+  const changedLines = Object.values(recentFileMeta).reduce((sum, file) => sum + (file.additions ?? 0), 0);
+  const tabCount = (item: InspectorTab) => item === "files" ? accessedFiles.length || files.length : item === "changes" ? changedLines || changes?.length || 0 : 0;
   const sessionDirectories = (grants?.session_directories as string[] | undefined) ?? [];
   const persistentDirectories = (grants?.persistent_directories as string[] | undefined) ?? [];
   const boundaries = (grants?.boundaries as string[] | undefined) ?? [];
@@ -490,6 +551,16 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
     if (detail.toLowerCase().startsWith(label.toLowerCase())) return detail[0].toUpperCase() + detail.slice(1);
     return `${label} · ${detail}`;
   };
+  const waitText = (wait: WaitReason) => {
+    const label = tr(`web.plan_wait.${wait.kind}`);
+    return wait.detail ? `${label} · ${wait.detail}` : label;
+  };
+  const stepTiming = (step: PlanStep) => {
+    if (typeof step.elapsed_ms !== "number") return "";
+    const extra = livePlan && step.ended_at === null && typeof state.plan.observed_at === "number"
+      ? Math.max(0, clockNow - state.plan.observed_at * 1000) : 0;
+    return tr("web.step_elapsed", { duration: `${((step.elapsed_ms + extra) / 1000).toFixed(1)}s` });
+  };
   return <aside className={`inspector ${open ? "" : "is-closed"} ${narrow ? "narrow-open" : ""}`}>
     <div className="inspector-tabs" role="tablist">
       {tabs.map((item) => <button key={item} className={item === "permissions" && state.pending_interactions.length ? "pending-tab" : ""} role="tab" aria-selected={tab === item} onClick={() => setTab(item)}><span>{tr(`web.tab.${item}`)}</span>{tabCount(item) > 0 && <small className={item === "changes" ? "tab-positive" : ""}>{item === "changes" ? `(+${tabCount(item)})` : `(${tabCount(item)})`}</small>}</button>)}
@@ -501,29 +572,50 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
         <p>{state.plan.objective || state.session.user_goal || tr("web.no_plan")}</p>
         {steps.length ? <div className="progress"><i style={{ width: `${Math.round((completedSteps / steps.length) * 100)}%` }} /></div> : null}
       </section>
+      {state.plan.wait_reason && <p className="hint plan-wait" role="status">{waitText(state.plan.wait_reason)}</p>}
       <div className="inspector-plan">
         <div className="section-label"><span>{tr("web.execution_plan")} {steps.length ? `(${completedSteps}/${steps.length})` : ""}</span>{currentStep >= 0 && <span>{tr("web.step_active", { step: currentStep + 1 })}</span>}</div>
         <div className="step-list">{steps.map((step) => {
           const metadata = stepMeta(step.status, step.note);
-          return <article key={step.id} className={`step-card ${step.status}`}>{step.status === "completed" ? <Check size={15} weight="bold" /> : ["in_progress", "running", "active"].includes(step.status) ? <span className="step-spinner" aria-hidden="true" /> : <Circle size={15} />}<div><strong title={step.title}>{step.title}</strong><small title={metadata}>{metadata}</small></div>{["in_progress", "running", "active"].includes(step.status) && <span className="current-step">Current</span>}</article>;
+          const timing = stepTiming(step);
+          return <article key={step.id} className={`step-card ${step.status}`}>{step.status === "completed" ? <Check size={15} weight="bold" /> : ["in_progress", "running", "active"].includes(step.status) ? <span className="step-spinner" aria-hidden="true" /> : <Circle size={15} />}<div><strong title={step.title}>{step.title}</strong><small title={metadata}>{metadata}</small>{timing && <small>{timing}</small>}{typeof step.ended_at === "number" && <small>{tr("web.step_ended", { time: new Date(step.ended_at * 1000).toLocaleString() })}</small>}{step.wait_reason && <small className="plan-wait" role="status">{waitText(step.wait_reason)}</small>}</div>{["in_progress", "running", "active"].includes(step.status) && <span className="current-step">{tr("web.current_step")}</span>}</article>;
         })}</div>
       </div>
       {!state.plan.steps?.length && <p className="empty-small">{tr("web.no_plan")}</p>}
       <section className="goal-card">
         <div className="card-kicker"><span>{tr("web.accessed_files")}</span><span>{tr("web.files_count", { count: (state.accessed_files ?? []).length })}</span></div>
-        {(state.accessed_files ?? []).slice(0, 3).map((file) => <div className={`file-stat${/\+\d+/.test(file.access ?? "") ? " changed" : ""}`} key={`${file.call_id}-${file.path}`}><span>{file.path}</span><span>{file.access || ""}</span></div>)}
+        {accessedFiles.slice(-3).map((file) => {
+          const metadata = recentFileMeta[file.path] ?? {};
+          const access = file.access === "write" && metadata.additions !== undefined ? `+${metadata.additions} -${metadata.deletions ?? 0}` : file.access === "write" ? "MOD" : file.access === "read" ? "READ" : (file.access || "TOUCH").toUpperCase();
+          return <div className={`file-stat${file.access === "write" ? " changed" : ""}`} key={`${file.call_id}-${file.path}`}><span>{file.path}</span><span>{access}</span></div>;
+        })}
       </section>
       <section className="goal-card">
         <div className="card-kicker"><span>{tr("web.subagents")}</span><span>{(state.subagents ?? []).length ? tr("web.spawned_count", { count: (state.subagents ?? []).length }) : 0}</span></div>
-        {(state.subagents ?? []).map((agent) => <div className="subagent-row" key={agent.task_id}><span className="status-dot" /><span>{agent.task || agent.task_id}</span><span>{agent.status}</span></div>)}
-        {!(state.subagents ?? []).length && <p className="empty-small">{tr("web.no_subagents")}</p>}
-      </section>
+        {(state.subagents ?? []).map((agent) => <div className="subagent-row" key={agent.task_id}><span className="status-dot" /><span>{agent.task || agent.task_id}</span><span>{(agent.status || "unknown").replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())}</span></div>)}
+      {!(state.subagents ?? []).length && <p className="empty-small">{tr("web.no_subagents")}</p>}
+    </section>
     </div>}
     {tab === "files" && <div className="inspector-body">
-      <div className="section-label"><span>{tr("web.workspace_resources")}</span></div>
+      <div className="files-panel-head"><div className="section-label"><span>{tr("web.workspace_resources")}</span></div><button type="button" className="text-button" onClick={() => { setFilePath(""); setDirectory(""); setBrowseWorkspace((value) => !value); }}>{browseWorkspace ? tr("web.recent_files") : tr("web.browse_workspace")}</button></div>
       {panelError && <p className="form-error" role="alert">{panelError}</p>}
-      {files.map((entry) => <button className="resource-row" key={entry.path} onClick={() => api.file(sessionId, entry.path).then((file) => setFileText(file.binary ? "Binary file" : file.content)).catch((error) => setPanelError(String(error)))}><b>{entry.kind === "dir" ? "DIR" : "FILE"}</b><span>{entry.path}</span></button>)}
-      {!files.length && <p className="empty-small">{tr("web.dir_empty")}</p>}
+      {browseWorkspace ? <>
+        {directory && <button type="button" className="resource-row" onClick={() => { setFilePath(""); setDirectory(directory.split("/").slice(0, -1).join("/")); }}><Folder size={14} /><span>.. / {directory}</span></button>}
+        {files.map((entry) => <button className="resource-row" key={entry.path} onClick={() => { setPanelError(""); if (entry.kind === "dir") { setFilePath(""); setDirectory(entry.path); } else setFilePath(entry.path); }}><b>{entry.kind === "dir" ? "DIR" : "FILE"}</b><span>{entry.path}</span></button>)}
+        {!files.length && <p className="empty-small">{tr("web.dir_empty")}</p>}
+      </> : <>
+        <div className="accessed-file-list">{accessedFiles.slice(-8).map((file) => {
+          const metadata = recentFileMeta[file.path] ?? {};
+          const label = file.access === "write" ? "MOD" : file.access === "read" ? "READ" : (file.access || "TOUCH").toUpperCase();
+          const detail = file.access === "write" && (metadata.additions !== undefined || metadata.deletions !== undefined)
+            ? `+${metadata.additions ?? 0} -${metadata.deletions ?? 0}`
+            : typeof metadata.size === "number" ? `${(metadata.size / 1024).toFixed(1)} KB` : "";
+          return <button type="button" className="accessed-file" key={`${file.call_id}-${file.path}`} onClick={() => { setPanelError(""); setFilePath(file.path); }}>
+            <span className={`accessed-kind ${file.access === "write" ? "modified" : file.access === "read" ? "read" : "touched"}`}>{label}</span><span className="accessed-path" title={file.path}>{file.path}</span><span className={`accessed-detail${file.access === "write" ? " modified" : ""}`}>{detail}</span>
+          </button>;
+        })}</div>
+        {!accessedFiles.length && <p className="empty-small">{tr("web.no_accessed_files")}</p>}
+      </>}
       {fileText && <pre className="term-body">{fileText}</pre>}
     </div>}
     {tab === "changes" && <div className="inspector-body">
@@ -552,6 +644,17 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
       <div className="section-label"><span>{tr("web.security_policy")}</span></div>
       {panelError && <p className="form-error" role="alert">{panelError}</p>}
       <article className="policy-card"><div><strong>{tr("web.permission_mode")}</strong><span>{String(grants?.permission_mode ?? state.session.permission_mode ?? "default")}</span></div><small>{String(grants?.interaction_mode ?? state.session.interaction_mode ?? "agent")}</small></article>
+      {grants?.effective_policy?.map((policy) => <section className="policy-group" key={policy.operation}>
+        <div className="card-kicker"><span>{tr(`web.policy_operation.${policy.operation}`)}</span></div>
+        <article className="policy-card effective-policy">
+          <div><strong>{tr("web.policy_in_scope")}</strong><span>{tr(`web.policy_decision.${policy.defaults.in_scope.decision}`)}</span></div>
+          <small>{present(policy.defaults.in_scope.reason_code, policy.defaults.in_scope.reason_params, "")}</small>
+          {policy.operation !== "shell" && <><div><strong>{tr("web.policy_outside_scope")}</strong><span>{tr(`web.policy_decision.${policy.defaults.outside_scope.decision}`)}</span></div><small>{present(policy.defaults.outside_scope.reason_code, policy.defaults.outside_scope.reason_params, "")}</small></>}
+          {policy.directories.map((path) => <small className="mono policy-path" key={path}>{path}</small>)}
+          {policy.rules.map((rule, index) => <div className="policy-rule" key={index}><span>{tr(`web.policy_decision.${rule.effect}`)} · {rule.scope === "session" ? tr("web.session_scope") : tr("web.user_scope")}{rule.conditional ? ` · ${tr("web.policy_conditional")}` : ""}{rule.inactive ? ` · ${tr("web.policy_inactive")}` : ""}</span><small>{rule.description}</small></div>)}
+          {policy.constraints.map((constraint) => <small className="policy-constraint" key={constraint}>{tr(`web.policy_constraint.${constraint}`)}</small>)}
+        </article>
+      </section>)}
       {(sessionDirectories.length > 0 || persistentDirectories.length > 0) && <section className="policy-group">
         <div className="card-kicker"><span>{tr("web.additional_directories")}</span><span>{sessionDirectories.length + persistentDirectories.length}</span></div>
         {[...sessionDirectories.map((path) => ({ path, scope: "session" })), ...persistentDirectories.map((path) => ({ path, scope: "persistent" }))].map(({ path, scope }) => <article className="policy-card policy-directory" key={`${scope}:${path}`}><div><strong className="mono">{path}</strong><span className={scope === "persistent" ? "policy-scope persistent" : "policy-scope"}>{scope === "persistent" ? tr("web.user_scope") : tr("web.session_scope")}</span></div></article>)}
@@ -631,6 +734,7 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
   const statusLabel = (session: SessionSummary) => {
     const execution = session.execution || session.status;
     if (session.pending_interactions) return tr("web.awaiting_permission");
+    if (execution === "idle" && ["completed", "failed", "cancelled", "interrupted"].includes(session.agent_status ?? "")) return tr(`web.status.${session.agent_status}`);
     if (session.active && execution === "idle") return tr("web.status.paused");
     return tr(`web.status.${execution}`);
   };
@@ -639,7 +743,8 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
     {active.map((session) => {
       const title = sessionTitle(session, tr);
       const current = selected === session.session_id;
-      const execution = session.execution || session.status;
+      const execution = (session.execution || session.status) === "idle" && ["completed", "failed", "cancelled", "interrupted"].includes(session.agent_status ?? "")
+        ? session.agent_status : session.execution || session.status;
       const when = formatAgo(session.saved_at) || (session.environment === "worktree" ? tr("web.isolated_option") : "");
       return <div className="session-entry" key={session.session_id}>
         <button className={current ? "task-card" : "task-row"} onClick={() => onSelect(session)}>

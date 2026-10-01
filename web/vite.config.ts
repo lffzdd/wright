@@ -8,7 +8,7 @@ const rootDir = fileURLToPath(new URL(".", import.meta.url));
 export default defineConfig({
   plugins: [react()],
   build: {
-    outDir: resolve(rootDir, "../src/wright/web/static"),
+    outDir: resolve(rootDir, "../src/wright/interfaces/web/static"),
     emptyOutDir: true,
   },
   test: {

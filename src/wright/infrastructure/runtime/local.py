@@ -139,7 +139,7 @@ class LocalExecutionBackend:
             relative = Path(resolved.value).relative_to(self.workspace_dir)
         except ValueError:
             return resolved.value
-        return str(relative) if str(relative) != "." else "."
+        return relative.as_posix()
 
     def metadata(self, path: ExecutionPath) -> FileMetadata:
         local = self._local(path)
@@ -164,10 +164,12 @@ class LocalExecutionBackend:
     def read_text(
         self, path: ExecutionPath, *, encoding: str, errors: str = "strict"
     ) -> str:
-        return self._local(path).read_text(encoding=encoding, errors=errors)
+        with self._local(path).open("r", encoding=encoding, errors=errors, newline="") as source:
+            return source.read()
 
     def write_text(self, path: ExecutionPath, content: str, *, encoding: str) -> None:
-        self._local(path).write_text(content, encoding=encoding)
+        with self._local(path).open("w", encoding=encoding, newline="") as target:
+            target.write(content)
 
     def ensure_directory(self, path: ExecutionPath) -> None:
         self._local(path).mkdir(parents=True, exist_ok=True)

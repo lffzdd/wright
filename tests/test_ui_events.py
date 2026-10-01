@@ -130,7 +130,9 @@ def test_interaction_broker_keeps_transport_request_id_distinct_from_tool_call_i
     assert result == ["allow_once"]
 
 
-def test_child_events_share_the_bus_without_entering_the_root_transcript():
+def test_child_events_share_the_bus_without_entering_the_root_transcript(monkeypatch):
+    monkeypatch.setattr("wright.interfaces.i18n.locale._current", "en")
+
     class Sink:
         def __init__(self) -> None:
             self.deltas: list[str] = []

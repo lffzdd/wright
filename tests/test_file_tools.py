@@ -35,9 +35,9 @@ def _runtime(tmp_path):
 
 
 def test_list_directory_is_sorted_bounded_and_hides_dotfiles(tmp_path):
-    (tmp_path / "b.txt").write_text("b", encoding="utf-8")
-    (tmp_path / "a.txt").write_text("a", encoding="utf-8")
-    (tmp_path / ".secret").write_text("x", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("b", encoding="utf-8", newline="")
+    (tmp_path / "a.txt").write_text("a", encoding="utf-8", newline="")
+    (tmp_path / ".secret").write_text("x", encoding="utf-8", newline="")
     (tmp_path / "dir").mkdir()
 
     result = list_directory(runtime=_runtime(tmp_path), max_entries=2)
@@ -49,8 +49,8 @@ def test_list_directory_is_sorted_bounded_and_hides_dotfiles(tmp_path):
 
 def test_glob_and_grep_have_distinct_structured_results(tmp_path):
     (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "a.py").write_text("needle = 1\n", encoding="utf-8")
-    (tmp_path / "src" / "b.txt").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "src" / "a.py").write_text("needle = 1\n", encoding="utf-8", newline="")
+    (tmp_path / "src" / "b.txt").write_text("needle\n", encoding="utf-8", newline="")
     runtime = _runtime(tmp_path)
 
     paths = glob_files("**/*.py", runtime=runtime)
@@ -64,7 +64,7 @@ def test_glob_and_grep_have_distinct_structured_results(tmp_path):
 
 
 def test_read_file_supports_line_ranges_and_continuation(tmp_path):
-    (tmp_path / "a.txt").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    (tmp_path / "a.txt").write_text("one\ntwo\nthree\n", encoding="utf-8", newline="")
 
     ranged = read_file("a.txt", start_line=2, end_line=3, runtime=_runtime(tmp_path))
     clipped = read_file("a.txt", start_line=2, max_chars=2, runtime=_runtime(tmp_path))
@@ -84,7 +84,7 @@ def test_read_file_supports_line_ranges_and_continuation(tmp_path):
 def test_relative_file_paths_follow_session_cwd(tmp_path):
     nested = tmp_path / "nested"
     nested.mkdir()
-    (nested / "a.txt").write_text("inside", encoding="utf-8")
+    (nested / "a.txt").write_text("inside", encoding="utf-8", newline="")
     session = Session.create("file tools", tmp_path)
     session.set_cwd(nested)
     runtime = tool_runtime_for_session(session, workspace_dir=tmp_path)
@@ -121,7 +121,7 @@ def test_granted_extra_root_allows_edit_and_glob_with_absolute_paths(tmp_path):
     extra = tmp_path / "extra"
     workspace.mkdir()
     extra.mkdir()
-    (extra / "a.txt").write_text("old line\n", encoding="utf-8")
+    (extra / "a.txt").write_text("old line\n", encoding="utf-8", newline="")
     session = Session.create("extra root", workspace)
     session.add_working_directory(extra)
     runtime = tool_runtime_for_session(session, workspace_dir=workspace)
@@ -143,7 +143,7 @@ def test_read_outside_asks_until_permission_allows(tmp_path):
     extra = tmp_path / "extra"
     workspace.mkdir()
     extra.mkdir()
-    (extra / "a.txt").write_text("secret\n", encoding="utf-8")
+    (extra / "a.txt").write_text("secret\n", encoding="utf-8", newline="")
     session = Session.create("read outside", workspace)
     denied = _file_executor(
         session, [read_file_tool]
@@ -217,7 +217,7 @@ def _file_executor(session, tools, handler=None):
 
 
 def test_edit_file_replaces_unique_text_and_rejects_ungranted_escape(tmp_path):
-    (tmp_path / "a.txt").write_text("old line\n", encoding="utf-8")
+    (tmp_path / "a.txt").write_text("old line\n", encoding="utf-8", newline="")
     runtime = _runtime(tmp_path)
     assert read_file("a.txt", runtime=runtime).ok
 
@@ -235,7 +235,7 @@ def test_edit_file_replaces_unique_text_and_rejects_ungranted_escape(tmp_path):
 
 
 def test_edit_file_rejects_ambiguous_matches_with_nearby_context(tmp_path):
-    (tmp_path / "a.txt").write_text("alpha foo\nfoo\nomega foo\n", encoding="utf-8")
+    (tmp_path / "a.txt").write_text("alpha foo\nfoo\nomega foo\n", encoding="utf-8", newline="")
     runtime = _runtime(tmp_path)
     assert read_file("a.txt", runtime=runtime).ok
     result = edit_file("a.txt", "foo", "bar", runtime=runtime)
@@ -249,7 +249,7 @@ def test_edit_file_rejects_ambiguous_matches_with_nearby_context(tmp_path):
 
 
 def test_edit_file_replace_all_replaces_every_occurrence(tmp_path):
-    (tmp_path / "a.txt").write_text("foo\nfoo\nfoo\n", encoding="utf-8")
+    (tmp_path / "a.txt").write_text("foo\nfoo\nfoo\n", encoding="utf-8", newline="")
     runtime = _runtime(tmp_path)
     assert read_file("a.txt", runtime=runtime).ok
     result = edit_file(
@@ -260,7 +260,7 @@ def test_edit_file_replace_all_replaces_every_occurrence(tmp_path):
 
 
 def test_edit_file_not_found_reports_whitespace_mismatch(tmp_path):
-    (tmp_path / "a.txt").write_text("hello world\n", encoding="utf-8")
+    (tmp_path / "a.txt").write_text("hello world\n", encoding="utf-8", newline="")
     runtime = _runtime(tmp_path)
     assert read_file("a.txt", runtime=runtime).ok
     result = edit_file(
@@ -274,7 +274,7 @@ def test_edit_file_not_found_reports_whitespace_mismatch(tmp_path):
 
 
 def test_edit_file_caps_ambiguous_previews(tmp_path):
-    (tmp_path / "a.txt").write_text("foo\n" * 6, encoding="utf-8")
+    (tmp_path / "a.txt").write_text("foo\n" * 6, encoding="utf-8", newline="")
     runtime = _runtime(tmp_path)
     assert read_file("a.txt", runtime=runtime).ok
     result = edit_file("a.txt", "foo", "bar", runtime=runtime)
@@ -285,7 +285,7 @@ def test_edit_file_caps_ambiguous_previews(tmp_path):
 
 
 def test_edit_file_requires_a_fresh_read(tmp_path):
-    (tmp_path / "a.txt").write_text("old line\n", encoding="utf-8")
+    (tmp_path / "a.txt").write_text("old line\n", encoding="utf-8", newline="")
     runtime = _runtime(tmp_path)
 
     unread = edit_file("a.txt", "old line\n", "new line\n", runtime=runtime)
@@ -294,7 +294,7 @@ def test_edit_file_requires_a_fresh_read(tmp_path):
     assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "old line\n"
 
     assert read_file("a.txt", runtime=runtime).ok
-    (tmp_path / "a.txt").write_text("tampered\n", encoding="utf-8")
+    (tmp_path / "a.txt").write_text("tampered\n", encoding="utf-8", newline="")
     stale = edit_file("a.txt", "tampered\n", "new line\n", runtime=runtime)
     assert not stale.ok
     assert stale.data["reason"] == "stale"
@@ -325,7 +325,7 @@ def test_write_file_creates_without_a_prior_read(tmp_path):
 
 def test_write_file_requires_a_complete_read_to_overwrite(tmp_path):
     path = tmp_path / "a.txt"
-    path.write_text("old line\n", encoding="utf-8")
+    path.write_text("old line\n", encoding="utf-8", newline="")
     runtime = _runtime(tmp_path)
 
     unread = write_file("a.txt", "new line\n", runtime=runtime)
@@ -351,10 +351,10 @@ def test_write_file_requires_a_complete_read_to_overwrite(tmp_path):
 
 def test_write_file_rejects_stale_overwrite(tmp_path):
     path = tmp_path / "a.txt"
-    path.write_text("old line\n", encoding="utf-8")
+    path.write_text("old line\n", encoding="utf-8", newline="")
     runtime = _runtime(tmp_path)
     assert read_file("a.txt", runtime=runtime).ok
-    path.write_text("tampered\n", encoding="utf-8")
+    path.write_text("tampered\n", encoding="utf-8", newline="")
 
     stale = write_file("a.txt", "new line\n", runtime=runtime)
 
@@ -364,7 +364,7 @@ def test_write_file_rejects_stale_overwrite(tmp_path):
 
 
 def test_file_view_is_shared_across_replaced_runtimes(tmp_path):
-    (tmp_path / "a.txt").write_text("old line\n", encoding="utf-8")
+    (tmp_path / "a.txt").write_text("old line\n", encoding="utf-8", newline="")
     runtime = _runtime(tmp_path)
     assert read_file(
         "a.txt", runtime=replace(runtime, tool_name="read_file")
@@ -379,7 +379,7 @@ def test_file_view_is_shared_across_replaced_runtimes(tmp_path):
 
 
 def test_read_file_stubs_identical_unchanged_rereads(tmp_path, monkeypatch):
-    (tmp_path / "a.txt").write_text("one\ntwo\n", encoding="utf-8")
+    (tmp_path / "a.txt").write_text("one\ntwo\n", encoding="utf-8", newline="")
     runtime = _runtime(tmp_path)
 
     first = read_file("a.txt", runtime=runtime)
@@ -404,7 +404,7 @@ def test_read_file_stubs_identical_unchanged_rereads(tmp_path, monkeypatch):
 
 def test_edit_file_accepts_complete_view_when_mtime_lies(tmp_path):
     path = tmp_path / "a.txt"
-    path.write_text("old line\n", encoding="utf-8")
+    path.write_text("old line\n", encoding="utf-8", newline="")
     runtime = _runtime(tmp_path)
     assert read_file("a.txt", runtime=runtime).ok
     os.utime(path, ns=(path.stat().st_atime_ns, path.stat().st_mtime_ns + 1_000_000))
@@ -417,7 +417,7 @@ def test_edit_file_accepts_complete_view_when_mtime_lies(tmp_path):
 
 def test_edit_file_rejects_partial_view_when_mtime_lies(tmp_path):
     path = tmp_path / "a.txt"
-    path.write_text("one\ntwo\n", encoding="utf-8")
+    path.write_text("one\ntwo\n", encoding="utf-8", newline="")
     runtime = _runtime(tmp_path)
     assert read_file("a.txt", start_line=1, end_line=1, runtime=runtime).ok
     os.utime(path, ns=(path.stat().st_atime_ns, path.stat().st_mtime_ns + 1_000_000))
@@ -430,7 +430,7 @@ def test_edit_file_rejects_partial_view_when_mtime_lies(tmp_path):
 
 
 def test_file_view_stores_raw_content_not_numbered_output(tmp_path):
-    (tmp_path / "a.txt").write_text("hello\n", encoding="utf-8")
+    (tmp_path / "a.txt").write_text("hello\n", encoding="utf-8", newline="")
     runtime = _runtime(tmp_path)
     result = read_file("a.txt", runtime=runtime)
     view = _remembered_file_view(
@@ -469,7 +469,7 @@ def test_write_file_creates_utf8_without_bom(tmp_path):
 
 def test_write_and_edit_preserve_utf8_bom(tmp_path):
     path = tmp_path / "a.txt"
-    path.write_text("old line\n", encoding="utf-8-sig")
+    path.write_text("old line\n", encoding="utf-8-sig", newline="")
     runtime = _runtime(tmp_path)
     assert read_file("a.txt", runtime=runtime).ok
 

@@ -24,6 +24,7 @@ def _fake_runtime(session_id, root):
     publisher = EventPublisher(project_id="project", session_id=session_id)
     return SimpleNamespace(
         session_state=SimpleNamespace(
+            agent_task_id=None,
             session_id=session_id,
             status="running",
             user_goal="test",

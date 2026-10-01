@@ -6,7 +6,6 @@ import { parseEvent } from "./protocol";
 import { applyEvent } from "./reducer";
 import type { SessionSummary, Snapshot, ViewState } from "./types";
 import { MemoryDialog, RulesDialog, SchedulesDialog, SearchDialog, SettingsDialog } from "./workspace/panels";
-import { EmptyFixture, VisualFixture } from "./workspace/visual-fixture";
 import {
   Composer, Inspector, SessionRail, Timeline, emptyDraft, taskCode, sessionTitle, EnvironmentChoice,
   type Draft,
@@ -79,6 +78,27 @@ export default function App() {
     });
   }, []);
 
+  // The event stream carries text and tool progress; derived inspector data
+  // (context categories, accessed files, subagents) lives in the snapshot.
+  useEffect(() => {
+    if (!selected || browsing !== "live" || !state || state.resync) return;
+    const sessionId = selected;
+    const generation = epoch.current;
+    const timer = window.setTimeout(() => {
+      api.snapshot(sessionId).then((snapshot) => {
+        if (epoch.current !== generation) return;
+        setState((current) => current?.session.session_id === sessionId && snapshot.last_seq >= current.last_seq ? {
+          ...current,
+          plan: snapshot.plan,
+          context_breakdown: snapshot.context_breakdown,
+          accessed_files: snapshot.accessed_files,
+          subagents: snapshot.subagents,
+        } : current);
+      }).catch(() => undefined);
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [selected, browsing, state?.last_seq, state?.resync]);
+
   const refreshSessions = useCallback(async () => {
     const id = workspaceId.current;
     const items = id && launchId.current && id !== launchId.current
@@ -89,6 +109,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!booted) return;
     let mounted = true;
     let pending = false;
     const measure = async () => {
@@ -108,7 +129,7 @@ export default function App() {
     void measure();
     const timer = window.setInterval(() => void measure(), 10_000);
     return () => { mounted = false; window.clearInterval(timer); };
-  }, []);
+  }, [booted]);
 
   const selectedProjectId = String(workspaceId.current || project?.project_id || "");
   useEffect(() => {
@@ -136,7 +157,7 @@ export default function App() {
           ? [core.persona, core.human_profile, core.project_anchor].filter((value) => typeof value === "string" && value.trim().length > 0).length + semantic.length + episodes.length
           : null,
         rules: rulesResult.status === "fulfilled"
-          ? rulesResult.value.rules.filter((rule) => typeof rule.id === "string" && rule.id.length > 0).length
+          ? (rulesResult.value.rules ?? []).filter((rule) => typeof rule.id === "string" && rule.id.length > 0).length
           : null,
         schedules: schedulesResult.status === "fulfilled" ? schedulesResult.value.length : null,
       });
@@ -213,11 +234,6 @@ export default function App() {
   }, [sessionActionsOpen]);
 
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("visual") === "fixture") {
-      setLocale("en");
-      applyTheme("dark");
-      return;
-    }
     document.documentElement.classList.add("dark");
     let cancelled = false;
     bootstrap().then(async () => {
@@ -232,7 +248,6 @@ export default function App() {
         setLocale(prefs.interface_language);
         applyTheme(prefs.theme);
         setInspectorOpen(prefs.inspector_open);
-        setNarrowInspector(prefs.inspector_open);
       }
       setProject(projectData);
       launchId.current = String(projectData.project_id ?? "");
@@ -356,7 +371,7 @@ export default function App() {
         });
         if ([
           "turn.started", "turn.completed", "turn.failed", "turn.cancelled",
-          "interaction.requested", "interaction.resolved", "session.status_changed",
+          "interaction.requested", "interaction.resolved", "session.status_changed", "session.policy_updated",
         ].includes(event.type)) {
           refreshSessions().catch(() => undefined);
         }
@@ -583,9 +598,6 @@ export default function App() {
     ? tr("web.step_of", { current: currentStep >= 0 ? currentStep + 1 : Math.min(planSteps.length, planSteps.filter((step) => step.status === "completed").length + 1), total: planSteps.length })
     : "";
 
-  const visual = new URLSearchParams(window.location.search).get("visual");
-  if (visual === "fixture") return <VisualFixture />;
-  if (visual === "empty") return <EmptyFixture />;
   if (fatal && !project) return <main className="fatal"><Warning size={28} /><h1>{tr("web.fatal_title")}</h1><p>{fatal}</p><button className="button primary" onClick={() => location.reload()}>{tr("web.reload")}</button></main>;
   const connection = state?.connection ?? (booted ? "idle" : "connecting");
   const agentStatus = state?.session.agent_status;
@@ -687,7 +699,7 @@ export default function App() {
                 <span className="meter slim context-meter-segments">
                   {breakdown?.categories?.length ? breakdown.categories.map((category) => {
                     const segment = category.id === "system_prompt" ? "prompt" : category.id === "history" ? "history" : "tools";
-                    return <i key={category.id} className={`context-segment ${segment}`} style={{ width: `${Math.max(0, category.share * 100)}%` }} />;
+                    return <i key={category.id} className={`context-segment ${segment}`} style={{ width: `${breakdown.limit ? Math.min(100, Math.max(0, category.tokens / breakdown.limit * 100)) : 0}%` }} />;
                   }) : <i className="context-segment prompt" style={{ width: `${contextWidth}%` }} />}
                 </span>
               </div>}

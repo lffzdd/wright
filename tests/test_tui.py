@@ -255,6 +255,7 @@ def test_terminal_uses_default_driver_outside_iterm_and_keeps_user_override():
     assert "TEXTUAL_DRIVER" not in overridden_environment
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="iTerm driver requires POSIX termios")
 def test_iterm_driver_uses_xterm_shift_enter_protocol(monkeypatch):
     import textual.constants
     from textual._xterm_parser import XTermParser

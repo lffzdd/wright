@@ -105,7 +105,7 @@ selector 成功、失败或没有 selector 时，注入的索引都只来自这�
 
 ## 并发
 
-写入在目录锁 `.semantic.lock` 上使用 `fcntl` 排他锁，不只靠进程内的线程锁。文件用临时文件写入后 `os.replace`，失败时删掉临时文件，不留半截正文。
+写入在目录锁 `.semantic.lock` 上使用基于 `portalocker` 的跨平台排他锁（Windows、Linux、macOS），不只靠进程内的线程锁。文件用临时文件写入后 `os.replace`，失败时删掉临时文件，不留半截正文。锁文件在释放后保留，进程退出时由操作系统释放锁。
 
 更新必须带读到的 `revision`。锁内发现 revision 已变时返回冲突，当前 revision 写在错误里，不自动重试覆盖。调用方重新读取后再决定。停用之后，基于旧 revision 的更新不能把记录悄悄改回 active。
 

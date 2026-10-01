@@ -1,4 +1,5 @@
 import json
+import os
 
 import pytest
 
@@ -68,7 +69,8 @@ def test_checkpoint_round_trips_complete_session_state(tmp_path):
     path = store.save(original)
     restored = store.load(original.session_id)
 
-    assert path.stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == 0o600
     assert restored.session_id == original.session_id
     assert restored.current_run_status() == "completed"
     assert restored.current_goal() == "checkpoint goal"

@@ -83,6 +83,12 @@ Wright binds only to `127.0.0.1`. At startup it creates a one-time bootstrap
 token in the URL fragment, exchanges it for an HttpOnly SameSite cookie, and
 removes the fragment in the browser.
 
+After changing the Web frontend, run `npm ci` and `npm run build` from `web/`.
+Vite writes the production bundle into `src/wright/interfaces/web/static`, the
+same directory served by `wright --ui web`. The normal `/` entry renders the
+reference-inspired workspace with real session data; no visual fixture mode is
+required or shipped.
+
 For Git projects, new Web sessions use independent worktrees by default under
 `~/.wright/worktrees/<project-id>/<session-id>` on branches named
 `wright/<session-id>`. They start from the current checkout's `HEAD`; uncommitted

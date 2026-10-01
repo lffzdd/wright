@@ -41,6 +41,7 @@ def add_grant(service: Any, rule: dict[str, Any]) -> dict[str, Any]:
     except (GrantError, TypeError, ValueError) as exc:
         raise SessionServiceError(str(exc)) from exc
     service.persist()
+    service.publisher.publish("session.policy_updated", {})
     return created
 
 
@@ -58,6 +59,7 @@ def revoke_grant(service: Any, rule_id: str, *, confirm: bool) -> dict[str, Any]
         raise SessionServiceError(str(exc)) from exc
     if result.get("scope") == "session":
         service.persist()
+    service.publisher.publish("session.policy_updated", {})
     return result
 
 
@@ -77,6 +79,7 @@ def change_directory_grant(service: Any, **fields: Any) -> dict[str, Any]:
         raise SessionServiceError(str(exc)) from exc
     if result.get("scope") == "session":
         service.persist()
+    service.publisher.publish("session.policy_updated", {})
     return result
 
 

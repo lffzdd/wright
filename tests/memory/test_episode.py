@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from wright.application.memory.assembly import assemble_memory_manager
@@ -68,7 +70,8 @@ def test_episode_is_compact_sanitized_and_idempotent(tmp_path):
     assert "secret-must-not-be-persisted" not in raw
     assert "secret-result-must-not-be-persisted" not in raw
     assert first.usage == {"prompt_tokens": 18, "completion_tokens": 8, "total_tokens": 26}
-    assert store.path_for(first.id).stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":  # Windows chmod only controls the read-only flag.
+        assert store.path_for(first.id).stat().st_mode & 0o777 == 0o600
 
 
 def test_episode_id_distinguishes_turns_cancelled_before_first_step(tmp_path):

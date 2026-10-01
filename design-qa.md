@@ -1,4 +1,52 @@
-# Wright Web reference design QA
+# Wright Web production integration QA — 2026-09-30
+
+This current section supersedes the historical fixture-based evidence below.
+
+- Source visual truth: `web/example.html` and `web/example.png` (2880 × 1920 pixels, normalized to the design's 1440 × 960 CSS viewport).
+- Production route: `http://127.0.0.1:18765/`, served by Wright's real FastAPI app under WSL. Authentication, session creation, model calls, tool events and approval decisions used the normal APIs and WebSocket. No visual query, injected state, mocked network or alternate React page was used.
+- Implementation: `web/qa/production-session-1440x960.png` and `web/qa/production-approval-1440x960.png`, 1440 × 960 pixels at 1×.
+- Full comparison: `web/qa/production-reference-comparison.png` (2880 × 960 pixels). Source and production both show the dark desktop workspace with a pending shell approval. Production contains the real verification conversation; the reference contains its Redis example.
+- Focused comparison: `web/qa/production-approval-detail.png`. Both approval cards were opened together for inspection.
+
+## Findings and repairs
+
+- Removed `VisualFixture`, `EmptyFixture`, their URL branches and Inspector's `staticData` bypass. Old visual queries now authenticate and render the production App, covered by regression tests.
+- Consolidated Vite output and the server's static path into `src/wright/interfaces/web/static`; removed the duplicate legacy bundle. Production assets were rebuilt.
+- Real execution exposed stale inspector metadata: context and accessed files stayed at zero until reload. The App now refreshes derived snapshot data after streamed events, retaining the live timeline and rejecting older snapshot watermarks.
+- Real execution exposed duplicate final replies when model/completion transport turn ids differed. Both events now use the active turn's identity; the regression test retains one answer while preserving identical answers in distinct turns.
+- Context category `share` describes a fraction of used tokens, not the window limit. Segment widths now use `tokens / limit`: the inspected production page uses 42.0k / 128k and fills approximately 33%, rather than filling the entire bar.
+- Files directories now call the tree endpoint and support parent navigation. File reads and directory requests discard results after the owner changes.
+- Sidebar terminal status now agrees with the main completed/failed/cancelled status instead of describing completed work as paused.
+- Health polling now starts after authenticated bootstrap.
+
+## Visual and interaction validation
+
+- Typography: the production font stacks, compact labels, monospace commands and heading hierarchy follow the source; real Chinese content wraps within the same regions.
+- Layout rhythm: measured header 1440 × 38; left rail 230 px, conversation 830 px, inspector 380 px; column height 922 px. Composer and inspector controls remain visible. Pending production approval is 793 × 225 px; the source is approximately 798 × 207 px. The real permission scope/risk copy requires additional wrapping.
+- Colors/tokens: dark surfaces, subtle borders, purple accent, amber approval card, green completion and blue/amber context segments match the source's semantic roles.
+- Assets: retained the existing Phosphor icon library and Wright identity. No raster illustrations are required by this workspace design. Source user/model/project identifiers remain sample content and are not transplanted into production.
+- Copy/content: project, branch, task, model, token counts, file accesses, scope and available permission choices come from real data. Only choices supplied by the backend are shown; the source's session-grant button is absent when the backend offers only single-invocation approval and denial. Plans/subagents have honest empty states for this non-planning, non-delegated task.
+- Primary flow tested: normal login → create actual session → receive real model/tool results → complete → reload and restore → browse `web/` and read `example.html` → run a print-only shell verification → pending permission card → Allow Once → shell output and final “验证完成” reply.
+- Browser console: no warnings or errors in the inspected production tab.
+- Automated validation: 51 frontend tests; production TypeScript/Vite build; 14 backend web-server tests under WSL.
+
+## Limits
+
+Native Windows backend startup currently fails on the existing POSIX-only `fcntl` imports; this frontend task did not change file-lock semantics. WSL was used for the actual backend validation. The repo's mounted Windows permissions also appear as preexisting Git mode changes to WSL, so the visible dirty count is environment-specific. No review acceptance or revert was performed.
+
+At 1024 × 768, the initial inspector drawer previously overlapped the composer. Removed automatic narrow-drawer opening from saved desktop preferences. Post-fix evidence: `web/qa/production-1024x768.png`; inspector left edge 1043 px (offscreen), composer right edge 1014 px, both real conversation replies remain intact. The browser viewport override was reset after verification.
+
+No actionable P0/P1/P2 design differences remain in the inspected dark desktop and narrow-screen states. Light-theme inspection was not repeated in this pass.
+
+## 2026-09-30 Inspector tabs follow-up
+
+**Final result: latest five-panel visual check is pending.** Task, Files, Changes, Permissions, and Context were all opened in an authentic Wright session. That session had a different goal and a repository with 500+ local changes; after reloading the current build (`index-BGXEakQ9.js`), Wright had zero active sessions. The earlier tab captures came from `index-DF5U5UCq.js` and do not certify the current source build. Browser policy also rejected opening the local `file://` reference, so its five tabs were compared from `web/example.html` source markup and styles. See [`web/qa/inspector-tabs-comparison.md`](web/qa/inspector-tabs-comparison.md) for per-tab findings and [`web/qa/backend-implementation-gaps.md`](web/qa/backend-implementation-gaps.md) for backend contracts to revisit.
+
+final result: passed
+
+---
+
+# Historical Wright Web reference design QA (superseded)
 
 ## Target and evidence
 

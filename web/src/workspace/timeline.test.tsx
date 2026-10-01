@@ -52,6 +52,15 @@ describe("real timeline projection", () => {
     expect(screen.queryByText("draft")).toBeNull();
   });
 
+  it("renders one answer when completion events use a different transport turn id", () => {
+    let state = emit(fresh(), "turn.started", { prompt: "Inspect the real page" }, "run-1");
+    state = emit(state, "content.final", { content: "Production answer" }, "model-step-1");
+    state = emit(state, "turn.completed", {}, "completion-1");
+    render(transcript(state));
+    expect(screen.getAllByText("Production answer")).toHaveLength(1);
+    expect(state.timeline?.filter((item) => item.role === "assistant")).toHaveLength(1);
+  });
+
   it("shows real reasoning separately from the final answer", () => {
     let state = emit(fresh(), "turn.started", { prompt: "Check it" });
     state = emit(state, "reasoning.delta", { piece: "Inspecting the input" });

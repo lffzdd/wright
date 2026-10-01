@@ -8,9 +8,7 @@ and background supervisor.
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
-import os
 import queue
 import threading
 from collections.abc import Callable, Sequence
@@ -22,6 +20,7 @@ from uuid import uuid4
 from ...domain.model.agent.control import AgentControlPlane
 from ...domain.model.scheduling import JobRun
 from ...domain.policy import PermissionSettings
+from ...infrastructure.file_lock import FileLock, FileLockUnavailable
 from ...infrastructure.llm.llm import LLMClient
 from ...infrastructure.persistence.autonomy_store import AutonomyStore
 from ...infrastructure.storage.artifacts import ArtifactStore
@@ -83,7 +82,7 @@ class ApplicationHost:
         self._lock = threading.RLock()
         self._state = "new"
         self._closed = threading.Event()
-        self._lock_fd: int | None = None
+        self._project_lock: FileLock | None = None
         self._event_thread: threading.Thread | None = None
         self._coordinator = directory_coordinator
         self._stop = threading.Event()
@@ -220,7 +219,7 @@ class ApplicationHost:
 
         SQLite's atomic claim handles normal concurrent polling, while this
         lock prevents a second host from classifying a live owner's running
-        rows as crash recovery. ``flock`` is released by the OS if its process
+        rows as crash recovery. The file lock is released by the OS if its process
         dies, so it cannot leave a stale PID file behind.
         """
         # Durable definitions retain their source-session association, but
@@ -229,24 +228,19 @@ class ApplicationHost:
         # writes concurrently merely because their source sessions differ.
         scope = hashlib.sha256(str(self.workspace_dir).encode("utf-8")).hexdigest()[:16]
         lock_path = self.store.path.parent / f"{scope}.host.lock"
-        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        lock = FileLock(lock_path, blocking=False)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as exc:
-            os.close(fd)
+            lock.acquire()
+        except FileLockUnavailable as exc:
             raise RuntimeError(
                 f"another ApplicationHost already owns {self.workspace_dir}"
             ) from exc
-        self._lock_fd = fd
+        self._project_lock = lock
 
     def _release_project_lock(self) -> None:
-        fd, self._lock_fd = self._lock_fd, None
-        if fd is None:
-            return
-        try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        finally:
-            os.close(fd)
+        lock, self._project_lock = self._project_lock, None
+        if lock is not None:
+            lock.release()
 
     def _dispatch(self, run_id: str, scheduler: JobScheduler) -> None:
         """Launch a claimed run without borrowing a source Session resource."""

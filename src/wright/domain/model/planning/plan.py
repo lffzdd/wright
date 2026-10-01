@@ -7,8 +7,10 @@ layer. Overall status is derived from step status.
 
 from __future__ import annotations
 
+import math
 import re
 import threading
+import time
 from dataclasses import dataclass
 from typing import Literal
 
@@ -49,6 +51,8 @@ class PlanStep:
     title: str
     status: PlanStepStatus = "pending"
     note: str = ""
+    started_at: float | None = None
+    ended_at: float | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -56,6 +60,8 @@ class PlanStep:
             "title": self.title,
             "status": self.status,
             "note": self.note,
+            "started_at": self.started_at,
+            "ended_at": self.ended_at,
         }
 
 
@@ -129,6 +135,7 @@ class PlanManager:
                 "Invalid step status. It must be pending, in_progress, completed, blocked, or skipped.",
                 code="plan.bad_status",
             )
+        normalized_note = self._clean_note(note) if note is not None else None
 
         with self._lock:
             step = self._find_step(step_id)
@@ -164,9 +171,14 @@ class PlanManager:
                 self._require_predecessors_terminal(step)
 
             changed = step.status != status
+            if changed:
+                now = time.time()
+                if status == "in_progress" and step.started_at is None:
+                    step.started_at = now
+                if status in _TERMINAL_STATUSES:
+                    step.ended_at = max(now, step.started_at or now)
             step.status = status
-            if note is not None:
-                normalized_note = self._clean_note(note)
+            if normalized_note is not None:
                 changed = changed or step.note != normalized_note
                 step.note = normalized_note
             if changed:
@@ -199,6 +211,7 @@ class PlanManager:
             for step in self.steps:
                 if step.status not in _TERMINAL_STATUSES:
                     step.status = "skipped"
+                    step.ended_at = max(time.time(), step.started_at or 0)
                     marker = f"Replanned: {reason}"
                     combined = (
                         f"{step.note}; {marker}".strip("; ")
@@ -282,7 +295,13 @@ class PlanManager:
             if status not in _VALID_STEP_STATUSES:
                 raise PlanError(f"steps[{index}].status is invalid: {status}", code="plan.snapshot")
             note = self._clean_note(item.get("note", ""))
-            restored_steps.append(PlanStep(step_id, title, status, note))
+            started = self._timestamp(item.get("started_at"), "started_at")
+            ended = self._timestamp(item.get("ended_at"), "ended_at")
+            if ended is not None and started is not None and ended < started:
+                raise PlanError("ended_at cannot precede started_at", code="plan.snapshot")
+            if ended is not None and status not in _TERMINAL_STATUSES:
+                raise PlanError("only terminal steps can have ended_at", code="plan.snapshot")
+            restored_steps.append(PlanStep(step_id, title, status, note, started, ended))
 
         if sum(step.status == "in_progress" for step in restored_steps) > 1:
             raise PlanError("plan snapshot has more than one in_progress step", code="plan.snapshot")
@@ -363,6 +382,14 @@ class PlanManager:
             "revision": self.revision,
             "steps": [step.to_dict() for step in self.steps],
         }
+
+    @staticmethod
+    def _timestamp(value: object, name: str) -> float | None:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+            raise PlanError(f"{name} must be a finite non-negative timestamp", code="plan.snapshot")
+        return float(value)
 
     @staticmethod
     def _clean_text(value: object, field: str, *, max_length: int) -> str:

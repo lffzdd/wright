@@ -261,7 +261,7 @@ class SessionService:
                 before = store.get_command(self._command_scope, command_id)
             except Exception as exc:
                 raise SessionServiceError(f"could not queue accepted command: {exc}") from exc
-            if str(before.get("status")) not in {"accepted"}:
+            if str(before.get("status")) != "accepted":
                 return
             try:
                 record = store.queue_command(self._command_scope, command_id)
@@ -612,12 +612,14 @@ class SessionService:
                 )
             state.permission_mode = permission_mode
         self._checkpoint()
-        return {
+        result = {
             "session_id": state.session_id,
             "interaction_mode": state.interaction_mode,
             "permission_mode": state.permission_mode,
             "effective": "next permission resolution",
         }
+        self.publisher.publish("session.policy_updated", result)
+        return result
 
     def add_document(self, session_id: str, filename: str, data: bytes) -> dict[str, Any]:
         self._require_accepting_input()

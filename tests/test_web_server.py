@@ -215,7 +215,7 @@ def test_authenticated_attachment_upload_and_delete(tmp_path):
 
 def test_authenticated_artifact_delivery_uses_registered_reference(tmp_path):
     artifact = tmp_path / "report.md"
-    artifact.write_text("# Report\ncount: 2", encoding="utf-8")
+    artifact.write_text("# Report\ncount: 2", encoding="utf-8", newline="")
     # The route resolves through the handle, never from an arbitrary path sent
     # by the browser.  Install the test-only registered reference on the same
     # manager used to create the application.
@@ -357,7 +357,8 @@ def test_default_static_directory_is_the_vite_build(tmp_path):
     static = default_static_dir()
     assert static.name == "static"
     assert static.parent.name == "web"
-    assert static.parent.parent.name == "wright"
+    assert static.parent.parent.name == "interfaces"
+    assert static.parent.parent.parent.name == "wright"
     if not (static / "index.html").is_file():
         return
     auth = BootstrapAuth("bootstrap-secret")

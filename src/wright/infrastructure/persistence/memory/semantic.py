@@ -8,8 +8,6 @@ must build its own scoped view.
 
 from __future__ import annotations
 
-import fcntl
-import os
 import re
 import threading
 from pathlib import Path
@@ -27,6 +25,7 @@ from ....domain.model.memory import (
     parse_semantic_memory_type,
     parse_semantic_status,
 )
+from ...file_lock import FileLock
 from .semantic_document import (
     _atomic_write,
     _encode_refs,
@@ -72,25 +71,21 @@ class _StoreLock:
     def __init__(self, directory: Path) -> None:
         self.directory = directory
         self._thread = _thread_lock(directory)
-        self._fd: int | None = None
+        self._file_lock = FileLock(directory / ".semantic.lock")
 
     def __enter__(self) -> _StoreLock:
         self._thread.acquire()
         try:
             self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-            fd = os.open(self.directory / ".semantic.lock", os.O_CREAT | os.O_RDWR, 0o600)
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            self._fd = fd
-        except Exception:
+            self._file_lock.acquire()
+        except BaseException:
             self._thread.release()
             raise
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
         try:
-            if self._fd is not None:
-                fcntl.flock(self._fd, fcntl.LOCK_UN)
-                os.close(self._fd)
+            self._file_lock.release()
         finally:
             self._thread.release()
 

@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import App from "./App";
 
@@ -14,12 +14,45 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   window.location.hash = "";
+  history.replaceState(null, "", "/");
   localStorage.clear();
 });
 
 beforeAll(() => { Element.prototype.scrollTo = vi.fn(); });
 
 describe("web startup", () => {
+  it("refreshes real inspector metadata and scales context segments against the window limit", async () => {
+    let snapshots = 0;
+    vi.stubGlobal("WebSocket", class {
+      static OPEN = 1;
+      readyState = 1;
+      close() {}
+    });
+    const session = { session_id: "live-design", active: true, status: "idle", user_goal: "Real task" };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.includes("/preferences")) return jsonResponse({ interface_language: "en", theme: "dark", inspector_open: true });
+      if (path.includes("/workspaces")) return jsonResponse({ selected_project_id: "p", projects: [] });
+      if (path.includes("/project")) return jsonResponse({ project_id: "p", name: "Real project" });
+      if (path.includes("/snapshot")) {
+        snapshots += 1;
+        return jsonResponse({
+          stream_id: "real-stream", last_seq: 0, session, history: [], timeline: [], active_turn: null,
+          plan: {}, pending_interactions: [], usage: {},
+          context_breakdown: snapshots > 1 ? { total: 32000, limit: 128000, categories: [{ id: "history", tokens: 32000, share: 1 }] } : { total: 0, limit: 128000, categories: [] },
+          accessed_files: snapshots > 1 ? [{ path: "web/src/App.tsx", access: "read" }] : [],
+        });
+      }
+      if (path === "/api/v1/sessions") return jsonResponse([session]);
+      return jsonResponse({ changes: [], rules: [] });
+    }));
+    render(<App />);
+    await screen.findByText("web/src/App.tsx");
+    expect(document.querySelector<HTMLElement>(".context-segment.history")?.style.width).toBe("25%");
+    expect(screen.getByRole("heading", { name: "Real task" })).toBeTruthy();
+    expect(snapshots).toBeGreaterThan(1);
+  });
+
   it("calls APIs only after the bootstrap exchange resolves", async () => {
     window.location.hash = "#bootstrap=secret";
     let release = () => {};
@@ -119,7 +152,29 @@ describe("web startup", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Fix Redis leak" })).toBeTruthy());
     expect(screen.getByLabelText("Message Wright").hasAttribute("disabled")).toBe(false);
     expect(screen.queryByText(/Offline/)).toBeNull();
-    expect(screen.getByRole("button", { name: "Rename" })).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: "Archive" }).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
+    expect(screen.getByRole("menuitem", { name: "Rename" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Archive" })).toBeTruthy();
+  });
+
+  it.each(["fixture", "empty"])("uses the production workspace even with the old visual=%s query", async (visual) => {
+    history.replaceState(null, "", `/?visual=${visual}`);
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      calls.push(path);
+      if (path.includes("/preferences")) return jsonResponse({ interface_language: "en", theme: "dark", inspector_open: true });
+      if (path.includes("/workspaces")) return jsonResponse({ selected_project_id: "real-project", projects: [] });
+      if (path.includes("/project")) return jsonResponse({ project_id: "real-project", name: "Actual workspace" });
+      if (path.includes("/sessions")) return jsonResponse([]);
+      return jsonResponse({});
+    }));
+    render(<App />);
+    await screen.findByText("Actual workspace");
+    expect(calls).toContain("/api/v1/project");
+    expect(calls).toContain("/api/v1/sessions");
+    expect(screen.queryByText("api-gateway")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(await screen.findByRole("dialog")).toBeTruthy();
   });
 });

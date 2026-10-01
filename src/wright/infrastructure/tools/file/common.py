@@ -67,7 +67,7 @@ def _write_text(path: ExecutionPath, content: str, encoding: str, runtime: ToolR
     if journal is not None and absolute.is_file():
         existed = True
         try:
-            before = absolute.read_text(encoding=encoding)
+            before = _backend(runtime).read_text(path, encoding=encoding)
         except (OSError, UnicodeError):
             before = None
     _backend(runtime).write_text(path, content, encoding=encoding)

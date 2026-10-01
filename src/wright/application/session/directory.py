@@ -337,7 +337,7 @@ class SessionDirectory:
         """Read a checkpoint without starting a runtime or a worktree."""
 
         try:
-            saved = self.checkpoints.load(session_id)
+            saved, saved_at = self.checkpoints.load_with_saved_at(session_id)
         except CheckpointError as exc:
             raise SessionDirectoryError(str(exc), kind="not_found") from exc
         saved_project = (saved.project_root or self.project_root).resolve()
@@ -357,7 +357,12 @@ class SessionDirectory:
         manager = getattr(saved, "plan_manager", None)
         snapshot = getattr(manager, "snapshot", None)
         if callable(snapshot):
-            plan = snapshot() or {}
+            from ..planning.projection import project_plan
+
+            plan = project_plan(
+                snapshot() or {}, [], owner_task_id=saved.agent_task_id or "",
+                owner_session_id=saved.session_id, observed_at=saved_at,
+            )
         return {
             "view_only": True,
             "history": project_history(saved, turn_ids, run_ids),

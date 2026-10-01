@@ -13,6 +13,7 @@ import os
 import signal
 import subprocess
 import time
+from functools import lru_cache
 
 _PROC_PIDTBSDINFO = 3
 _MAXCOMLEN = 16
@@ -45,13 +46,20 @@ class _ProcBsdInfo(ctypes.Structure):
     ]
 
 
-_libproc = ctypes.CDLL(ctypes.util.find_library("proc"), use_errno=True)
+@lru_cache(maxsize=1)
+def _process_library() -> ctypes.CDLL:
+    # This adapter is only needed when a shell process is started. Loading
+    # macOS's libproc at import time prevents even Windows CLI/Web startup.
+    library = ctypes.util.find_library("proc")
+    if library is None:
+        raise RuntimeError("the local process-group adapter requires macOS libproc")
+    return ctypes.CDLL(library, use_errno=True)
 
 
 def process_start(pid: int) -> tuple[int, int] | None:
     """Return the kernel start time of ``pid``, or None if that pid is gone."""
     info = _ProcBsdInfo()
-    size = _libproc.proc_pidinfo(
+    size = _process_library().proc_pidinfo(
         ctypes.c_int(pid),
         ctypes.c_int(_PROC_PIDTBSDINFO),
         ctypes.c_uint64(0),

@@ -21,6 +21,7 @@ from .common import (
     _unread_or_stale,
     _write_text,
 )
+from .diff import edit_diff
 
 
 def _line_count(content: str) -> int:
@@ -133,6 +134,7 @@ def edit_file(
             "message": "File updated",
             "file": _relative_file(safe_path, runtime),
             "replacements": replacements,
+            **edit_diff(content, updated, _relative_file(safe_path, runtime)),
         })
     except Exception as e:
         return ToolResult.fail(str(e))

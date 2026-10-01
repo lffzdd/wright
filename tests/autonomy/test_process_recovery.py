@@ -211,7 +211,7 @@ def test_real_host_process_lock_is_released_for_takeover_after_crash(tmp_path):
         with pytest.raises(RuntimeError, match="already owns"):
             second.start()
         process.kill()
-        assert process.wait(timeout=3) == -signal.SIGKILL
+        assert process.wait(timeout=3) == (1 if os.name == "nt" else -signal.SIGKILL)
         takeover_store = AutonomyStore(db, session_id="takeover", workspace_dir=workspace)
         takeover = ApplicationHost(
             workspace_dir=workspace, store=takeover_store, llm=ScriptLLM("done"),
@@ -306,7 +306,7 @@ def test_real_process_child_agent_side_effect_becomes_unknown_without_replay(tmp
             stdout, stderr = process.communicate(timeout=3)
             pytest.fail(f"child did not reach effect: stdout={stdout!r} stderr={stderr!r}")
         process.kill()
-        assert process.wait(timeout=3) == -signal.SIGKILL
+        assert process.wait(timeout=3) == (1 if os.name == "nt" else -signal.SIGKILL)
 
         recovery = r'''
             import json, sys

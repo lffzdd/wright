@@ -7,6 +7,7 @@ the canonical path value those backends return and permission grants store.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Protocol
 
 
@@ -22,13 +23,15 @@ class ExecutionPath:
 
     @property
     def name(self) -> str:
-        return self.value.rstrip("/").rsplit("/", 1)[-1]
+        return self._pure_path().name
 
     @property
     def parent(self) -> ExecutionPath:
-        value = self.value.rstrip("/")
-        parent = value.rsplit("/", 1)[0] or "/"
-        return ExecutionPath(self.environment_id, parent)
+        return ExecutionPath(self.environment_id, str(self._pure_path().parent))
+
+    def _pure_path(self) -> PurePosixPath | PureWindowsPath:
+        windows = PureWindowsPath(self.value)
+        return windows if windows.is_absolute() else PurePosixPath(self.value)
 
 
 class PathResolver(Protocol):

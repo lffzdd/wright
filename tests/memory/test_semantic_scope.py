@@ -353,13 +353,13 @@ def test_stale_revision_conflicts_and_failed_write_is_atomic(tmp_path: Path, mon
     assert len(stored) >= 3
     assert all(path.read_text(encoding="utf-8").count("---") >= 2 for path in stored)
 
-    import wright.infrastructure.persistence.memory.semantic as semantic
+    import wright.infrastructure.persistence.memory.semantic_document as semantic_document
 
     def explode(source, destination):
         del source, destination
         raise OSError("replace failed")
 
-    monkeypatch.setattr(semantic.os, "replace", explode)
+    monkeypatch.setattr(semantic_document.os, "replace", explode)
     with pytest.raises(OSError):
         create_memory("broken", "d", "user", "nope", tmp_path, scope="global")
     assert list(tmp_path.glob("*.tmp")) == []

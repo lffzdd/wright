@@ -1,6 +1,7 @@
-import { CaretDown, Check, Lightning, ShieldWarning, User, X } from "@phosphor-icons/react";
+import { CaretDown, Check, User, X } from "@phosphor-icons/react";
 import { useRef, useState } from "react";
 import { MarkdownContent } from "../Markdown";
+import { parseDiff } from "../diff";
 import { present, t, useT } from "../i18n";
 import type { Interaction, TimelineItem, ToolState } from "../types";
 
@@ -20,15 +21,18 @@ function arg(record: Record<string, unknown> | undefined, keys: string[]): strin
 }
 
 function DiffBody({ text }: { text: string }) {
-  const lines = text.split("\n").filter((line) => line.length > 0);
-  const structured = lines.length > 0 && lines.every((line) => line.startsWith("+") || line.startsWith("-") || line.startsWith(" "));
+  const lines = text.split(/\r?\n/).filter((line) => line.length > 0);
+  const structured = /^@@ /m.test(text) || (lines.length > 0 && lines.every((line) => line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")));
   if (!structured) return <pre className="term-body">{text}</pre>;
   return <div className="diff-body">
-    {lines.map((line, index) => <div className={line.startsWith("+") ? "diff-add" : line.startsWith("-") ? "diff-del" : "diff-ctx"} key={`${index}-${line.slice(0, 12)}`}>
-      <span className="diff-line" aria-hidden="true" />
-      <span className="diff-mark">{line[0]}</span>
-      <span className="diff-text">{line.slice(1)}</span>
-    </div>)}
+    {parseDiff(text).lines.map((line, index) => line.type === "hunk" || line.type === "meta"
+      ? <div className="diff-meta" key={index}>{line.content}</div>
+      : <div className={line.type === "add" ? "diff-add" : line.type === "del" ? "diff-del" : "diff-ctx"} key={index}>
+        <span className="diff-line diff-line-old">{line.oldNum ?? ""}</span>
+        <span className="diff-line diff-line-new">{line.newNum ?? ""}</span>
+        <span className="diff-mark">{line.type === "add" ? "+" : line.type === "del" ? "-" : " "}</span>
+        <span className="diff-text">{line.content || " "}</span>
+      </div>)}
   </div>;
 }
 
@@ -138,7 +142,9 @@ export function SummaryRow({ text, durationMs }: { text: string; durationMs?: nu
   return <div className={`tl-indent reasoning-block ${open ? "open" : ""}`}>
     <div className="summary-row">
       <div className="summary-copy">
-        <Lightning className="summary-mark" size={14} weight="fill" aria-hidden="true" />
+        <svg className="summary-mark" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M13 10V3L4 14h7v7l9-11h-7z" />
+        </svg>
         <span className="reasoning-label">{tr("web.reasoning")}{typeof durationMs === "number" ? ` (${formatDuration(durationMs)})` : ""}:</span>
         {!open && <strong>{text}</strong>}
       </div>
@@ -171,10 +177,11 @@ export function ToolCard({
   const path = arg(args, ["path", "file", "file_path", "target"]);
   const code = family === "shell" ? exitCode(result, data) : null;
   const raw = output || (result ? (typeof result.output === "string" ? result.output : JSON.stringify(result, null, 2)) : "");
-  const body = compactToolBody(name, raw, result);
+  const metricSource = data && typeof data === "object" ? data as Record<string, unknown> : result;
+  const hasDiff = family === "edit" && typeof metricSource?.diff === "string";
+  const body = hasDiff ? metricSource.diff as string : compactToolBody(name, raw, result);
   const badge = family === "shell" ? "SHELL" : family === "edit" ? "FILE EDIT" : family === "read" ? "TOOL" : "TOOL";
   const bodyLines = body.split("\n").filter(Boolean);
-  const metricSource = result ?? (data && typeof data === "object" ? data as Record<string, unknown> : null);
   const added = family === "edit" && typeof metricSource?.additions === "number" ? metricSource.additions : family === "edit" ? bodyLines.filter((line) => line.startsWith("+")).length : 0;
   const deleted = family === "edit" && typeof metricSource?.deletions === "number" ? metricSource.deletions : family === "edit" ? bodyLines.filter((line) => line.startsWith("-")).length : 0;
   const directoryCount = family === "read" && /directory/i.test(name) ? bodyLines.length : 0;
@@ -200,6 +207,8 @@ export function ToolCard({
         </span>
       </button>
       {open && body && (family === "edit" ? <DiffBody text={body} /> : testFailed ? <TestFailureOutput text={body} /> : <pre className={`term-body ${code !== null && code !== 0 ? "failed" : ""}`}>{body}</pre>)}
+      {open && hasDiff && !body && <p className="empty-small">{tr("web.no_diff")}</p>}
+      {open && hasDiff && metricSource?.diff_truncated === true && <p className="hint" role="status">{tr("web.diff_truncated")}</p>}
     </section>
   </div>;
 }
@@ -304,7 +313,7 @@ export function InteractionCard({ interaction, respond }: {
   return <div className="tl-indent">
     <section className="interaction-card" role="alert">
       <div className="perm-head">
-        <span className="perm-title"><span className="perm-icon"><ShieldWarning size={12} weight="fill" /></span><strong>{tr("web.permission_required")}</strong><span className="perm-blocked">{tr("web.action_blocked")}</span></span>
+        <span className="perm-title"><span className="perm-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg></span><strong>{tr("web.permission_required")}</strong><span className="perm-blocked">{tr("web.action_blocked")}</span></span>
         <span className="perm-paused">{tr("web.agent_paused")}<span className="dot pulse" /></span>
       </div>
       <div className="perm-body">
@@ -336,6 +345,7 @@ export function InteractionCard({ interaction, respond }: {
           {denies.map((choice) => choiceButton(choice, "deny"))}
           {extra.length > 0 && <button type="button" className="text-button perm-more" onClick={() => setMore((value) => !value)}>{tr("web.more_grants")}</button>}
         </div>
+        <small className="audit-note">{tr("web.audit_recorded")}</small>
         {more && extra.length > 0 && <div className="more-grants">
           {extra.map((choice) => <button key={choice.id} type="button" className="perm-choice session" disabled={Boolean(submitting)} onClick={() => choose(choice.id)}>
             <b>{choice.label}</b><small>{choice.scope} · {choice.persistence}</small>

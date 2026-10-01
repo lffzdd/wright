@@ -105,7 +105,7 @@ def test_paths_reject_escape_and_symlink(tmp_path: Path):
     outside = tmp_path / "outside"
     root.mkdir()
     outside.mkdir()
-    (outside / "secret.txt").write_text("secret", encoding="utf-8")
+    (outside / "secret.txt").write_text("secret", encoding="utf-8", newline="")
     (root / "link").symlink_to(outside)
     with pytest.raises(PathRejected):
         resolve_inside(root, "../outside/secret.txt")
@@ -118,8 +118,8 @@ def test_paths_reject_escape_and_symlink(tmp_path: Path):
 
 
 def test_symbol_search_is_not_a_text_search(tmp_path: Path):
-    (tmp_path / "widget.py").write_text("def AlphaWidget():\n    return 1\n", encoding="utf-8")
-    (tmp_path / "notes.md").write_text("AlphaWidget is mentioned here\n", encoding="utf-8")
+    (tmp_path / "widget.py").write_text("def AlphaWidget():\n    return 1\n", encoding="utf-8", newline="")
+    (tmp_path / "notes.md").write_text("AlphaWidget is mentioned here\n", encoding="utf-8", newline="")
     symbols = search_symbols(tmp_path, "AlphaWidget")
     content = search_content(tmp_path, "AlphaWidget")
     assert [item["path"] for item in symbols] == ["widget.py"]
@@ -145,7 +145,7 @@ def test_catalog_unregister_keeps_files_and_selection_is_not_cwd(tmp_path: Path,
     second = tmp_path / "second"
     first.mkdir()
     second.mkdir()
-    (first / "keep.txt").write_text("stay", encoding="utf-8")
+    (first / "keep.txt").write_text("stay", encoding="utf-8", newline="")
     catalog = WorkspaceCatalog(tmp_path / "home" / "workspaces.json")
     registered = catalog.register(first)
     catalog.register(second)
@@ -165,10 +165,10 @@ def test_change_attribution_conflict_and_batch_failure(tmp_path: Path, monkeypat
     subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
     tracked = root / "tracked.txt"
-    tracked.write_text("base\n", encoding="utf-8")
+    tracked.write_text("base\n", encoding="utf-8", newline="")
     subprocess.run(["git", "add", "tracked.txt"], cwd=root, check=True)
     subprocess.run(["git", "commit", "-m", "base"], cwd=root, check=True, capture_output=True)
-    tracked.write_text("dirty before task\n", encoding="utf-8")
+    tracked.write_text("dirty before task\n", encoding="utf-8", newline="")
     session = SimpleNamespace(session_id="s1", project_root=root, workspace_dir=root)
     journal = SessionChangeJournal(session)
     journal.ensure_baseline()
@@ -179,18 +179,18 @@ def test_change_attribution_conflict_and_batch_failure(tmp_path: Path, monkeypat
     assert tracked.read_text(encoding="utf-8") == "dirty before task\n"
 
     created = root / "added.txt"
-    created.write_text("task\n", encoding="utf-8")
+    created.write_text("task\n", encoding="utf-8", newline="")
     journal.note_text(created, before=None, after="task\n", existed=False, call_id="c1", tool_name="write_file")
     other = root / "other.txt"
-    other.write_text("other\n", encoding="utf-8")
+    other.write_text("other\n", encoding="utf-8", newline="")
     journal.note_text(other, before=None, after="other\n", existed=False, call_id="c2", tool_name="write_file")
-    created.write_text("external\n", encoding="utf-8")
+    created.write_text("external\n", encoding="utf-8", newline="")
     conflicted = journal.revert(["added.txt", "other.txt"], confirm=True)
     assert conflicted["applied"] is False
     assert other.read_text(encoding="utf-8") == "other\n"
     assert created.read_text(encoding="utf-8") == "external\n"
 
-    created.write_text("task\n", encoding="utf-8")
+    created.write_text("task\n", encoding="utf-8", newline="")
     reviewed = journal.accept(["added.txt", "other.txt"], confirm=True)
     assert reviewed["applied"] is True
     assert created.read_text(encoding="utf-8") == "task\n"
@@ -199,7 +199,7 @@ def test_change_attribution_conflict_and_batch_failure(tmp_path: Path, monkeypat
     assert states["other.txt"] == "accepted"
 
     fresh = root / "fresh.txt"
-    fresh.write_text("fresh\n", encoding="utf-8")
+    fresh.write_text("fresh\n", encoding="utf-8", newline="")
     journal.note_text(fresh, before=None, after="fresh\n", existed=False, call_id="c4", tool_name="write_file")
     original_restore = journal._restore_before
 
@@ -509,11 +509,13 @@ def test_timeline_projects_reasoning_apart_from_assistant_text():
 
 
 def test_checkpoint_relabel_updates_the_display_name(tmp_path: Path):
-    from wright.infrastructure.persistence.session.repository import FileSessionRepository
+    from wright.infrastructure.persistence.session.repository import (
+        FileSessionRepository,
+    )
 
     store = FileSessionRepository(tmp_path)
     path = tmp_path / "sess01ab.json"
-    path.write_text('{"session": {"session_id": "sess01ab", "session_label": "old"}, "saved_at": "2026-09-29T12:00:00"}', encoding="utf-8")
+    path.write_text('{"session": {"session_id": "sess01ab", "session_label": "old"}, "saved_at": "2026-09-29T12:00:00"}', encoding="utf-8", newline="")
     result = store.relabel("sess01ab", "Harden Redis rate limiter")
     assert result["user_goal"] == "Harden Redis rate limiter"
     assert '"session_label": "Harden Redis rate limiter"' in path.read_text(encoding="utf-8")
@@ -537,7 +539,7 @@ def test_documents_inline_without_entering_the_workspace(tmp_path: Path, monkeyp
 def _client(tmp_path: Path, manager: RuntimeManager) -> TestClient:
     static = tmp_path / "static"
     static.mkdir()
-    (static / "index.html").write_text("<main>Wright</main>", encoding="utf-8")
+    (static / "index.html").write_text("<main>Wright</main>", encoding="utf-8", newline="")
     client = TestClient(create_app(manager, BootstrapAuth("secret"), static_dir=static))
     response = client.post(
         "/api/v1/auth/exchange",
@@ -554,8 +556,8 @@ def test_workspace_http_isolates_projects_and_preferences(tmp_path: Path, monkey
     other = tmp_path / "other"
     launch.mkdir()
     other.mkdir()
-    (other / "secret.txt").write_text("hidden", encoding="utf-8")
-    (launch / "visible.txt").write_text("shown", encoding="utf-8")
+    (other / "secret.txt").write_text("hidden", encoding="utf-8", newline="")
+    (launch / "visible.txt").write_text("shown", encoding="utf-8", newline="")
     manager = RuntimeManager(launch, base_args=argparse.Namespace())
     client = _client(tmp_path, manager)
     try:
@@ -684,11 +686,11 @@ def test_rename_of_a_clean_file_reverts_without_touching_other_work(tmp_path: Pa
     subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
     subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
-    (root / "kept.txt").write_text("leave me\n", encoding="utf-8")
-    (root / "old.txt").write_text("same\n", encoding="utf-8")
+    (root / "kept.txt").write_text("leave me\n", encoding="utf-8", newline="")
+    (root / "old.txt").write_text("same\n", encoding="utf-8", newline="")
     subprocess.run(["git", "add", "kept.txt", "old.txt"], cwd=root, check=True)
     subprocess.run(["git", "commit", "-m", "base"], cwd=root, check=True, capture_output=True)
-    (root / "kept.txt").write_text("edited outside the task\n", encoding="utf-8")
+    (root / "kept.txt").write_text("edited outside the task\n", encoding="utf-8", newline="")
     session = SimpleNamespace(session_id="s-rename", project_root=root, workspace_dir=root)
     journal = SessionChangeJournal(session)
     before = journal.capture()

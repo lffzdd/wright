@@ -24,6 +24,7 @@ from ....domain.model.memory.core import (
     ProjectCoreRecord,
 )
 from ....domain.model.memory.episode import PROJECT_ID_RE
+from ...file_lock import FileLock
 from .paths import memory_dir
 
 CORE_MEMORY_FILE = "core_memory.json"
@@ -78,28 +79,8 @@ class FileCoreMemoryStore(ICoreMemoryStore):
             os.chmod(self.projects_dir, 0o700)
             os.chmod(self.projects_dir.parent, 0o700)
         with _lock_for(lock_path):
-            descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
-            with os.fdopen(descriptor, "r+b", buffering=0) as lock_file:
-                if os.name == "nt":
-                    import msvcrt
-
-                    if os.fstat(lock_file.fileno()).st_size == 0:
-                        lock_file.write(b"\0")
-                    lock_file.seek(0)
-                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
-                    try:
-                        yield
-                    finally:
-                        lock_file.seek(0)
-                        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
-                else:
-                    import fcntl
-
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-                    try:
-                        yield
-                    finally:
-                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            with FileLock(lock_path):
+                yield
 
     def load_global(self) -> GlobalCoreRecord:
         if not self.file_path.is_file():

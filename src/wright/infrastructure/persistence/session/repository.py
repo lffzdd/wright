@@ -111,6 +111,10 @@ class FileSessionRepository(ISessionRepository):
         return {"session_id": session_id, "user_goal": label, "active": False}
 
     def load(self, session_id: str) -> Session:
+        return self.load_with_saved_at(session_id)[0]
+
+    def load_with_saved_at(self, session_id: str) -> tuple[Session, float]:
+        """Return one decoded checkpoint and its observation time atomically."""
         path = self.path_for(session_id)
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -118,7 +122,12 @@ class FileSessionRepository(ISessionRepository):
             raise _CheckpointError(f"checkpoint 不存在: {session_id}") from exc
         except (OSError, json.JSONDecodeError) as exc:
             raise _CheckpointError(f"checkpoint 无法读取: {exc}") from exc
-        return _decode_session(data)
+        session = _decode_session(data)
+        try:
+            saved_at = datetime.fromisoformat(data["saved_at"]).timestamp()
+        except (KeyError, TypeError, ValueError) as exc:
+            raise _CheckpointError("checkpoint saved_at must be an ISO timestamp") from exc
+        return session, saved_at
 
     def latest_session_id(self) -> str | None:
         if not self.directory.is_dir():

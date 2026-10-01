@@ -1,13 +1,7 @@
 import { Check, Copy } from "@phosphor-icons/react";
 import { memo, useMemo, useState } from "react";
 import { useT } from "./i18n";
-
-type DiffLine = {
-  type: "meta" | "hunk" | "add" | "del" | "context";
-  oldNum: number | null;
-  newNum: number | null;
-  content: string;
-};
+import { parseDiff } from "./diff";
 
 export const DiffViewer = memo(function DiffViewer({
   patch,
@@ -19,45 +13,7 @@ export const DiffViewer = memo(function DiffViewer({
   const tr = useT();
   const [copied, setCopied] = useState(false);
 
-  const { lines, additions, deletions } = useMemo(() => {
-    if (!patch) return { lines: [], additions: 0, deletions: 0 };
-    const rawLines = patch.split("\n");
-    let oldLine: number | null = null;
-    let newLine: number | null = null;
-    let additions = 0;
-    let deletions = 0;
-    const lines: DiffLine[] = [];
-
-    for (const line of rawLines) {
-      const hunkMatch = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-      if (hunkMatch) {
-        oldLine = parseInt(hunkMatch[1], 10);
-        newLine = parseInt(hunkMatch[2], 10);
-        lines.push({ type: "hunk", oldNum: null, newNum: null, content: line });
-      } else if (
-        line.startsWith("+++") ||
-        line.startsWith("---") ||
-        line.startsWith("diff ") ||
-        line.startsWith("index ")
-      ) {
-        lines.push({ type: "meta", oldNum: null, newNum: null, content: line });
-      } else if (line.startsWith("+")) {
-        additions++;
-        lines.push({ type: "add", oldNum: null, newNum: newLine, content: line.slice(1) });
-        if (newLine !== null) newLine++;
-      } else if (line.startsWith("-")) {
-        deletions++;
-        lines.push({ type: "del", oldNum: oldLine, newNum: null, content: line.slice(1) });
-        if (oldLine !== null) oldLine++;
-      } else {
-        const content = line.startsWith(" ") ? line.slice(1) : line;
-        lines.push({ type: "context", oldNum: oldLine, newNum: newLine, content });
-        if (oldLine !== null) oldLine++;
-        if (newLine !== null) newLine++;
-      }
-    }
-    return { lines, additions, deletions };
-  }, [patch]);
+  const { lines, additions, deletions } = useMemo(() => parseDiff(patch), [patch]);
 
   const handleCopy = async () => {
     try {
