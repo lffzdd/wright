@@ -312,10 +312,10 @@ def launch_job_run(
             from ...infrastructure.config.permission_store import (
                 FilePermissionRepository,
             )
-            from ..tool_execution.permissions import PermissionService
+            from ..permission.service import PermissionService
 
-            # Durable runs have no session checkpoint. The change stays on
-            # target_session, which is the child when a child is committing.
+            # Durable runs have no checkpoint; the live authorization chain
+            # determines which conversation owns remembered session grants.
             PermissionService(FilePermissionRepository(target_session.project_root or target_session.workspace_dir)).commit(change, target_session)
 
         return commit_authorization
@@ -343,7 +343,7 @@ def launch_job_run(
         max_steps=record.step_budget,
     )
     child_session.project_root = root_session.project_root if root_session is not None else workspace_dir
-    child_session.permission_parent = root_session
+    child_session.authorization.bind_parent(root_session.authorization if root_session is not None else None)
     child_session.control_plane = control
     child_session.agent_task_id = record.id
     child_session.agent_root_turn_id = root_turn_id

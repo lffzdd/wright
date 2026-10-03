@@ -5,10 +5,10 @@ from tests.responses import event, response
 from wright.application.agent import make_spawn_agent_tool
 from wright.application.command.execution import CommandExecution
 from wright.application.execution.identity import bind_identity
+from wright.application.permission.service import PermissionService
 from wright.application.session.live_resources import RuntimeResources
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
-from wright.application.tool_execution.permissions import PermissionService
 from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
@@ -414,13 +414,13 @@ def test_agent_child_persistent_directory_uses_child_checkpoint(tmp_path, monkey
 
     assert outcome.result.ok
     assert (extra / "child.txt").read_text(encoding="utf-8") == "child"
-    assert parent.permission_rules == []
+    assert parent.authorization.rules == ()
     assert permission_directories(parent) == (extra.resolve(),)
     child_sessions = [session for session in sessions.values() if session is not parent]
     assert len(child_sessions) == 1
     child = child_sessions[0]
-    assert child.permission_rules == []
-    assert checkpoints.load(child.session_id).permission_rules == []
+    assert child.authorization.rules == ()
+    assert checkpoints.load(child.session_id).authorization.rules == ()
     effective = PermissionService(FilePermissionRepository(workspace)).snapshot(child)
     assert effective.scope.additional == (extra.resolve(),)
 
@@ -448,7 +448,7 @@ def test_project_approval_uses_repository_without_custom_callback(tmp_path):
 
     assert outcome.result.ok
     assert outside.read_text(encoding="utf-8") == "x"
-    assert session.permission_rules == []
+    assert session.authorization.rules == ()
     snapshot = PermissionService(FilePermissionRepository(tmp_path)).snapshot(session)
     assert snapshot.settings.project_rules
 

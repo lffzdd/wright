@@ -8,9 +8,19 @@ from wright.application.agent import create_agent
 from wright.domain.model.llm import UsageRecord
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ArtifactRef, ToolCall, ToolResult
+from wright.domain.policy.permission.settings import PermissionRule
 from wright.domain.protocol import build_tool_results_messages
 from wright.infrastructure.persistence.session.errors import CheckpointError
 from wright.infrastructure.persistence.session.repository import FileSessionRepository
+
+
+def _restore_authorization(session):
+    from wright.application.permission.service import PermissionService
+    from wright.infrastructure.config.permission_store import FilePermissionRepository
+    from wright.infrastructure.runtime import LocalExecutionBackend
+
+    service = PermissionService(FilePermissionRepository(session.project_root))
+    service.restore(session, LocalExecutionBackend(session.workspace_dir, session.get_cwd))
 
 
 def _populated_session(tmp_path):
@@ -24,8 +34,8 @@ def _populated_session(tmp_path):
     session.set_cwd(cwd)
     extra = tmp_path / "extra-root"
     extra.mkdir()
-    session.add_permission_rule({"id": "checkpoint-directory", "lifetime": "session", "kind": "directory", "tool_name": "*",
-                                 "root": str(extra), "pattern": "", "operations": ["file_read", "file_write"], "recursive": True})
+    session.authorization.add_rule(PermissionRule.from_mapping({"id": "checkpoint-directory", "lifetime": "session", "kind": "directory", "tool_name": "*",
+                                 "root": str(extra), "pattern": "", "operations": ["file_read", "file_write"], "recursive": True}))
 
     session.plan_manager.create_plan("ship", ["write", "test"])
     session.plan_manager.update_step("step_1", "completed", note="written")
@@ -94,8 +104,7 @@ def test_checkpoint_round_trips_complete_session_state(tmp_path):
     }
     assert restored.active_deferred_tools == ["web_search", "schedule_task"]
     assert restored.project_root == original.workspace_dir
-    from wright.domain.policy.permission.settings import PermissionRule
-    assert restored.permission_rules == [PermissionRule.from_mapping(item).to_persistent() for item in original.permission_rules]
+    assert restored.authorization.rules == original.authorization.rules
     assert restored.environment == "local"
     assert restored.committed_turn_ids == [original.agent_root_turn_id]
     assert restored.plan_manager.snapshot() == original.plan_manager.snapshot()
@@ -143,37 +152,18 @@ def test_reopened_turn_revokes_its_commit_marker(tmp_path):
     assert not session.is_turn_committed()
 
 
-def test_checkpoint_v2_without_project_fields_defaults_to_local(tmp_path):
+@pytest.mark.parametrize("version", range(1, 8))
+def test_old_checkpoint_versions_are_rejected_without_rewriting(tmp_path, version):
     original = _populated_session(tmp_path)
     store = FileSessionRepository(tmp_path / "checkpoints")
     path = store.save(original)
     payload = json.loads(path.read_text())
-    for key in ("project_root", "environment", "base_commit", "branch_name"):
-        payload["session"].pop(key)
+    payload["version"] = version
     path.write_text(json.dumps(payload))
-
-    restored = store.load(original.session_id)
-
-    assert restored.project_root == original.workspace_dir
-    assert restored.environment == "local"
-    assert restored.base_commit is None
-    assert restored.branch_name is None
-
-
-def test_checkpoint_v2_user_content_is_migrated_to_text_part(tmp_path):
-    original = _populated_session(tmp_path)
-    store = FileSessionRepository(tmp_path / "checkpoints")
-    path = store.save(original)
-    payload = json.loads(path.read_text())
-    payload["version"] = 2
-    payload["session"].pop("attachments")
-    payload["session"].pop("llm_transport")
-    path.write_text(json.dumps(payload))
-
-    restored = store.load(original.session_id)
-
-    user = next(item for item in restored.conversation_messages() if item["role"] == "user")
-    assert user["parts"] == [{"type": "text", "text": "do it"}]
+    before = path.read_bytes()
+    with pytest.raises(CheckpointError, match="only version 8"):
+        store.load(original.session_id)
+    assert path.read_bytes() == before
 
 
 def test_restored_plan_continues_step_ids_without_collision(tmp_path):
@@ -216,26 +206,16 @@ def test_unknown_checkpoint_version_is_rejected(tmp_path):
         store.load("abc123")
 
 
-def test_phase_two_v5_checkpoint_loads_without_request_context_estimate(tmp_path):
+def test_checkpoint_requires_message_provenance(tmp_path):
     from wright.infrastructure.persistence.session.codec import (
         _deserialize_session,
         _serialize_session,
     )
 
-    session = _populated_session(tmp_path)
-    payload = _serialize_session(session)
-    payload["version"] = 5
-    del payload["session"]["request_context_tokens"]
-    for record in payload["session"]["message_records"]:
-        del record["source"]
-
-    restored = _deserialize_session(payload)
-
-    assert restored.request_context_tokens == 0
-    assert [record.source for record in restored.message_records] == [
-        "system_instruction", "user_input", "model_output", "tool_result", "model_output"
-    ]
-    assert restored.current_run_status() == "completed"
+    payload = _serialize_session(_populated_session(tmp_path))
+    del payload["session"]["message_records"][0]["source"]
+    with pytest.raises(CheckpointError, match="source"):
+        _deserialize_session(payload)
 
 
 def test_checkpoint_refuses_missing_workspace(tmp_path):
@@ -346,7 +326,7 @@ def test_legacy_json_checkpoint_requires_the_preserved_version(tmp_path):
     store = FileSessionRepository(tmp_path / "checkpoints")
     store.directory.mkdir()
     store.path_for("legacy").write_text(json.dumps({"version": 1, "session": {}}))
-    with pytest.raises(CheckpointError, match="legacy-json-react"):
+    with pytest.raises(CheckpointError, match="only version 8"):
         store.load("legacy")
 
 
@@ -375,17 +355,19 @@ def test_checkpoint_snaps_cwd_back_when_outside_granted_roots(tmp_path):
     workspace.mkdir()
     extra.mkdir()
     session = Session.create("outside cwd", workspace)
-    session.add_permission_rule({"id": "checkpoint-directory", "lifetime": "session", "kind": "directory", "tool_name": "*",
-                                 "root": str(extra), "pattern": "", "operations": ["file_read", "file_write"], "recursive": True})
+    session.authorization.add_rule(PermissionRule.from_mapping({"id": "checkpoint-directory", "lifetime": "session", "kind": "directory", "tool_name": "*",
+                                 "root": str(extra), "pattern": "", "operations": ["file_read", "file_write"], "recursive": True}))
     session.set_cwd(tmp_path)
     store = FileSessionRepository(tmp_path / "checkpoints")
     store.save(session)
 
     restored = store.load(session.session_id)
+    _restore_authorization(restored)
     assert restored.get_cwd() == workspace
-    assert restored.permission_rules[0]["root"] == str(extra.resolve())
+    assert restored.authorization.rules[0].root == str(extra.resolve())
 
     session.set_cwd(extra)
     store.save(session)
     kept = store.load(session.session_id)
+    _restore_authorization(kept)
     assert kept.get_cwd() == extra.resolve()

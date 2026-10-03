@@ -195,21 +195,21 @@ def test_console_live_takes_a_snapshot_not_a_callback(monkeypatch):
     assert captured["updates"]
 
 
-def test_legacy_checkpoint_derives_task_boundary(tmp_path):
+def test_checkpoint_requires_explicit_task_usage_boundary(tmp_path):
+    import pytest
+
     from wright.infrastructure.persistence.session.codec import (
         _deserialize_session,
         _serialize_session,
     )
+    from wright.infrastructure.persistence.session.errors import CheckpointError
 
-    session = Session.create('old', tmp_path)
-    for goal, usage in [('old', UsageRecord(90, 10, 100)), ('new', UsageRecord(10, 5, 15))]:
-        session.begin_user_turn(goal)
-        turn = session.record_assistant_turn(assistant_raw='done', parsed={}, route='final')
-        session.record_usage_for_turn(turn, usage)
+    session = Session.create("task", tmp_path)
+    session.begin_user_turn("task")
     payload = _serialize_session(session)
-    del payload['session']['task_usage_start']
-    restored = _deserialize_session(payload)
-    assert restored.task_usage() == UsageRecord(10, 5, 15)
+    del payload["session"]["task_usage_start"]
+    with pytest.raises(CheckpointError, match="task_usage_start"):
+        _deserialize_session(payload)
 
 
 def test_runtime_event_summary_waits_for_memory_finalization(tmp_path):

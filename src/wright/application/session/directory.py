@@ -278,10 +278,6 @@ class SessionDirectory:
                 self._rollback_worktree(created_worktree, context)
                 raise SessionDirectoryError("runtime did not construct ApplicationHost")
             runtime.owns_application_host = False
-            if getattr(runtime.session_state, "permission_mode", None) is None:
-                settings = getattr(runtime, "permission_settings", None)
-                if settings is not None and getattr(settings, "mode", None):
-                    runtime.session_state.permission_mode = settings.mode
             try:
                 from ..workspace.journal import SessionChangeJournal
 
@@ -378,8 +374,8 @@ class SessionDirectory:
                 "active": False,
                 "user_goal": saved.current_goal() if hasattr(saved, "current_goal") else saved.user_goal,
                 "model": saved.model_name,
-                "interaction_mode": getattr(saved, "interaction_mode", "agent"),
-                "permission_mode": getattr(saved, "permission_mode", None),
+                "interaction_mode": saved.authorization.interaction_mode,
+                "permission_mode": saved.authorization.permission_mode,
                 "environment": saved.environment,
                 "execution_root": str(execution_root),
                 "project_root": str(saved_project),

@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..permission.service import PermissionConflict
 from ..session.errors import SessionServiceError
-from ..tool_execution.permissions import PermissionConflict
 from .documents import DocumentError
 from .grants import GrantError, list_grants, resource_change
 from .journal import ChangeJournalError, SessionChangeJournal
@@ -24,7 +24,7 @@ def require_idle(service: Any) -> None:
 
 
 def _permissions(service):
-    return service.runtime.agent.executor.permissions
+    return service.runtime.permissions
 
 
 def session_grants(service: Any) -> dict[str, Any]:

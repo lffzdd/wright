@@ -27,9 +27,9 @@ from ...infrastructure.tools.capabilities import (
 )
 from ..agent.operations import AgentExecution
 from ..execution.identity import bind_identity
+from ..permission.service import PermissionService
 from ..scheduling.service import SchedulingService
 from ..session.live_resources import RuntimeResources
-from .permissions import PermissionService
 
 if TYPE_CHECKING:
     from ...domain.model.session import Session
@@ -61,6 +61,7 @@ def assemble_tool_capabilities(
         Callable[[Session], Callable[[AuthorizationChange], None]] | None
     ) = None,
     expose_scheduling: bool = False,
+    permissions: PermissionService | None = None,
 ) -> CapabilityAssembly:
     """Build explicit capabilities at the application boundary."""
 
@@ -69,8 +70,9 @@ def assemble_tool_capabilities(
         session.get_cwd if session is not None else lambda: workspace
     )
     backend = execution_backend or LocalExecutionBackend(workspace, cwd)
-    from ...infrastructure.config.permission_store import FilePermissionRepository
-    permissions = PermissionService(FilePermissionRepository(getattr(session, "project_root", None) or workspace), execution_factory=AuthorizedExecution)
+    if permissions is None:
+        from ...infrastructure.config.permission_store import FilePermissionRepository
+        permissions = PermissionService(FilePermissionRepository(getattr(session, "project_root", None) or workspace), execution_factory=AuthorizedExecution)
     if session is None:
         return CapabilityAssembly(
             ToolCapabilities(RunScope("")),
@@ -81,6 +83,7 @@ def assemble_tool_capabilities(
             permissions,
         )
 
+    permissions.restore(session, backend)
     active_run = session.active_run()
     scope = RunScope(
         session_id=session.session_id,
@@ -202,7 +205,7 @@ def _delegation(session, services, journal_factory, authorization_factory) -> De
         request_cancel=request_cancel,
         is_cancelled=lambda task_id: control.is_cancelled(task_id),
         cancellation_reason=lambda task_id: control.cancellation_reason(task_id),
-        inherit_permissions=lambda child: setattr(child, "permission_parent", session),
+        inherit_permissions=lambda child: child.authorization.bind_parent(session.authorization),
         share_control_plane=share_control_plane,
         limits=lambda: control.config.to_dict(),
         tree=lambda root_turn_id: control.tree_summary(root_turn_id),

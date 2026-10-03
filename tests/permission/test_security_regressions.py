@@ -125,7 +125,7 @@ def test_file_rule_stays_on_its_root_when_cwd_or_project_changes(tmp_path, monke
 
     config = tmp_path / "permissions.json"
     monkeypatch.setenv("WRIGHT_PERMISSION_CONFIG", str(config))
-    rule = session.permission_rules[0]
+    rule = session.authorization.rules[0].to_persistent()
     from dataclasses import replace as replace_rule
 
     from wright.domain.policy.permission.settings import PermissionRule
@@ -324,7 +324,7 @@ def test_checkpoint_failure_rolls_back_session_and_config(tmp_path, monkeypatch)
         executor, "write_file", {"file": "nested/a.txt", "content": "no"}, "c2"
     )
     assert not persistent.ok
-    assert session.permission_rules == []
+    assert session.authorization.rules == ()
     assert not (workspace / "nested" / "a.txt").exists()
     assert '"kind"' not in config.read_text(encoding="utf-8")
 
@@ -372,8 +372,8 @@ def test_child_session_rule_does_not_widen_the_parent(tmp_path):
         parent_executor, "write_file", {"file": "nested/b.txt", "content": "b"}, "c2"
     )
     assert not parent_result.ok
-    assert child.permission_rules
-    assert parent.permission_rules == []
+    assert child.authorization.rules
+    assert parent.authorization.rules == ()
     assert not (workspace / "nested" / "b.txt").exists()
 
 

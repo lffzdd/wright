@@ -19,6 +19,7 @@ from ....domain.gateway.session_repository import ISessionRepository
 from ....domain.model.session import Session
 from .codec import (
     _SESSION_ID_PATTERN,
+    CHECKPOINT_VERSION,
     _checkpoint_run_status,
 )
 from .codec import (
@@ -88,6 +89,8 @@ class FileSessionRepository(ISessionRepository):
                 raise _CheckpointError(f"checkpoint 不存在: {session_id}") from exc
             except (OSError, json.JSONDecodeError) as exc:
                 raise _CheckpointError(f"checkpoint 无法读取: {exc}") from exc
+            if data.get("version") != CHECKPOINT_VERSION:
+                raise _CheckpointError("Unsupported checkpoint version; only version 8 is accepted")
             session = data.setdefault("session", {})
             if not isinstance(session, dict):
                 raise _CheckpointError(f"checkpoint 无法读取: {session_id}")
@@ -183,12 +186,13 @@ class FileSessionRepository(ISessionRepository):
                     "saved_at": saved_at_str,
                     "status": _checkpoint_run_status(session_info),
                     "user_goal": session_info.get(
-                        "session_label", session_info.get("user_goal", "")
+                        "session_label", ""
                     ),
                     "environment": session_info.get("environment", "local"),
                     "execution_root": session_info.get("workspace_dir", ""),
                     "recoverable": bool(
-                        session_info.get("workspace_dir")
+                        data.get("version") == CHECKPOINT_VERSION
+                        and session_info.get("workspace_dir")
                         and Path(session_info["workspace_dir"]).is_dir()
                     ),
                 })

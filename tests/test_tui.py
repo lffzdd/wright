@@ -14,6 +14,7 @@ from wright.application.session.dispatch import (
     slash_command_matches,
 )
 from wright.application.session.interaction import RoutedPrompter
+from wright.domain.model.session import SessionAuthorization
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.domain.policy import PermissionChoice, PermissionPrompt
 from wright.interfaces.cli.args import parse_cli_args
@@ -82,6 +83,7 @@ def test_tui_keeps_application_host_alive_across_session_resume(tmp_path, monkey
         chosen = application_host or host
         state = SimpleNamespace(
             session_id=session_id or "saved",
+            authorization=SessionAuthorization(session_id or "saved"),
             lifecycle="open",
             model_name="test",
             environment=getattr(project_context, "environment", "local"),
@@ -102,7 +104,6 @@ def test_tui_keeps_application_host_alive_across_session_resume(tmp_path, monkey
             plan_manager=SimpleNamespace(has_plan=False, snapshot=lambda: {"steps": []}),
             request_context_tokens=0,
             context_tokens=0,
-            permission_mode="default",
         )
         idle = threading.Event()
         idle.set()

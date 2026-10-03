@@ -9,7 +9,7 @@ from typing import Any
 from ...domain.policy.permission.resolver import PermissionPolicy
 from ...domain.policy.permission.settings import PermissionRule, relative_to_root
 from ...domain.policy.permission.types import AuthorizationChange
-from ..tool_execution.permissions import PermissionService, record_id
+from ..permission.service import PermissionService, record_id
 
 
 class GrantError(ValueError):

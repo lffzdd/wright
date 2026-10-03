@@ -640,6 +640,7 @@ def test_anchor_update_is_on_the_next_request_and_not_another_project(tmp_path):
 
 def test_core_read_failure_does_not_block_delivery(tmp_path, monkeypatch):
     manager = assemble_memory_manager(EmptySelectorLLM(), directory=tmp_path)
+    (tmp_path / "proj").mkdir()
     session = Session.create("deliver", tmp_path / "proj")
 
     def boom(self):

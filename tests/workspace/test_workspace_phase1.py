@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from wright.application.memory.memory_service import MemoryService
-from wright.application.tool_execution.permissions import PermissionService
+from wright.application.permission.service import PermissionService
 from wright.application.workspace.catalog import WorkspaceCatalog
 from wright.application.workspace.context_usage import classify_context
 from wright.application.workspace.documents import render_documents, store_document
@@ -53,7 +53,7 @@ from wright.application.workspace.search import (
 from wright.application.workspace.timeline import project_subagents, project_timeline
 from wright.core.paths import project_id, task_db_path
 from wright.domain.model.agent.control import AgentControlPlane
-from wright.domain.model.session import Session
+from wright.domain.model.session import Session, SessionAuthorization
 from wright.domain.policy.permission.resolver import PermissionPolicy
 from wright.domain.policy.permission.settings import PermissionSettings
 from wright.domain.policy.permission.types import ToolAccess
@@ -235,8 +235,8 @@ def test_ask_ceiling_survives_bypass_and_grant_revoke_is_scoped(tmp_path: Path, 
         permission_mode="bypass",
     )
     assert plan[0] != "deny"
-    assert not tool_visible("write_file", SimpleNamespace(interaction_mode="ask", permission_mode="bypass"))
-    assert tool_visible("update_plan", SimpleNamespace(interaction_mode="plan", permission_mode="bypass"))
+    assert not tool_visible("write_file", SimpleNamespace(authorization=SessionAuthorization("visibility", interaction_mode="ask", permission_mode="bypass")))
+    assert tool_visible("update_plan", SimpleNamespace(authorization=SessionAuthorization("visibility", interaction_mode="plan", permission_mode="bypass")))
     assert PermissionPolicy._ASK_OPERATIONS == ASK_OPERATIONS
     assert PermissionPolicy._PLAN_OPERATIONS == PLAN_OPERATIONS
 
@@ -247,7 +247,7 @@ def test_ask_ceiling_survives_bypass_and_grant_revoke_is_scoped(tmp_path: Path, 
     change = resource_change(session, backend, snapshot, {"kind": "file", "path": "a.txt", "operations": ["file_read"]}, "project")
     permissions.commit(change, session, expected_version=snapshot.version)
     listed = list_grants(session, permissions)
-    assert session.permission_rules == []
+    assert session.authorization.rules == ()
     grant = listed["grants"][0]
     permissions.revoke(session, grant["id"], "project", listed["version"])
     assert list_grants(session, permissions)["grants"] == []
@@ -451,8 +451,7 @@ def test_checkpoint_relabel_updates_the_display_name(tmp_path: Path):
     )
 
     store = FileSessionRepository(tmp_path)
-    path = tmp_path / "sess01ab.json"
-    path.write_text('{"session": {"session_id": "sess01ab", "session_label": "old"}, "saved_at": "2026-09-29T12:00:00"}', encoding="utf-8", newline="")
+    path = store.save(Session.create("old", tmp_path, session_id="sess01ab"))
     result = store.relabel("sess01ab", "Harden Redis rate limiter")
     assert result["user_goal"] == "Harden Redis rate limiter"
     assert '"session_label": "Harden Redis rate limiter"' in path.read_text(encoding="utf-8")

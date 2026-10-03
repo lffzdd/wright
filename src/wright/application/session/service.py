@@ -599,21 +599,16 @@ class SessionService:
                 "a turn is still executing; change the mode when the session is idle"
             )
         state = self.runtime.session_state
-        if interaction_mode is not None:
-            if interaction_mode not in {"agent", "plan", "ask"}:
-                raise SessionServiceError("interaction_mode must be agent, plan, or ask")
-            state.interaction_mode = interaction_mode
-        if permission_mode is not None:
-            if permission_mode not in {"default", "acceptEdits", "bypass", "plan"}:
-                raise SessionServiceError(
-                    "permission_mode must be default, acceptEdits, bypass, or plan"
-                )
-            state.permission_mode = permission_mode
-        self._checkpoint()
+        permissions = self.runtime.permissions
+        try:
+            permissions.set_modes(state, interaction_mode=interaction_mode, permission_mode=permission_mode,
+                                  save_checkpoint=lambda _: self._checkpoint())
+        except ValueError as exc:
+            raise SessionServiceError(str(exc)) from exc
         result = {
             "session_id": state.session_id,
-            "interaction_mode": state.interaction_mode,
-            "permission_mode": state.permission_mode,
+            "interaction_mode": state.authorization.interaction_mode,
+            "permission_mode": state.authorization.permission_mode,
             "effective": "next permission resolution",
         }
         self.publisher.publish("session.policy_updated", result)
@@ -667,8 +662,8 @@ class SessionService:
             # second writable session-level task field.
             "user_goal": state.current_goal() if hasattr(state, "current_goal") else state.user_goal,
             "model": state.model_name,
-            "interaction_mode": getattr(state, "interaction_mode", "agent"),
-            "permission_mode": getattr(state, "permission_mode", None),
+            "interaction_mode": state.authorization.interaction_mode,
+            "permission_mode": state.authorization.permission_mode,
             "transport": getattr(state, "llm_transport", None),
             "environment": state.environment,
             "execution_root": str(state.workspace_dir),

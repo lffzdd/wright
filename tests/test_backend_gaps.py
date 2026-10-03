@@ -444,7 +444,7 @@ def test_summary_exposes_conditions_and_bypass_does_not_hide_deny_or_ask():
 
 
 def test_grants_summary_uses_fresh_persisted_scope(tmp_path, monkeypatch):
-    from wright.application.tool_execution.permissions import PermissionService
+    from wright.application.permission.service import PermissionService
     from wright.domain.model.session import Session
     from wright.domain.policy.permission.types import AuthorizationChange
     from wright.infrastructure.config.permission_store import FilePermissionRepository

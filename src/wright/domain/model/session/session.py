@@ -17,6 +17,7 @@ from ..command.record import CommandRecord
 from ..llm.usage import UsageRecord
 from ..planning import PlanManager
 from ..tool import ToolCall, ToolResult
+from .authorization import SessionAuthorization
 from .conversation import (
     ConversationMessage,
     ImagePart,
@@ -51,17 +52,13 @@ class Session:
     tool_executions: dict[CallId, ToolExecutionRecord]
     commands: dict[str, CommandRecord]
     plan_manager: PlanManager
+    authorization: SessionAuthorization = field(repr=False)
     # A stable label for the long-lived conversation, not the current task.
     # Every executable goal belongs to its RunRecord.
     session_label: str = ""
     lifecycle: SessionLifecycle = "open"
     # Durable state is grouped by project_root. workspace_dir remains the
     # actual execution directory for compatibility with existing tools.
-    # Structured allow rules for this session only. They are not stored on a
-    # shared policy object, so a child session cannot widen its parent.
-    permission_rules: list[dict] = field(default_factory=list)
-    # A live child inherits authorization by reference so parent revocation is immediate.
-    permission_parent: Session | None = field(default=None, repr=False, compare=False)
     project_root: Path | None = None
     environment: ExecutionEnvironment = "local"
     base_commit: str | None = None
@@ -97,11 +94,6 @@ class Session:
 
     # The active main-model choice is session state so /model survives resume.
     model_name: str | None = None
-    # Execution ceilings. None permission_mode follows the settings object.
-    # A stored mode is frozen for this session and does not track later edits
-    # of the user defaults while a turn is already authorized.
-    interaction_mode: Literal["agent", "plan", "ask"] = "agent"
-    permission_mode: str | None = None
     # Tokenizer estimate of the last assembled model request. Not billing usage.
     request_context_breakdown: dict[str, Any] = field(default_factory=dict)
     # Non-image uploads. Bytes stay outside the edited workspace.
@@ -130,6 +122,10 @@ class Session:
         default_factory=threading.RLock, repr=False
     )
 
+    def __post_init__(self) -> None:
+        if self.authorization.session_id != self.session_id:
+            raise ValueError("Session authorization identity must match its owner")
+
     @classmethod
     def create(
         cls,
@@ -144,8 +140,10 @@ class Session:
         branch_name: str | None = None,
     ) -> Session:
         execution_root = workspace_dir.resolve()
+        identity = session_id or uuid4().hex[:6]
         return cls(
-            session_id=session_id or uuid4().hex[:6],
+            session_id=identity,
+            authorization=SessionAuthorization(identity),
             session_label=initial_goal,
             workspace_dir=execution_root,
             cwd=execution_root,
@@ -170,28 +168,6 @@ class Session:
             raise TypeError("Session.set_cwd requires pathlib.Path")
         with self._cwd_lock:
             self.cwd = cwd.resolve()
-
-    def add_permission_rule(self, rule: dict) -> None:
-        """Remember one structured allow rule on this session."""
-        if not isinstance(rule, dict):
-            raise TypeError("permission rule must be a structured record")
-        record = dict(rule)
-        with self._cwd_lock:
-            if record not in self.permission_rules:
-                self.permission_rules.append(record)
-
-    def remove_permission_rule(self, rule: dict) -> bool:
-        """Drop one session allow rule. Returns whether the list changed."""
-        if not isinstance(rule, dict):
-            raise TypeError("permission rule must be a structured record")
-        record = dict(rule)
-        with self._cwd_lock:
-            if record not in self.permission_rules:
-                return False
-            self.permission_rules = [
-                item for item in self.permission_rules if item != record
-            ]
-            return True
 
     def register_command(self, record: CommandRecord) -> None:
         """Store command metadata. The command runtime owns process handles."""

@@ -27,6 +27,7 @@ from wright.application.workspace.references import (
     search_file_references,
 )
 from wright.core.paths import project_id
+from wright.domain.model.session import SessionAuthorization
 from wright.interfaces.cli.args import parse_cli_args
 
 
@@ -181,6 +182,7 @@ def test_same_request_reopens_the_same_session(tmp_path, monkeypatch):
         idle.set()
         state = SimpleNamespace(
             session_id=session_id,
+            authorization=SessionAuthorization(session_id),
             lifecycle="open",
             model_name="test",
             environment=project_context.environment,
@@ -201,7 +203,6 @@ def test_same_request_reopens_the_same_session(tmp_path, monkeypatch):
             plan_manager=SimpleNamespace(has_plan=False, snapshot=lambda: {"steps": []}),
             request_context_tokens=0,
             context_tokens=0,
-            permission_mode="default",
         )
         return SimpleNamespace(
             application_host=application_host or SimpleNamespace(workspace_dir=project_context.execution_root, close=lambda: True, has_active_work=lambda: False, state="open"),
@@ -302,6 +303,7 @@ def _runtime(root: Path):
     idle.set()
     state = SimpleNamespace(
         session_id="session",
+        authorization=SessionAuthorization("session"),
         status="open",
         model_name="test",
         user_goal="test",

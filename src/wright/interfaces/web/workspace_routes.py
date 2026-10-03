@@ -12,9 +12,9 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
+from ...application.permission.service import PermissionConflict
 from ...application.session.dispatch import SLASH_COMMANDS
 from ...application.session.errors import SessionServiceError
-from ...application.tool_execution.permissions import PermissionConflict
 from ...application.workspace.catalog import WorkspaceCatalogError
 from ...application.workspace.documents import DocumentError
 from ...application.workspace.files import PathRejected, list_directory, read_text

@@ -18,6 +18,7 @@ from ....domain.model.planning import PlanManager
 from ....domain.model.session import (
     MessageRecord,
     Session,
+    SessionAuthorization,
     SessionLifecycle,
     ToolExecutionRecord,
     ToolExecutionStatus,
@@ -32,12 +33,9 @@ from .errors import CheckpointError
 from .links import validate_session_links
 from .recovery import recover_interrupted_tool_calls
 
-CHECKPOINT_VERSION = 7
+CHECKPOINT_VERSION = 8
 _SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,128}")
 _T = TypeVar("_T", bound=str)
-_LEGACY_RUN_STATUSES = frozenset(
-    {"running", "completed", "failed", "max_steps"}
-)
 _TURN_ROUTES: frozenset[TurnRoute] = frozenset({"tool_calls", "final", "invalid"})
 _EXECUTION_STATUSES: frozenset[ToolExecutionStatus] = frozenset(
     {"pending", "running", "succeeded", "failed", "timeout"}
@@ -46,6 +44,7 @@ _MESSAGE_ROLES = frozenset({"system", "user", "assistant", "tool", "developer"})
 
 
 def _serialize_session(session: Session) -> dict[str, Any]:
+    authorization = session.authorization.snapshot()
     return {
         "version": CHECKPOINT_VERSION,
         "saved_at": datetime.now(timezone.utc).isoformat(),
@@ -56,8 +55,11 @@ def _serialize_session(session: Session) -> dict[str, Any]:
             "workspace_dir": str(session.workspace_dir),
             "cwd": str(session.get_cwd()),
             "project_root": str(session.project_root or session.workspace_dir),
-            "permission_data_version": 2,
-            "permission_rules": [dict(rule) for rule in session.permission_rules],
+            "authorization": {
+                "rules": [rule.to_persistent() for rule in authorization.rules],
+                "interaction_mode": authorization.interaction_mode,
+                "permission_mode": authorization.permission_mode,
+            },
             "environment": session.environment,
             "base_commit": session.base_commit,
             "branch_name": session.branch_name,
@@ -117,8 +119,6 @@ def _serialize_session(session: Session) -> dict[str, Any]:
             "task_usage_start": _serialize_usage(session.task_usage_start),
             "model_name": session.model_name,
             "llm_transport": session.llm_transport,
-            "interaction_mode": getattr(session, "interaction_mode", "agent"),
-            "permission_mode": getattr(session, "permission_mode", None),
             "request_context_breakdown": _json_safe(
                 getattr(session, "request_context_breakdown", {}) or {}
             ),
@@ -173,11 +173,8 @@ def _serialize_usage(usage: UsageRecord | None) -> dict[str, int] | None:
 def _deserialize_session(payload: Any) -> Session:
     root = _object(payload, "checkpoint")
     version = root.get("version")
-    if version not in {2, 3, 4, 5, 6, CHECKPOINT_VERSION}:
-        raise CheckpointError(
-            f"不支持的 checkpoint version: {version}; 当前支持 2–{CHECKPOINT_VERSION}。"
-            "旧 JSON 协议会话请在 legacy-json-react 标签版本中打开；新版请新建会话。"
-        )
+    if type(version) is not int or version != CHECKPOINT_VERSION:
+        raise CheckpointError(f"Unsupported checkpoint version: {version}; only version {CHECKPOINT_VERSION} is accepted. Start a new session.")
     data = _object(root.get("session"), "session")
 
     session_id = _string(data.get("session_id"), "session_id")
@@ -188,41 +185,16 @@ def _deserialize_session(payload: Any) -> Session:
         frozenset({"open", "closing", "closed"}),
         "session lifecycle",
     )
-    legacy_run_status = _one_of(
-        data.get("status", "running"), _LEGACY_RUN_STATUSES, "legacy session status"
-    )
-
-    workspace_dir = Path(
-        _string(data.get("workspace_dir"), "workspace_dir")
-    ).resolve()
-    if not workspace_dir.is_dir():
-        raise CheckpointError(f"workspace_dir 不存在: {workspace_dir}")
-    saved_cwd = Path(_string(data.get("cwd"), "cwd")).resolve()
-    if data.get("additional_working_directories"):
-        raise CheckpointError("Unbounded directory permissions are unsupported; approve a bounded resource again")
-    permission_rules = _deserialize_permission_rules(data.get("permission_rules", []), data.get("permission_data_version"))
-    from ....domain.policy.permission.settings import PermissionRule
-    project_root_value = data.get("project_root")
-    project_root = (
-        Path(_string(project_root_value, "project_root")).resolve()
-        if project_root_value is not None
-        else workspace_dir
-    )
-    # Cwd restoration uses the current stores, including project grants and
-    # session revocations made by another process since this checkpoint.
-    from ...config.permission_store import FilePermissionRepository
-    repository = FilePermissionRepository(project_root)
-    try:
-        with repository.transaction():
-            settings, protected = repository.read()
-            permission_rules, _ = repository.read_session(session_id, tuple(permission_rules))
-        records = (*settings.allow, *(PermissionRule.from_mapping(item) for item in permission_rules))
-        directory_roots = [Path(rule.resource_root(str(workspace_dir))) for rule in records if rule.kind == "directory"]
-        cwd = saved_cwd if saved_cwd.is_dir() else workspace_dir
-        if not _cwd_in_granted_roots(cwd, workspace_dir, directory_roots) or any(cwd == Path(root) or cwd.is_relative_to(Path(root)) for root in protected):
-            cwd = workspace_dir
-    except (OSError, ValueError, TypeError) as error:
-        raise CheckpointError(f"Could not restore current permissions: {error}") from error
+    workspace_dir = Path(_string(data.get("workspace_dir"), "workspace_dir"))
+    cwd = Path(_string(data.get("cwd"), "cwd"))
+    project_root = Path(_string(data.get("project_root"), "project_root"))
+    if not all(path.is_absolute() for path in (workspace_dir, cwd, project_root)):
+        raise CheckpointError("Checkpoint execution paths must be absolute")
+    if any(key in data for key in ("permission_rules", "permission_data_version", "permission_parent", "permission_mode", "interaction_mode", "additional_working_directories")):
+        raise CheckpointError("Flat session authorization fields are unsupported")
+    authorization = _deserialize_authorization(data.get("authorization"), session_id)
+    if "task_usage_start" not in data:
+        raise CheckpointError("task_usage_start is required")
     environment = data.get("environment", "local")
     if environment not in {"local", "worktree"}:
         raise CheckpointError("environment 必须是 local 或 worktree")
@@ -230,13 +202,6 @@ def _deserialize_session(payload: Any) -> Session:
     branch_name = _optional_string(data.get("branch_name"), "branch_name")
 
     message_records = _deserialize_messages(data.get("message_records"))
-    if version == 2:
-        # v2 persisted Chat Completions-style strings.  Normalize them while
-        # loading so resumed sessions enter the provider-neutral v3 model.
-        for record in message_records:
-            message = record.message
-            if message.get("role") == "user" and isinstance(message.get("content"), str):
-                message.setdefault("parts", [{"type": "text", "text": message["content"]}])
     turns = _deserialize_turns(data.get("turns"))
     tool_executions = _deserialize_executions(data.get("tool_executions"))
     plan_manager = PlanManager.from_snapshot(_object(data.get("plan"), "plan"))
@@ -312,14 +277,14 @@ def _deserialize_session(payload: Any) -> Session:
         session_id=session_id,
         lifecycle=cast(SessionLifecycle, lifecycle),
         session_label=_string(
-            data.get("session_label", data.get("user_goal")),
-            "session_label" if version == CHECKPOINT_VERSION else "user_goal",
+            data.get("session_label"),
+            "session_label",
             allow_empty=True,
         ),
         workspace_dir=workspace_dir,
         cwd=cwd,
         project_root=project_root,
-        permission_rules=permission_rules,
+        authorization=authorization,
         environment=environment,
         base_commit=base_commit,
         branch_name=branch_name,
@@ -342,12 +307,10 @@ def _deserialize_session(payload: Any) -> Session:
         last_usage=_deserialize_usage(data.get("last_usage"), "last_usage"),
         total_usage=_deserialize_usage(data.get("total_usage"), "total_usage")
         or UsageRecord(),
-        task_usage_start=_deserialize_usage(data.get("task_usage_start"), "task_usage_start")
+        task_usage_start=_deserialize_usage(data["task_usage_start"], "task_usage_start")
         or UsageRecord(),
         model_name=_optional_string(data.get("model_name"), "model_name"),
         llm_transport=_optional_string(data.get("llm_transport"), "llm_transport"),
-        interaction_mode=_interaction_mode(data.get("interaction_mode", "agent")),
-        permission_mode=_permission_mode(data.get("permission_mode")),
         request_context_breakdown=_object(
             data.get("request_context_breakdown", {}), "request_context_breakdown"
         ),
@@ -359,49 +322,24 @@ def _deserialize_session(payload: Any) -> Session:
         max_steps=max_steps,
         message_id_counter=message_id_counter,
     )
-    _restore_runs(
-        session, data.get("runs"), data.get("active_run_id"), legacy_run_status
-    )
-    if "task_usage_start" not in data:
-        # Older checkpoints counted only main-loop turns.
-        for turn in session.turns:
-            if turn.step <= session.active_turn_start_step and turn.usage is not None:
-                for name, value in vars(turn.usage).items():
-                    setattr(session.task_usage_start, name,
-                            getattr(session.task_usage_start, name) + value)
+    _restore_runs(session, data.get("runs"), data.get("active_run_id"))
     recover_interrupted_tool_calls(session)
     return session
 
 
-def _restore_runs(
-    session: Session,
-    value: Any,
-    active_run_id: Any,
-    legacy_status: str,
-) -> None:
-    """Load v4 records or deterministically map older turn boundaries."""
-    if isinstance(value, dict):
-        for run_id, row in value.items():
-            if not isinstance(run_id, str) or not isinstance(row, dict):
-                continue
-            run = RunRecord(run_id, session.session_id, str(row.get("source", "legacy")), str(row.get("goal", "")))
-            for key in ("parent_run_id", "root_run_id", "status", "started_at", "ended_at", "result", "error", "model_config", "plan", "usage", "step_ids", "tool_execution_ids"):
-                if key in row:
-                    setattr(run, key, row[key])
-            session.runs[run_id] = run
-        session.active_run_id = active_run_id if active_run_id in session.runs else None
-        return
-    # Old checkpoints had only root-turn strings.  Mapping is deterministic and
-    # intentionally does not invent boundaries beyond what the checkpoint proves.
-    legacy_id = session.agent_root_turn_id or f"legacy:{session.session_id}:0"
-    run = RunRecord(
-        legacy_id, session.session_id, "legacy", session.current_goal(), root_run_id=legacy_id
-    )
-    run.status = "completed" if legacy_status == "completed" else "interrupted"
-    run.step_ids = [turn.step_id or f"legacy-step:{turn.step}" for turn in session.turns]
-    run.tool_execution_ids = list(session.tool_executions)
-    session.runs[legacy_id] = run
-    session.active_run_id = legacy_id if legacy_status == "running" else None
+def _restore_runs(session: Session, value: Any, active_run_id: Any) -> None:
+    rows = _object(value, "runs")
+    for run_id, row in rows.items():
+        if not isinstance(run_id, str) or not isinstance(row, dict):
+            raise CheckpointError("Invalid run record")
+        run = RunRecord(run_id, session.session_id, _string(row.get("source"), "run source"), _string(row.get("goal"), "run goal", allow_empty=True))
+        for key in ("parent_run_id", "root_run_id", "status", "started_at", "ended_at", "result", "error", "model_config", "plan", "usage", "step_ids", "tool_execution_ids"):
+            if key in row:
+                setattr(run, key, row[key])
+        session.runs[run_id] = run
+    if active_run_id is not None and active_run_id not in session.runs:
+        raise CheckpointError("Active run does not exist")
+    session.active_run_id = active_run_id
 
 
 def _checkpoint_run_status(session_info: dict[str, Any]) -> str:
@@ -412,13 +350,11 @@ def _checkpoint_run_status(session_info: dict[str, Any]) -> str:
         active = runs.get(active_id)
         if isinstance(active, dict) and isinstance(active.get("status"), str):
             return active["status"]
-    # v2-v4 files persisted this as session status.
-    value = session_info.get("status", "idle")
-    return value if isinstance(value, str) else "idle"
+    return "idle"
 
 
 def _deserialize_extract_receipts(value: Any) -> dict[str, dict[str, Any]]:
-    """Old checkpoints omit the field. A bad value does not block resume."""
+    """Decode bounded optional extraction receipts."""
     if not isinstance(value, dict):
         return {}
     receipts: dict[str, dict[str, Any]] = {}
@@ -482,25 +418,13 @@ def _deserialize_messages(value: Any) -> list[MessageRecord]:
     for index, row in enumerate(rows):
         item = _object(row, f"message_records[{index}]")
         message = _object(item.get("message"), f"message_records[{index}].message")
-        source = _optional_string(
-            item.get("source"), f"message_records[{index}].source"
-        ) or _legacy_message_source(message)
+        source = _string(item.get("source"), f"message_records[{index}].source")
         records.append(MessageRecord(
             _string(item.get("id"), f"message_records[{index}].id"),
             _message_param(message),
             source,
         ))
     return records
-
-
-def _legacy_message_source(message: dict[str, Any]) -> str:
-    """Give checkpoints written before message provenance a stable projection."""
-    return {
-        "user": "user_input",
-        "assistant": "model_output",
-        "tool": "tool_result",
-        "system": "system_instruction",
-    }.get(str(message.get("role", "")), "system_feedback")
 
 
 def _deserialize_turns(value: Any) -> list[TurnRecord]:
@@ -673,59 +597,28 @@ def _message_param(value: dict[str, Any]) -> dict[str, Any]:
     return value
 
 
-def _deserialize_permission_rules(value: Any, version: Any = None) -> list[dict]:
-    """Permission data has its own schema version; old grants are unsupported."""
-    if value in (None, []):
-        return []
-    if version != 2 or not isinstance(value, list):
-        raise CheckpointError("Unsupported permission data; clear old grants and approve access again")
+def _deserialize_authorization(value: Any, session_id: str) -> SessionAuthorization:
     from ....domain.policy.permission.settings import PermissionRule
-    rules = []
-    for item in value:
-        if not isinstance(item, dict) or not item.get("id") or item.get("lifetime") != "session":
-            raise CheckpointError("Invalid session authorization record")
-        try:
-            rules.append(PermissionRule.from_mapping(item).to_persistent())
-        except (ValueError, TypeError) as exc:
-            raise CheckpointError(str(exc)) from exc
-    return rules
 
-
-def _cwd_in_granted_roots(
-    cwd: Path, workspace_dir: Path, additional: list[Path]
-) -> bool:
-    from ....domain.policy.permission.scope import is_under
-
-    resolved = cwd.resolve()
-    return any(is_under(resolved, root) for root in (workspace_dir, *additional))
+    data = _object(value, "authorization")
+    if set(data) != {"rules", "interaction_mode", "permission_mode"}:
+        raise CheckpointError("Invalid authorization fields")
+    records = _array(data["rules"], "authorization.rules")
+    try:
+        return SessionAuthorization(
+            session_id,
+            (PermissionRule.from_mapping(_object(item, "authorization rule")) for item in records),
+            interaction_mode=data["interaction_mode"],
+            permission_mode=data["permission_mode"],
+        )
+    except (ValueError, TypeError) as exc:
+        raise CheckpointError(str(exc)) from exc
 
 
 def _optional_string(value: Any, field: str) -> str | None:
     if value is None:
         return None
     return _string(value, field, allow_empty=True)
-
-
-_INTERACTION_MODES = frozenset({"agent", "plan", "ask"})
-_PERMISSION_MODES = frozenset({"default", "acceptEdits", "bypass", "plan"})
-
-
-def _interaction_mode(value: Any) -> str:
-    if value in (None, ""):
-        return "agent"
-    text = _string(value, "interaction_mode")
-    if text not in _INTERACTION_MODES:
-        raise CheckpointError(f"非法 interaction_mode: {text}")
-    return text
-
-
-def _permission_mode(value: Any) -> str | None:
-    if value in (None, ""):
-        return None
-    text = _string(value, "permission_mode")
-    if text not in _PERMISSION_MODES:
-        raise CheckpointError(f"非法 permission_mode: {text}")
-    return text
 
 
 def _documents(value: Any) -> dict[str, dict[str, Any]]:

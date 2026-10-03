@@ -11,6 +11,7 @@ from wright.application.session.service import (
     SessionService,
     SessionServiceError,
 )
+from wright.domain.model.session import SessionAuthorization
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 from wright.interfaces.interaction import InteractionBroker
 
@@ -21,6 +22,7 @@ def _runtime(*, status="completed", model="first"):
     idle.set()
     state = SimpleNamespace(
         session_id="session",
+        authorization=SessionAuthorization("session"),
         status=status,
         model_name=model,
         user_goal="test",

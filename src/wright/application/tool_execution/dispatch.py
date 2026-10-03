@@ -314,14 +314,6 @@ class ToolDispatchService:
             effective_call.id,
             self.capabilities.scope.agent_task_id,
         )
-        session_rules = ()
-        if self.session is not None:
-            from ...domain.policy.permission.settings import PermissionRule
-
-            session_rules = tuple(
-                PermissionRule.from_persistent(item)
-                for item in self.session.permission_rules
-            )
         snapshot = self.permissions.snapshot(self.session) if self._managed_permissions() else None
         resolver = self.permissions.resolver(self.permission_resolver, snapshot, self.session) if snapshot else self.permission_resolver
         permission = resolver.resolve(
@@ -336,9 +328,9 @@ class ToolDispatchService:
             scope=snapshot.scope if snapshot else scope,
             identity=identity,
             cwd=fixed_cwd,
-            session_rules=snapshot.rules if snapshot else session_rules,
-            interaction_mode=snapshot.interaction_mode if snapshot else getattr(self.session, "interaction_mode", "agent"),
-            permission_mode=snapshot.mode if snapshot else getattr(self.session, "permission_mode", None),
+            session_rules=snapshot.rules if snapshot else (),
+            interaction_mode=snapshot.interaction_mode if snapshot else "agent",
+            permission_mode=snapshot.mode if snapshot else None,
         )
         approval_wait_ms = (time.monotonic() - permission_started) * 1_000
         self._emit_lifecycle("permission_decision", {

@@ -73,6 +73,7 @@ from ..memory.assembly import (
     assemble_memory_manager,
     memory_tools,
 )
+from ..permission.service import PermissionService
 from ..session.events import SessionEvents
 from ..session.interaction import RoutedPrompter, UserPrompter
 from ..session.live_resources import RuntimeResources
@@ -102,6 +103,7 @@ class WrightRuntime:
     checkpoint_store: FileSessionRepository
     autonomy_store: AutonomyStore
     permission_settings: PermissionSettings
+    permissions: PermissionService
     assembled_base_tools: list[Tool]
     llm: LLMClient
     resumed: bool
@@ -328,6 +330,17 @@ def assemble_runtime(
     except CheckpointError as exc:
         raise SystemExit(f"Could not resume the session: {exc}") from exc
 
+    from ...infrastructure.config.permission_store import FilePermissionRepository
+    from ...infrastructure.runtime import AuthorizedExecution, LocalExecutionBackend
+
+    permissions = PermissionService(FilePermissionRepository(project_root), execution_factory=AuthorizedExecution)
+    try:
+        permissions.restore(session_state, LocalExecutionBackend(session_state.workspace_dir, session_state.get_cwd))
+        if session_state.authorization.permission_mode is None:
+            permissions.set_modes(session_state, permission_mode=permissions.snapshot(session_state).mode)
+    except (OSError, ValueError, TypeError) as exc:
+        raise SystemExit(f"Could not restore current permissions: {exc}") from exc
+
     # An explicit --model wins. Otherwise resuming retains the model selected
     # in that session, falling back to OPENAI_MODEL for new/legacy sessions.
     model = requested_model or session_state.model_name or configured_model
@@ -552,12 +565,7 @@ def assemble_runtime(
         """Create the commit route owned by one root or child Session."""
 
         def commit_authorization(change: AuthorizationChange) -> None:
-            from ...infrastructure.config.permission_store import (
-                FilePermissionRepository,
-            )
-            from ..tool_execution.permissions import PermissionService
-
-            PermissionService(FilePermissionRepository(session_state.project_root or session_state.workspace_dir)).commit(
+            permissions.commit(
                 change, target_session, save_checkpoint=(
                     None if config.no_session_persistence else checkpoint_store.save
                 ),
@@ -661,6 +669,7 @@ def assemble_runtime(
         workspace_dir=workspace_dir,
         authorization_commit_factory=authorization_commit_factory,
         expose_scheduling=True,
+        permissions=permissions,
     )
 
     prepared = prepare_model_tools(session_state, tools)
@@ -728,6 +737,7 @@ def assemble_runtime(
         checkpoint_store=checkpoint_store,
         autonomy_store=autonomy_store,
         permission_settings=settings,
+        permissions=agent.executor.permissions,
         assembled_base_tools=assembled_base,
         llm=llm_client,
         resumed=resumed,

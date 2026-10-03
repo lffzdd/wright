@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .authorization import SessionAuthorization
 from .conversation import (
     ConversationMessage,
     ConversationPart,
@@ -35,6 +36,7 @@ __all__ = [
     "RunRecord",
     "RunStatus",
     "Session",
+    "SessionAuthorization",
     "SessionLifecycle",
     "TextPart",
     "ToolExecutionRecord",

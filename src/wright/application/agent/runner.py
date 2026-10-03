@@ -423,6 +423,7 @@ class Agent:
             execution_journal_factory=self._execution_journal_factory,
             authorization_commit_factory=self._authorization_commit_factory,
             expose_scheduling=self._expose_scheduling,
+            permissions=self.executor.permissions,
         )
         self.executor.bind_run(
             assembly, authorization_commit=self._authorization_commit

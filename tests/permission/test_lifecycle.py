@@ -3,12 +3,12 @@
 
 import pytest
 
-from wright.application.tool_execution.capabilities import assemble_tool_capabilities
-from wright.application.tool_execution.dispatch import ToolDispatchService
-from wright.application.tool_execution.permissions import (
+from wright.application.permission.service import (
     PermissionConflict,
     PermissionService,
 )
+from wright.application.tool_execution.capabilities import assemble_tool_capabilities
+from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.application.workspace.grants import list_grants, resource_change
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall
@@ -127,7 +127,7 @@ def test_file_grant_is_exact_and_revoked_once(setup, lifetime):
     dispatch = executor(setup)
     assert write(dispatch, "nested/a.txt").ok
     assert not write(dispatch, "nested/b.txt", "second").ok
-    assert len(session.permission_rules) == (1 if lifetime == "session" else 0)
+    assert len(session.authorization.rules) == (1 if lifetime == "session" else 0)
     listing = list_grants(session, service)
     service.revoke(session, item["id"], lifetime, listing["version"])
     assert list_grants(session, service)["grants"] == []
@@ -151,7 +151,7 @@ def test_external_read_only_is_hard_limit(setup, tmp_path, mode, lifetime):
     outside.mkdir()
     (outside / "a.txt").write_text("readable")
     grant(setup, outside, kind="directory", lifetime=lifetime, write=False)
-    session.permission_mode = mode
+    session.authorization.set_modes(permission_mode=mode, interaction_mode=session.authorization.interaction_mode)
     dispatch = executor(setup, lambda _: PermissionResponse("allow_once"))
     assert dispatch.execute([ToolCall("read_file", {"file": str(outside / "a.txt")}, "read")])[0].result.ok
     assert not write(dispatch, outside / "a.txt").ok
@@ -186,7 +186,7 @@ def test_session_resume_preserves_authorization(setup):
     session, service, _ = setup
     grant(setup, "a.txt", lifetime="session")
     restored = deserialize_session(serialize_session(session))
-    assert restored.permission_rules == session.permission_rules
+    assert restored.authorization.rules == session.authorization.rules
     assert write(executor((restored, service, LocalExecutionBackend(restored.workspace_dir, restored.get_cwd))), "a.txt").ok
 
 
@@ -228,7 +228,7 @@ def test_live_child_tracks_parent_revocation(setup):
     parent, service, _ = setup
     item = grant(setup, "a.txt", lifetime="session")
     child = Session.create("child", parent.workspace_dir)
-    child.permission_parent = parent
+    child.authorization.bind_parent(parent.authorization)
     child_setup = child, service, LocalExecutionBackend(child.workspace_dir, child.get_cwd)
     dispatch = executor(child_setup)
     assert write(dispatch, "a.txt").ok
@@ -243,8 +243,7 @@ def test_legacy_permission_data_is_rejected(setup):
     with pytest.raises(ValueError, match="version"):
         PermissionSettings.from_dict({"permissions": {"allow": ["write_file"]}})
     data = serialize_session(session)
-    data["session"]["permission_rules"] = ["write_file"]
-    data["session"].pop("permission_data_version")
+    data["session"]["authorization"]["rules"] = ["write_file"]
     with pytest.raises(CheckpointError):
         deserialize_session(data)
 
@@ -356,19 +355,21 @@ def test_project_directory_cwd_resumes_and_revocation_snaps_back(setup, tmp_path
     checkpoint = serialize_session(session)
     assert deserialize_session(checkpoint).get_cwd() == directory
     service.revoke(session, row["id"], "project", service.snapshot(session).version)
-    assert deserialize_session(checkpoint).get_cwd() == session.workspace_dir
+    restored = deserialize_session(checkpoint)
+    service.restore(restored, LocalExecutionBackend(restored.workspace_dir, restored.get_cwd))
+    assert restored.get_cwd() == session.workspace_dir
 
 
 @pytest.mark.parametrize("field,value", [("permission_mode", "plan"), ("interaction_mode", "ask")])
 def test_child_tracks_parent_hard_mode_changes(setup, field, value):
     parent, service, _ = setup
     child = Session.create("child", parent.workspace_dir)
-    child.permission_parent = parent
-    child.permission_mode = "bypass"
+    child.authorization.bind_parent(parent.authorization)
+    child.authorization.set_modes(permission_mode="bypass", interaction_mode=child.authorization.interaction_mode)
     child_setup = child, service, LocalExecutionBackend(child.workspace_dir, child.get_cwd)
     dispatch = executor(child_setup)
     old = service.snapshot(child)
-    setattr(parent, field, value)
+    service.set_modes(parent, **{field: value})
     with pytest.raises(PermissionConflict):
         service.validate(child, old.version)
     assert not write(dispatch, "child-write.txt").ok
@@ -378,14 +379,15 @@ def test_child_session_approval_belongs_to_resumable_conversation(setup):
     parent, service, _ = setup
     old_checkpoint = serialize_session(parent)
     child = Session.create("child", parent.workspace_dir)
-    child.permission_parent = parent
+    child.authorization.bind_parent(parent.authorization)
     child_setup = child, service, LocalExecutionBackend(child.workspace_dir, child.get_cwd)
     grant(child_setup, "shared.txt", lifetime="session")
-    assert child.permission_rules == []
-    assert len(parent.permission_rules) == 1
+    assert child.authorization.rules == ()
+    assert len(parent.authorization.rules) == 1
     assert write(executor(setup), "shared.txt").ok
     resumed = deserialize_session(old_checkpoint)
-    assert len(resumed.permission_rules) == 1
+    service.restore(resumed, LocalExecutionBackend(resumed.workspace_dir, resumed.get_cwd))
+    assert len(resumed.authorization.rules) == 1
     row = list_grants(child, service)["grants"][0]
     service.revoke(child, row["id"], "session", service.snapshot(child).version)
     assert not write(executor(setup), "shared.txt").ok

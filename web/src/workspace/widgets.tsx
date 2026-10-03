@@ -2,7 +2,7 @@ import { PermissionGrants, ResourceOperations } from "./permissions";
 import {
   Archive, Check, Circle, DotsThreeVertical, Folder, Image, Paperclip, PaperPlaneRight, Plus, Square, Warning, X,
 } from "@phosphor-icons/react";
-import { FormEvent, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { DiffViewer } from "../DiffViewer";
 import { MarkdownContent } from "../Markdown";
 import { api } from "../api";
@@ -109,6 +109,17 @@ export function visibleModels(models: string[], currentModel: string, extras: st
 
 export { InteractionCard };
 
+export function InteractionDock({ sessionId, pending, respond }: {
+  sessionId: string;
+  pending: ViewState["pending_interactions"];
+  respond: (requestId: string, answer: unknown) => boolean | Promise<boolean>;
+}) {
+  if (!pending.length) return null;
+  return <div className="interaction-dock" aria-live="polite">
+    {pending.map((item) => <InteractionCard key={item.request_id} sessionId={sessionId} interaction={item} respond={respond} />)}
+  </div>;
+}
+
 export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }: {
   state: ViewState;
   respond: (requestId: string, answer: unknown) => boolean | Promise<boolean>;
@@ -127,14 +138,19 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }:
     stick.current = near;
     setStuck(near);
   };
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (stick.current) scroller.current?.scrollTo?.({ top: scroller.current.scrollHeight });
-  }, [state.history.length, state.active_turn?.content, state.active_turn?.tools.length, state.timeline?.length, state.pending_interactions.length]);
+  }, [
+    state.history.length,
+    state.active_turn?.content,
+    state.active_turn?.reasoning,
+    state.active_turn?.tools.length,
+    state.timeline?.length,
+  ]);
   const timeline = state.timeline ?? [];
   const known = new Set(timeline.map((item) => item.id));
   const liveTools = (state.active_turn?.tools ?? []).filter((tool) => !known.has(tool.call_id));
   const liveText = state.active_turn?.content && !timeline.some((item) => item.role === "assistant" && item.turn_id === state.active_turn?.turn_id && item.turn_id !== undefined) ? state.active_turn.content : "";
-  const pending = state.pending_interactions.filter((item) => !known.has(item.request_id));
   return <div className="timeline" ref={scroller} onScroll={onScroll}>
     {!timeline.length && !state.history.length && !state.active_turn && <p className="empty-small">{tr("web.empty_timeline")}</p>}
     {timeline.length > 0 ? <>
@@ -142,11 +158,7 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }:
         if (item.kind === "text" && item.role === "user") return <UserMessage key={item.id} text={item.text || ""} userLabel={userLabel} timestamp={timestamp} />;
         if (item.kind === "reasoning") return <ReasoningRow key={item.id} text={item.text || ""} durationMs={item.duration_ms} />;
         if (item.kind === "text") return <AssistantMessage key={item.id} text={item.text || ""} />;
-        if (item.kind === "approval" && item.interaction) {
-          const stillPending = state.pending_interactions.some((entry) => entry.request_id === item.interaction?.request_id);
-          if (!stillPending) return null;
-          return <InteractionCard key={item.id} sessionId={state.session.session_id} interaction={item.interaction} respond={respond} />;
-        }
+        if (item.kind === "approval") return null;
         return toolCardFromTimeline(item);
       })}
       {liveTools.map((tool) => toolCardFromState(tool))}
@@ -169,7 +181,6 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }:
       </div>}
     </>}
     {(state.agents ?? []).map((agent) => <section className="agent-progress" key={agent.task_id}><strong>Subagent {agent.task_id} · {agent.status}</strong>{agent.content && <MarkdownContent content={agent.content} />}</section>)}
-    {pending.map((item) => <InteractionCard key={item.request_id} sessionId={state.session.session_id} interaction={item} respond={respond} />)}
     {state.queued_commands.map((item) => <div className="queue-item" key={item.command_id}><span>{item.prompt}</span><button type="button" className="button" onClick={() => cancelQueued(item.command_id)}>{tr("web.remove_queued")}</button></div>)}
     {state.notices.slice(-5).map((notice) => <div className="system-notice" role="status" key={notice.id}>{present(notice.code, notice.params, notice.text)}</div>)}
     {!stuck && <button type="button" className="button jump" onClick={() => { stick.current = true; setStuck(true); scroller.current?.scrollTo?.({ top: scroller.current.scrollHeight }); }}>{tr("web.jump_bottom")}</button>}

@@ -199,7 +199,7 @@ def test_always_allow_outside_write_then_edit_in_same_extra_root(tmp_path):
     ])[0].result
 
     assert written.ok and read.ok and edited.ok
-    assert any(rule["kind"] == "directory" and rule["root"] == str(extra.resolve()) for rule in session.permission_rules)
+    assert any(rule.kind == "directory" and rule.root == str(extra.resolve()) for rule in session.authorization.rules)
     assert extra.joinpath("a.txt").read_text(encoding="utf-8") == "new line\n"
 
 

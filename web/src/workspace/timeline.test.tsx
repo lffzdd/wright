@@ -48,7 +48,7 @@ describe("real timeline projection", () => {
     const { container } = render(transcript(state));
     expect(screen.getAllByText(/print\(42\)/)).toHaveLength(2);
     expect(container.querySelectorAll(".avatar.assistant")).toHaveLength(2);
-    expect(container.querySelectorAll(".summary-row")).toHaveLength(0);
+    expect(container.querySelectorAll(".reasoning-card")).toHaveLength(0);
     expect(screen.queryByText("draft")).toBeNull();
   });
 
@@ -66,11 +66,12 @@ describe("real timeline projection", () => {
     state = emit(state, "reasoning.delta", { piece: "Inspecting the input" });
     state = emit(state, "content.final", { content: "Finished checking" });
     render(transcript(state));
-    expect(screen.getByText("Inspecting the input").closest(".reasoning-block")).toBeTruthy();
-    fireEvent.click(screen.getByText("Inspecting the input").closest(".reasoning-block")!.querySelector("button")!);
-    expect(screen.getByText("Inspecting the input").closest(".reasoning-block")?.classList.contains("open")).toBe(true);
+    const reasoning = screen.getByText("Inspecting the input").closest(".reasoning-card");
+    expect(reasoning).toBeTruthy();
+    fireEvent.click(reasoning!.querySelector("button")!);
+    expect(reasoning?.classList.contains("open")).toBe(true);
     expect(screen.getByText("Finished checking").closest(".msg-card")).toBeTruthy();
-    expect(screen.queryByText("Finished checking")?.closest(".summary-row")).toBeNull();
+    expect(screen.getAllByText("Inspecting the input").length).toBeGreaterThan(0);
   });
 
   it("renders failed snapshot and live tool results with the same error and exit code", () => {

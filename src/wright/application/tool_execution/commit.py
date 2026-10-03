@@ -5,7 +5,7 @@ from collections.abc import Callable
 
 from ...domain.model.session.session import Session
 from ...domain.policy.permission.types import AuthorizationChange
-from .permissions import PermissionService
+from ..permission.service import PermissionService
 
 
 def commit_authorization(change: AuthorizationChange, *, session: Session,

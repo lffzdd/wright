@@ -7,10 +7,7 @@ operations even when the session permission mode is bypass.
 
 from __future__ import annotations
 
-from typing import Literal
-
-InteractionMode = Literal["agent", "plan", "ask"]
-PermissionModeName = Literal["default", "acceptEdits", "bypass", "plan"]
+from ...domain.model.session.authorization import InteractionMode
 
 ASK_TOOLS = frozenset({
     "read_file",
@@ -53,7 +50,7 @@ PLAN_OPERATIONS = ASK_OPERATIONS | frozenset({"plan_update"})
 
 
 def interaction_mode_of(session: object | None) -> InteractionMode:
-    value = getattr(session, "interaction_mode", "agent") if session is not None else "agent"
+    value = session.authorization.interaction_mode if session is not None else "agent"
     if value in {"agent", "plan", "ask"}:
         return value
     return "agent"
@@ -62,7 +59,7 @@ def interaction_mode_of(session: object | None) -> InteractionMode:
 def permission_mode_of(session: object | None) -> str | None:
     if session is None:
         return None
-    value = getattr(session, "permission_mode", None)
+    value = session.authorization.permission_mode
     if value in {"default", "acceptEdits", "bypass", "plan"}:
         return value
     return None
@@ -71,9 +68,12 @@ def permission_mode_of(session: object | None) -> str | None:
 def ceiling_for(session: object | None) -> InteractionMode:
     """The stricter of the interaction mode and a plan-only permission mode."""
 
-    if interaction_mode_of(session) == "ask":
+    if session is None:
+        return "agent"
+    permission, interaction = session.authorization.effective_modes("default")
+    if interaction == "ask":
         return "ask"
-    if interaction_mode_of(session) == "plan" or permission_mode_of(session) == "plan":
+    if interaction == "plan" or permission == "plan":
         return "plan"
     return "agent"
 

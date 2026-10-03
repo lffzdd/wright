@@ -100,7 +100,7 @@ def test_outside_directory_choices_update_session_only_after_allow(tmp_path):
     )
     assert written.ok
     assert permission_directories(session) == (extra.resolve(),)
-    assert session.permission_rules[0]["kind"] == "directory"
+    assert session.authorization.rules[0].kind == "directory"
     assert "allow_session_directory_write" in {choice.id for choice in renderer.prompts[0].choices}
     assert _run(
         _executor(session, _MockRenderer()),

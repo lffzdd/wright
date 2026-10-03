@@ -314,3 +314,15 @@ def test_schedule_tools_do_not_wake_the_scheduler() -> None:
     )
     assert "notify_changed" not in text
     assert "durable_store" not in text
+
+
+def test_session_authorization_has_one_owner_and_codec_has_no_permission_io() -> None:
+    session = (PACKAGE_ROOT / "domain/model/session/session.py").read_text()
+    for old in ("permission_rules", "permission_parent", "add_permission_rule", "remove_permission_rule"):
+        assert old not in session
+    codec = (PACKAGE_ROOT / "infrastructure/persistence/session/codec.py").read_text()
+    assert "FilePermissionRepository" not in codec
+    assert "_cwd_in_granted_roots" not in codec
+    assert not (PACKAGE_ROOT / "application/tool_execution/permissions.py").exists()
+    authorization = PACKAGE_ROOT / "domain/model/session/authorization.py"
+    assert not any("infrastructure" in module or "application" in module or "interfaces" in module for module in _imports_including_type_checking(authorization))

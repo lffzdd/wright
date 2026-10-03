@@ -24,6 +24,7 @@ from wright.application.session.history_projection import project_history
 from wright.application.session.mailbox import InteractionMailbox
 from wright.application.session.publisher import EventPublisher
 from wright.application.session.service import SessionService
+from wright.domain.model.session import SessionAuthorization
 from wright.domain.policy import PermissionSettings
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 
@@ -31,6 +32,7 @@ from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 def _state(session_id: str, root: Path) -> SimpleNamespace:
     return SimpleNamespace(
         session_id=session_id,
+        authorization=SessionAuthorization(session_id),
         lifecycle="open",
         model_name="test",
         environment="local",

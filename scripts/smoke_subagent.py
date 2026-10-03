@@ -71,7 +71,7 @@ def _final(answer: str) -> ContentDone:
 
 def _make_session(goal: str = "主任务") -> Session:
     session = Session.create(initial_goal=goal, workspace_dir=WORKSPACE)
-    session.permission_mode = "bypass"
+    session.authorization.set_modes(permission_mode="bypass", interaction_mode=session.authorization.interaction_mode)
     return session
 
 

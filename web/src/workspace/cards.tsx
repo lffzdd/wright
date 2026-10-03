@@ -140,18 +140,28 @@ export function AssistantMessage({ text }: { text: string }) {
 export function SummaryRow({ text, durationMs }: { text: string; durationMs?: number | null }) {
   const [open, setOpen] = useState(false);
   const tr = useT();
-  return <div className={`tl-indent reasoning-block ${open ? "open" : ""}`}>
-    <div className="summary-row">
-      <div className="summary-copy">
-        <svg className="summary-mark" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M13 10V3L4 14h7v7l9-11h-7z" />
-        </svg>
-        <span className="reasoning-label">{tr("web.reasoning")}{typeof durationMs === "number" ? ` (${formatDuration(durationMs)})` : ""}:</span>
-        {!open && <strong>{text}</strong>}
-      </div>
-      <button type="button" className="text-button summary-toggle" onClick={() => setOpen((value) => !value)}>{open ? tr("web.hide") : tr("web.steps")}<CaretDown size={12} className={open ? "" : "collapsed"} /></button>
-    </div>
-    {open && <p className="summary-body">{text}</p>}
+  const durationLabel = typeof durationMs === "number" ? formatDuration(durationMs) : "";
+  const preview = text.replace(/\s+/g, " ").trim();
+  return <div className="tl-indent">
+    <section className={`tool-card reasoning-card ${open ? "open" : ""}`}>
+      <button
+        type="button"
+        className="tool-card-head"
+        aria-expanded={open}
+        aria-label={open ? tr("web.reasoning_collapse") : tr("web.reasoning_expand")}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="tool-title">
+          <span className="tool-badge reasoning">REASON</span>
+          <span className="tool-name">{tr("web.reasoning")}{durationLabel ? ` · ${durationLabel}` : ""}</span>
+          {!open && preview && <span className="reasoning-snippet">{preview}</span>}
+        </span>
+        <span className="tool-meta">
+          <CaretDown size={12} className={open ? "" : "collapsed"} aria-hidden="true" />
+        </span>
+      </button>
+      {open && preview && <pre className="term-body">{text}</pre>}
+    </section>
   </div>;
 }
 

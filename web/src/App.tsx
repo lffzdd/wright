@@ -7,7 +7,7 @@ import { applyEvent } from "./reducer";
 import type { SessionSummary, Snapshot, ViewState } from "./types";
 import { MemoryDialog, RulesDialog, SchedulesDialog, SearchDialog, SettingsDialog } from "./workspace/panels";
 import {
-  Composer, Inspector, SessionRail, Timeline, emptyDraft, taskCode, sessionTitle, EnvironmentChoice,
+  Composer, Inspector, InteractionDock, SessionRail, Timeline, emptyDraft, taskCode, sessionTitle, EnvironmentChoice,
   type Draft,
 } from "./workspace/widgets";
 import type { FileReference } from "./types";
@@ -729,6 +729,13 @@ export default function App() {
             }}
           />
           {browsing === "preview" && <p className="hint">{state.session.recoverable === false ? tr("web.archived") : tr("web.history_view")}</p>}
+          {browsing === "live" && state.pending_interactions.length > 0 && (
+            <InteractionDock
+              sessionId={state.session.session_id}
+              pending={state.pending_interactions}
+              respond={(requestId, answer) => respondToInteraction(requestId, answer)}
+            />
+          )}
           <div className="composer-wrap">
             <Composer
               sessionId={state.session.session_id}

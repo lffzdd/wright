@@ -8,7 +8,7 @@ import pytest
 
 from wright.application.session.live_resources import RuntimeResources
 from wright.application.session.publisher import EventPublisher
-from wright.domain.model.session import Session
+from wright.domain.model.session import Session, SessionAuthorization
 from wright.domain.model.tool import ArtifactRef, ToolCall, ToolResult
 from wright.infrastructure.workspace.project import ProjectContext
 from wright.interfaces.interaction import InteractionBroker
@@ -26,6 +26,7 @@ def _fake_runtime(session_id, root):
         session_state=SimpleNamespace(
             agent_task_id=None,
             session_id=session_id,
+            authorization=SessionAuthorization(session_id),
             status="running",
             user_goal="test",
             model_name="model",

@@ -1,5 +1,5 @@
 """Create test grants through the same authoritative application service."""
-from wright.application.tool_execution.permissions import PermissionService
+from wright.application.permission.service import PermissionService
 from wright.application.workspace.grants import resource_change
 from wright.infrastructure.config.permission_store import FilePermissionRepository
 from wright.infrastructure.runtime import LocalExecutionBackend
