@@ -1,7 +1,6 @@
 """Contract tests for the three model-facing execution tool families."""
 
-import os
-import subprocess
+import json
 import time
 
 from wright.application.command.execution import CommandExecution
@@ -16,9 +15,9 @@ from wright.domain.model.tool import ToolCall
 from wright.domain.policy import PermissionPolicy, PermissionSettings
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 from wright.infrastructure.tools.agent_tools import agent_tools
-from wright.infrastructure.tools.schedule import schedule_tools
 from wright.infrastructure.tools.command import execute_command_tool
 from wright.infrastructure.tools.command.control import command_tools
+from wright.infrastructure.tools.schedule import schedule_tools
 
 
 def _executor(session, services=None):
@@ -69,7 +68,7 @@ def test_command_tools_follow_background_and_timeout_handoff(tmp_path):
     observed = _call(executor, "get_command", command_id=command_id)
     assert observed.ok and observed.data["command_id"] == command_id
     waited = _call(executor, "wait_command", command_id=command_id, timeout=2)
-    assert waited.ok and waited.data["status"] == "completed"
+    assert waited.ok and waited.data["status"] == "completed", json.dumps(waited.to_dict())
     assert waited.data["returncode"] == 0
     assert "handed-off" in waited.data["output"]
     again = _call(executor, "terminate_command", command_id=command_id)
@@ -104,7 +103,7 @@ def test_wait_timeout_does_not_terminate_and_list_stays_in_session(tmp_path):
     )
     command_id = launched.data["command_id"]
     waited = _call(current, "wait_command", command_id=first.data["command_id"], timeout=0)
-    assert waited.ok and waited.data["wait_timed_out"] is True
+    assert waited.ok and waited.data["wait_timed_out"] is True, json.dumps(waited.to_dict())
     assert waited.data["cancel_requested"] is False
     still = _call(current, "get_command", command_id=first.data["command_id"])
     assert still.data["status"] == "running"
@@ -167,40 +166,25 @@ def test_unknown_command_is_not_a_successful_completion(tmp_path):
 
 def test_terminate_command_kills_the_process_tree(tmp_path):
     session = _session(tmp_path)
-    pidfile = tmp_path / "child.pid"
+    ready = tmp_path / "child.ready"
+    late = tmp_path / "child.late"
     executor = _executor(session)
     launched = _call(
-        executor,
-        "execute_command",
-        command=f"sleep 30 & echo $! > '{pidfile}'; wait",
+        executor, "execute_command",
+        command=f"(sleep 1; echo escaped > '{late}') & echo ready > '{ready}'; wait",
         run_in_background=True,
     )
+    assert launched.ok
     command_id = launched.data["command_id"]
-    deadline = time.monotonic() + 2
-    while not pidfile.exists() and time.monotonic() < deadline:
+    deadline = time.monotonic() + 3
+    while not ready.exists() and time.monotonic() < deadline:
         time.sleep(0.02)
-    child_pid = int(pidfile.read_text().strip())
+    assert ready.exists()
     terminated = _call(executor, "terminate_command", command_id=command_id)
     assert terminated.ok
-    assert terminated.data["status"] == "cancelled"
-    deadline = time.monotonic() + 2
-    while time.monotonic() < deadline and not _process_stopped(child_pid):
-        time.sleep(0.02)
-    assert _process_stopped(child_pid)
-
-
-def _process_stopped(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return True
-    state = subprocess.run(
-        ["ps", "-p", str(pid), "-o", "stat="],
-        check=False,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    return not state or state.startswith("Z")
+    assert terminated.data["status"] == "cancelled", json.dumps(terminated.to_dict())
+    time.sleep(1.2)
+    assert not late.exists()
 
 
 def test_cross_type_ids_fail_before_any_control(tmp_path):

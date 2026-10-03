@@ -1,4 +1,5 @@
 {
+  "version": 2,
   "mode": "default",
   "permissions": {
     "allow": [],
@@ -8,7 +9,6 @@
       "execute_command(* sudo *)",
       "execute_command(*git push*)",
       "http_request(http://*)"
-    ],
-    "additionalDirectories": []
+    ]
   }
 }

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import Protocol, runtime_checkable
 
+from ...domain.policy.permission.types import InvocationGrant
 from .types import (
     DirectoryEntry,
     ExecutionPath,
@@ -85,4 +86,4 @@ class ExecutionBackend(Protocol):
         cancellation_check: Callable[[], bool] | None = None,
     ) -> Iterable[SearchMatch]: ...
 
-    def start_shell(self, command: str, *, cwd: ExecutionPath) -> ProcessHandle: ...
+    def start_shell(self, command: str, *, cwd: ExecutionPath, grant: InvocationGrant) -> ProcessHandle: ...

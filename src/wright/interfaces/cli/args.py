@@ -16,6 +16,10 @@ from ..i18n import t
 
 def parse_cli_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=t("cli.help.description"))
+    sandbox_group = parser.add_mutually_exclusive_group()
+    sandbox_group.add_argument("--sandbox-setup", action="store_true", help="Initialize native Shell isolation (Windows requests administrator setup)")
+    sandbox_group.add_argument("--sandbox-cleanup", action="store_true", help="Remove the dedicated Windows sandbox accounts and network filters")
+    sandbox_group.add_argument("--sandbox-status", action="store_true", help="Show native Shell isolation availability")
     resume_group = parser.add_mutually_exclusive_group()
     resume_group.add_argument(
         "--resume",

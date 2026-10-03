@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import os
-import selectors
-import shlex
+import queue
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Iterable, Iterator
 from itertools import islice
@@ -28,22 +28,30 @@ class LocalProcessHandle:
         self._cwd_result: ExecutionPath | None = None
         self._cwd_consumed = False
         self._group = OwnedProcessGroup(process.pid)
-        if process.stdout is not None:
-            os.set_blocking(process.stdout.fileno(), False)
+        self._output: queue.Queue[bytes | None] = queue.Queue(maxsize=128)
+        self._pending = b""
+        self._eof = False
+        def collect():
+            if process.stdout is not None:
+                while chunk := process.stdout.read(65536):
+                    self._output.put(chunk)
+            self._output.put(None)
+        threading.Thread(target=collect, daemon=True).start()
 
     def read_output(self, max_bytes: int) -> bytes | None:
-        stream = self._process.stdout
-        if stream is None:
-            return None
-        try:
-            chunk = os.read(stream.fileno(), max_bytes)
-        except BlockingIOError:
-            return b""
-        except OSError:
-            return None
-        if not chunk:
-            return None
-        return chunk
+        if not self._pending:
+            if self._eof:
+                return None
+            try:
+                chunk = self._output.get_nowait()
+            except queue.Empty:
+                return b""
+            if chunk is None:
+                self._eof = True
+                return None
+            self._pending = chunk
+        result, self._pending = self._pending[:max_bytes], self._pending[max_bytes:]
+        return result
 
     def wait(self, timeout: float | None = None) -> int:
         result = self._process.wait(timeout=timeout)
@@ -304,22 +312,19 @@ class LocalExecutionBackend:
             if callable(close):
                 close()
 
-    def start_shell(self, command: str, *, cwd: ExecutionPath) -> LocalProcessHandle:
-        local_cwd = self._local(cwd)
-        descriptor, cwd_file = tempfile.mkstemp(prefix="wright-cwd-")
-        os.close(descriptor)
-        cwd_path = Path(cwd_file)
-        cwd_path.unlink(missing_ok=True)
-        injected = f"eval {shlex.quote(command)} && pwd -P > {shlex.quote(str(cwd_path))}"
-        process = subprocess.Popen(
-            ["/bin/bash", "-c", injected],
-            cwd=local_cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=False,
-            bufsize=0,
-            start_new_session=True,
-        )
+    def start_shell(self, command: str, *, cwd: ExecutionPath, grant) -> LocalProcessHandle:
+        from .sandbox import launch
+        self._local(cwd)
+        scratch = Path(tempfile.mkdtemp(prefix="wright-command-"))
+        cwd_path = scratch / "cwd"
+        try:
+            process = launch(command, grant, scratch, cwd_path)
+        except Exception:
+            import shutil
+            shutil.rmtree(scratch)
+            raise
+        if hasattr(process, "read_output"):
+            return process
         return LocalProcessHandle(process, self, cwd_path)
 
 
@@ -354,37 +359,41 @@ def _iter_rg_chunks(
     cancellation_check: Callable[[], bool] | None,
 ) -> Iterator[tuple[str, bytes]]:
     """Read both rg pipes without blocking on either one indefinitely."""
-    selector = selectors.DefaultSelector()
-    streams = (("stdout", process.stdout), ("stderr", process.stderr))
-    try:
-        for name, stream in streams:
-            if stream is None:
-                continue
-            fd = stream.fileno()
-            os.set_blocking(fd, False)
-            selector.register(fd, selectors.EVENT_READ, name)
-
-        while selector.get_map() or process.poll() is None:
-            _check_search_controls(deadline, cancellation_check)
-            if not selector.get_map():
-                # The child may have closed both descriptors before its wait
-                # status becomes visible.  Keep the control checks live while
-                # avoiding an unbounded wait.
-                time.sleep(_selector_wait(deadline))
-                continue
-            for key, _mask in selector.select(_selector_wait(deadline)):
-                try:
-                    chunk = os.read(key.fd, 64 * 1024)
-                except BlockingIOError:
-                    continue
-                except OSError as exc:
-                    raise RuntimeError(f"ripgrep output read failed: {exc}") from exc
+    chunks: queue.Queue[tuple[str, bytes | None]] = queue.Queue(maxsize=128)
+    stop = threading.Event()
+    def collect(name, stream):
+        try:
+            while not stop.is_set():
+                chunk = stream.read(65536)
+                while not stop.is_set():
+                    try:
+                        chunks.put((name, chunk or None), timeout=0.05)
+                        break
+                    except queue.Full:
+                        continue
                 if not chunk:
-                    selector.unregister(key.fd)
-                    continue
-                yield key.data, chunk
+                    return
+        except (OSError, ValueError):
+            if not stop.is_set():
+                chunks.put((name, None))
+    pending = 0
+    for name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
+        if stream is not None:
+            pending += 1
+            threading.Thread(target=collect, args=(name, stream), daemon=True).start()
+    try:
+        while pending or process.poll() is None:
+            _check_search_controls(deadline, cancellation_check)
+            try:
+                name, chunk = chunks.get(timeout=_selector_wait(deadline))
+            except queue.Empty:
+                continue
+            if chunk is None:
+                pending -= 1
+            else:
+                yield name, chunk
     finally:
-        selector.close()
+        stop.set()
 
 
 def _selector_wait(deadline: float | None) -> float:
@@ -460,6 +469,9 @@ def _terminate_process_tree(process: subprocess.Popen, *, grace_seconds: float =
         return
 
     def send(sig: signal.Signals) -> None:
+        if os.name == "nt":
+            process.terminate() if sig == signal.SIGTERM else process.kill()
+            return
         try:
             group = os.getpgid(process.pid)
             if group == process.pid:
@@ -475,7 +487,7 @@ def _terminate_process_tree(process: subprocess.Popen, *, grace_seconds: float =
     try:
         process.wait(timeout=grace_seconds)
     except subprocess.TimeoutExpired:
-        send(signal.SIGKILL)
+        send(signal.SIGTERM if os.name == "nt" else signal.SIGKILL)
         try:
             process.wait(timeout=grace_seconds)
         except subprocess.TimeoutExpired:

@@ -1,0 +1,282 @@
+{
+  "write": {
+    "kind": "permission",
+    "request_id": "audit-request",
+    "tool_name": "write_file",
+    "subject": "C:\\Project\\Python\\wright\\audit-example.txt",
+    "reason": "This operation needs approval",
+    "risk_flags": [
+      "reads_files",
+      "writes_files"
+    ],
+    "targets": [
+      "C:\\Project\\Python\\wright\\audit-example.txt"
+    ],
+    "choices": [
+      {
+        "id": "allow_once",
+        "label": "Allow once",
+        "scope": "This invocation only",
+        "persistence": "Not saved",
+        "lifetime": "once",
+        "resource_kind": "invocation",
+        "operations": [],
+        "resource": {}
+      },
+      {
+        "id": "allow_session_rule",
+        "label": "This conversation (including resume)",
+        "scope": "C:\\Project\\Python\\wright\\audit-example.txt",
+        "persistence": "This conversation (including resume)",
+        "lifetime": "session",
+        "resource_kind": "file",
+        "operations": [
+          "file_read",
+          "file_write"
+        ],
+        "resource": {
+          "kind": "file",
+          "tool_name": "write_file",
+          "root": "C:\\Project\\Python\\wright",
+          "pattern": "audit-example.txt",
+          "operations": [
+            "file_read",
+            "file_write"
+          ],
+          "id": "",
+          "lifetime": "session",
+          "project_id": "",
+          "source": "approval",
+          "root_kind": "absolute",
+          "recursive": false,
+          "exact": true,
+          "cwd": "",
+          "sandbox_key": ""
+        }
+      },
+      {
+        "id": "allow_project_rule",
+        "label": "This project",
+        "scope": "C:\\Project\\Python\\wright\\audit-example.txt",
+        "persistence": "This project",
+        "lifetime": "project",
+        "resource_kind": "file",
+        "operations": [
+          "file_read",
+          "file_write"
+        ],
+        "resource": {
+          "kind": "file",
+          "tool_name": "write_file",
+          "root": "C:\\Project\\Python\\wright",
+          "pattern": "audit-example.txt",
+          "operations": [
+            "file_read",
+            "file_write"
+          ],
+          "id": "",
+          "lifetime": "session",
+          "project_id": "",
+          "source": "approval",
+          "root_kind": "absolute",
+          "recursive": false,
+          "exact": true,
+          "cwd": "",
+          "sandbox_key": ""
+        }
+      },
+      {
+        "id": "allow_user_rule",
+        "label": "All projects",
+        "scope": "C:\\Project\\Python\\wright\\audit-example.txt",
+        "persistence": "All projects",
+        "lifetime": "user",
+        "resource_kind": "file",
+        "operations": [
+          "file_read",
+          "file_write"
+        ],
+        "resource": {
+          "kind": "file",
+          "tool_name": "write_file",
+          "root": "C:\\Project\\Python\\wright",
+          "pattern": "audit-example.txt",
+          "operations": [
+            "file_read",
+            "file_write"
+          ],
+          "id": "",
+          "lifetime": "session",
+          "project_id": "",
+          "source": "approval",
+          "root_kind": "absolute",
+          "recursive": false,
+          "exact": true,
+          "cwd": "",
+          "sandbox_key": ""
+        }
+      },
+      {
+        "id": "allow_session_directory_write",
+        "label": "This conversation (including resume)",
+        "scope": "C:\\Project\\Python\\wright",
+        "persistence": "This conversation (including resume)",
+        "lifetime": "session",
+        "resource_kind": "directory",
+        "operations": [
+          "file_read",
+          "file_write"
+        ],
+        "resource": {
+          "path": "C:\\Project\\Python\\wright",
+          "recursive": true
+        }
+      },
+      {
+        "id": "allow_project_directory_write",
+        "label": "This project",
+        "scope": "C:\\Project\\Python\\wright",
+        "persistence": "This project",
+        "lifetime": "project",
+        "resource_kind": "directory",
+        "operations": [
+          "file_read",
+          "file_write"
+        ],
+        "resource": {
+          "path": "C:\\Project\\Python\\wright",
+          "recursive": true
+        }
+      },
+      {
+        "id": "allow_user_directory_write",
+        "label": "All projects",
+        "scope": "C:\\Project\\Python\\wright",
+        "persistence": "All projects",
+        "lifetime": "user",
+        "resource_kind": "directory",
+        "operations": [
+          "file_read",
+          "file_write"
+        ],
+        "resource": {
+          "path": "C:\\Project\\Python\\wright",
+          "recursive": true
+        }
+      },
+      {
+        "id": "deny",
+        "label": "Deny",
+        "scope": "No execution",
+        "persistence": "Not saved",
+        "lifetime": "once",
+        "resource_kind": "invocation",
+        "operations": [],
+        "resource": {}
+      }
+    ],
+    "principal": "audit-session",
+    "operation": "file_read, file_write",
+    "grant_summary": "This invocation only: C:\\Project\\Python\\wright\\audit-example.txt; C:\\Project\\Python\\wright\\audit-example.txt",
+    "preview": "Hello from the file approval preview",
+    "cwd": "C:\\Project\\Python\\wright",
+    "command": "",
+    "http_method": "",
+    "http_target": "",
+    "shell_note": "",
+    "reason_code": "permission.needs_approval",
+    "reason_params": {},
+    "summary_code": "permission.scope.invocation_only",
+    "summary_params": {
+      "targets": "C:\\Project\\Python\\wright\\audit-example.txt; C:\\Project\\Python\\wright\\audit-example.txt"
+    }
+  },
+  "shell": {
+    "kind": "permission",
+    "request_id": "audit-request",
+    "tool_name": "execute_command",
+    "subject": "echo hello",
+    "reason": "This operation needs approval",
+    "risk_flags": [
+      "writes_files",
+      "executes_shell",
+      "may_modify_git",
+      "may_delete_files"
+    ],
+    "targets": [
+      "echo hello"
+    ],
+    "choices": [
+      {
+        "id": "allow_once",
+        "label": "Allow once",
+        "scope": "This invocation only",
+        "persistence": "Not saved",
+        "lifetime": "once",
+        "resource_kind": "invocation",
+        "operations": [],
+        "resource": {}
+      },
+      {
+        "id": "allow_session_rule",
+        "label": "This conversation (including resume)",
+        "scope": "echo hello \u00b7 C:\\Project\\Python\\wright",
+        "persistence": "This conversation (including resume)",
+        "lifetime": "session",
+        "resource_kind": "shell",
+        "operations": [
+          "shell"
+        ],
+        "resource": {
+          "kind": "shell",
+          "tool_name": "execute_command",
+          "pattern": "echo hello",
+          "id": "",
+          "lifetime": "session",
+          "project_id": "",
+          "source": "approval",
+          "root_kind": "absolute",
+          "recursive": false,
+          "exact": true,
+          "cwd": "C:\\Project\\Python\\wright",
+          "sandbox_key": "bb5e052e66a6ed718880900065f87010b561e5b9a78f1630b2a51fd699178353"
+        }
+      },
+      {
+        "id": "allow_once_network",
+        "label": "Allow this command with network",
+        "scope": "This command only; filesystem isolation remains",
+        "persistence": "Not saved",
+        "lifetime": "once",
+        "resource_kind": "invocation",
+        "operations": [],
+        "resource": {}
+      },
+      {
+        "id": "deny",
+        "label": "Deny",
+        "scope": "No execution",
+        "persistence": "Not saved",
+        "lifetime": "once",
+        "resource_kind": "invocation",
+        "operations": [],
+        "resource": {}
+      }
+    ],
+    "principal": "audit-session",
+    "operation": "shell",
+    "grant_summary": "This invocation only: echo hello",
+    "preview": "",
+    "cwd": "C:\\Project\\Python\\wright",
+    "command": "echo hello",
+    "http_method": "",
+    "http_target": "",
+    "shell_note": "Approves this whole command in a local process at C:\\Project\\Python\\wright. The process and its descendants remain inside the approved filesystem OS sandbox. Network is disabled unless separately approved for this command.",
+    "reason_code": "permission.needs_approval",
+    "reason_params": {},
+    "summary_code": "permission.scope.invocation_only",
+    "summary_params": {
+      "targets": "echo hello"
+    }
+  }
+}

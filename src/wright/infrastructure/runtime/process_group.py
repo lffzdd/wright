@@ -12,6 +12,7 @@ import ctypes.util
 import os
 import signal
 import subprocess
+import sys
 import time
 from functools import lru_cache
 
@@ -58,6 +59,28 @@ def _process_library() -> ctypes.CDLL:
 
 def process_start(pid: int) -> tuple[int, int] | None:
     """Return the kernel start time of ``pid``, or None if that pid is gone."""
+    if sys.platform == "win32":
+        import wright.infrastructure.runtime.windows_native as native
+        kernel = native.kernel
+        open_process = native.bind(kernel, "OpenProcess", [native.w.DWORD, native.w.BOOL, native.w.DWORD], native.w.HANDLE)
+        handle = open_process(0x1000, False, pid)
+        if not handle:
+            return None
+        try:
+            values = (ctypes.c_uint64 * 4)()
+            times = native.bind(kernel, "GetProcessTimes", [native.w.HANDLE, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p])
+            native.check(times(handle, ctypes.byref(values, 0), ctypes.byref(values, 8), ctypes.byref(values, 16), ctypes.byref(values, 24)))
+            return int(values[0]), 0
+        finally:
+            native.close(handle)
+    if sys.platform.startswith("linux"):
+        from pathlib import Path
+        try:
+            text = Path(f"/proc/{pid}/stat").read_text()
+            fields = text[text.rfind(")") + 2:].split()
+            return int(fields[19]), 0
+        except (OSError, ValueError, IndexError):
+            return None
     info = _ProcBsdInfo()
     size = _process_library().proc_pidinfo(
         ctypes.c_int(pid),

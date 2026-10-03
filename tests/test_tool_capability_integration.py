@@ -1,8 +1,8 @@
 import queue
 import threading
 
-from wright.application.scheduling.scheduler import JobScheduler
 from wright.application.composition.services import RuntimeServices
+from wright.application.scheduling.scheduler import JobScheduler
 from wright.application.session.loops import SessionLoopRegistry
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
@@ -10,8 +10,8 @@ from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall
 from wright.domain.policy import PermissionResolver, PermissionResponse
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
-from wright.infrastructure.tools.schedule import schedule_tools
 from wright.infrastructure.tools.loop_tools import manage_loop_tool
+from wright.infrastructure.tools.schedule import schedule_tools
 
 
 def test_registered_management_tools_work_through_capability_restriction(tmp_path):

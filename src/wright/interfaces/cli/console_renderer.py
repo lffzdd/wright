@@ -37,19 +37,8 @@ def _choice_text(choice: dict) -> tuple[str, str, str]:
         "allow_once": "permission.scope.once",
         "deny": "permission.scope.none",
     }
-    persistence_keys = {
-        "allow_once": "permission.persistence.none",
-        "deny": "permission.persistence.none",
-        "allow_session_directory": "permission.persistence.session_directory",
-        "allow_persistent_directory": "permission.persistence.persistent_directory",
-        "allow_session_rule": "permission.persistence.session_rule",
-        "allow_persistent_rule": "permission.persistence.persistent_rule",
-    }
     scope = present(scope_keys.get(choice_id, ""), fallback=str(choice.get("scope") or ""))
-    persistence = present(
-        persistence_keys.get(choice_id, ""),
-        fallback=str(choice.get("persistence") or ""),
-    )
+    persistence = present(f"permission.lifetime.{choice.get('lifetime', 'once')}", fallback=str(choice.get("persistence") or ""))
     return label, scope, persistence
 
 _COMMAND_OUTPUT_LINES = 24
@@ -572,9 +561,9 @@ class ConsoleRenderer(Renderer):
             if principal:
                 info.append("\n" + t("permission.field.principal"), style="bold")
                 info.append(principal)
-            for choice in choices:
+            for index, choice in enumerate(choices, 1):
                 label, scope, persistence = _choice_text(choice)
-                info.append(f"\n- {choice.get('id', '')}: {label} | {scope} | {persistence}")
+                info.append(f"\n{index}. {choice.get('id', '')}: {label} | {scope} | {persistence}")
             self._console.print()
             self._console.print(
                 Panel(
@@ -584,10 +573,10 @@ class ConsoleRenderer(Renderer):
                     padding=(0, 1),
                 )
             )
-            for choice in choices:
+            for index, choice in enumerate(choices, 1):
                 label, scope, persistence = _choice_text(choice)
                 self._console.print(
-                    f"  [bold]{choice['id']}[/] {label} — {scope} ({persistence})"
+                    f"  {index}. [bold]{choice['id']}[/] {label} — {scope} ({persistence})"
                 )
 
     def present_question(

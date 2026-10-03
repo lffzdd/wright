@@ -16,9 +16,11 @@ def execute_command(
     command: str,
     timeout: int = 20,
     run_in_background: bool = False,
+    network: bool = False,
     runtime: ToolRuntime | None = None,
 ) -> ToolResult:
     """执行 shell 命令。启动、输出、后台转换和清理由命令运行时负责。"""
+    del network  # The immutable grant alone controls networking.
     capabilities = runtime.capabilities if runtime is not None else None
     commands = capabilities.commands if capabilities is not None else None
     if runtime is None or commands is None or capabilities is None:
@@ -68,7 +70,7 @@ def _project(outcome: CommandOutcome) -> ToolResult:
 execute_command_tool = Tool(
     name="execute_command",
     description=(
-        "Execute a shell command in the workspace. "
+        "Execute a shell command in the workspace, offline and isolated by default. "
         "The working directory persists across calls (cd works) and is returned as cwd "
         "on every result — do not cd into the directory you are already in. "
         "Long-running commands auto-background after timeout and return a command_id. "
@@ -83,6 +85,7 @@ execute_command_tool = Tool(
                 "type": "string",
                 "description": "The shell command to execute",
             },
+            "network": {"type": "boolean", "default": False, "description": "Request network access for this invocation; requires separate approval and keeps file isolation"},
             "timeout": {
                 "type": "integer",
                 "description": "Timeout in seconds before auto-backgrounding (default: 20)",

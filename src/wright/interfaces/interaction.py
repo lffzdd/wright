@@ -57,14 +57,14 @@ class InteractionHub:
     def closed(self) -> bool:
         return self._mailbox.closed
 
-    def request(self, kind: InteractionKind, payload: dict[str, Any]) -> Any:
+    def request(self, kind: InteractionKind, payload: dict[str, Any], *, validator=None) -> Any:
         item = self._mailbox.begin(kind, payload)
         if item is None:
             return "deny" if kind == "permission" else None
         interrupt = self._interrupt
         if interrupt is not None:
             interrupt()
-        return self._mailbox.wait(item)
+        return self._mailbox.wait(item, validator=validator, resolve=self.resolve)
 
     def poll(self) -> InteractionRequest | None:
         return self._mailbox.poll()
@@ -101,14 +101,14 @@ class InteractionBroker:
     ) -> None:
         self._mailbox.set_persistence(on_requested, on_resolved)
 
-    def request(self, kind: InteractionKind, payload: dict[str, Any]) -> Any:
+    def request(self, kind: InteractionKind, payload: dict[str, Any], *, validator=None) -> Any:
         item = self._mailbox.begin(kind, payload)
         if item is None:
             return "deny" if kind == "permission" else None
         event_payload = dict(payload)
         event_payload.update({"request_id": item.request_id, "kind": kind})
         self.publisher.publish("interaction.requested", event_payload)
-        answer = self._mailbox.wait(item)
+        answer = self._mailbox.wait(item, validator=validator, resolve=self.resolve)
         return answer
 
     def resolve(self, request_id: str, answer: Any) -> bool:

@@ -1,0 +1,34 @@
+{
+  "actual_file_write_decision": "allow",
+  "summary_rules_by_operation": {
+    "file_read": 0,
+    "file_write": 0,
+    "shell": 0
+  },
+  "shell_risk_flags": [
+    "writes_files",
+    "executes_shell",
+    "may_modify_git",
+    "may_delete_files"
+  ],
+  "shell_choices": [
+    "allow_once",
+    "allow_session_rule",
+    "allow_once_network",
+    "deny"
+  ],
+  "remembered_file_operations": [
+    "file_read",
+    "file_write"
+  ],
+  "remembered_file_tool": "write_file",
+  "remembered_file_decisions_in_default": {
+    "write_file": "allow",
+    "read_file": "allow",
+    "edit_file": "ask"
+  },
+  "remembered_file_rule_projection_scopes": [
+    "persistent",
+    "persistent"
+  ]
+}

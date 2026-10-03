@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -95,6 +96,7 @@ class FileView:
     size: int
     content: str
     origin: FileViewOrigin
+    digest: str
     start_line: int | None = None
     start_column: int | None = None
     end_line: int | None = None
@@ -154,6 +156,7 @@ def _stamp_read_view(
     runtime: ToolRuntime,
     *,
     content: str,
+    source_content: str,
     start_line: int,
     start_column: int,
     end_line: int | None,
@@ -172,6 +175,7 @@ def _stamp_read_view(
             size=stat.size,
             content=content,
             origin="read",
+            digest=hashlib.sha256(source_content.encode("utf-8")).hexdigest(),
             start_line=start_line,
             start_column=start_column,
             end_line=end_line,
@@ -194,6 +198,7 @@ def _stamp_write_view(path: ExecutionPath, runtime: ToolRuntime, content: str) -
             size=stat.size,
             content=content,
             origin="write",
+            digest=hashlib.sha256(content.encode("utf-8")).hexdigest(),
         ),
     )
 
@@ -217,9 +222,10 @@ def _unread_or_stale(
             data={"reason": "incomplete", "file": relative},
         )
     stat = _backend(runtime).metadata(path)
-    if stat.modified_ns == viewed.mtime_ns and stat.size == viewed.size:
-        return None
-    if viewed.is_complete and _read_text(path, runtime, replace=True)[0] == viewed.content:
+    current, _ = _read_text(path, runtime, replace=True)
+    if hashlib.sha256(current.encode("utf-8")).hexdigest() == viewed.digest and (
+        viewed.is_complete or (stat.modified_ns == viewed.mtime_ns and stat.size == viewed.size)
+    ):
         return None
     return ToolResult.fail(
         "file changed since last read_file; read it again",

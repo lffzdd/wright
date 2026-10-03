@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from wright.application.memory.memory_service import MemoryService
+from wright.application.tool_execution.permissions import PermissionService
 from wright.application.workspace.catalog import WorkspaceCatalog
 from wright.application.workspace.context_usage import classify_context
 from wright.application.workspace.documents import render_documents, store_document
@@ -23,13 +24,7 @@ from wright.application.workspace.files import (
     list_directory,
     resolve_inside,
 )
-from wright.application.workspace.grants import (
-    add_session_rule,
-    change_directory,
-    list_grants,
-    revoke_persistent_rule,
-    revoke_session_rule,
-)
+from wright.application.workspace.grants import list_grants, resource_change
 from wright.application.workspace.journal import SessionChangeJournal
 from wright.application.workspace.memory_view import (
     create_semantic,
@@ -58,11 +53,14 @@ from wright.application.workspace.search import (
 from wright.application.workspace.timeline import project_subagents, project_timeline
 from wright.core.paths import project_id, task_db_path
 from wright.domain.model.agent.control import AgentControlPlane
+from wright.domain.model.session import Session
 from wright.domain.policy.permission.resolver import PermissionPolicy
 from wright.domain.policy.permission.settings import PermissionSettings
 from wright.domain.policy.permission.types import ToolAccess
+from wright.infrastructure.config.permission_store import FilePermissionRepository
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 from wright.infrastructure.persistence.memory import EpisodeStore, SemanticMemoryStore
+from wright.infrastructure.runtime import LocalExecutionBackend
 from wright.interfaces.web.auth import BootstrapAuth
 from wright.interfaces.web.runtime_manager import RuntimeManager
 from wright.interfaces.web.server import create_app
@@ -242,96 +240,35 @@ def test_ask_ceiling_survives_bypass_and_grant_revoke_is_scoped(tmp_path: Path, 
     assert PermissionPolicy._ASK_OPERATIONS == ASK_OPERATIONS
     assert PermissionPolicy._PLAN_OPERATIONS == PLAN_OPERATIONS
 
-    class Rules:
-        def __init__(self):
-            self.permission_rules = []
-
-        def add_permission_rule(self, rule):
-            self.permission_rules.append(rule)
-
-        def remove_permission_rule(self, rule):
-            before = len(self.permission_rules)
-            self.permission_rules = [item for item in self.permission_rules if item != rule]
-            return len(self.permission_rules) != before
-
-    session = Rules()
-    created = add_session_rule(session, "read_file")
-    assert list_grants(session, settings)["session_rules"]
-    with pytest.raises(Exception, match="confirmation"):
-        revoke_session_rule(session, created["id"], confirm=False)
-    assert revoke_session_rule(session, created["id"], confirm=True)["ok"] is True
+    session = Session.create("grants", tmp_path)
+    permissions = PermissionService(FilePermissionRepository(tmp_path))
+    backend = LocalExecutionBackend(tmp_path, session.get_cwd)
+    snapshot = permissions.snapshot(session)
+    change = resource_change(session, backend, snapshot, {"kind": "file", "path": "a.txt", "operations": ["file_read"]}, "project")
+    permissions.commit(change, session, expected_version=snapshot.version)
+    listed = list_grants(session, permissions)
     assert session.permission_rules == []
-
-    path = tmp_path / "home" / "permission_settings.json"
-    persistent = PermissionSettings.from_dict({"mode": "default", "permissions": {"allow": ["read_file"]}})
-    listed = list_grants(SimpleNamespace(permission_rules=[], interaction_mode="agent"), persistent)
-    rule_id = listed["persistent_rules"][0]["id"]
-    revoked = revoke_persistent_rule(persistent, rule_id, confirm=True, path=path)
-    assert revoked["scope"] == "persistent"
-    assert persistent.allow == []
+    grant = listed["grants"][0]
+    permissions.revoke(session, grant["id"], "project", listed["version"])
+    assert list_grants(session, permissions)["grants"] == []
 
 
-def test_directory_grant_can_be_added_and_removed(tmp_path: Path):
-    extra = tmp_path / "extra"
-    root = tmp_path / "root"
-    extra.mkdir()
+def test_directory_grant_can_be_added_and_removed(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "home"))
+    root, extra = tmp_path / "root", tmp_path / "extra"
     root.mkdir()
-
-    class Box:
-        def __init__(self):
-            self.workspace_dir = root
-            self.directories: list[Path] = []
-
-        def add_working_directory(self, directory: Path) -> Path:
-            self.directories.append(directory)
-            return directory
-
-        def remove_working_directory(self, directory: Path) -> bool:
-            before = len(self.directories)
-            self.directories = [item for item in self.directories if item != directory]
-            return len(self.directories) != before
-
-    session = Box()
-    settings = PermissionSettings()
-    store = tmp_path / "permission_settings.json"
-    added = change_directory(
-        session, settings, str(extra), scope="session", confirm=True, action="add",
-    )
-    assert added["path"] == str(extra.resolve())
-    assert session.directories == [extra.resolve()]
-    with pytest.raises(Exception, match="confirmation"):
-        change_directory(
-            session, settings, str(extra), scope="session", confirm=False, action="remove",
-        )
-    removed = change_directory(
-        session, settings, str(extra), scope="session", confirm=True, action="remove",
-    )
-    assert removed["ok"] is True
-    assert session.directories == []
-    persistent = change_directory(
-        session,
-        settings,
-        str(extra),
-        scope="persistent",
-        confirm=True,
-        action="add",
-        store_path=store,
-    )
-    assert persistent["path"] in settings.additional_directories
-    change_directory(
-        session,
-        settings,
-        str(extra),
-        scope="persistent",
-        confirm=True,
-        action="remove",
-        store_path=store,
-    )
-    assert settings.additional_directories == []
-    with pytest.raises(Exception, match="execution root"):
-        change_directory(
-            session, settings, str(root), scope="session", confirm=True, action="remove",
-        )
+    extra.mkdir()
+    session = Session.create("directories", root)
+    permissions = PermissionService(FilePermissionRepository(root))
+    backend = LocalExecutionBackend(root, session.get_cwd)
+    snapshot = permissions.snapshot(session)
+    change = resource_change(session, backend, snapshot, {"kind": "directory", "path": str(extra), "operations": ["file_read"]}, "session")
+    permissions.commit(change, session, expected_version=snapshot.version)
+    listed = list_grants(session, permissions)
+    assert listed["grants"][0]["target"] == str(extra.resolve())
+    assert listed["grants"][0]["operations"] == ["file_read"]
+    permissions.revoke(session, listed["grants"][0]["id"], "session", listed["version"])
+    assert permissions.snapshot(session).scope.additional == ()
 
 
 def test_memory_and_rules_are_project_scoped(tmp_path: Path, monkeypatch):

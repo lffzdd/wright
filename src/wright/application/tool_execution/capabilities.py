@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from ...domain.policy.permission.types import AuthorizationChange
 from ...infrastructure.runtime import (
+    AuthorizedExecution,
     ExecutionBackend,
     LocalExecutionBackend,
 )
@@ -28,6 +29,7 @@ from ..agent.operations import AgentExecution
 from ..execution.identity import bind_identity
 from ..scheduling.service import SchedulingService
 from ..session.live_resources import RuntimeResources
+from .permissions import PermissionService
 
 if TYPE_CHECKING:
     from ...domain.model.session import Session
@@ -43,6 +45,7 @@ class CapabilityAssembly:
     backend: ExecutionBackend
     workspace_dir: Path
     cwd_provider: Callable[[], Path]
+    permissions: PermissionService | None = None
 
 
 def assemble_tool_capabilities(
@@ -61,13 +64,13 @@ def assemble_tool_capabilities(
 ) -> CapabilityAssembly:
     """Build explicit capabilities at the application boundary."""
 
-    workspace = (
-        workspace_dir or getattr(session, "workspace_dir", None) or Path.cwd()
-    ).resolve()
+    workspace = Path(workspace_dir or getattr(session, "workspace_dir", None) or Path.cwd()).resolve()
     cwd = cwd_provider or (
         session.get_cwd if session is not None else lambda: workspace
     )
     backend = execution_backend or LocalExecutionBackend(workspace, cwd)
+    from ...infrastructure.config.permission_store import FilePermissionRepository
+    permissions = PermissionService(FilePermissionRepository(getattr(session, "project_root", None) or workspace), execution_factory=AuthorizedExecution)
     if session is None:
         return CapabilityAssembly(
             ToolCapabilities(RunScope("")),
@@ -75,6 +78,7 @@ def assemble_tool_capabilities(
             backend,
             workspace,
             cwd,
+            permissions,
         )
 
     active_run = session.active_run()
@@ -134,7 +138,7 @@ def assemble_tool_capabilities(
             agents=agents,
             scheduling=scheduling,
             delegation=_delegation(
-                session.control_plane,
+                session,
                 services,
                 execution_journal_factory,
                 authorization_commit_factory,
@@ -145,6 +149,7 @@ def assemble_tool_capabilities(
         backend,
         workspace,
         cwd,
+        permissions,
     )
 
 
@@ -162,7 +167,8 @@ def _command_operations(resources: RuntimeResources | None) -> CommandOperations
     )
 
 
-def _delegation(control, services, journal_factory, authorization_factory) -> DelegationOperations:
+def _delegation(session, services, journal_factory, authorization_factory) -> DelegationOperations:
+    control = session.control_plane
     background = services.agent_background if services is not None else None
 
     def begin_task(**kwargs):
@@ -196,6 +202,7 @@ def _delegation(control, services, journal_factory, authorization_factory) -> De
         request_cancel=request_cancel,
         is_cancelled=lambda task_id: control.is_cancelled(task_id),
         cancellation_reason=lambda task_id: control.cancellation_reason(task_id),
+        inherit_permissions=lambda child: setattr(child, "permission_parent", session),
         share_control_plane=share_control_plane,
         limits=lambda: control.config.to_dict(),
         tree=lambda root_turn_id: control.tree_summary(root_turn_id),

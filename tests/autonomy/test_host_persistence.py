@@ -10,7 +10,7 @@ from wright.application.tool_execution.capabilities import assemble_tool_capabil
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.scheduling import TriggerSpec
 from wright.domain.model.session import Session
-from wright.domain.model.tool import ToolCall, ToolResult
+from wright.domain.model.tool import ToolAccess, ToolCall, ToolResult
 from wright.domain.policy import (
     PermissionPolicy,
     PermissionResolver,
@@ -248,7 +248,7 @@ def test_effect_is_not_called_when_intent_cannot_be_persisted(tmp_path):
         def mark_started(self, _call_id):
             raise AssertionError("must not start after failed intent")
 
-    tool = Tool("effect", "effect", {"type": "object"}, lambda args, _rt: called.append(args))
+    tool = Tool("effect", "effect", {"type": "object"}, lambda args, _rt: called.append(args), access_descriptor=lambda _: ToolAccess(frozenset({"persistent_write"})))
     executor = ToolDispatchService(
         {"effect": tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
@@ -284,7 +284,7 @@ def test_result_persistence_failure_stops_agent_without_retrying_effect(tmp_path
 
     agent = create_agent(
         ToolLLM(),
-        [Tool("effect", "effect", {"type": "object"}, lambda _args, _rt: calls.append("ran") or ToolResult.success())],
+        [Tool("effect", "effect", {"type": "object"}, lambda _args, _rt: calls.append("ran") or ToolResult.success(), access_descriptor=lambda _: ToolAccess(frozenset({"persistent_write"})))],
         Session.create("effect", tmp_path),
         permission_resolver=PermissionResolver(
             PermissionPolicy(PermissionSettings(mode="bypass"))
@@ -300,7 +300,7 @@ def test_result_persistence_failure_stops_agent_without_retrying_effect(tmp_path
 
 
 def test_host_does_not_retry_unknown_effect_even_with_retry_policy(tmp_path, monkeypatch):
-    from wright.domain.model.tool import ToolResult
+    from wright.domain.model.tool import ToolAccess, ToolResult
 
     workspace, store = _store(tmp_path)
     automation = store.create_job(
@@ -336,7 +336,7 @@ def test_host_does_not_retry_unknown_effect_even_with_retry_policy(tmp_path, mon
     finished = threading.Event()
     host = ApplicationHost(
         workspace_dir=workspace, store=store, llm=Model(),
-        base_tools=[Tool("effect", "append marker", {"type": "object"}, effect)],
+        base_tools=[Tool("effect", "append marker", {"type": "object"}, effect, access_descriptor=lambda _: ToolAccess(frozenset({"persistent_write"})))],
         permission_settings=PermissionSettings(mode="bypass"), poll_interval=0.01,
         on_event=lambda *_: finished.set(),
     )
@@ -381,7 +381,7 @@ def test_run_with_uncommitted_effect_cannot_finish_or_retry(tmp_path, requested_
 
 
 def test_sessions_sharing_host_share_dispatch_capacity(tmp_path):
-    from wright.domain.model.tool import ToolResult
+    from wright.domain.model.tool import ToolAccess, ToolResult
 
     workspace, first = _store(tmp_path)
     second = AutonomyStore(first.path, session_id="second", workspace_dir=workspace)
@@ -410,7 +410,7 @@ def test_sessions_sharing_host_share_dispatch_capacity(tmp_path):
 
     host = ApplicationHost(
         workspace_dir=workspace, store=first, llm=Model(),
-        base_tools=[Tool("effect", "work", {"type": "object"}, effect)],
+        base_tools=[Tool("effect", "work", {"type": "object"}, effect, access_descriptor=lambda _: ToolAccess(frozenset({"persistent_write"})))],
         permission_settings=PermissionSettings(mode="bypass"), poll_interval=0.01, on_event=completed,
     )
     try:

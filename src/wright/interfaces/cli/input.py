@@ -76,7 +76,7 @@ class CliInputController:
             result = None if request.kind == "ask_user" else "deny"
         respond = getattr(self._service, "respond_interaction", None)
         if not callable(respond):
-            raise RuntimeError("interaction answers must go through the session service")
+            raise TypeError("interaction answers must go through the session service")
         respond(uuid4().hex, request.request_id, result)
 
     def _dispatch_control(self, value: str) -> bool:
@@ -210,7 +210,7 @@ class CliInputController:
         """唯一读 stdin 的线程：主指令、权限/提问收集都走这里。"""
 
         def read() -> None:
-            self._prompt_session = PromptSession()
+            self._prompt_session = PromptSession() if self._read_main is None else None
             hub = self._hub
             if hub is not None:
                 hub.bind_collector(interrupt=self.interrupt_main_prompt)

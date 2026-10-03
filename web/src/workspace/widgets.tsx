@@ -1,3 +1,4 @@
+import { PermissionGrants, ResourceOperations } from "./permissions";
 import {
   Archive, Check, Circle, DotsThreeVertical, Folder, Image, Paperclip, PaperPlaneRight, Plus, Square, Warning, X,
 } from "@phosphor-icons/react";
@@ -144,7 +145,7 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }:
         if (item.kind === "approval" && item.interaction) {
           const stillPending = state.pending_interactions.some((entry) => entry.request_id === item.interaction?.request_id);
           if (!stillPending) return null;
-          return <InteractionCard key={item.id} interaction={item.interaction} respond={respond} />;
+          return <InteractionCard key={item.id} sessionId={state.session.session_id} interaction={item.interaction} respond={respond} />;
         }
         return toolCardFromTimeline(item);
       })}
@@ -168,7 +169,7 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }:
       </div>}
     </>}
     {(state.agents ?? []).map((agent) => <section className="agent-progress" key={agent.task_id}><strong>Subagent {agent.task_id} · {agent.status}</strong>{agent.content && <MarkdownContent content={agent.content} />}</section>)}
-    {pending.map((item) => <InteractionCard key={item.request_id} interaction={item} respond={respond} />)}
+    {pending.map((item) => <InteractionCard key={item.request_id} sessionId={state.session.session_id} interaction={item} respond={respond} />)}
     {state.queued_commands.map((item) => <div className="queue-item" key={item.command_id}><span>{item.prompt}</span><button type="button" className="button" onClick={() => cancelQueued(item.command_id)}>{tr("web.remove_queued")}</button></div>)}
     {state.notices.slice(-5).map((notice) => <div className="system-notice" role="status" key={notice.id}>{present(notice.code, notice.params, notice.text)}</div>)}
     {!stuck && <button type="button" className="button jump" onClick={() => { stick.current = true; setStuck(true); scroller.current?.scrollTo?.({ top: scroller.current.scrollHeight }); }}>{tr("web.jump_bottom")}</button>}
@@ -374,7 +375,7 @@ export function Composer({
           <option value="plan">{tr("web.perm.plan")}</option>
           <option value="bypass">{tr("web.perm.bypass")}</option>
         </select>
-        {running && <button type="button" className="button stop" onClick={() => { cancel().catch(() => undefined); }}><Square size={11} weight="fill" />{tr("web.stop")}<kbd>⌘.</kbd></button>}
+        {running && <button type="button" className="button stop" onClick={() => { cancel().catch(() => undefined); }}><Square size={11} weight="fill" />{tr("web.stop")}<kbd>{tr("web.shortcut_key", { key: "." })}</kbd></button>}
         {running && cancelAll && <button type="button" className="button stop" onClick={() => { cancelAll().catch(() => undefined); }}>{tr("web.stop_all")}</button>}
         {(!running || draft.prompt.trim()) && <button className="button primary" disabled={uploading || draft.phase === "awaiting" || (!draft.prompt.trim() && !draft.command && !draft.attachments.length && !(draft.documents ?? []).length && !(draft.references ?? []).length && !(draft.localFiles ?? []).length)}><PaperPlaneRight size={13} />{draft.phase === "unknown" ? tr("web.retry") : tr("web.send")}</button>}
       </div>
@@ -535,9 +536,7 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
   const currentStep = steps.findIndex((step) => ["in_progress", "running", "active"].includes(step.status));
   const changedLines = Object.values(recentFileMeta).reduce((sum, file) => sum + (file.additions ?? 0), 0);
   const tabCount = (item: InspectorTab) => item === "files" ? accessedFiles.length || files.length : item === "changes" ? changedLines || changes?.length || 0 : 0;
-  const sessionDirectories = (grants?.session_directories as string[] | undefined) ?? [];
-  const persistentDirectories = (grants?.persistent_directories as string[] | undefined) ?? [];
-  const boundaries = (grants?.boundaries as string[] | undefined) ?? [];
+  const boundaries = grants?.boundary_codes ?? [];
   const formatTokens = (value: number | null | undefined) => value == null ? tr("web.unknown") : new Intl.NumberFormat().format(value);
   const contextCategoryLabel = (id: string) => {
     const key = `web.context_category.${id}`;
@@ -643,7 +642,7 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
     {tab === "permissions" && <div className="inspector-body">
       <div className="section-label"><span>{tr("web.security_policy")}</span></div>
       {panelError && <p className="form-error" role="alert">{panelError}</p>}
-      <article className="policy-card"><div><strong>{tr("web.permission_mode")}</strong><span>{String(grants?.permission_mode ?? state.session.permission_mode ?? "default")}</span></div><small>{String(grants?.interaction_mode ?? state.session.interaction_mode ?? "agent")}</small></article>
+      <article className="policy-card"><div><strong>{tr("web.permission_mode")}</strong><span>{tr(`web.perm.${grants?.permission_mode ?? state.session.permission_mode ?? "default"}`)}</span></div><small>{tr(`web.mode.${grants?.interaction_mode ?? state.session.interaction_mode ?? "agent"}`)}</small></article>
       {grants?.effective_policy?.map((policy) => <section className="policy-group" key={policy.operation}>
         <div className="card-kicker"><span>{tr(`web.policy_operation.${policy.operation}`)}</span></div>
         <article className="policy-card effective-policy">
@@ -651,20 +650,16 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
           <small>{present(policy.defaults.in_scope.reason_code, policy.defaults.in_scope.reason_params, "")}</small>
           {policy.operation !== "shell" && <><div><strong>{tr("web.policy_outside_scope")}</strong><span>{tr(`web.policy_decision.${policy.defaults.outside_scope.decision}`)}</span></div><small>{present(policy.defaults.outside_scope.reason_code, policy.defaults.outside_scope.reason_params, "")}</small></>}
           {policy.directories.map((path) => <small className="mono policy-path" key={path}>{path}</small>)}
-          {policy.rules.map((rule, index) => <div className="policy-rule" key={index}><span>{tr(`web.policy_decision.${rule.effect}`)} · {rule.scope === "session" ? tr("web.session_scope") : tr("web.user_scope")}{rule.conditional ? ` · ${tr("web.policy_conditional")}` : ""}{rule.inactive ? ` · ${tr("web.policy_inactive")}` : ""}</span><small>{rule.description}</small></div>)}
+          {policy.read_only.map((path) => <small className="policy-constraint" key={path}>{tr("web.read_only_boundary", { path })}</small>)}
+          {policy.rules.map((rule, index) => <div className="policy-rule" key={index}><span>{tr(`web.policy_decision.${rule.effect}`)} · {tr(`web.lifetime.${rule.scope}`)}{rule.conditional ? ` · ${tr("web.policy_conditional")}` : ""}</span><small className="mono policy-path">{rule.target}</small><small><ResourceOperations kind={rule.resource_kind} operations={rule.operations} tool={rule.tool} /></small></div>)}
           {policy.constraints.map((constraint) => <small className="policy-constraint" key={constraint}>{tr(`web.policy_constraint.${constraint}`)}</small>)}
         </article>
       </section>)}
-      {(sessionDirectories.length > 0 || persistentDirectories.length > 0) && <section className="policy-group">
-        <div className="card-kicker"><span>{tr("web.additional_directories")}</span><span>{sessionDirectories.length + persistentDirectories.length}</span></div>
-        {[...sessionDirectories.map((path) => ({ path, scope: "session" })), ...persistentDirectories.map((path) => ({ path, scope: "persistent" }))].map(({ path, scope }) => <article className="policy-card policy-directory" key={`${scope}:${path}`}><div><strong className="mono">{path}</strong><span className={scope === "persistent" ? "policy-scope persistent" : "policy-scope"}>{scope === "persistent" ? tr("web.user_scope") : tr("web.session_scope")}</span></div></article>)}
-      </section>}
       {boundaries.length > 0 && <section className="policy-group">
         <div className="card-kicker"><span>{tr("web.enforced_boundaries")}</span></div>
-        {boundaries.map((item) => <article className="policy-card policy-boundary" key={item}><span className="policy-check"><Check size={12} weight="bold" /></span><span>{item}</span></article>)}
+        {boundaries.map((item) => <article className="policy-card policy-boundary" key={item}><span className="policy-check"><Check size={12} weight="bold" /></span><span>{tr(item)}</span></article>)}
       </section>}
-      {((grants?.session_rules as Array<{ id: string }> | undefined) ?? []).map((rule) => <article className="policy-card" key={rule.id}><div><strong>{rule.id}</strong><button type="button" className="text-button" onClick={() => api.revokeGrant(sessionId, rule.id).then(() => api.grants(sessionId).then(setGrants)).catch((error) => setPanelError(String(error)))}>{tr("web.revoke")}</button></div><small>session</small></article>)}
-      {((grants?.persistent_rules as Array<{ id: string }> | undefined) ?? []).map((rule) => <article className="policy-card warn" key={rule.id}><div><strong>{rule.id}</strong><button type="button" className="text-button" onClick={() => api.revokeGrant(sessionId, rule.id).then(() => api.grants(sessionId).then(setGrants)).catch((error) => setPanelError(String(error)))}>{tr("web.revoke")}</button></div><small>persistent</small></article>)}
+      {grants && <PermissionGrants sessionId={sessionId} grants={grants} update={setGrants} />}
     </div>}
     {tab === "context" && <div className="inspector-body">
       <div className="section-label"><span>{tr("web.token_breakdown")}</span></div>
@@ -772,7 +767,7 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
   </>;
   return <aside className={`sidebar ${open ? "responsive-open" : ""}`}>
     <div className="sidebar-scroll">
-      <button className="primary-action" onClick={onCreate} aria-label={tr("web.new_session")}><span className="primary-action-label"><Plus size={14} weight="bold" /><span>{tr("web.new_task")}</span></span><kbd>⌘N</kbd></button>
+      <button className="primary-action" onClick={onCreate} aria-label={tr("web.new_session")}><span className="primary-action-label"><Plus size={14} weight="bold" /><span>{tr("web.new_task")}</span></span><kbd>{tr("web.shortcut_key", { key: "N" })}</kbd></button>
       <div>{renderActive()}</div>
       <div>{renderHistory()}</div>
       {workspaces.length > 0 && <div>

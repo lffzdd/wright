@@ -143,6 +143,8 @@ class ConcurrentToolExecutor(IToolExecutor):
                 start_deadline()
 
         try:
+            if getattr(prepared, "before_execute", None) is not None:
+                prepared.before_execute()
             result = self._run_allowed_tool(
                 tool,
                 tool_call,
@@ -153,6 +155,8 @@ class ConcurrentToolExecutor(IToolExecutor):
                 start_execution,
                 timings,
             )
+        except Exception as exc:
+            result = ToolResult.fail(f"Permission validation failed: {exc}")
         finally:
             if timer is not None:
                 timer.cancel()

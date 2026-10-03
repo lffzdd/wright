@@ -57,10 +57,11 @@ class Session:
     lifecycle: SessionLifecycle = "open"
     # Durable state is grouped by project_root. workspace_dir remains the
     # actual execution directory for compatibility with existing tools.
-    additional_working_directories: list[Path] = field(default_factory=list)
     # Structured allow rules for this session only. They are not stored on a
     # shared policy object, so a child session cannot widen its parent.
     permission_rules: list[dict] = field(default_factory=list)
+    # A live child inherits authorization by reference so parent revocation is immediate.
+    permission_parent: Session | None = field(default=None, repr=False, compare=False)
     project_root: Path | None = None
     environment: ExecutionEnvironment = "local"
     base_commit: str | None = None
@@ -141,7 +142,6 @@ class Session:
         environment: ExecutionEnvironment = "local",
         base_commit: str | None = None,
         branch_name: str | None = None,
-        additional_working_directories: list[Path] | None = None,
     ) -> Session:
         execution_root = workspace_dir.resolve()
         return cls(
@@ -153,10 +153,6 @@ class Session:
             environment=environment,
             base_commit=base_commit,
             branch_name=branch_name,
-            additional_working_directories=[
-                Path(item).expanduser().absolute()
-                for item in (additional_working_directories or ())
-            ],
             turns=[],
             message_records=[],
             tool_executions={},
@@ -174,42 +170,6 @@ class Session:
             raise TypeError("Session.set_cwd requires pathlib.Path")
         with self._cwd_lock:
             self.cwd = cwd.resolve()
-
-    def add_working_directory(self, directory: Path) -> Path:
-        """Grant an extra working-directory root for this session."""
-        from ...policy.permission.scope import is_under, resolve_root
-
-        resolved = resolve_root(directory)
-        origin = resolve_root(self.workspace_dir)
-        with self._cwd_lock:
-            if resolved == origin or is_under(resolved, origin):
-                return resolved
-            if any(
-                item == resolved or is_under(resolved, item)
-                for item in self.additional_working_directories
-            ):
-                return resolved
-            self.additional_working_directories.append(resolved)
-            return resolved
-
-    def remove_working_directory(self, directory: Path) -> bool:
-        """Drop one extra session root. The execution root is not in this list."""
-
-        from ...policy.permission.scope import resolve_root
-
-        resolved = resolve_root(directory)
-        with self._cwd_lock:
-            remaining = [
-                item for item in self.additional_working_directories if item != resolved
-            ]
-            changed = len(remaining) != len(self.additional_working_directories)
-            self.additional_working_directories = remaining
-            return changed
-
-    def working_directories_snapshot(self) -> tuple[Path, ...]:
-        """Return the current session roots without exposing mutable state."""
-        with self._cwd_lock:
-            return tuple(self.additional_working_directories)
 
     def add_permission_rule(self, rule: dict) -> None:
         """Remember one structured allow rule on this session."""
@@ -232,22 +192,6 @@ class Session:
                 item for item in self.permission_rules if item != record
             ]
             return True
-
-    def restore_authorization(
-        self,
-        directories: tuple[Path, ...] | list[Path],
-        rules: list[dict],
-    ) -> None:
-        """Put session grants back after a failed authorization commit."""
-        with self._cwd_lock:
-            self.additional_working_directories = list(directories)
-            self.permission_rules = [dict(item) for item in rules]
-
-    def access_scope(self):
-        """Build an immutable permission snapshot at a composition boundary."""
-        from ...policy.permission.scope import AccessScope
-
-        return AccessScope(self.workspace_dir, self.working_directories_snapshot())
 
     def register_command(self, record: CommandRecord) -> None:
         """Store command metadata. The command runtime owns process handles."""

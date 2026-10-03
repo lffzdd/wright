@@ -7,25 +7,18 @@ decide permission, memory, or schedule rules themselves.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from ...application.session.dispatch import SLASH_COMMANDS
+from ...application.session.errors import SessionServiceError
+from ...application.tool_execution.permissions import PermissionConflict
 from ...application.workspace.catalog import WorkspaceCatalogError
 from ...application.workspace.documents import DocumentError
 from ...application.workspace.files import PathRejected, list_directory, read_text
 from ...application.workspace.git_status import summarize_git
-from ...application.session.errors import SessionServiceError
-from ...application.workspace.session_commands import (
-    add_grant,
-    change_directory_grant,
-    memory_binding,
-    review_action,
-    revoke_grant,
-    session_grants,
-)
 from ...application.workspace.journal import SessionChangeJournal
 from ...application.workspace.memory_view import (
     MemoryViewError,
@@ -60,6 +53,16 @@ from ...application.workspace.search import (
     search_files,
     search_symbols,
     search_tasks,
+)
+from ...application.workspace.session_commands import (
+    add_grant,
+    memory_binding,
+    review_action,
+    sandbox_action,
+    session_grants,
+)
+from ...application.workspace.session_commands import (
+    revoke_grant as revoke_session_grant,
 )
 from ...core.paths import project_id
 from .auth import BootstrapAuth
@@ -99,16 +102,19 @@ class ConfirmBody(BaseModel):
     paths: list[str] = Field(default_factory=list)
 
 
-class DirectoryBody(BaseModel):
-    path: str
-    scope: str = "session"
-    action: str
-    confirm: bool = False
+class RevokeBody(BaseModel):
+    source: Literal["session", "project", "user"]
+    expected_version: str
+
+
+class SandboxBody(BaseModel):
+    action: Literal["setup", "cleanup"]
 
 
 class RuleBody(BaseModel):
-    confirm: bool = False
-    rule: dict[str, Any] | None = None
+    resource: dict[str, Any]
+    lifetime: Literal["session", "project", "user"] = "project"
+    expected_version: str
 
 
 class CoreBody(BaseModel):
@@ -345,38 +351,32 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
     @router.post("/sessions/{session_id}/grants")
     def create_grant(session_id: str, body: RuleBody, request: Request) -> dict[str, Any]:
         require(request)
-        if not body.confirm or not isinstance(body.rule, dict):
-            raise HTTPException(status_code=400, detail="confirmation and a rule are required")
+        service = _handle(manager, session_id).service
         try:
-            return add_grant(_handle(manager, session_id).service, body.rule)
+            return add_grant(service, body.resource, lifetime=body.lifetime, expected_version=body.expected_version)
+        except PermissionConflict as exc:
+            raise HTTPException(status_code=409, detail={"message": str(exc), "latest": session_grants(service)}) from exc
         except SessionServiceError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.post("/sessions/{session_id}/grants/{rule_id}/revoke")
-    def revoke_grant(session_id: str, rule_id: str, body: ConfirmBody, request: Request) -> dict[str, Any]:
+    def revoke_grant(session_id: str, rule_id: str, body: RevokeBody, request: Request) -> dict[str, Any]:
         require(request)
+        service = _handle(manager, session_id).service
         try:
-            return revoke_grant(
-                _handle(manager, session_id).service, rule_id, confirm=body.confirm,
-            )
+            return revoke_session_grant(service, rule_id, source=body.source, expected_version=body.expected_version)
+        except PermissionConflict as exc:
+            raise HTTPException(status_code=409, detail={"message": str(exc), "latest": session_grants(service)}) from exc
         except SessionServiceError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @router.post("/sessions/{session_id}/directories")
-    def change_directory_grant(
-        session_id: str, body: DirectoryBody, request: Request,
-    ) -> dict[str, Any]:
+    @router.post("/sessions/{session_id}/sandbox")
+    def change_sandbox(session_id: str, body: SandboxBody, request: Request) -> dict[str, Any]:
         require(request)
         try:
-            return change_directory_grant(
-                _handle(manager, session_id).service,
-                path=body.path,
-                scope=body.scope,
-                confirm=body.confirm,
-                action=body.action,
-            )
-        except SessionServiceError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            return sandbox_action(_handle(manager, session_id).service, body.action)
+        except (SessionServiceError, RuntimeError, OSError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.get("/sessions/{session_id}/review")
     def review(session_id: str, request: Request) -> dict[str, Any]:

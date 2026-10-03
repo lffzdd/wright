@@ -7,14 +7,14 @@ from wright.application.agent import (
     build_agent_tools,
     create_agent,
 )
+from wright.application.composition.services import RuntimeServices
 from wright.application.scheduling.runner import _RunJournal, launch_job_run
 from wright.application.scheduling.scheduler import JobScheduler
-from wright.application.composition.services import RuntimeServices
 from wright.application.skills import SkillRegistry
 from wright.domain.model.agent import AgentProfile
 from wright.domain.model.scheduling import TriggerSpec
 from wright.domain.model.session import Session
-from wright.domain.model.tool import ToolResult
+from wright.domain.model.tool import ToolAccess, ToolResult
 from wright.domain.policy import (
     PermissionPolicy,
     PermissionResolver,
@@ -22,11 +22,11 @@ from wright.domain.policy import (
 )
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 from wright.infrastructure.storage.skills import write_skill
-from wright.infrastructure.tools.schedule import schedule_tools
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.human_input import ask_user_tool
 from wright.infrastructure.tools.knowledge import build_knowledge_tools
 from wright.infrastructure.tools.memory import build_memory_tools
+from wright.infrastructure.tools.schedule import schedule_tools
 from wright.infrastructure.tools.skill_tools import build_skill_tools
 
 
@@ -302,7 +302,7 @@ def test_durable_run_persists_history_and_child_side_effect_identity(tmp_path):
     )
     tools = build_agent_tools(
         llm,
-        [Tool("write_marker", "write marker", {"type": "object"}, write_marker)],
+        [Tool("write_marker", "write marker", {"type": "object"}, write_marker, access_descriptor=lambda _: ToolAccess(frozenset({"persistent_write"})))],
         max_depth=1,
         render_subagents=False,
         permission_resolver=permission_resolver,

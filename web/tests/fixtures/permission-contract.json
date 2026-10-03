@@ -1,0 +1,587 @@
+{
+  "prompts": {
+    "file": {
+      "kind": "permission",
+      "request_id": "approval-file",
+      "tool_name": "write_file",
+      "subject": "/external/result.txt",
+      "reason": "The target is outside this session's access scope",
+      "risk_flags": [
+        "reads_files",
+        "writes_files",
+        "path_outside_scope"
+      ],
+      "targets": [
+        "/external/result.txt"
+      ],
+      "choices": [
+        {
+          "id": "allow_once",
+          "label": "Allow once",
+          "scope": "This invocation only",
+          "persistence": "Not saved",
+          "lifetime": "once",
+          "resource_kind": "invocation",
+          "operations": [],
+          "resource": {}
+        },
+        {
+          "id": "allow_session_rule",
+          "label": "This conversation (including resume)",
+          "scope": "/external/result.txt",
+          "persistence": "This conversation (including resume)",
+          "lifetime": "session",
+          "resource_kind": "file",
+          "operations": [
+            "file_read",
+            "file_write"
+          ],
+          "resource": {
+            "kind": "file",
+            "tool_name": "*",
+            "root": "/external",
+            "pattern": "result.txt",
+            "operations": [
+              "file_read",
+              "file_write"
+            ],
+            "id": "",
+            "lifetime": "session",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": true,
+            "cwd": "",
+            "sandbox_key": ""
+          }
+        },
+        {
+          "id": "allow_project_rule",
+          "label": "This project",
+          "scope": "/external/result.txt",
+          "persistence": "This project",
+          "lifetime": "project",
+          "resource_kind": "file",
+          "operations": [
+            "file_read",
+            "file_write"
+          ],
+          "resource": {
+            "kind": "file",
+            "tool_name": "*",
+            "root": "/external",
+            "pattern": "result.txt",
+            "operations": [
+              "file_read",
+              "file_write"
+            ],
+            "id": "",
+            "lifetime": "session",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": true,
+            "cwd": "",
+            "sandbox_key": ""
+          }
+        },
+        {
+          "id": "allow_user_rule",
+          "label": "All projects",
+          "scope": "/external/result.txt",
+          "persistence": "All projects",
+          "lifetime": "user",
+          "resource_kind": "file",
+          "operations": [
+            "file_read",
+            "file_write"
+          ],
+          "resource": {
+            "kind": "file",
+            "tool_name": "*",
+            "root": "/external",
+            "pattern": "result.txt",
+            "operations": [
+              "file_read",
+              "file_write"
+            ],
+            "id": "",
+            "lifetime": "session",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": true,
+            "cwd": "",
+            "sandbox_key": ""
+          }
+        },
+        {
+          "id": "allow_session_directory_write",
+          "label": "This conversation (including resume)",
+          "scope": "/external",
+          "persistence": "This conversation (including resume)",
+          "lifetime": "session",
+          "resource_kind": "directory",
+          "operations": [
+            "file_read",
+            "file_write"
+          ],
+          "resource": {
+            "path": "/external",
+            "recursive": true
+          }
+        },
+        {
+          "id": "allow_project_directory_write",
+          "label": "This project",
+          "scope": "/external",
+          "persistence": "This project",
+          "lifetime": "project",
+          "resource_kind": "directory",
+          "operations": [
+            "file_read",
+            "file_write"
+          ],
+          "resource": {
+            "path": "/external",
+            "recursive": true
+          }
+        },
+        {
+          "id": "allow_user_directory_write",
+          "label": "All projects",
+          "scope": "/external",
+          "persistence": "All projects",
+          "lifetime": "user",
+          "resource_kind": "directory",
+          "operations": [
+            "file_read",
+            "file_write"
+          ],
+          "resource": {
+            "path": "/external",
+            "recursive": true
+          }
+        },
+        {
+          "id": "deny",
+          "label": "Deny",
+          "scope": "No execution",
+          "persistence": "Not saved",
+          "lifetime": "once",
+          "resource_kind": "invocation",
+          "operations": [],
+          "resource": {}
+        }
+      ],
+      "principal": "session-permission",
+      "operation": "file_read, file_write",
+      "grant_summary": "This invocation only: /external/result.txt",
+      "preview": "A new file\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview line\npreview l",
+      "cwd": "/project",
+      "command": "",
+      "http_method": "",
+      "http_target": "",
+      "shell_note": "",
+      "preview_truncated": true,
+      "risk_level": "review",
+      "reason_code": "permission.outside_scope",
+      "reason_params": {},
+      "summary_code": "permission.scope.invocation_only",
+      "summary_params": {
+        "targets": "/external/result.txt"
+      }
+    },
+    "shell": {
+      "kind": "permission",
+      "request_id": "approval-shell",
+      "tool_name": "execute_command",
+      "subject": "echo hello",
+      "reason": "This operation needs approval",
+      "risk_flags": [
+        "executes_shell"
+      ],
+      "targets": [
+        "echo hello"
+      ],
+      "choices": [
+        {
+          "id": "allow_once",
+          "label": "Allow once",
+          "scope": "This invocation only",
+          "persistence": "Not saved",
+          "lifetime": "once",
+          "resource_kind": "invocation",
+          "operations": [],
+          "resource": {}
+        },
+        {
+          "id": "allow_session_rule",
+          "label": "This conversation (including resume)",
+          "scope": "echo hello · /project",
+          "persistence": "This conversation (including resume)",
+          "lifetime": "session",
+          "resource_kind": "shell",
+          "operations": [
+            "shell"
+          ],
+          "resource": {
+            "kind": "shell",
+            "tool_name": "execute_command",
+            "pattern": "echo hello",
+            "id": "",
+            "lifetime": "session",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": true,
+            "cwd": "/project",
+            "sandbox_key": "2b01559367283639d5baadcb71922789165e5ef4d9cabb7944fc99e1455ff0df"
+          }
+        },
+        {
+          "id": "allow_once_network",
+          "label": "Allow this command with network",
+          "scope": "This command only; filesystem isolation remains",
+          "persistence": "Not saved",
+          "lifetime": "once",
+          "resource_kind": "invocation",
+          "operations": [],
+          "resource": {}
+        },
+        {
+          "id": "deny",
+          "label": "Deny",
+          "scope": "No execution",
+          "persistence": "Not saved",
+          "lifetime": "once",
+          "resource_kind": "invocation",
+          "operations": [],
+          "resource": {}
+        }
+      ],
+      "principal": "session-permission",
+      "operation": "shell",
+      "grant_summary": "This invocation only: echo hello",
+      "preview": "",
+      "cwd": "/project",
+      "command": "echo hello",
+      "http_method": "",
+      "http_target": "",
+      "shell_note": "Approves this whole command in a local process at /project. The process and its descendants remain inside the approved filesystem OS sandbox. Network is disabled unless separately approved for this command.",
+      "preview_truncated": false,
+      "risk_level": "review",
+      "reason_code": "permission.needs_approval",
+      "reason_params": {},
+      "summary_code": "permission.scope.invocation_only",
+      "summary_params": {
+        "targets": "echo hello"
+      }
+    }
+  },
+  "effective_policy": [
+    {
+      "operation": "file_read",
+      "defaults": {
+        "in_scope": {
+          "decision": "allow",
+          "source": "default",
+          "reason_code": "permission.default_allow",
+          "reason_params": {}
+        },
+        "outside_scope": {
+          "decision": "ask",
+          "source": "scope",
+          "reason_code": "permission.outside_scope",
+          "reason_params": {}
+        }
+      },
+      "directories": [
+        "/project"
+      ],
+      "read_only": [],
+      "rules": [
+        {
+          "effect": "allow",
+          "scope": "project",
+          "rule": {
+            "kind": "file",
+            "tool_name": "*",
+            "root": "/external",
+            "pattern": "project.txt",
+            "operations": [
+              "file_read",
+              "file_write"
+            ],
+            "id": "project",
+            "lifetime": "project",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": true,
+            "cwd": "",
+            "sandbox_key": ""
+          },
+          "target": "/external/project.txt",
+          "resource_kind": "file",
+          "operations": [
+            "file_read",
+            "file_write"
+          ],
+          "tool": "*",
+          "description": "* under /external matching project.txt for file_read, file_write only",
+          "conditional": true
+        },
+        {
+          "effect": "allow",
+          "scope": "user",
+          "rule": {
+            "kind": "file",
+            "tool_name": "*",
+            "root": "/external",
+            "pattern": "user.txt",
+            "operations": [
+              "file_read",
+              "file_write"
+            ],
+            "id": "user",
+            "lifetime": "user",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": true,
+            "cwd": "",
+            "sandbox_key": ""
+          },
+          "target": "/external/user.txt",
+          "resource_kind": "file",
+          "operations": [
+            "file_read",
+            "file_write"
+          ],
+          "tool": "*",
+          "description": "* under /external matching user.txt for file_read, file_write only",
+          "conditional": true
+        },
+        {
+          "effect": "allow",
+          "scope": "session",
+          "rule": {
+            "kind": "file",
+            "tool_name": "*",
+            "root": "/external",
+            "pattern": "session.txt",
+            "operations": [
+              "file_read",
+              "file_write"
+            ],
+            "id": "session",
+            "lifetime": "session",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": true,
+            "cwd": "",
+            "sandbox_key": ""
+          },
+          "target": "/external/session.txt",
+          "resource_kind": "file",
+          "operations": [
+            "file_read",
+            "file_write"
+          ],
+          "tool": "*",
+          "description": "* under /external matching session.txt for file_read, file_write only",
+          "conditional": true
+        }
+      ],
+      "constraints": [
+        "rule_precedence",
+        "invocation_required",
+        "protected_permission_files"
+      ],
+      "precedence": [
+        "protected_permission_files",
+        "mode_ceiling",
+        "deny",
+        "ask",
+        "allow",
+        "mode_default"
+      ]
+    },
+    {
+      "operation": "file_write",
+      "defaults": {
+        "in_scope": {
+          "decision": "ask",
+          "source": "policy",
+          "reason_code": "permission.needs_approval",
+          "reason_params": {}
+        },
+        "outside_scope": {
+          "decision": "ask",
+          "source": "scope",
+          "reason_code": "permission.outside_scope",
+          "reason_params": {}
+        }
+      },
+      "directories": [
+        "/project"
+      ],
+      "read_only": [],
+      "rules": [
+        {
+          "effect": "allow",
+          "scope": "project",
+          "rule": {
+            "kind": "file",
+            "tool_name": "*",
+            "root": "/external",
+            "pattern": "project.txt",
+            "operations": [
+              "file_read",
+              "file_write"
+            ],
+            "id": "project",
+            "lifetime": "project",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": true,
+            "cwd": "",
+            "sandbox_key": ""
+          },
+          "target": "/external/project.txt",
+          "resource_kind": "file",
+          "operations": [
+            "file_read",
+            "file_write"
+          ],
+          "tool": "*",
+          "description": "* under /external matching project.txt for file_read, file_write only",
+          "conditional": true
+        },
+        {
+          "effect": "allow",
+          "scope": "user",
+          "rule": {
+            "kind": "file",
+            "tool_name": "*",
+            "root": "/external",
+            "pattern": "user.txt",
+            "operations": [
+              "file_read",
+              "file_write"
+            ],
+            "id": "user",
+            "lifetime": "user",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": true,
+            "cwd": "",
+            "sandbox_key": ""
+          },
+          "target": "/external/user.txt",
+          "resource_kind": "file",
+          "operations": [
+            "file_read",
+            "file_write"
+          ],
+          "tool": "*",
+          "description": "* under /external matching user.txt for file_read, file_write only",
+          "conditional": true
+        },
+        {
+          "effect": "allow",
+          "scope": "session",
+          "rule": {
+            "kind": "file",
+            "tool_name": "*",
+            "root": "/external",
+            "pattern": "session.txt",
+            "operations": [
+              "file_read",
+              "file_write"
+            ],
+            "id": "session",
+            "lifetime": "session",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": true,
+            "cwd": "",
+            "sandbox_key": ""
+          },
+          "target": "/external/session.txt",
+          "resource_kind": "file",
+          "operations": [
+            "file_read",
+            "file_write"
+          ],
+          "tool": "*",
+          "description": "* under /external matching session.txt for file_read, file_write only",
+          "conditional": true
+        }
+      ],
+      "constraints": [
+        "rule_precedence",
+        "invocation_required",
+        "protected_permission_files"
+      ],
+      "precedence": [
+        "protected_permission_files",
+        "mode_ceiling",
+        "deny",
+        "ask",
+        "allow",
+        "mode_default"
+      ]
+    },
+    {
+      "operation": "shell",
+      "defaults": {
+        "in_scope": {
+          "decision": "ask",
+          "source": "policy",
+          "reason_code": "permission.needs_approval",
+          "reason_params": {}
+        },
+        "outside_scope": {
+          "decision": "ask",
+          "source": "policy",
+          "reason_code": "permission.needs_approval",
+          "reason_params": {}
+        }
+      },
+      "directories": [
+        "/project"
+      ],
+      "read_only": [],
+      "rules": [],
+      "constraints": [
+        "rule_precedence",
+        "invocation_required",
+        "shell_system_sandbox"
+      ],
+      "precedence": [
+        "protected_permission_files",
+        "mode_ceiling",
+        "deny",
+        "ask",
+        "allow",
+        "mode_default"
+      ]
+    }
+  ]
+}

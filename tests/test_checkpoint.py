@@ -24,7 +24,8 @@ def _populated_session(tmp_path):
     session.set_cwd(cwd)
     extra = tmp_path / "extra-root"
     extra.mkdir()
-    session.add_working_directory(extra)
+    session.add_permission_rule({"id": "checkpoint-directory", "lifetime": "session", "kind": "directory", "tool_name": "*",
+                                 "root": str(extra), "pattern": "", "operations": ["file_read", "file_write"], "recursive": True})
 
     session.plan_manager.create_plan("ship", ["write", "test"])
     session.plan_manager.update_step("step_1", "completed", note="written")
@@ -93,7 +94,8 @@ def test_checkpoint_round_trips_complete_session_state(tmp_path):
     }
     assert restored.active_deferred_tools == ["web_search", "schedule_task"]
     assert restored.project_root == original.workspace_dir
-    assert restored.additional_working_directories == original.additional_working_directories
+    from wright.domain.policy.permission.settings import PermissionRule
+    assert restored.permission_rules == [PermissionRule.from_mapping(item).to_persistent() for item in original.permission_rules]
     assert restored.environment == "local"
     assert restored.committed_turn_ids == [original.agent_root_turn_id]
     assert restored.plan_manager.snapshot() == original.plan_manager.snapshot()
@@ -373,14 +375,15 @@ def test_checkpoint_snaps_cwd_back_when_outside_granted_roots(tmp_path):
     workspace.mkdir()
     extra.mkdir()
     session = Session.create("outside cwd", workspace)
-    session.add_working_directory(extra)
+    session.add_permission_rule({"id": "checkpoint-directory", "lifetime": "session", "kind": "directory", "tool_name": "*",
+                                 "root": str(extra), "pattern": "", "operations": ["file_read", "file_write"], "recursive": True})
     session.set_cwd(tmp_path)
     store = FileSessionRepository(tmp_path / "checkpoints")
     store.save(session)
 
     restored = store.load(session.session_id)
     assert restored.get_cwd() == workspace
-    assert restored.additional_working_directories == [extra.resolve()]
+    assert restored.permission_rules[0]["root"] == str(extra.resolve())
 
     session.set_cwd(extra)
     store.save(session)

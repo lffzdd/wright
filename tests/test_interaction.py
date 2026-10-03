@@ -1,8 +1,5 @@
-import queue
 import threading
 import time
-
-import pytest
 
 from wright.application.session.interaction import RoutedPrompter
 from wright.domain.policy import PermissionChoice, PermissionPrompt

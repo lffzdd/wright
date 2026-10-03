@@ -5,6 +5,7 @@ import shlex
 import threading
 from pathlib import Path
 
+from tests.permission_helpers import authorize_directory
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.application.tool_execution.runtime import tool_runtime_for_session
@@ -18,8 +19,8 @@ from wright.domain.policy import (
     InvocationIdentity,
     PathClass,
     ToolAccess,
-    forbidden_paths,
 )
+from wright.infrastructure.config.permission_store import protected_permission_paths
 from wright.infrastructure.runtime import AuthorizedExecution, LocalExecutionBackend
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.command import execute_command
@@ -228,7 +229,7 @@ class _MemoryExecutionBackend:
                         line,
                     )
 
-    def start_shell(self, command, *, cwd):
+    def start_shell(self, command, *, cwd, grant):
         complete = command != "background"
         output = ("fake-output\n",) if command == "printf fake-output" else ()
         process = _MemoryProcess(output, cwd, complete=complete)
@@ -448,7 +449,7 @@ def test_forbidden_permission_settings_path_is_rejected(tmp_path, monkeypatch):
     monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "home"))
     home = tmp_path / "home"
     home.mkdir()
-    settings = forbidden_paths()[0]
+    settings = protected_permission_paths()[0]
     settings.write_text("{}", encoding="utf-8")
     origin = tmp_path / "workspace"
     origin.mkdir()
@@ -520,7 +521,7 @@ def test_command_cwd_stays_inside_granted_extra_root(tmp_path):
     workspace.mkdir()
     extra.mkdir()
     session = Session.create("keep extra cwd", workspace)
-    session.add_working_directory(extra)
+    authorize_directory(session, extra)
     runtime = tool_runtime_for_session(session, workspace_dir=workspace)
 
     result = execute_command(f"cd {shlex.quote(str(extra))}", runtime=runtime)

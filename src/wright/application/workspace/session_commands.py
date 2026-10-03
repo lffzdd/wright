@@ -9,15 +9,9 @@ from __future__ import annotations
 from typing import Any
 
 from ..session.errors import SessionServiceError
+from ..tool_execution.permissions import PermissionConflict
 from .documents import DocumentError
-from .grants import (
-    GrantError,
-    add_session_rule,
-    change_directory,
-    list_grants,
-    revoke_persistent_rule,
-    revoke_session_rule,
-)
+from .grants import GrantError, list_grants, resource_change
 from .journal import ChangeJournalError, SessionChangeJournal
 from .memory_view import bound_project
 
@@ -29,58 +23,58 @@ def require_idle(service: Any) -> None:
         )
 
 
+def _permissions(service):
+    return service.runtime.agent.executor.permissions
+
+
 def session_grants(service: Any) -> dict[str, Any]:
-    runtime = service.runtime
-    return list_grants(runtime.session_state, runtime.permission_settings)
+    control = getattr(service.runtime, "sandbox_control", None)
+    return list_grants(service.runtime.session_state, _permissions(service), control.status() if control else {})
 
 
-def add_grant(service: Any, rule: dict[str, Any]) -> dict[str, Any]:
-    require_idle(service)
+def add_grant(service: Any, resource: dict[str, Any], *, lifetime: str, expected_version: str) -> dict[str, Any]:
+    permissions = _permissions(service)
+    session = service.runtime.session_state
     try:
-        created = add_session_rule(service.runtime.session_state, rule)
-    except (GrantError, TypeError, ValueError) as exc:
+        with permissions.repository.transaction():
+            permissions.validate(session, expected_version)
+            snapshot = permissions.snapshot(session)
+            change = resource_change(session, service.runtime.agent.executor.backend, snapshot, resource, lifetime)
+            permissions.commit(change, session, lambda _: service.persist(), expected_version=expected_version)
+    except PermissionConflict:
+        raise
+    except (GrantError, TypeError, ValueError, OSError) as exc:
         raise SessionServiceError(str(exc)) from exc
-    service.persist()
     service.publisher.publish("session.policy_updated", {})
-    return created
+    return session_grants(service)
 
 
-def revoke_grant(service: Any, rule_id: str, *, confirm: bool) -> dict[str, Any]:
-    require_idle(service)
-    runtime = service.runtime
+def revoke_grant(service: Any, rule_id: str, *, source: str, expected_version: str) -> dict[str, Any]:
+    permissions = _permissions(service)
+    session = service.runtime.session_state
     try:
-        try:
-            result = revoke_session_rule(runtime.session_state, rule_id, confirm=confirm)
-        except GrantError:
-            result = revoke_persistent_rule(
-                runtime.permission_settings, rule_id, confirm=confirm,
-            )
-    except GrantError as exc:
+        permissions.revoke(session, rule_id, source, expected_version, lambda _: service.persist())
+    except PermissionConflict:
+        raise
+    except (ValueError, OSError) as exc:
         raise SessionServiceError(str(exc)) from exc
-    if result.get("scope") == "session":
-        service.persist()
+    interactions = getattr(service, "interactions", None)
+    if interactions is not None:
+        for request in interactions.snapshot():
+            if request.get("kind") == "permission":
+                interactions.resolve(request["request_id"], "deny")
     service.publisher.publish("session.policy_updated", {})
-    return result
+    return session_grants(service)
 
 
-def change_directory_grant(service: Any, **fields: Any) -> dict[str, Any]:
-    require_idle(service)
-    runtime = service.runtime
+def sandbox_action(service: Any, action: str) -> dict[str, Any]:
+    control = getattr(service.runtime, "sandbox_control", None)
+    if control is None or action not in {"setup", "cleanup"}:
+        raise SessionServiceError("Sandbox setup is unavailable")
     try:
-        result = change_directory(
-            runtime.session_state,
-            runtime.permission_settings,
-            fields["path"],
-            scope=fields.get("scope", "session"),
-            confirm=bool(fields.get("confirm")),
-            action=fields["action"],
-        )
-    except GrantError as exc:
-        raise SessionServiceError(str(exc)) from exc
-    if result.get("scope") == "session":
-        service.persist()
-    service.publisher.publish("session.policy_updated", {})
-    return result
+        return control.initialize(cleanup=action == "cleanup")
+    except RuntimeError as error:
+        raise SessionServiceError(str(error)) from error
 
 
 def review_action(service: Any, action: str, paths: list[str], *, confirm: bool) -> dict[str, Any]:
@@ -113,11 +107,11 @@ def store_session_document(service: Any, filename: str, data: bytes) -> dict[str
 
 __all__ = [
     "add_grant",
-    "change_directory_grant",
     "memory_binding",
     "require_idle",
     "review_action",
     "revoke_grant",
+    "sandbox_action",
     "session_grants",
     "store_session_document",
 ]

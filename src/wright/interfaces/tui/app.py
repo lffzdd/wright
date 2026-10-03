@@ -20,8 +20,8 @@ from ...application.session.service import (
     set_session_model,
 )
 from ...core.logger import get_logger
-from ..i18n import language_label, set_locale, t
 from ..cli.resume_select import choose_resume_session
+from ..i18n import language_label, set_locale, t
 from ..interaction import InteractionRequest
 from .blocks import (
     AssistantBlock,
@@ -517,7 +517,7 @@ class WrightTUI(App):
         if action is not None and action.name == "exit":
             self._request_quit()
             return
-        if action is not None and action.name not in {"exit"}:
+        if action is not None and action.name != "exit":
             try:
                 assert self.service is not None
                 result = apply_control(self.service, action)
@@ -833,8 +833,8 @@ class WrightTUI(App):
         if not tools:
             return
         any_collapsed = any(t.collapsed for t in tools)
-        for t in tools:
-            t.collapsed = not any_collapsed
+        for tool in tools:
+            tool.collapsed = not any_collapsed
 
     def action_scroll_end(self) -> None:
         self._scroll_to_end()

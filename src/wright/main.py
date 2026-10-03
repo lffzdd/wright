@@ -2,17 +2,16 @@
 
 import os
 import sys
-
 from pathlib import Path
 
 from .application.composition.runtime import load_env
 from .application.session.directory import SessionDirectory, SessionDirectoryError
 from .interfaces.cli.args import parse_cli_args, runtime_config_from_args
-from .interfaces.i18n import activate_saved_locale, set_locale, t
 from .interfaces.cli.console_renderer import ConsoleRenderer
 from .interfaces.cli.prompter import ConsolePrompter
 from .interfaces.cli.repl import Repl
 from .interfaces.cli.resume_select import choose_resume_session
+from .interfaces.i18n import activate_saved_locale, set_locale, t
 from .interfaces.interaction import InteractionHub
 from .interfaces.rendering.attach import attach_renderer
 from .interfaces.tui.terminal import configure_terminal
@@ -24,6 +23,14 @@ def main() -> None:
     if getattr(args, "interface_language", None):
         set_locale(args.interface_language, persist=True)
     load_env()
+    if args.sandbox_setup or args.sandbox_cleanup or args.sandbox_status:
+        import json
+
+        from .infrastructure.runtime.sandbox import LocalSandboxControl
+        control = LocalSandboxControl()
+        result = control.status() if args.sandbox_status else control.initialize(cleanup=args.sandbox_cleanup)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
     if args.ui == "web":
         try:
             from .interfaces.web.server import run_web

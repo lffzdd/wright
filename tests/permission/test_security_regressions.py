@@ -12,6 +12,9 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
+from tests.permission_helpers import permission_directories
 from wright.application.command.execution import CommandExecution
 from wright.application.execution.identity import bind_identity
 from wright.application.session.live_resources import RuntimeResources
@@ -91,7 +94,7 @@ def test_file_deny_matches_dot_and_absolute_aliases(tmp_path):
     secret.parent.mkdir(parents=True)
     secret.write_text("hidden", encoding="utf-8")
     session = Session.create("files", workspace)
-    settings = PermissionSettings.from_dict({
+    settings = PermissionSettings.from_dict({"version": 2,
         "mode": "bypass",
         "permissions": {"deny": ["read_file(secrets/*)"]},
     })
@@ -123,7 +126,11 @@ def test_file_rule_stays_on_its_root_when_cwd_or_project_changes(tmp_path, monke
     config = tmp_path / "permissions.json"
     monkeypatch.setenv("WRIGHT_PERMISSION_CONFIG", str(config))
     rule = session.permission_rules[0]
-    append_allow_rule(rule, config)
+    from dataclasses import replace as replace_rule
+
+    from wright.domain.policy.permission.settings import PermissionRule
+    record = replace_rule(PermissionRule.from_mapping(rule), root=str(workspace), root_kind="absolute", lifetime="user").to_persistent()
+    append_allow_rule(record, config)
     from wright.infrastructure.config import load_permission_settings
 
     elsewhere = Session.create("elsewhere", other)
@@ -138,7 +145,12 @@ def test_symlink_write_is_judged_by_the_canonical_target(tmp_path):
     outside = tmp_path / "outside.txt"
     nested = workspace / "nested"
     nested.mkdir(parents=True)
-    (nested / "inside.txt").symlink_to(outside)
+    try:
+        (nested / "inside.txt").symlink_to(outside)
+    except OSError as error:
+        if getattr(error, "winerror", None) == 1314:
+            pytest.skip("Windows account cannot create symlinks; native isolation suite also tests junctions")
+        raise
     session = Session.create("files", workspace)
     handler = _Choices("allow_session_rule")
     executor = _files(session, handler)
@@ -233,7 +245,7 @@ def test_compound_shell_cannot_skip_deny_or_a_simple_allow(tmp_path):
     demo = workspace / "demo"
     demo.write_text("keep", encoding="utf-8")
     session = Session.create("shell", workspace)
-    denied = PermissionSettings.from_dict({
+    denied = PermissionSettings.from_dict({"version": 2,
         "mode": "bypass",
         "permissions": {"deny": ["execute_command(rm *)"]},
     })
@@ -252,14 +264,13 @@ def test_compound_shell_cannot_skip_deny_or_a_simple_allow(tmp_path):
         assert not result.ok, command
         assert demo.read_text(encoding="utf-8") == "keep"
 
-    asked = PermissionSettings.from_dict({
-        "mode": "default",
-        "permissions": {"allow": ["execute_command(echo *)"]},
-    })
+    with pytest.raises(ValueError, match="Shell grants"):
+        PermissionSettings.from_dict({"version": 2, "permissions": {"allow": ["execute_command(echo *)"]}})
+    asked = PermissionSettings.from_dict({"version": 2, "mode": "default", "permissions": {}})
     handler = _Choices()
     asking = _shell(session, asked, handler)
     compound = _run(
-        asking, "execute_command", {"command": "echo hi && rm demo"}, "ask"
+        asking, "execute_command", {"command": "echo hi && echo done"}, "ask"
     )
     assert not compound.ok
     assert handler.prompts
@@ -275,7 +286,7 @@ def test_checkpoint_failure_rolls_back_session_and_config(tmp_path, monkeypatch)
     extra.mkdir()
     config = tmp_path / "permissions.json"
     config.write_text(
-        '{"mode":"default","permissions":{"allow":[],"deny":[],"additionalDirectories":[]}}\n',
+        '{"mode": "default", "permissions": {"allow": [], "deny": []}, "version": 2}\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("WRIGHT_PERMISSION_CONFIG", str(config))
@@ -285,9 +296,9 @@ def test_checkpoint_failure_rolls_back_session_and_config(tmp_path, monkeypatch)
         raise RuntimeError("checkpoint failed")
 
     def commit(change) -> None:
-        commit_authorization(change, session=session, save_checkpoint=fail_save)
+        commit_authorization(change, session=session, permissions=assemble_tool_capabilities(session, None, None).permissions, save_checkpoint=fail_save)
 
-    handler = _Choices("allow_session_directory", "allow_persistent_rule")
+    handler = _Choices("allow_session_directory_write", "allow_user_rule")
     executor = ToolDispatchService(
         {write_file_tool.name: write_file_tool},
         assemble_tool_capabilities(
@@ -306,7 +317,7 @@ def test_checkpoint_failure_rolls_back_session_and_config(tmp_path, monkeypatch)
         "c1",
     )
     assert not outside.ok
-    assert session.working_directories_snapshot() == ()
+    assert permission_directories(session) == ()
     assert not (extra / "a.txt").exists()
 
     persistent = _run(
@@ -326,7 +337,7 @@ def test_child_session_rule_does_not_widen_the_parent(tmp_path):
 
     def factory(target: Session):
         def commit(change) -> None:
-            commit_authorization(change, session=target)
+            commit_authorization(change, session=target, permissions=assemble_tool_capabilities(target, None, None).permissions)
 
         return commit
 
@@ -374,7 +385,7 @@ def _append_many(path: str, prefix: str) -> None:
 def test_concurrent_config_updates_keep_both_writers(tmp_path):
     config = tmp_path / "permissions.json"
     config.write_text(
-        '{"mode":"default","permissions":{"allow":[],"deny":[]}}\n',
+        '{"mode": "default", "permissions": {"allow": [], "deny": []}, "version": 2}\n',
         encoding="utf-8",
     )
     context = multiprocessing.get_context("spawn")
@@ -394,6 +405,7 @@ def test_concurrent_config_updates_keep_both_writers(tmp_path):
 def _wait_request(hub: InteractionHub):
     deadline = time.time() + 2
     while time.time() < deadline:
+        time.sleep(0.005)
         request = hub.poll()
         if request is not None:
             return request

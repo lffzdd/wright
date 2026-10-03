@@ -1,6 +1,6 @@
 import threading
-from pathlib import Path
 
+from tests.permission_helpers import authorize_directory, permission_directories
 from tests.responses import event, response
 from wright.application.agent import make_spawn_agent_tool
 from wright.application.command.execution import CommandExecution
@@ -8,6 +8,7 @@ from wright.application.execution.identity import bind_identity
 from wright.application.session.live_resources import RuntimeResources
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
+from wright.application.tool_execution.permissions import PermissionService
 from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
@@ -19,11 +20,7 @@ from wright.domain.policy import (
     PermissionSettings,
     ToolAccess,
 )
-from wright.infrastructure.config import (
-    append_additional_directory,
-    append_allow_rule,
-    load_permission_settings,
-)
+from wright.infrastructure.config.permission_store import FilePermissionRepository
 from wright.infrastructure.persistence.session.repository import FileSessionRepository
 from wright.infrastructure.runtime import LocalExecutionBackend
 from wright.infrastructure.tools.base import Tool
@@ -165,7 +162,7 @@ def test_denied_rewrite_does_not_commit_or_execute(tmp_path):
 
     assert not outcome.result.ok
     assert called == []
-    assert session.working_directories_snapshot() == ()
+    assert permission_directories(session) == ()
 
 
 def test_child_uses_fixed_local_cwd_and_own_scope_snapshot(tmp_path):
@@ -186,7 +183,7 @@ def test_child_uses_fixed_local_cwd_and_own_scope_snapshot(tmp_path):
         assert runtime.execution is not None
         observed["path"] = runtime.execution.resolve_path("same.txt").value
         observed["scope_before"] = runtime.access_scope.additional
-        parent.add_working_directory(later)
+        authorize_directory(parent, later)
         observed["scope_after"] = runtime.access_scope.additional
         return ToolResult.success()
 
@@ -239,7 +236,7 @@ def test_child_uses_fixed_local_cwd_and_own_scope_snapshot(tmp_path):
     assert observed["scope_before"] == ()
     assert observed["scope_after"] == ()
     assert parent.get_cwd() == nested.resolve()
-    assert parent.working_directories_snapshot() == (later.resolve(),)
+    assert permission_directories(parent) == (later.resolve(),)
 
 
 def test_one_executor_refreshes_scope_for_shell_and_child(tmp_path):
@@ -290,14 +287,13 @@ def test_one_executor_refreshes_scope_for_shell_and_child(tmp_path):
 
     def authorization_commit_factory(target_session):
         def commit(change):
-            for directory in change.session_directories:
-                target_session.add_working_directory(Path(directory.value))
+            PermissionService(FilePermissionRepository(target_session.project_root or target_session.workspace_dir)).commit(change, target_session)
 
         return commit
 
     def approve(request):
         if request.tool_call.name == "write_file":
-            return PermissionResponse("allow_session_directory")
+            return PermissionResponse("allow_session_directory_write")
         return PermissionResponse("allow_once")
 
     resolver = PermissionResolver(PermissionPolicy(PermissionSettings()), approve)
@@ -344,7 +340,7 @@ def test_one_executor_refreshes_scope_for_shell_and_child(tmp_path):
     ])
 
     assert all(outcome.result.ok for outcome in outcomes)
-    assert parent.working_directories_snapshot() == (extra.resolve(),)
+    assert tuple(executor._access_scope().additional) == (extra.resolve(),)
     assert parent.get_cwd() == extra.resolve()
     assert observed["cwd"] == str(extra.resolve())
     assert observed["additional"] == (extra.resolve(),)
@@ -367,14 +363,7 @@ def test_agent_child_persistent_directory_uses_child_checkpoint(tmp_path, monkey
         sessions[target_session.session_id] = target_session
 
         def commit(change):
-            for directory in change.session_directories:
-                target_session.add_working_directory(Path(directory.value))
-            if change.session_directories:
-                checkpoints.save(target_session)
-            for rule in change.persistent_rules:
-                append_allow_rule(rule)
-            for directory in change.persistent_directories:
-                append_additional_directory(directory.value)
+            PermissionService(FilePermissionRepository(target_session.project_root or target_session.workspace_dir)).commit(change, target_session, checkpoints.save)
 
         return commit
 
@@ -399,7 +388,7 @@ def test_agent_child_persistent_directory_uses_child_checkpoint(tmp_path, monkey
 
     def approve(request):
         if request.tool_call.name == "write_file":
-            return PermissionResponse("allow_persistent_directory")
+            return PermissionResponse("allow_project_directory_write")
         return PermissionResponse("allow_once")
 
     resolver = PermissionResolver(
@@ -425,23 +414,23 @@ def test_agent_child_persistent_directory_uses_child_checkpoint(tmp_path, monkey
 
     assert outcome.result.ok
     assert (extra / "child.txt").read_text(encoding="utf-8") == "child"
-    assert parent.working_directories_snapshot() == ()
+    assert parent.permission_rules == []
+    assert permission_directories(parent) == (extra.resolve(),)
     child_sessions = [session for session in sessions.values() if session is not parent]
     assert len(child_sessions) == 1
     child = child_sessions[0]
-    assert child.working_directories_snapshot() == (extra.resolve(),)
-    assert checkpoints.load(child.session_id).working_directories_snapshot() == (
-        extra.resolve(),
-    )
-    assert str(extra.resolve()) in load_permission_settings().additional_directories
+    assert child.permission_rules == []
+    assert checkpoints.load(child.session_id).permission_rules == []
+    effective = PermissionService(FilePermissionRepository(workspace)).snapshot(child)
+    assert effective.scope.additional == (extra.resolve(),)
 
 
-def test_persistent_approval_without_commit_callback_fails_closed(tmp_path):
+def test_project_approval_uses_repository_without_custom_callback(tmp_path):
     session = Session.create("independent", tmp_path)
     outside = tmp_path.parent / "a.txt"
     resolver = PermissionResolver(
         approval_handler=lambda _request: PermissionResponse(
-            "allow_persistent_directory"
+            "allow_project_directory_write"
         )
     )
     outcome = ToolDispatchService(
@@ -457,9 +446,11 @@ def test_persistent_approval_without_commit_callback_fails_closed(tmp_path):
         )
     ])[0]
 
-    assert not outcome.result.ok
-    assert "persistent authorization" in outcome.result.err
-    assert not outside.exists()
+    assert outcome.result.ok
+    assert outside.read_text(encoding="utf-8") == "x"
+    assert session.permission_rules == []
+    snapshot = PermissionService(FilePermissionRepository(tmp_path)).snapshot(session)
+    assert snapshot.settings.project_rules
 
 
 def test_authorization_commit_failure_prevents_tool_execution(tmp_path):
@@ -472,7 +463,7 @@ def test_authorization_commit_failure_prevents_tool_execution(tmp_path):
 
     resolver = PermissionResolver(
         approval_handler=lambda _request: PermissionResponse(
-            "allow_session_directory"
+            "allow_session_directory_write"
         )
     )
     outcome = ToolDispatchService(

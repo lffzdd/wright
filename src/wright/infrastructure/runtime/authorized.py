@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable, Iterable
+from dataclasses import replace
 
+from ...domain.policy.permission.scope import is_under
 from ...domain.policy.permission.types import (
     GrantTarget,
     InvocationGrant,
@@ -23,6 +24,8 @@ class AuthorizedExecution:
         grant: InvocationGrant,
         *,
         dynamic_cwd: bool = False,
+        validator: Callable[[], None] | None = None,
+        process_validator: Callable[[], None] | None = None,
     ):
         if backend.environment_id != grant.environment_id:
             raise ValueError("grant and execution backend use different environments")
@@ -33,6 +36,8 @@ class AuthorizedExecution:
         # cwd for the whole invocation.
         self._dynamic_cwd = dynamic_cwd
         self._closed = False
+        self._validator = validator
+        self._process_validator = process_validator
 
     @property
     def environment_id(self) -> str:
@@ -44,6 +49,8 @@ class AuthorizedExecution:
     def _ensure_open(self) -> None:
         if self._closed:
             raise PermissionError("authorized execution is closed")
+        if self._validator is not None:
+            self._validator()
 
     def _operation(self, operation: PermissionOperation) -> None:
         self._ensure_open()
@@ -69,7 +76,10 @@ class AuthorizedExecution:
             return self._backend.cwd()
         if self.grant.cwd.environment_id != self.environment_id:
             raise PermissionError("cwd belongs to another execution environment")
-        return self._backend.revalidate_path(self.grant.cwd)
+        current = self._backend.revalidate_path(self.grant.cwd)
+        if current != self.grant.cwd:
+            raise PermissionError("Working directory changed since approval")
+        return current
 
     def resolve_path(self, requested: str) -> ExecutionPath:
         self._ensure_open()
@@ -217,16 +227,33 @@ class AuthorizedExecution:
     def start_shell(self, command: str) -> ProcessHandle:
         """Run the approved command text in a local process.
 
-        The grant checks the command string and cwd. It does not apply file
-        grants or protected-path checks to the process, and it is not an OS
-        sandbox.
+        The platform backend must enforce the immutable sandbox profile.
         """
         self._operation("shell")
         if self.grant.command is not None and (
             self.grant.subject != command or self.grant.command != command
         ):
             raise PermissionError("shell command differs from the approved command")
-        return self._backend.start_shell(command, cwd=self.cwd())
+        for path in (*self.grant.shell_readable, *self.grant.shell_writable, *self.grant.shell_readonly):
+            if self._backend.revalidate_path(path) != path:
+                raise PermissionError("Sandbox resource changed since approval")
+        cwd = self.cwd()
+        grant = replace(self.grant, cwd=cwd) if self._dynamic_cwd else self.grant
+        handle = self._backend.start_shell(command, cwd=cwd, grant=grant)
+        if self._process_validator is not None:
+            import threading
+
+            def monitor():
+                while handle.group_alive():
+                    try:
+                        self._process_validator()
+                    except Exception:
+                        handle.terminate(grace_seconds=0)
+                        return
+                    threading.Event().wait(0.1)
+
+            threading.Thread(target=monitor, daemon=True).start()
+        return handle
 
     def _ensure_not_blocked(self, path: ExecutionPath) -> None:
         if any(_is_under(path, blocked) for blocked in self.grant.blocked_paths):
@@ -235,10 +262,10 @@ class AuthorizedExecution:
 
 def _is_under(path: ExecutionPath, root: ExecutionPath) -> bool:
     try:
-        return os.path.commonpath((path.value, root.value)) == root.value
+        return path.environment_id == root.environment_id and is_under(path.value, root.value)
     except ValueError:
         return False
 
 
 def _matches(path: ExecutionPath, target: GrantTarget) -> bool:
-    return path == target.path or (target.recursive and _is_under(path, target.path))
+    return (_is_under(path, target.path) and _is_under(target.path, path)) or (target.recursive and _is_under(path, target.path))

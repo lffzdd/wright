@@ -270,9 +270,9 @@ def test_command_tool_starts_and_waits_through_execution_backend(tmp_path):
             super().__init__(tmp_path, lambda: tmp_path)
             self.events = []
 
-        def start_shell(self, command, *, cwd):
+        def start_shell(self, command, *, cwd, grant):
             self.events.append(("start", command, cwd))
-            handle = super().start_shell(command, cwd=cwd)
+            handle = super().start_shell(command, cwd=cwd, grant=grant)
             backend = self
 
             class RecordingHandle:

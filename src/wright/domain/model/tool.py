@@ -33,6 +33,7 @@ class AccessTarget:
     operation: PermissionOperation
     recursive: bool = False
     kind: Literal["file", "directory", "url", "command", "other"] = "other"
+    http_method: str = ""
 
 
 @dataclass(frozen=True)

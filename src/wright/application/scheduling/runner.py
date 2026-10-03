@@ -309,11 +309,14 @@ def launch_job_run(
 
     def authorization_commit_factory(target_session: Session):
         def commit_authorization(change) -> None:
-            from ..tool_execution.commit import commit_authorization as commit_change
+            from ...infrastructure.config.permission_store import (
+                FilePermissionRepository,
+            )
+            from ..tool_execution.permissions import PermissionService
 
             # Durable runs have no session checkpoint. The change stays on
             # target_session, which is the child when a child is committing.
-            commit_change(change, session=target_session)
+            PermissionService(FilePermissionRepository(target_session.project_root or target_session.workspace_dir)).commit(change, target_session)
 
         return commit_authorization
 
@@ -338,11 +341,9 @@ def launch_job_run(
         initial_goal=prompt,
         workspace_dir=(root_session.workspace_dir if root_session is not None else workspace_dir),
         max_steps=record.step_budget,
-        additional_working_directories=(
-            list(root_session.working_directories_snapshot())
-            if root_session is not None else None
-        ),
     )
+    child_session.project_root = root_session.project_root if root_session is not None else workspace_dir
+    child_session.permission_parent = root_session
     child_session.control_plane = control
     child_session.agent_task_id = record.id
     child_session.agent_root_turn_id = root_turn_id

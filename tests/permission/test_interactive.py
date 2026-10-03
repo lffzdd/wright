@@ -1,3 +1,4 @@
+from tests.permission_helpers import permission_directories
 from wright.application.tool_execution.approval import InteractiveApprovalHandler
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
@@ -76,12 +77,8 @@ def test_structured_prompt_uses_fixed_choice_ids(tmp_path):
         ToolCall("write_file", {"file": "a.txt", "content": "hello"}, "c1"),
     )
     assert result.ok
-    assert [choice.id for choice in renderer.prompts[0].choices] == [
-        "allow_once",
-        "allow_session_rule",
-        "allow_persistent_rule",
-        "deny",
-    ]
+    ids = {choice.id for choice in renderer.prompts[0].choices}
+    assert {"allow_once", "allow_session_rule", "allow_project_rule", "allow_user_rule", "deny"} <= ids
     assert renderer.prompts[0].targets == (str((tmp_path / "a.txt").resolve()),)
     assert renderer.phases == [("c1", "awaiting_approval")]
 
@@ -92,7 +89,7 @@ def test_outside_directory_choices_update_session_only_after_allow(tmp_path):
     workspace.mkdir()
     extra.mkdir()
     session = Session.create("outside grant", workspace)
-    renderer = _MockRenderer("allow_session_directory")
+    renderer = _MockRenderer("allow_session_directory_write")
     written = _run(
         _executor(session, renderer),
         ToolCall(
@@ -102,13 +99,9 @@ def test_outside_directory_choices_update_session_only_after_allow(tmp_path):
         ),
     )
     assert written.ok
-    assert session.working_directories_snapshot() == (extra.resolve(),)
-    assert [choice.id for choice in renderer.prompts[0].choices] == [
-        "allow_once",
-        "allow_session_directory",
-        "allow_persistent_directory",
-        "deny",
-    ]
+    assert permission_directories(session) == (extra.resolve(),)
+    assert session.permission_rules[0]["kind"] == "directory"
+    assert "allow_session_directory_write" in {choice.id for choice in renderer.prompts[0].choices}
     assert _run(
         _executor(session, _MockRenderer()),
         ToolCall("read_file", {"file": str(extra / "a.txt")}, "c2"),
@@ -157,14 +150,14 @@ def test_session_rule_choice_is_scoped_and_reused_by_the_same_resolver(tmp_path)
         ),
     )
 
-    assert first.ok and second.ok
-    assert len(renderer.prompts) == 1
-    assert (tmp_path / "nested/b.txt").read_text(encoding="utf-8") == "b"
+    assert first.ok and not second.ok
+    assert len(renderer.prompts) == 2
+    assert not (tmp_path / "nested/b.txt").exists()
 
 
 def test_persistent_rule_choice_is_returned_to_the_commit_adapter(tmp_path):
     session = Session.create("permission", tmp_path)
-    renderer = _MockRenderer("allow_persistent_rule")
+    renderer = _MockRenderer("allow_user_rule")
     changes = []
     resolver = PermissionResolver(approval_handler=_approval(renderer))
     executor = ToolDispatchService(
@@ -195,11 +188,11 @@ def test_persistent_rule_choice_is_returned_to_the_commit_adapter(tmp_path):
     assert result.ok
     rule = changes[0].persistent_rules[0]
     assert rule["kind"] == "file"
-    assert rule["tool_name"] == "write_file"
-    assert rule["pattern"] == "nested/*"
+    assert rule["tool_name"] == "*"
+    assert rule["pattern"] == "nested/a.txt"
     assert rule["root"] == str(tmp_path.resolve())
     assert rule["operations"] == ["file_read", "file_write"]
-    assert changes[0].session_directories == ()
+    assert changes[0].session_rules == ()
 
 
 def test_cancelled_permission_is_denied(tmp_path):

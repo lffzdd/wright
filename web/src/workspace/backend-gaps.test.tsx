@@ -52,7 +52,7 @@ describe("backend data in workspace panels", () => {
   it("renders explicit zero-change diffs and approval audit text", () => {
     render(toolCardFromState({ call_id: "c", name: "edit_file", phase: "succeeded", data: { diff: "", additions: 0, deletions: 0, diff_truncated: false } }));
     expect(screen.getByText("No textual diff.")).toBeTruthy();
-    render(<InteractionCard interaction={{ request_id: "permission", kind: "permission", choices: [{ id: "deny", label: "Deny", scope: "invocation", persistence: "none" }] }} respond={async () => true} />);
+    render(<InteractionCard sessionId="s" interaction={{ request_id: "permission", kind: "permission", choices: [{ id: "deny", label: "Deny", scope: "invocation", persistence: "none" }] }} respond={async () => true} />);
     expect(screen.getByText(/Permission requests and decisions are recorded/)).toBeTruthy();
   });
 
@@ -99,21 +99,24 @@ describe("backend data in workspace panels", () => {
 
   it("shows policy defaults, conditional overrides and refreshes on policy and reconnect changes", async () => {
     const base = (decision: "allow" | "ask" | "deny") => ({ decision, source: "default", reason_code: "", reason_params: {} });
-    const policy: EffectivePolicy = { operation: "file_write", defaults: { in_scope: base("ask"), outside_scope: base("ask") }, directories: ["/project"], rules: [{ effect: "deny", scope: "persistent", rule: { tool_name: "edit_file", pattern: "secrets/*" }, description: "edit_file secrets/*", conditional: true, inactive: false }], constraints: ["protected_permission_files"], precedence: [] };
-    const grants: Grants = { permission_mode: "default", effective_policy: [policy] };
+    const policy: EffectivePolicy = { operation: "file_write", defaults: { in_scope: base("ask"), outside_scope: base("ask") }, directories: ["/project"], read_only: ["/external-ro"], rules: [{ effect: "deny", scope: "project", rule: { tool_name: "edit_file", pattern: "secrets/*" }, target: "/project/secrets/*", resource_kind: "file", operations: ["file_write"], tool: "edit_file", description: "edit_file secrets/*", conditional: true }], constraints: ["protected_permission_files"], precedence: [] };
+    const grants: Grants = { version: "test", grants: [], permission_mode: "default", effective_policy: [policy] };
     const request = vi.spyOn(api, "grants").mockResolvedValue(grants);
     const state = view();
     const { rerender } = render(inspector(state));
     fireEvent.click(screen.getByRole("tab", { name: /Permissions/ }));
     expect(await screen.findByText("File Write")).toBeTruthy();
     expect(screen.getByText(/Conditional rule/)).toBeTruthy();
+    expect(screen.getByText(/Conditional rule/).textContent).toContain("This project long term");
+    expect(screen.getByText(/Read-only directory: \/external-ro/)).toBeTruthy();
+    expect(screen.getByText("Only through edit_file")).toBeTruthy();
     expect(screen.getByText("Protected permission files remain blocked.")).toBeTruthy();
     expect(screen.queryByText(/unrestricted/i)).toBeNull();
     request.mockResolvedValue({ ...grants, permission_mode: "bypass", effective_policy: [{ ...policy, defaults: { in_scope: base("allow"), outside_scope: base("allow") } }] });
     const bypass = { ...state, session: { ...state.session, permission_mode: "bypass" } };
     rerender(inspector(bypass));
     await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText("bypass")).toBeTruthy();
+    expect(await screen.findByText("Fewer confirmations")).toBeTruthy();
     rerender(inspector({ ...bypass, connection: "reconnecting" }));
     await waitFor(() => expect(request).toHaveBeenCalledTimes(3));
     rerender(inspector({ ...bypass, connection: "connected" }));

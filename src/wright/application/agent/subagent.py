@@ -191,15 +191,17 @@ def make_spawn_agent_tool(
             publisher=publisher,
         )
 
-        workspace_dir = access_scope.origin
+        workspace_dir = Path(access_scope.origin)
         child_session = Session.create(
             initial_goal=task,
             workspace_dir=workspace_dir,
             max_steps=record.step_budget,
             # A child receives the parent's current session roots, but not any
             # one-call InvocationGrant that may have led to this delegation.
-            additional_working_directories=list(access_scope.additional),
         )
+        child_session.project_root = access_scope.project_root or workspace_dir
+        if delegation.inherit_permissions is not None:
+            delegation.inherit_permissions(child_session)
         delegation.share_control_plane(child_session)
         child_session.agent_task_id = record.id
         child_session.agent_root_turn_id = root_turn_id

@@ -2,12 +2,12 @@ import queue
 import sys
 import threading
 import time
-from argparse import Namespace
 from types import SimpleNamespace
 
 import pytest
 
 from wright.application.composition.runtime import _trusted_mcp_config_paths
+from wright.application.session.directory import SessionDirectory
 from wright.application.session.dispatch import (
     dispatch_slash,
     process_session_event,
@@ -20,7 +20,6 @@ from wright.interfaces.cli.args import parse_cli_args
 from wright.interfaces.interaction import InteractionHub
 from wright.interfaces.rendering.history import collect_history_pairs
 from wright.interfaces.rendering.silent import SilentRenderer
-from wright.interfaces.tui import app as tui_app_module
 from wright.interfaces.tui.app import WrightTUI, require_interactive_tty
 from wright.interfaces.tui.blocks import AssistantBlock
 from wright.interfaces.tui.composer import MultilineComposer
@@ -31,7 +30,6 @@ from wright.interfaces.tui.format import (
     _tool_title,
 )
 from wright.interfaces.tui.renderer import TUIRenderer
-from wright.application.session.directory import SessionDirectory
 
 
 def test_cli_ui_flag_defaults_to_tui(monkeypatch):

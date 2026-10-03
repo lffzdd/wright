@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 
+from tests.permission_helpers import authorize_directory
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.application.tool_execution.runtime import tool_runtime_for_session
@@ -123,7 +124,7 @@ def test_granted_extra_root_allows_edit_and_glob_with_absolute_paths(tmp_path):
     extra.mkdir()
     (extra / "a.txt").write_text("old line\n", encoding="utf-8", newline="")
     session = Session.create("extra root", workspace)
-    session.add_working_directory(extra)
+    authorize_directory(session, extra)
     runtime = tool_runtime_for_session(session, workspace_dir=workspace)
 
     assert read_file(str(extra / "a.txt"), runtime=runtime).ok
@@ -167,7 +168,7 @@ def test_always_allow_outside_write_then_edit_in_same_extra_root(tmp_path):
     extra.mkdir()
     session = Session.create("always extra", workspace)
 
-    decisions = iter(("allow_session_directory", "allow_once", "allow_once"))
+    decisions = iter(("allow_session_directory_write", "allow_once", "allow_once"))
 
     def grant_then_allow(request):
         return PermissionResponse(next(decisions))
@@ -198,7 +199,7 @@ def test_always_allow_outside_write_then_edit_in_same_extra_root(tmp_path):
     ])[0].result
 
     assert written.ok and read.ok and edited.ok
-    assert extra.resolve() in session.additional_working_directories
+    assert any(rule["kind"] == "directory" and rule["root"] == str(extra.resolve()) for rule in session.permission_rules)
     assert extra.joinpath("a.txt").read_text(encoding="utf-8") == "new line\n"
 
 

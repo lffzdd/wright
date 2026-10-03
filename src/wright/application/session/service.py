@@ -385,8 +385,7 @@ class SessionService:
 
         from ..workspace.references import ReferenceError, identify_reference
 
-        settings = getattr(self.runtime, "permission_settings", None)
-        external = list(getattr(settings, "additional_directories", []) or [])
+        external = self.runtime.agent.executor.permissions.reference_roots(self.runtime.session_state)
         project = Path(
             self.runtime.session_state.project_root or self.runtime.session_state.workspace_dir
         )
@@ -424,8 +423,7 @@ class SessionService:
         if document_text:
             cleaned = f"{cleaned}\n\n{document_text}".strip()
         project_root = self.runtime.session_state.project_root or self.runtime.session_state.workspace_dir
-        settings = getattr(self.runtime, "permission_settings", None)
-        external = list(getattr(settings, "additional_directories", []) or [])
+        external = self.runtime.agent.executor.permissions.reference_roots(self.runtime.session_state) if references or self._staged_references or "@[" in cleaned else []
         with self._lock:
             staged = list(self._staged_references)
             if references is None:

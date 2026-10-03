@@ -105,7 +105,7 @@ def test_approval_failure_is_published_once_and_does_not_execute(
                 "deny", "rejected by test"
             )
             if approval_failure == "denied"
-            else PermissionResponse("allow_session_directory")
+            else PermissionResponse("allow_session_directory_write")
         )
     )
     commit_calls = []
@@ -377,7 +377,7 @@ def test_rg_drains_large_stderr_without_deadlock(tmp_path, monkeypatch):
 
 
 def test_rg_candidate_nul_records_and_json_chunks_are_preserved(tmp_path, monkeypatch):
-    odd = tmp_path / "odd\n\r name.txt"
+    odd = tmp_path / ("odd name Ω.txt" if os.name == "nt" else "odd\n\r name.txt")
     ordinary = tmp_path / "ordinary.txt"
     odd.write_text("needle\n", encoding="utf-8")
     ordinary.write_text("needle\n", encoding="utf-8")
@@ -548,7 +548,7 @@ def _grep_rows_from_rg(root: Path, glob: str | None = None):
         path = Path(data["path"]["text"]).resolve().relative_to(root.resolve())
         text = data["lines"]["text"].rstrip("\r\n")
         for submatch in data["submatches"]:
-            rows.append((str(path), data["line_number"], submatch["start"] + 1, text))
+            rows.append((path.as_posix(), data["line_number"], submatch["start"] + 1, text))
     return sorted(rows)
 
 
@@ -565,7 +565,7 @@ def test_grep_matches_actual_rg_for_gitignore_hidden_and_special_names(tmp_path)
     (tmp_path / "visible.txt").write_text("needle\n", encoding="utf-8")
     (tmp_path / "ignored.txt").write_text("needle\n", encoding="utf-8")
     (tmp_path / ".hidden.txt").write_text("needle\n", encoding="utf-8")
-    odd = tmp_path / "odd\n\r name.txt"
+    odd = tmp_path / ("odd name Ω.txt" if os.name == "nt" else "odd\n\r name.txt")
     odd.write_text("needle\n", encoding="utf-8")
     nested = tmp_path / "nested"
     nested.mkdir()

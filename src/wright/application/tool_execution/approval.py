@@ -30,11 +30,23 @@ class InteractiveApprovalHandler:
         self._prompter = prompter
         self._notify_phase = notify_phase
 
+    def with_validator(self, validator):
+        return lambda request: self._approve(request, validator)
+
     def __call__(self, request: PermissionRequest) -> PermissionResponse:
+        return self._approve(request)
+
+    def _approve(self, request: PermissionRequest, validator=None) -> PermissionResponse:
         try:
             if self._notify_phase is not None:
                 self._notify_phase(request.tool_call, "awaiting_approval")
-            response = self._prompter.prompt_permission(request.prompt)
+            guarded = getattr(self._prompter, "prompt_permission_guarded", None)
+            if validator is not None and callable(guarded):
+                response = guarded(request.prompt, validator)
+            else:
+                response = self._prompter.prompt_permission(request.prompt)
+                if validator is not None:
+                    validator()
         except Exception:
             return PermissionResponse("deny")
         if isinstance(response, PermissionResponse):

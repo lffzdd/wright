@@ -56,9 +56,7 @@ def _serialize_session(session: Session) -> dict[str, Any]:
             "workspace_dir": str(session.workspace_dir),
             "cwd": str(session.get_cwd()),
             "project_root": str(session.project_root or session.workspace_dir),
-            "additional_working_directories": [
-                str(path) for path in session.additional_working_directories
-            ],
+            "permission_data_version": 2,
             "permission_rules": [dict(rule) for rule in session.permission_rules],
             "environment": session.environment,
             "base_commit": session.base_commit,
@@ -200,19 +198,31 @@ def _deserialize_session(payload: Any) -> Session:
     if not workspace_dir.is_dir():
         raise CheckpointError(f"workspace_dir 不存在: {workspace_dir}")
     saved_cwd = Path(_string(data.get("cwd"), "cwd")).resolve()
-    additional_working_directories = _deserialize_additional_directories(
-        data.get("additional_working_directories", []),
-        workspace_dir,
-    )
-    cwd = saved_cwd if saved_cwd.is_dir() else workspace_dir
-    if not _cwd_in_granted_roots(cwd, workspace_dir, additional_working_directories):
-        cwd = workspace_dir
+    if data.get("additional_working_directories"):
+        raise CheckpointError("Unbounded directory permissions are unsupported; approve a bounded resource again")
+    permission_rules = _deserialize_permission_rules(data.get("permission_rules", []), data.get("permission_data_version"))
+    from ....domain.policy.permission.settings import PermissionRule
     project_root_value = data.get("project_root")
     project_root = (
         Path(_string(project_root_value, "project_root")).resolve()
         if project_root_value is not None
         else workspace_dir
     )
+    # Cwd restoration uses the current stores, including project grants and
+    # session revocations made by another process since this checkpoint.
+    from ...config.permission_store import FilePermissionRepository
+    repository = FilePermissionRepository(project_root)
+    try:
+        with repository.transaction():
+            settings, protected = repository.read()
+            permission_rules, _ = repository.read_session(session_id, tuple(permission_rules))
+        records = (*settings.allow, *(PermissionRule.from_mapping(item) for item in permission_rules))
+        directory_roots = [Path(rule.resource_root(str(workspace_dir))) for rule in records if rule.kind == "directory"]
+        cwd = saved_cwd if saved_cwd.is_dir() else workspace_dir
+        if not _cwd_in_granted_roots(cwd, workspace_dir, directory_roots) or any(cwd == Path(root) or cwd.is_relative_to(Path(root)) for root in protected):
+            cwd = workspace_dir
+    except (OSError, ValueError, TypeError) as error:
+        raise CheckpointError(f"Could not restore current permissions: {error}") from error
     environment = data.get("environment", "local")
     if environment not in {"local", "worktree"}:
         raise CheckpointError("environment 必须是 local 或 worktree")
@@ -309,8 +319,7 @@ def _deserialize_session(payload: Any) -> Session:
         workspace_dir=workspace_dir,
         cwd=cwd,
         project_root=project_root,
-        additional_working_directories=additional_working_directories,
-        permission_rules=_deserialize_permission_rules(data.get("permission_rules", [])),
+        permission_rules=permission_rules,
         environment=environment,
         base_commit=base_commit,
         branch_name=branch_name,
@@ -664,45 +673,21 @@ def _message_param(value: dict[str, Any]) -> dict[str, Any]:
     return value
 
 
-def _deserialize_additional_directories(
-    value: Any, workspace_dir: Path
-) -> list[Path]:
+def _deserialize_permission_rules(value: Any, version: Any = None) -> list[dict]:
+    """Permission data has its own schema version; old grants are unsupported."""
     if value in (None, []):
         return []
-    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
-        raise CheckpointError("additional_working_directories 必须是非空字符串数组")
-    unique: list[Path] = []
-    seen: set[Path] = {workspace_dir.resolve()}
-    for item in value:
-        resolved = Path(item).expanduser().resolve()
-        if resolved in seen:
-            continue
-        seen.add(resolved)
-        unique.append(resolved)
-    return unique
-
-
-def _deserialize_permission_rules(value: Any) -> list[dict]:
-    """Load session allow rules. Missing data grants nothing.
-
-    A legacy string is kept only as an unresolved record, so an old allow
-    glob cannot start matching a different path after resume.
-    """
-    if value in (None, []):
-        return []
-    if not isinstance(value, list):
-        raise CheckpointError("permission_rules 必须是数组")
+    if version != 2 or not isinstance(value, list):
+        raise CheckpointError("Unsupported permission data; clear old grants and approve access again")
     from ....domain.policy.permission.settings import PermissionRule
-
-    rules: list[dict] = []
+    rules = []
     for item in value:
-        if isinstance(item, dict):
-            rules.append(dict(item))
-            continue
-        if isinstance(item, str) and item.strip():
-            rules.append(PermissionRule.parse(item, effect="allow").to_persistent())
-            continue
-        raise CheckpointError("permission_rules 含有无法识别的规则")
+        if not isinstance(item, dict) or not item.get("id") or item.get("lifetime") != "session":
+            raise CheckpointError("Invalid session authorization record")
+        try:
+            rules.append(PermissionRule.from_mapping(item).to_persistent())
+        except (ValueError, TypeError) as exc:
+            raise CheckpointError(str(exc)) from exc
     return rules
 
 

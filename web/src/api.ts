@@ -1,4 +1,8 @@
-import type { Grants, SessionSummary, Snapshot } from "./types";
+import type { Grants, SandboxStatus, SessionSummary, Snapshot } from "./types";
+
+export class ApiError extends Error {
+  constructor(message: string, public status: number, public latest?: Grants) { super(message); }
+}
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -8,7 +12,7 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const detail = await response.json().catch(() => ({ detail: response.statusText }));
-    throw new Error(String(detail.detail ?? response.statusText));
+    throw new ApiError(String(detail.detail?.message ?? detail.detail ?? response.statusText), response.status, detail.detail?.latest);
   }
   return response.json() as Promise<T>;
 }
@@ -53,7 +57,7 @@ export const api = {
     const response = await fetch(`/api/v1/sessions/${id}/attachments`, { method: "POST", credentials: "same-origin", body });
     if (!response.ok) {
       const detail = await response.json().catch(() => ({ detail: response.statusText }));
-      throw new Error(String(detail.detail ?? response.statusText));
+      throw new Error(String(detail.detail?.message ?? detail.detail ?? response.statusText));
     }
     return response.json();
   },
@@ -76,8 +80,9 @@ export const api = {
   workspaceInfo: (sessionId: string) => json<Record<string, unknown>>(`/api/v1/sessions/${sessionId}/workspace`),
   policy: (sessionId: string, body: { interaction_mode?: string; permission_mode?: string }) => json<Record<string, unknown>>(`/api/v1/sessions/${sessionId}/policy`, { method: "POST", body: JSON.stringify(body) }),
   grants: (sessionId: string) => json<Grants>(`/api/v1/sessions/${sessionId}/grants`),
-  revokeGrant: (sessionId: string, ruleId: string) => json<Record<string, unknown>>(`/api/v1/sessions/${sessionId}/grants/${ruleId}/revoke`, { method: "POST", body: JSON.stringify({ confirm: true }) }),
-  addGrant: (sessionId: string, rule: Record<string, unknown>) => json<Record<string, unknown>>(`/api/v1/sessions/${sessionId}/grants`, { method: "POST", body: JSON.stringify({ confirm: true, rule }) }),
+  revokeGrant: (sessionId: string, ruleId: string, source: string, expected_version: string) => json<Grants>(`/api/v1/sessions/${sessionId}/grants/${ruleId}/revoke`, { method: "POST", body: JSON.stringify({ source, expected_version }) }),
+  addGrant: (sessionId: string, resource: Record<string, unknown>, lifetime: string, expected_version: string) => json<Grants>(`/api/v1/sessions/${sessionId}/grants`, { method: "POST", body: JSON.stringify({ resource, lifetime, expected_version }) }),
+  sandbox: (sessionId: string, action: "setup" | "cleanup") => json<SandboxStatus>(`/api/v1/sessions/${sessionId}/sandbox`, { method: "POST", body: JSON.stringify({ action }) }),
   review: (sessionId: string) => json<{ changes: Array<Record<string, unknown>>; semantics?: Record<string, string> }>(`/api/v1/sessions/${sessionId}/review`),
   reviewAction: (sessionId: string, action: "accept" | "revert", paths: string[]) => json<{ applied: boolean; results: Array<Record<string, string>>; error?: string }>(`/api/v1/sessions/${sessionId}/review/${action}`, { method: "POST", body: JSON.stringify({ confirm: true, paths }) }),
   memory: (sessionId: string) => json<Record<string, unknown>>(`/api/v1/sessions/${sessionId}/memory`),
@@ -101,7 +106,7 @@ export const api = {
     const response = await fetch(`/api/v1/sessions/${id}/documents`, { method: "POST", credentials: "same-origin", body });
     if (!response.ok) {
       const detail = await response.json().catch(() => ({ detail: response.statusText }));
-      throw new Error(String(detail.detail ?? response.statusText));
+      throw new Error(String(detail.detail?.message ?? detail.detail ?? response.statusText));
     }
     return response.json() as Promise<{ id: string; filename: string }>;
   },

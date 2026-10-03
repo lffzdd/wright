@@ -8,6 +8,7 @@ Searching a project does not grant permission to read file bytes.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -88,7 +89,7 @@ def identify_reference(
     if not text:
         raise ReferenceError("reference path is empty")
     owner = project_id(project_root)
-    if text.startswith("/") or text.startswith("~"):
+    if Path(text).is_absolute() or text.startswith("~"):
         path = Path(text).expanduser().resolve()
         if not path.is_file():
             raise ReferenceError("external reference is not a file")
@@ -155,6 +156,7 @@ def capture_references(
     project_root: Path,
     execution_root: Path,
     references: list[dict[str, Any]],
+    reader: Callable[[Path], bytes] | None = None,
     external_roots: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Read each reference from the execution directory at turn start.
@@ -166,7 +168,7 @@ def capture_references(
 
     owner = project_id(project_root)
     return [
-        _capture_one(execution_root, item, owner, external_roots or [])
+        _capture_one(execution_root, item, owner, external_roots or [], reader)
         for item in references
     ]
 
@@ -189,6 +191,7 @@ def _capture_one(
     ref: dict[str, Any],
     owner: str,
     external_roots: list[str],
+    reader: Callable[[Path], bytes] | None = None,
 ) -> dict[str, Any]:
     base = {
         "kind": "file",
@@ -219,16 +222,20 @@ def _capture_one(
             "reason": "file was not in the execution directory when the turn started",
         }
     try:
-        digest, size = _hash_file(target)
+        if reader is None:
+            digest, size = _hash_file(target)
+            raw = target.read_bytes() if size <= MAX_REFERENCE_BYTES else b""
+        else:
+            raw = reader(target)
+            size = len(raw)
+            digest = hashlib.sha256(raw).hexdigest()
+    except PermissionError as exc:
+        return {**base, "status": "denied", "reason": str(exc)}
     except OSError as exc:
         return {**base, "status": "missing", "reason": str(exc)}
     recorded = {**base, "sha256": digest, "size": size, "name": target.name}
     if size > MAX_REFERENCE_BYTES:
         return {**recorded, "status": "too_large", "reason": "file exceeds 5 MiB"}
-    try:
-        raw = target.read_bytes()
-    except OSError as exc:
-        return {**recorded, "status": "missing", "reason": str(exc)}
     if b"\0" in raw[:8192]:
         return {**recorded, "status": "binary"}
     text = raw.decode("utf-8", errors="replace")

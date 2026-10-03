@@ -7,7 +7,7 @@ from ....application.execution.identity import (
     ExecutionNotFound,
     ExecutionWaitCancelled,
 )
-from ....domain.model.tool import ToolResult
+from ....domain.model.tool import ToolAccess, ToolResult
 from ..base import Tool
 from ..runtime import ToolCancelledError, ToolRuntime
 
@@ -82,6 +82,7 @@ get_command_tool = Tool(
     },
     call=lambda args, runtime: get_command(**args, runtime=runtime),
     required_capabilities=frozenset({"commands"}),
+    access_descriptor=lambda _: ToolAccess.internal_read(),
 )
 
 wait_command_tool = Tool(
@@ -97,6 +98,7 @@ wait_command_tool = Tool(
     },
     call=lambda args, runtime: wait_command(**args, runtime=runtime),
     required_capabilities=frozenset({"commands"}),
+    access_descriptor=lambda _: ToolAccess.internal_read(),
     timeout_owner="tool",
 )
 
@@ -110,6 +112,7 @@ terminate_command_tool = Tool(
     },
     call=lambda args, runtime: terminate_command(**args, runtime=runtime),
     required_capabilities=frozenset({"commands"}),
+    access_descriptor=lambda _: ToolAccess(frozenset({"execution_control"})),
 )
 
 list_commands_tool = Tool(
@@ -133,6 +136,7 @@ list_commands_tool = Tool(
     },
     call=lambda args, runtime: list_commands(**args, runtime=runtime),
     required_capabilities=frozenset({"commands"}),
+    access_descriptor=lambda _: ToolAccess.internal_read(),
 )
 
 command_tools = [

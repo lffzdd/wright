@@ -7,7 +7,10 @@ LLMClient 用假参数构造(不发起任何网络请求),整套测试离线可�
     uv run python scripts/smoke_agent.py
 """
 
+# Environment and source path must be configured before importing Wright.
+# ruff: noqa: E402
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -21,13 +24,14 @@ from tests.responses import event, response
 
 _TMP = tempfile.TemporaryDirectory(prefix="wright-test-", ignore_cleanup_errors=True)
 _WORKSPACE = Path(_TMP.name)
+os.environ.setdefault("WRIGHT_HOME", str(_WORKSPACE / "wright-state"))
 
 from wright.application.agent import Agent, create_agent
 from wright.application.session.publisher import open_session_events
-from wright.domain.model.llm.events import ContentDelta, ContentDone, UsageEvent
 from wright.domain.model.llm import UsageRecord
+from wright.domain.model.llm.events import ContentDelta, ContentDone, UsageEvent
 from wright.domain.model.session import Session
-from wright.domain.model.tool import ToolCall, ToolResult
+from wright.domain.model.tool import ToolAccess, ToolCall, ToolResult
 from wright.infrastructure.llm.llm import LLMClient
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.runtime import ToolRuntime
@@ -106,8 +110,22 @@ def test_parallel_timeout_fills_fail():
 
     agent = _make_agent(
         [
-            Tool("fast", "", {}, fast, is_concurrency_safe=lambda args: True),
-            Tool("slow", "", {}, slow, is_concurrency_safe=lambda args: True),
+            Tool(
+                "fast",
+                "",
+                {},
+                fast,
+                is_concurrency_safe=lambda args: True,
+                access_descriptor=lambda _: ToolAccess.internal_read(),
+            ),
+            Tool(
+                "slow",
+                "",
+                {},
+                slow,
+                is_concurrency_safe=lambda args: True,
+                access_descriptor=lambda _: ToolAccess.internal_read(),
+            ),
         ],
         tool_timeout=0.5,
     )
@@ -145,6 +163,7 @@ def test_mixed_calls_preserve_original_batch_order():
             {},
             call,
             is_concurrency_safe=lambda args: safe,
+            access_descriptor=lambda _: ToolAccess.internal_read(),
         )
 
     agent = _make_agent(
@@ -155,11 +174,13 @@ def test_mixed_calls_preserve_original_batch_order():
         ],
         tool_timeout=1,
     )
-    agent.executor.execute([
-        ToolCall("write", {}, "c1"),
-        ToolCall("read1", {}, "c2"),
-        ToolCall("read2", {}, "c3"),
-    ])
+    agent.executor.execute(
+        [
+            ToolCall("write", {}, "c1"),
+            ToolCall("read1", {}, "c2"),
+            ToolCall("read2", {}, "c3"),
+        ]
+    )
 
     assert log[0:2] == ["start:write", "end:write"]
     assert set(log[2:4]) == {"start:read1", "start:read2"}
@@ -182,15 +203,29 @@ def test_serial_timeout_exits_before_next_tool_starts():
 
     agent = _make_agent(
         [
-            Tool("slow", "", {}, slow),
-            Tool("next", "", {}, next_tool),
+            Tool(
+                "slow",
+                "",
+                {},
+                slow,
+                access_descriptor=lambda _: ToolAccess.internal_read(),
+            ),
+            Tool(
+                "next",
+                "",
+                {},
+                next_tool,
+                access_descriptor=lambda _: ToolAccess.internal_read(),
+            ),
         ],
         tool_timeout=0.1,
     )
-    outcomes = agent.executor.execute([
-        ToolCall("slow", {}, "c1"),
-        ToolCall("next", {}, "c2"),
-    ])
+    outcomes = agent.executor.execute(
+        [
+            ToolCall("slow", {}, "c1"),
+            ToolCall("next", {}, "c2"),
+        ]
+    )
 
     assert log == ["slow-start", "slow-exit", "next-start"]
     assert outcomes[0].status == "timeout"
@@ -206,7 +241,15 @@ def test_inner_timeout_clamped_to_budget():
         return ToolResult.success(None)
 
     agent = _make_agent(
-        [Tool("spy", "", {}, lambda args, runtime: spy(**args))],
+        [
+            Tool(
+                "spy",
+                "",
+                {},
+                lambda args, runtime: spy(**args),
+                access_descriptor=lambda _: ToolAccess.internal_read(),
+            )
+        ],
         tool_timeout=30,
     )
     agent.executor.execute([ToolCall("spy", {"timeout": 300}, "c1")])
@@ -225,8 +268,12 @@ def test_tool_runtime_is_separate_from_model_arguments():
         return ToolResult.success(None)
 
     tool = Tool(
-        "spy", "", {}, spy,
+        "spy",
+        "",
+        {},
+        spy,
         required_capabilities=frozenset({"execution"}),
+        access_descriptor=lambda _: ToolAccess.internal_read(),
     )
     tool_call = ToolCall("spy", {"runtime": "model supplied"}, "c1")
     agent = _make_agent([tool], tool_timeout=5)
@@ -239,7 +286,7 @@ def test_tool_runtime_is_separate_from_model_arguments():
     assert captured["runtime"].tool_name == "spy"
     assert captured["runtime"].tool_call_id == "c1"
     assert (
-        captured["runtime"].capabilities.execution.workspace_dir
+        Path(captured["runtime"].execution.grant.cwd.value)
         == agent.session_state.workspace_dir
     )
     assert tool_call.arguments == {"runtime": "model supplied"}
@@ -253,7 +300,15 @@ def test_tool_exception_becomes_fail():
         raise RuntimeError("炸了")
 
     agent = _make_agent(
-        [Tool("boom", "", {}, lambda args, runtime: boom())],
+        [
+            Tool(
+                "boom",
+                "",
+                {},
+                lambda args, runtime: boom(),
+                access_descriptor=lambda _: ToolAccess.internal_read(),
+            )
+        ],
         tool_timeout=5,
     )
     outcomes = agent.executor.execute([ToolCall("boom", {}, "c1")])
@@ -285,11 +340,15 @@ def test_run_turn_records_usage():
 
     content, usage = agent._run_turn()
     assert content.content == "content 1"
-    assert usage == UsageRecord(prompt_tokens=100, completion_tokens=10, total_tokens=110)
+    assert usage == UsageRecord(
+        prompt_tokens=100, completion_tokens=10, total_tokens=110
+    )
 
     content, usage = agent._run_turn()
     assert content.content == "content 2"
-    assert usage == UsageRecord(prompt_tokens=200, completion_tokens=20, total_tokens=220)
+    assert usage == UsageRecord(
+        prompt_tokens=200, completion_tokens=20, total_tokens=220
+    )
 
 
 def test_run_turn_records_dict_usage():
@@ -330,7 +389,12 @@ def test_stream_usage_event_can_live_on_choice_chunk():
 
     usage = SimpleNamespace(prompt_tokens=12, completion_tokens=3)
     chunk = SimpleNamespace(
-        choices=[SimpleNamespace(finish_reason="stop", delta=SimpleNamespace(content="hi", tool_calls=None))],
+        choices=[
+            SimpleNamespace(
+                finish_reason="stop",
+                delta=SimpleNamespace(content="hi", tool_calls=None),
+            )
+        ],
         usage=usage,
     )
 
@@ -339,16 +403,16 @@ def test_stream_usage_event_can_live_on_choice_chunk():
             return iter([chunk])
 
     llm = LLMClient.__new__(LLMClient)
-    llm.client = SimpleNamespace(
-        chat=SimpleNamespace(completions=FakeCompletions())
-    )
+    llm.client = SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions()))
     llm.model = "fake-model"
     llm.max_attempts = 1
     llm.base_wait = 0
     llm.max_wait = 0
     llm.response_format = {"type": "json_object"}
 
-    events = list(llm._call_stream([{"role": "user", "content": "hello"}], {}, "fake-model"))
+    events = list(
+        llm._call_stream([{"role": "user", "content": "hello"}], {}, "fake-model")
+    )
 
     assert isinstance(events[0], ContentDelta) and events[0].piece == "hi"
     assert isinstance(events[1], UsageEvent)
@@ -360,7 +424,7 @@ def test_session_records_tool_turn_and_execution():
     call = ToolCall("read_file", {"file": "a.py"}, "call_1")
 
     turn = session.record_assistant_turn(
-        assistant_raw='Inspecting file',
+        assistant_raw="Inspecting file",
         parsed={"tool_calls": [{"name": "read_file"}], "final_answer": None},
         route="tool_calls",
         tool_calls=[call],
@@ -390,7 +454,7 @@ def test_session_rejects_duplicate_tool_ids_without_partial_state():
 
     try:
         session.record_assistant_turn(
-            assistant_raw='Invalid duplicate call IDs',
+            assistant_raw="Invalid duplicate call IDs",
             parsed={"tool_calls": [{}, {}], "final_answer": None},
             route="tool_calls",
             tool_calls=calls,
@@ -418,14 +482,16 @@ def test_session_records_invalid_usage_and_status():
         turn,
         UsageRecord(prompt_tokens=10, completion_tokens=2, total_tokens=12),
     )
-    assert turn.usage == UsageRecord(prompt_tokens=10, completion_tokens=2, total_tokens=12)
+    assert turn.usage == UsageRecord(
+        prompt_tokens=10, completion_tokens=2, total_tokens=12
+    )
     assert session.last_usage == turn.usage
     assert session.total_usage == UsageRecord(
         prompt_tokens=10, completion_tokens=2, total_tokens=12
     )
 
     final_turn = session.record_assistant_turn(
-        assistant_raw='done',
+        assistant_raw="done",
         parsed={"tool_calls": [], "final_answer": "done"},
         route="final",
     )
@@ -442,13 +508,13 @@ def test_assistant_raw_uses_stable_message_id_after_non_assistant_reorder():
     session.append_message({"role": "user", "content": "before"})
 
     first_turn = session.record_assistant_turn(
-        assistant_raw='one',
+        assistant_raw="one",
         parsed={"tool_calls": [], "final_answer": "one"},
         route="final",
     )
     session.append_message({"role": "user", "content": "between"})
     second_turn = session.record_assistant_turn(
-        assistant_raw='two',
+        assistant_raw="two",
         parsed={"tool_calls": [], "final_answer": "two"},
         route="final",
     )
@@ -470,8 +536,8 @@ def test_assistant_raw_uses_stable_message_id_after_non_assistant_reorder():
         assistant_records[0],
     ]
 
-    assert session.assistant_raw(first_turn) == 'one'
-    assert session.assistant_raw(second_turn) == 'two'
+    assert session.assistant_raw(first_turn) == "one"
+    assert session.assistant_raw(second_turn) == "two"
 
 
 def test_run_defaults_to_session_max_steps():
@@ -542,7 +608,15 @@ def test_consecutive_invalid_resets_on_success():
     session = _make_session()
     agent = create_agent(
         ScriptedLLM(),
-        [Tool("noop", "", {}, lambda args, runtime: noop())],
+        [
+            Tool(
+                "noop",
+                "",
+                {},
+                lambda args, runtime: noop(),
+                access_descriptor=lambda _: ToolAccess.internal_read(),
+            )
+        ],
         session,
         tool_timeout=5,
         max_consecutive_invalid=2,
@@ -555,9 +629,13 @@ def test_consecutive_invalid_resets_on_success():
 
 def test_is_tool_result_message_only_accepts_valid_tool_results():
     compactor = _make_agent([], tool_timeout=5).compactor
-    assert compactor._is_tool_result_message({
-        "role": "tool", "tool_call_id": "c1", "content": "result",
-    })
+    assert compactor._is_tool_result_message(
+        {
+            "role": "tool",
+            "tool_call_id": "c1",
+            "content": "result",
+        }
+    )
     for message in [
         {"role": "user", "content": '{"tool_results": []}'},
         {"role": "assistant", "content": "result"},
@@ -573,11 +651,19 @@ def test_context_projection_folds_old_results_without_mutating_history():
     original_messages = list(agent.messages)
     for i in range(5):
         agent.session_state.append_message(
-            {"role": "tool", "tool_call_id": f"call_{i}", "content": json.dumps({
-                                    "ok": True,
-                                    "err": "",
-                                    "data": f"large result {i} " * 20,
-                                }, ensure_ascii=False), "_test_extra_field": f"keep {i}"}
+            {
+                "role": "tool",
+                "tool_call_id": f"call_{i}",
+                "content": json.dumps(
+                    {
+                        "ok": True,
+                        "err": "",
+                        "data": f"large result {i} " * 20,
+                    },
+                    ensure_ascii=False,
+                ),
+                "_test_extra_field": f"keep {i}",
+            }
         )
         agent.session_state.append_message(
             {"role": "assistant", "content": f"assistant {i}"}
@@ -585,7 +671,10 @@ def test_context_projection_folds_old_results_without_mutating_history():
 
     before_ids = [record.id for record in agent.session_state.message_records]
     view = agent.context_builder.build(
-        agent.session_state.message_records, tools=[], context_limit=100, output_reserve_tokens=0,
+        agent.session_state.message_records,
+        tools=[],
+        context_limit=100,
+        output_reserve_tokens=0,
     )
     assert len(view.folded_record_ids) == 3
     assert [record.id for record in agent.session_state.message_records] == before_ids
@@ -606,10 +695,14 @@ def test_context_projection_folds_old_results_without_mutating_history():
         assert result["err"] == ""
         assert result["data"] == "[older tool result folded for this request]"
 
-    folded_messages = [msg for msg in view.messages if (
-        agent.compactor._is_tool_result_message(msg)
-        and json.loads(msg["content"]).get("folded")
-    )]
+    folded_messages = [
+        msg
+        for msg in view.messages
+        if (
+            agent.compactor._is_tool_result_message(msg)
+            and json.loads(msg["content"]).get("folded")
+        )
+    ]
     assert [msg["_test_extra_field"] for msg in folded_messages] == [
         "keep 0",
         "keep 1",
@@ -618,45 +711,65 @@ def test_context_projection_folds_old_results_without_mutating_history():
 
     for recent_idx, recent in enumerate(tool_result_messages[3:], start=3):
         assert "folded" not in recent
-        assert (
-            recent["data"]
-            == f"large result {recent_idx} " * 20
-        )
+        assert recent["data"] == f"large result {recent_idx} " * 20
 
 
 def test_context_projection_is_idempotent():
     agent = _make_agent([], tool_timeout=5, keep_recent_tool_results=1)
     for i in range(3):
         agent.session_state.append_message(
-            {"role": "tool", "tool_call_id": f"call_{i}", "content": json.dumps({"ok": False, "err": f"err {i}", "data": "x" * 200}, ensure_ascii=False)}
+            {
+                "role": "tool",
+                "tool_call_id": f"call_{i}",
+                "content": json.dumps(
+                    {"ok": False, "err": f"err {i}", "data": "x" * 200},
+                    ensure_ascii=False,
+                ),
+            }
         )
 
     first = agent.context_builder.build(
-        agent.session_state.message_records, tools=[], context_limit=100, output_reserve_tokens=0,
+        agent.session_state.message_records,
+        tools=[],
+        context_limit=100,
+        output_reserve_tokens=0,
     )
     second = agent.context_builder.build(
-        agent.session_state.message_records, tools=[], context_limit=100, output_reserve_tokens=0,
+        agent.session_state.message_records,
+        tools=[],
+        context_limit=100,
+        output_reserve_tokens=0,
     )
     assert len(first.folded_record_ids) == 2
     assert second.folded_record_ids == first.folded_record_ids
     assert first.messages == second.messages
-    assert not any(json.loads(message["content"]).get("folded") for message in agent.messages if message.get("role") == "tool")
+    assert not any(
+        json.loads(message["content"]).get("folded")
+        for message in agent.messages
+        if message.get("role") == "tool"
+    )
 
 
 def _append_tool_result_message(agent: Agent, idx: int) -> None:
     agent.session_state.append_message(
-        {"role": "tool", "tool_call_id": f"call_{idx}", "content": json.dumps({
-                                "ok": True,
-                                "err": "",
-                                "data": f"large result content that is long enough to make folding save tokens {idx}" * 5,
-                            }, ensure_ascii=False)}
+        {
+            "role": "tool",
+            "tool_call_id": f"call_{idx}",
+            "content": json.dumps(
+                {
+                    "ok": True,
+                    "err": "",
+                    "data": f"large result content that is long enough to make folding save tokens {idx}"
+                    * 5,
+                },
+                ensure_ascii=False,
+            ),
+        }
     )
 
 
 def _make_compactor_agent(renderer, keep_recent_tool_results, watermark=0.75):
-    llm = LLMClient(
-        base_url="http://x", api_key="sk-x", model="m", context_limit=100
-    )
+    llm = LLMClient(base_url="http://x", api_key="sk-x", model="m", context_limit=100)
     session = _make_session()
     events = open_session_events(session)
     events.publisher.add_listener(RendererEventSubscriber(renderer))
@@ -681,10 +794,15 @@ def test_context_projection_reports_folding_without_changing_history():
 
     original = [record.message.copy() for record in agent.session_state.message_records]
     view = agent.context_builder.build(
-        agent.session_state.message_records, tools=[], context_limit=100, output_reserve_tokens=0,
+        agent.session_state.message_records,
+        tools=[],
+        context_limit=100,
+        output_reserve_tokens=0,
     )
     assert len(view.folded_record_ids) == 3
-    assert [record.message for record in agent.session_state.message_records] == original
+    assert [
+        record.message for record in agent.session_state.message_records
+    ] == original
 
     assert len(renderer.context_compacts) == 1
     report = renderer.context_compacts[0]
@@ -700,7 +818,10 @@ def test_context_projection_without_tool_results_does_not_fold():
 
     agent.session_state.append_message({"role": "user", "content": "x" * 1_000})
     view = agent.context_builder.build(
-        agent.session_state.message_records, tools=[], context_limit=100, output_reserve_tokens=0,
+        agent.session_state.message_records,
+        tools=[],
+        context_limit=100,
+        output_reserve_tokens=0,
     )
     assert view.folded_record_ids == ()
     assert renderer.context_compacts[-1]["folded_count"] == 0
@@ -711,7 +832,10 @@ def test_context_projection_skips_below_watermark():
     agent = _make_compactor_agent(renderer, keep_recent_tool_results=1)
 
     view = agent.context_builder.build(
-        agent.session_state.message_records, tools=[], context_limit=100, output_reserve_tokens=0,
+        agent.session_state.message_records,
+        tools=[],
+        context_limit=128_000,
+        output_reserve_tokens=0,
     )
     assert view.folded_record_ids == ()
     assert renderer.context_compacts == []
@@ -728,7 +852,7 @@ def test_history_estimate_stays_distinct_from_reported_usage():
 
     # 模拟 record_assistant_turn + record_usage
     turn = session.record_assistant_turn(
-        assistant_raw='done',
+        assistant_raw="done",
         parsed={"tool_calls": [], "final_answer": "done"},
         route="final",
     )
@@ -753,7 +877,7 @@ def test_running_total_append_message_increments():
     assert after - before == 50  # 200 chars // 4
 
     turn = session.record_assistant_turn(
-        assistant_raw='done',
+        assistant_raw="done",
         parsed={"tool_calls": [], "final_answer": "done"},
         route="final",
     )

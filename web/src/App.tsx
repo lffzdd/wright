@@ -632,7 +632,7 @@ export default function App() {
       </div>
       <div className="top-center">
         {branch && <div className="branch-pill"><GitBranch size={12} /><span>{branch}</span>{dirty > 0 ? <span className="dirty">{tr("web.uncommitted", { count: dirty })}</span> : null}</div>}
-        <button type="button" className="search-trigger" onClick={() => setPanel("search")}><MagnifyingGlass size={14} /><span>{tr("web.search")}</span><kbd className="kbd">⌘K</kbd></button>
+        <button type="button" className="search-trigger" onClick={() => setPanel("search")}><MagnifyingGlass size={14} /><span>{tr("web.search")}</span><kbd className="kbd">{tr("web.shortcut_key", { key: "K" })}</kbd></button>
       </div>
       <div className="top-status">
         <span className="top-status-label">Active</span>

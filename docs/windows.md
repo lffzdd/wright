@@ -21,9 +21,13 @@ uv run wright --ui web --no-open
 Windows 不导入 iTerm 专用的 POSIX 终端驱动；macOS 的 `libproc`
 推迟到进程管理功能实际使用时加载。
 
-启动兼容不代表所有执行工具已经跨平台。本地 Shell 执行器仍使用
-`/bin/bash`，进程组管理实现仍依赖 macOS 的 `libproc`；原生 Windows
-命令执行需要单独适配。
+Windows 11 的 Shell 改用原生 PowerShell、低权限账户、受限令牌、WFP 和
+Job Object，初始化前明确拒绝执行。首次运行 `uv run wright --sandbox-setup`
+或在权限页初始化；`--sandbox-status` 查看状态，`--sandbox-cleanup` 清理。
+日常命令不会自动请求管理员权限，也不会降级到无隔离进程。
+
+三平台原生隔离 CI 全部通过之前，Shell 支持仍处于待验收状态。
+完整权限语义、存储格式和验收入口见 [权限说明](permissions.md)。
 
 `tests/test_file_lock.py` 验证真实进程互斥、等待释放、崩溃释放和异常清理。
 `tests/test_startup.py` 在独立解释器中验证 CLI 帮助命令及 Web 首页响应，

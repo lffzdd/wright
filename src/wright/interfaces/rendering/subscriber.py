@@ -11,8 +11,8 @@ from collections.abc import Callable
 from typing import Any
 
 from ...application.session.events import UiEventEnvelope
-from ..i18n import format_issues, present, t
 from ...domain.model.tool import ToolCall, ToolResult
+from ..i18n import format_issues, present, t
 from .contracts import Renderer
 
 

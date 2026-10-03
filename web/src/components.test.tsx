@@ -104,7 +104,7 @@ describe("InteractionCard", () => {
 
   it("shows the reason, grant and preview as text and ignores a second click", () => {
     const respond = vi.fn(() => new Promise<boolean>(() => undefined));
-    const { container } = render(<InteractionCard interaction={interaction} respond={respond} />);
+    const { container } = render(<InteractionCard sessionId="s" interaction={interaction} respond={respond} />);
     expect(screen.getByText("Reason: needs approval")).toBeDefined();
     expect(screen.getByText("Grant: Adds file root /tmp/project/nested")).toBeDefined();
     expect(screen.getByText("hello <script>alert(1)</script>")).toBeDefined();
@@ -118,21 +118,19 @@ describe("InteractionCard", () => {
 
   it("keeps the selected choice when the decision is not accepted", async () => {
     const respond = vi.fn(async () => false);
-    render(<InteractionCard interaction={interaction} respond={respond} />);
+    render(<InteractionCard sessionId="s" interaction={interaction} respond={respond} />);
     fireEvent.click(screen.getByRole("button", { name: /Allow once/i }));
-    expect(await screen.findByText(/Kept choice: allow_once/)).toBeDefined();
+    expect(await screen.findByText(/Kept choice: Allow once/i)).toBeDefined();
     expect(screen.getByRole("button", { name: /Allow once/i })).toBeDefined();
   });
 
   it("does not dump grant scopes into a truncated summary row", () => {
-    render(<InteractionCard interaction={{
+    render(<InteractionCard sessionId="s" interaction={{
       ...interaction,
       risk_flags: ["recursive_delete"],
       grant_summary: "./build, ./dist",
       choices: [
         { id: "allow_once", label: "Allow once", scope: "This invocation only", persistence: "No save" },
-        { id: "allow_session", label: "Allow for this session", scope: "This session", persistence: "Save on this session only" },
-        { id: "allow_persistent", label: "Allow permanently", scope: "Later sessions", persistence: "Save in user permissions" },
         { id: "deny", label: "Deny", scope: "No execution", persistence: "No save" },
       ],
     }} respond={() => true} />);

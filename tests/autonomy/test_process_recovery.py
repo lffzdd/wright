@@ -240,7 +240,7 @@ def test_real_process_child_agent_side_effect_becomes_unknown_without_replay(tmp
         from wright.domain.policy import PermissionSettings
         from tests.responses import event, response
         from wright.infrastructure.tools.base import Tool
-        from wright.domain.model.tool import ToolResult
+        from wright.domain.model.tool import ToolResult, ToolAccess
 
         workspace, db, marker, started = map(Path, sys.argv[1:])
 
@@ -283,7 +283,7 @@ def test_real_process_child_agent_side_effect_becomes_unknown_without_replay(tmp
         )
         host = ApplicationHost(
             workspace_dir=workspace, store=store, llm=Model(),
-                               base_tools=[Tool("effect", "append a marker", {"type": "object"}, effect)],
+                               base_tools=[Tool("effect", "append a marker", {"type": "object"}, effect, access_descriptor=lambda _: ToolAccess(frozenset({"persistent_write"})))],
                                permission_settings=PermissionSettings(mode="bypass"), poll_interval=0.01,
         )
         host.start()

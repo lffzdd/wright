@@ -1,6 +1,5 @@
 import threading
 import time
-from pathlib import Path
 
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
@@ -8,6 +7,7 @@ from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.domain.policy import ToolAccess
+from wright.infrastructure.runtime import LocalExecutionBackend
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.command import (
     execute_command,
@@ -189,24 +189,24 @@ def test_file_write_locks_serialize_same_path_but_not_different_paths(
 ):
     session = Session.create("files", tmp_path)
     runtime = tool_runtime_for_session(session, workspace_dir=tmp_path)
-    original_write_text = Path.write_text
+    original_write_text = LocalExecutionBackend.write_text
     guard = threading.Lock()
     active = 0
     max_active = 0
 
-    def delayed_write(path, data, *args, **kwargs):
+    def delayed_write(backend, path, data, *args, **kwargs):
         nonlocal active, max_active
         with guard:
             active += 1
             max_active = max(max_active, active)
         time.sleep(0.05)
         try:
-            return original_write_text(path, data, *args, **kwargs)
+            return original_write_text(backend, path, data, *args, **kwargs)
         finally:
             with guard:
                 active -= 1
 
-    monkeypatch.setattr(Path, "write_text", delayed_write)
+    monkeypatch.setattr(LocalExecutionBackend, "write_text", delayed_write)
 
     same_path_threads = [
         threading.Thread(

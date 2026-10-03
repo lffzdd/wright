@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
-from pathlib import PurePosixPath
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Literal
 from urllib.parse import urlsplit
+
+from .scope import path_module
 
 PermissionMode = Literal["default", "acceptEdits", "bypass", "plan"]
 _VALID_MODES = ("default", "acceptEdits", "bypass", "plan")
@@ -27,6 +28,8 @@ class MatchContext:
     files: tuple[tuple[str, str], ...] = ()
     url: str = ""
     method: str = ""
+    cwd: str = ""
+    sandbox_key: str = ""
 
 
 @dataclass(frozen=True)
@@ -166,15 +169,16 @@ def relative_to_root(path: str, root: str) -> str | None:
     if not path or not root:
         return None
     try:
-        path, root = os.path.normpath(path), os.path.normpath(root)
-        if os.path.normcase(os.path.commonpath((path, root))) != os.path.normcase(root):
+        module = path_module(root)
+        path, root = module.normpath(path), module.normpath(root)
+        if module.normcase(module.commonpath((path, root))) != module.normcase(root):
             return None
     except ValueError:
         return None
-    relative = os.path.relpath(path, root)
+    relative = module.relpath(path, root)
     if relative == "." or relative.startswith(".."):
         return None
-    return PurePosixPath(relative.replace(os.sep, "/")).as_posix()
+    return PurePosixPath(relative.replace("\\", "/")).as_posix()
 
 
 def component_match(pattern: str, relative: str) -> bool:
@@ -225,7 +229,7 @@ class PermissionRule:
 
     tool_name: str
     subject_glob: str | None = None
-    kind: Literal["tool", "file", "network", "shell"] = "tool"
+    kind: Literal["tool", "file", "directory", "network", "shell"] = "tool"
     root: str = ""
     pattern: str = ""
     operations: tuple[str, ...] = ()
@@ -235,6 +239,15 @@ class PermissionRule:
     methods: tuple[str, ...] = ()
     unresolved: bool = False
     legacy_text: str = ""
+    id: str = ""
+    lifetime: Literal["session", "project", "user"] = "session"
+    project_id: str = ""
+    source: str = "approval"
+    root_kind: Literal["absolute", "workspace"] = "absolute"
+    recursive: bool = False
+    exact: bool = False
+    cwd: str = ""
+    sandbox_key: str = ""
 
     @classmethod
     def parse(cls, raw: str, *, effect: str = "allow") -> PermissionRule:
@@ -246,6 +259,8 @@ class PermissionRule:
             if tool_name == "execute_command":
                 return cls(tool_name, glob, kind="shell", pattern=glob or "")
             if tool_name in _NETWORK_TOOLS:
+                if glob in {"http://*", "https://*"} and effect != "allow":
+                    return cls(tool_name, kind="network", scheme=glob.split(":")[0])
                 # A remembered prefix such as ``https://example.com*`` is not
                 # an origin. Allow does not keep that grant. Deny/ask stay
                 # closed for the whole tool rather than being dropped.
@@ -276,19 +291,64 @@ class PermissionRule:
 
     @classmethod
     def from_mapping(cls, data: dict) -> PermissionRule:
-        kind = str(data.get("kind", "tool"))
-        tool_name = str(data.get("tool_name", ""))
+        kind = data.get("kind")
+        tool_name = data.get("tool_name", "")
+        if not isinstance(tool_name, str):
+            raise TypeError("tool_name must be a string")
+        for key in ("recursive", "exact", "unresolved"):
+            if key in data and not isinstance(data[key], bool):
+                raise ValueError(f"{key} must be a boolean")
+        if kind not in {"tool", "file", "directory", "network", "shell"} or not tool_name:
+            raise ValueError("a permission rule requires a known kind and a tool_name")
+        lifetime = data.get("lifetime", "session")
+        root_kind = data.get("root_kind", "absolute")
+        if lifetime not in {"session", "project", "user"} or root_kind not in {"absolute", "workspace"}:
+            raise ValueError("invalid permission lifetime or root kind")
+        operations = data.get("operations", [])
+        methods = data.get("methods", [])
+        if not isinstance(operations, (list, tuple)) or not isinstance(methods, (list, tuple)):
+            raise TypeError("operations and methods must be arrays")
+        if any(op not in {"file_read", "file_write", "shell", "network_read", "network_write"} for op in operations):
+            raise ValueError("invalid permission operation")
+        if kind in {"file", "directory"}:
+            root = data.get("root", "")
+            pattern = data.get("pattern", "")
+            if not isinstance(root, str) or not isinstance(pattern, str) or not operations:
+                raise ValueError("file permissions require a root, pattern and operations")
+            if root_kind == "absolute" and not (PurePosixPath(root).is_absolute() or PureWindowsPath(root).is_absolute()):
+                raise ValueError("permission root must be absolute")
+            if root_kind == "workspace" and root:
+                raise ValueError("Workspace rules cannot contain an absolute root")
+            if ".." in PurePosixPath(pattern.replace("\\", "/")).parts or PureWindowsPath(pattern).drive or PurePosixPath(pattern).is_absolute():
+                raise ValueError("Resource pattern must stay within its root")
+            if kind == "file" and not pattern:
+                raise ValueError("file pattern must stay within its root")
+        for key in ("id", "project_id", "source", "cwd", "sandbox_key", "scheme", "host", "pattern"):
+            if key in data and not isinstance(data[key], str):
+                raise TypeError(f"{key} must be a string")
+        if any(not isinstance(method, str) or not method.isalpha() for method in methods):
+            raise ValueError("HTTP methods must be nonempty names")
+        if kind == "network":
+            scheme, host, port = data.get("scheme", ""), data.get("host", ""), data.get("port", 0)
+            if scheme not in _HTTP_SCHEMES or not isinstance(port, int) or isinstance(port, bool) or not 0 <= port <= 65535:
+                raise ValueError("Invalid network scheme or port")
+            if host and (not port or any(char in host for char in "/@* ") or not methods):
+                raise ValueError("Network authorizations require an exact host, port and methods")
+        common = {"source": data.get("source", "approval"), "id": data.get("id", ""), "lifetime": lifetime,
+                  "project_id": data.get("project_id", ""), "root_kind": root_kind, "recursive": data.get("recursive", False),
+                  "exact": data.get("exact", False), "cwd": data.get("cwd", ""), "sandbox_key": data.get("sandbox_key", "")}
+
         if data.get("unresolved"):
-            legacy = str(data.get("legacy_text", ""))
-            return cls.parse(legacy or tool_name, effect="allow")
-        if kind == "file":
+            raise ValueError("Ambiguous permission records are unsupported; approve access again")
+        if kind in {"file", "directory"}:
             return cls(
                 tool_name,
                 None,
-                kind="file",
+                kind=kind,
                 root=str(data.get("root", "")),
                 pattern=str(data.get("pattern", "")),
                 operations=tuple(str(item) for item in data.get("operations", ())),
+                **common,
             )
         if kind == "network":
             return cls(
@@ -299,11 +359,14 @@ class PermissionRule:
                 host=str(data.get("host", "")),
                 port=int(data.get("port", 0)),
                 methods=tuple(str(item).upper() for item in data.get("methods", ())),
+                **common,
             )
         if kind == "shell":
             pattern = str(data.get("pattern", ""))
-            return cls(tool_name, pattern or None, kind="shell", pattern=pattern)
-        return cls(tool_name, None, kind="tool")
+            if common["exact"] and (not pattern or not common["cwd"]):
+                raise ValueError("remembered shell commands require an exact command and cwd")
+            return cls(tool_name, pattern or None, kind="shell", pattern=pattern, **common)
+        return cls(tool_name, None, kind="tool", **common)
 
     @classmethod
     def file_grant(
@@ -343,7 +406,7 @@ class PermissionRule:
 
     def to_persistent(self) -> dict[str, object]:
         payload: dict[str, object] = {"kind": self.kind, "tool_name": self.tool_name}
-        if self.kind == "file":
+        if self.kind in {"file", "directory"}:
             payload.update(
                 root=self.root,
                 pattern=self.pattern,
@@ -361,7 +424,25 @@ class PermissionRule:
         if self.unresolved:
             payload["unresolved"] = True
             payload["legacy_text"] = self.legacy_text or self.tool_name
+        payload.update(id=self.id, lifetime=self.lifetime, project_id=self.project_id, source=self.source, root_kind=self.root_kind,
+                       recursive=self.recursive, exact=self.exact, cwd=self.cwd, sandbox_key=self.sandbox_key)
         return payload
+
+    def resource_root(self, workspace: str) -> str:
+        root = workspace if self.root_kind == "workspace" else self.root
+        return path_module(root).normpath(path_module(root).join(root, self.pattern)) if self.kind == "directory" and self.pattern else root
+
+    def display_target(self, workspace: str) -> str:
+        if self.kind == "file":
+            root = self.resource_root(workspace)
+            return path_module(root).normpath(path_module(root).join(root, self.pattern))
+        if self.kind == "directory":
+            return self.resource_root(workspace)
+        if self.kind == "network":
+            return f"{self.scheme}://{self.host}:{self.port}" if self.host else f"{self.scheme}://*"
+        if self.kind == "shell":
+            return self.pattern
+        return self.tool_name
 
     def describe(self) -> str:
         if self.kind == "network" and not self.unresolved:
@@ -370,10 +451,10 @@ class PermissionRule:
                 f"{self.tool_name} {methods} {self.scheme}://{self.host}:{self.port} "
                 "(this origin and these methods only; userinfo is not part of the grant)"
             )
-        if self.kind == "file" and self.root and not self.unresolved:
+        if self.kind in {"file", "directory"} and not self.unresolved:
             operations = ", ".join(self.operations) or "the approved file operation"
             return (
-                f"{self.tool_name} under {self.root} matching {self.pattern} "
+                f"{self.tool_name} under {self.root or 'current workspace'} matching {self.pattern or '(directory tree)'} "
                 f"for {operations} only"
             )
         if self.kind == "shell" and self.subject_glob:
@@ -390,7 +471,7 @@ class PermissionRule:
         effect: str = "allow",
         context: MatchContext | None = None,
     ) -> bool:
-        if self.tool_name != tool_name:
+        if self.tool_name != tool_name and not (self.kind in {"file", "directory"} and self.tool_name == "*"):
             return False
         if self.unresolved:
             # Ambiguous legacy allow must not grant anything. Ambiguous
@@ -399,10 +480,15 @@ class PermissionRule:
         if self.kind == "tool":
             return True
         if self.kind == "shell":
+            if self.exact:
+                return subject == self.pattern and context is not None and context.cwd == self.cwd and (not self.sandbox_key or context.sandbox_key == self.sandbox_key)
             return shell_rule_matches(self.subject_glob, subject, effect=effect)
         if self.kind == "network":
+            if effect != "allow" and self.scheme and not self.host:
+                origin = parse_http_origin(context.url if context else subject)
+                return origin is not None and origin[0] == self.scheme
             return _network_matches(self, subject, context)
-        if self.kind == "file":
+        if self.kind in {"file", "directory"}:
             return _file_matches(self, subject, effect, context)
         if self.subject_glob is None:
             return True
@@ -430,19 +516,30 @@ def _file_matches(
     effect: str,
     context: MatchContext | None,
 ) -> bool:
+    if rule.kind == "directory":
+        if context is None or not context.files:
+            return False
+        root = rule.resource_root(context.session_origin)
+        matches = [
+            (path_module(root).normcase(path) == path_module(root).normcase(root) or (relative_to_root(path, root) is not None and (rule.recursive or path_module(root).dirname(path) == root)))
+            and (not rule.operations or operation in rule.operations)
+            for path, operation in context.files
+        ]
+        return all(matches) if effect == "allow" else any(matches)
     pattern = rule.pattern or rule.subject_glob or ""
     if not pattern or ".." in PurePosixPath(pattern).parts or "**" in pattern:
         return effect != "allow"
-    if rule.root:
+    root = context.session_origin if context and rule.root_kind == "workspace" else rule.root
+    if root:
         if context is None:
             return False
+        matches = []
         for path, operation in context.files:
-            if rule.operations and operation not in rule.operations:
-                continue
-            relative = relative_to_root(path, rule.root)
-            if relative and component_match(pattern, relative):
-                return True
-        return False
+            relative = relative_to_root(path, root)
+            matches.append(bool((not rule.operations or operation in rule.operations) and relative and (
+                path_module(root).normcase(relative) == path_module(root).normcase(pattern) if rule.exact else component_match(pattern, relative)
+            )))
+        return bool(matches) and (all(matches) if effect == "allow" else any(matches))
     if effect == "allow":
         return False
     if context is not None and context.files and context.session_origin:
@@ -477,31 +574,45 @@ class PermissionSettings:
     allow: list[PermissionRule] = field(default_factory=list)
     deny: list[PermissionRule] = field(default_factory=list)
     ask: list[PermissionRule] = field(default_factory=list)
-    additional_directories: list[str] = field(default_factory=list)
+    project_rules: list[PermissionRule] = field(default_factory=list)
+    managed: bool = False
+    revision: str = ""
 
     @classmethod
     def from_dict(cls, data: dict) -> PermissionSettings:
+        if not isinstance(data, dict) or data.get("version") != 2:
+            raise ValueError("permissions require version 2")
         mode = data.get("mode", "default")
         if mode not in _VALID_MODES:
             raise ValueError(
                 f"Unknown permission mode {mode!r}; choices: {', '.join(_VALID_MODES)}"
             )
-        perms = data.get("permissions", {}) or {}
+        perms = data.get("permissions", {})
+        if not isinstance(perms, dict):
+            raise TypeError("permissions must be an object")
+        if "additionalDirectories" in perms:
+            raise ValueError("Use bounded directory authorization records instead of additionalDirectories")
+        if not isinstance(perms, dict) or any(not isinstance(perms.get(key, []), list) for key in ("allow", "deny", "ask")):
+            raise ValueError("permission allow/deny/ask must be arrays")
         return cls(
             mode=mode,
+            revision=str(data.get("revision", "")),
             allow=[_load_rule(item, "allow") for item in perms.get("allow", [])],
             deny=[_load_rule(item, "deny") for item in perms.get("deny", [])],
             ask=[_load_rule(item, "ask") for item in perms.get("ask", [])],
-            additional_directories=[
-                str(item) for item in perms.get("additionalDirectories", [])
-                if isinstance(item, str) and item.strip()
-            ],
+
         )
 
 
 def _load_rule(item: object, effect: str) -> PermissionRule:
     if isinstance(item, str):
-        return PermissionRule.parse(item, effect=effect)
-    if isinstance(item, dict):
-        return PermissionRule.from_mapping(item)
-    raise ValueError("permission rule must be a string or an object")
+        rule = PermissionRule.parse(item, effect=effect)
+    elif isinstance(item, dict):
+        rule = PermissionRule.from_mapping(item)
+    else:
+        raise TypeError("permission rule must be a string or an object")
+    if rule.unresolved:
+        raise ValueError("Ambiguous permission syntax is unsupported; use a bounded resource record")
+    if effect == "allow" and rule.tool_name == "execute_command" and (rule.kind != "shell" or not rule.exact or rule.lifetime != "session" or not rule.sandbox_key):
+        raise ValueError("Shell grants require an exact session command, cwd and sandbox capability")
+    return rule

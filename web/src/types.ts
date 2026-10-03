@@ -113,6 +113,8 @@ export type Interaction = {
   operation?: string;
   grant_summary?: string;
   preview?: string;
+  preview_truncated?: boolean;
+  risk_level?: "review" | "elevated";
   cwd?: string;
   command?: string;
   http_method?: string;
@@ -123,6 +125,7 @@ export type Interaction = {
     label: string;
     scope: string;
     persistence: string;
+    lifetime?: string; resource_kind?: string; operations?: string[]; resource?: Record<string, unknown>;
   }>;
 };
 
@@ -190,14 +193,18 @@ export type EffectivePolicy = {
   operation: "file_read" | "file_write" | "shell";
   defaults: { in_scope: PolicyDefault; outside_scope: PolicyDefault };
   directories: string[];
-  rules: Array<{ effect: "allow" | "ask" | "deny"; scope: "session" | "persistent"; rule: Record<string, unknown>; description: string; conditional: boolean; inactive: boolean }>;
+  read_only: string[];
+  rules: Array<{ effect: "allow" | "ask" | "deny"; scope: "session" | "project" | "user"; rule: Record<string, unknown>; target: string; resource_kind: string; operations: string[]; tool: string; description: string; conditional: boolean }>;
   constraints: string[]; precedence: string[];
 };
+export type SandboxStatus = { platform: string; provider: string; available: boolean; state: "ready" | "setup_required" | "initializing" | "failed"; detail?: string };
 export type Grants = {
+  version: string;
+  grants: Array<{ id: string; source: string; lifetime: string; resource_kind: string; target: string; http_methods?: string[]; operations: string[]; recursive: boolean; cwd?: string; tool?: string; version?: string; project_id?: string }>;
+  sandbox?: SandboxStatus | null;
   permission_mode?: string; interaction_mode?: string;
-  session_directories?: string[]; persistent_directories?: string[]; boundaries?: string[];
-  session_rules?: Array<{ id: string; rule?: Record<string, unknown> }>;
-  persistent_rules?: Array<{ id: string; rule?: Record<string, unknown> }>;
+  boundary_codes?: string[];
+
   effective_policy: EffectivePolicy[];
 };
 

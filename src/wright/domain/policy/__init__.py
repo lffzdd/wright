@@ -37,7 +37,6 @@ from .permission import (
     PermissionSubject,
     ToolAccess,
     UserInteractionHandler,
-    forbidden_paths,
     is_under,
     resolve_root,
 )
@@ -79,7 +78,6 @@ __all__ = [
     "ToolAccess",
     "UserInteractionHandler",
     "Verifier",
-    "forbidden_paths",
     "is_delivered_answer",
     "is_safe_memory",
     "is_under",

@@ -110,6 +110,7 @@ class WrightRuntime:
     artifact_store: ArtifactStore
     draft_attachments: DraftAttachments
     runtime_resources: RuntimeResources
+    sandbox_control: Any = None
     interaction_broker: Any = None
     # The ApplicationHost owns durable scheduling, SQLite and durable workers.
     # A session catalog may retain it after this Session closes.
@@ -530,8 +531,6 @@ def assemble_runtime(
     # Permission policy is centralized in the resolver.  Approval adapters only
     # collect a structured choice and never mutate settings themselves.
     settings = load_permission_settings()
-    for raw in settings.additional_directories:
-        session_state.add_working_directory(Path(raw))
     env_interactive = os.getenv("WRIGHT_PERMISSION_INTERACTIVE")
     tty_interactive = (
         env_interactive == "1" if env_interactive is not None else sys.stdin.isatty()
@@ -553,12 +552,13 @@ def assemble_runtime(
         """Create the commit route owned by one root or child Session."""
 
         def commit_authorization(change: AuthorizationChange) -> None:
-            from ..tool_execution.commit import commit_authorization as commit_change
+            from ...infrastructure.config.permission_store import (
+                FilePermissionRepository,
+            )
+            from ..tool_execution.permissions import PermissionService
 
-            commit_change(
-                change,
-                session=target_session,
-                save_checkpoint=(
+            PermissionService(FilePermissionRepository(session_state.project_root or session_state.workspace_dir)).commit(
+                change, target_session, save_checkpoint=(
                     None if config.no_session_persistence else checkpoint_store.save
                 ),
             )
@@ -712,6 +712,8 @@ def assemble_runtime(
         abort_assembly()
         raise
 
+    from ...infrastructure.runtime.sandbox import LocalSandboxControl
+
     return WrightRuntime(
         agent=agent,
         session_state=session_state,
@@ -737,6 +739,7 @@ def assemble_runtime(
         interaction_broker=interaction_broker,
         application_host=constructed_application_host,
         directory_coordinator=coordinator,
+        sandbox_control=LocalSandboxControl(),
     )
 
 

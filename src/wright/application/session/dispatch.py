@@ -7,6 +7,7 @@ consumer: USER_INPUT, background tasks, loops, durable runs, slash commands.
 from __future__ import annotations
 
 import json
+import os
 import shlex
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -261,7 +262,7 @@ def _dispatch_attachment_command(text: str, rt: WrightRuntime) -> tuple[bool, st
             _notice(rt, "This runtime does not support attachments", code="notice.attachments_unsupported")
             return True, None
         try:
-            added = drafts.attach_paths(shlex.split(tail))
+            added = drafts.attach_paths([item[1:-1] if len(item) >= 2 and item[0] == item[-1] and item[0] in "\"'" else item for item in shlex.split(tail, posix=os.name != "nt")])
             names = ", ".join(record.filename for record in added)
             _notice(rt, f"Attached: {names}", code="notice.attached", names=names)
         except (AttachmentError, ValueError) as exc:
@@ -377,14 +378,18 @@ def process_session_event(
             return False
         captured: list[dict] = []
         if references:
-            from ..workspace.references import capture_references, render_captures
+            from ..workspace.references import (
+                MAX_REFERENCE_BYTES,
+                capture_references,
+                render_captures,
+            )
 
-            settings = getattr(rt, "permission_settings", None)
-            external = list(getattr(settings, "additional_directories", []) or [])
+            external = rt.agent.executor.permissions.reference_roots(session_state)
             captured = capture_references(
                 project_root=rt.project_context.project_root,
                 execution_root=rt.project_context.execution_root,
                 references=references,
+                reader=lambda path: rt.agent.executor.permissions.read_file(session_state, rt.agent.executor.backend, path, max_bytes=MAX_REFERENCE_BYTES + 1),
                 external_roots=external,
             )
             user_input = render_captures(user_input, captured)

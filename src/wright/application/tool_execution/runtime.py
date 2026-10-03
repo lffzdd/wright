@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from ...domain.policy.permission.scope import AccessScope
+from ...domain.policy.permission.scope import AccessScope, is_under
 from ...domain.policy.permission.types import (
     GrantTarget,
     InvocationGrant,
@@ -57,15 +57,14 @@ def tool_runtime_for_session(
     workspace = (
         workspace_dir or getattr(session, "workspace_dir", None) or Path.cwd()
     ).resolve()
-    additional = ()
-    if session is not None:
-        snapshot = getattr(session, "working_directories_snapshot", None)
-        additional = (
-            tuple(snapshot())
-            if callable(snapshot)
-            else tuple(getattr(session, "additional_working_directories", ()) or ())
-        )
-    access_scope = AccessScope(workspace, additional)
+    if backend is not None and backend.environment_id != "local":
+        canonical = backend.resolve_path(".").value
+        workspace = PureWindowsPath(canonical) if PureWindowsPath(canonical).is_absolute() else PurePosixPath(canonical)
+        access_scope = AccessScope(workspace)
+    elif session is not None:
+        access_scope = assembly.permissions.snapshot(session).scope
+    else:
+        access_scope = AccessScope(workspace)
     execution = None
     if backend is not None:
         roots = access_scope.roots
@@ -76,6 +75,7 @@ def tool_runtime_for_session(
                 GrantTarget(backend.resolve_path(str(root)), "file_read", True),
                 GrantTarget(backend.resolve_path(str(root)), "file_write", True),
             )
+            if target.operation != "file_write" or not any(root == readonly or is_under(root, readonly) for readonly in access_scope.read_only)
         )
         cwd = backend.cwd()
         execution = AuthorizedExecution(
@@ -87,6 +87,10 @@ def tool_runtime_for_session(
                 frozenset({"file_read", "file_write", "shell"}),
                 targets,
                 command=None,
+                blocked_paths=tuple(backend.resolve_path(str(path)) for path in access_scope.protected),
+                shell_readable=tuple(backend.resolve_path(str(root)) for root in access_scope.roots),
+                shell_writable=tuple(target.path for target in targets if target.operation == "file_write"),
+                shell_readonly=tuple(backend.resolve_path(str(root)) for root in access_scope.read_only),
             ),
             dynamic_cwd=True,
         )

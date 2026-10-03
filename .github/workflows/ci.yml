@@ -17,6 +17,10 @@ jobs:
         run: uv sync --group dev
       - name: Lint
         run: uv run ruff check src tests
+      - name: Install Bubblewrap
+        run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap ripgrep
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Pytest
         run: uv run pytest -q
       - name: Offline runtime tests
@@ -40,5 +44,45 @@ jobs:
       - name: Build
         run: npm run build
         working-directory: web
+      - name: Browser dependencies
+        run: npx playwright install --with-deps chromium
+        working-directory: web
+      - name: Browser interaction tests
+        run: npm run test:e2e
+        working-directory: web
       - name: Verify committed assets are up to date
-        run: git diff --exit-code -- src/wright/web/static
+        run: git diff --exit-code -- src/wright/interfaces/web/static
+
+  native-sandbox:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2025]
+    runs-on: ${{ matrix.os }}
+    env:
+      WRIGHT_SANDBOX_INTEGRATION: "1"
+      WRIGHT_HOME: ${{ runner.temp }}/wright-native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: uv sync --group dev --extra web
+      - name: Linux sandbox dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap ripgrep
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Windows administrator initialization
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: uv run python -c "from wright.infrastructure.runtime.windows_sandbox import initialize; result=initialize(elevated=True); assert result['available'], result"
+      - name: Real native isolation tests
+        run: uv run pytest -q tests/runtime/test_native_sandbox.py
+      - name: Clean up Windows accounts and owned ACLs
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: uv run python -c "from wright.infrastructure.runtime.windows_sandbox import initialize; initialize(cleanup=True, elevated=True)"

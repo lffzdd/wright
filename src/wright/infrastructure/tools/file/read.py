@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 from ....domain.model.tool import ToolResult
 from ..base import Tool
 from ..runtime import ToolRuntime
@@ -51,7 +53,10 @@ def read_file(
 
         viewed = _remembered_file_view(runtime, safe_path)
         stat = _backend(runtime).metadata(safe_path)
-        if _unchanged_read_view(
+        encoding = _detect_encoding(safe_path, runtime)
+        source_content = _backend(runtime).read_text(safe_path, encoding=encoding, errors="replace")
+        digest = hashlib.sha256(source_content.encode("utf-8")).hexdigest()
+        if (viewed is not None and viewed.digest == digest) and _unchanged_read_view(
             viewed,
             mtime_ns=stat.modified_ns,
             size=stat.size,
@@ -73,16 +78,13 @@ def read_file(
                 "truncated": viewed.truncated,
             })
 
-        encoding = _detect_encoding(safe_path, runtime)
         selected: list[str] = []
         total_chars = 0
         truncated = False
         last_line = start_line - 1
         next_start_line: int | None = None
         next_start_column: int | None = None
-        source_lines = _backend(runtime).read_text(
-            safe_path, encoding=encoding, errors="replace"
-        ).splitlines(keepends=True)
+        source_lines = source_content.splitlines(keepends=True)
         for line_number, line in enumerate(source_lines, 1):
             runtime.raise_if_cancelled()
             if line_number < start_line:
@@ -112,6 +114,7 @@ def read_file(
             safe_path,
             runtime,
             content=content,
+            source_content=source_content,
             start_line=start_line,
             start_column=start_column,
             end_line=end_line,

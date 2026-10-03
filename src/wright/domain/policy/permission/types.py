@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal
 
@@ -55,16 +55,20 @@ class InvocationGrant:
     subject: str = ""
     command: str | None = None
     blocked_paths: tuple[ExecutionPath, ...] = ()
+    shell_readable: tuple[ExecutionPath, ...] = ()
+    shell_writable: tuple[ExecutionPath, ...] = ()
+    network_enabled: bool = False
+    policy_version: str = ""
+    shell_readonly: tuple[ExecutionPath, ...] = ()
 
 
 @dataclass(frozen=True)
 class AuthorizationChange:
     """A directory/config update committed only after final allow."""
 
-    session_directories: tuple[ExecutionPath, ...] = ()
-    persistent_directories: tuple[ExecutionPath, ...] = ()
     session_rules: tuple[dict[str, object], ...] = ()
     persistent_rules: tuple[dict[str, object], ...] = ()
+    project_rules: tuple[dict[str, object], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -73,13 +77,21 @@ class PermissionChoice:
     label: str
     scope: str
     persistence: str
+    lifetime: str = "once"
+    resource_kind: str = "invocation"
+    operations: tuple[str, ...] = ()
+    resource: Mapping[str, object] = field(default_factory=dict)
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, object]:
         return {
             "id": self.id,
             "label": self.label,
             "scope": self.scope,
             "persistence": self.persistence,
+            "lifetime": self.lifetime,
+            "resource_kind": self.resource_kind,
+            "operations": list(self.operations),
+            "resource": dict(self.resource),
         }
 
 
@@ -107,6 +119,8 @@ class PermissionPrompt:
     reason_params: tuple[tuple[str, str], ...] = ()
     summary_code: str = ""
     summary_params: tuple[tuple[str, str], ...] = ()
+    preview_truncated: bool = False
+    risk_level: Literal["review", "elevated"] = "review"
 
     def to_dict(self) -> dict[str, object]:
         payload = {
@@ -126,6 +140,8 @@ class PermissionPrompt:
             "http_method": self.http_method,
             "http_target": self.http_target,
             "shell_note": self.shell_note,
+            "preview_truncated": self.preview_truncated,
+            "risk_level": self.risk_level,
         }
         if self.reason_code:
             payload["reason_code"] = self.reason_code

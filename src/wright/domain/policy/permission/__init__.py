@@ -15,7 +15,7 @@ from .approval import (
     normalize_response,
 )
 from .resolver import PermissionPolicy, PermissionResolver
-from .scope import AccessScope, PathClass, forbidden_paths, is_under, resolve_root
+from .scope import AccessScope, PathClass, is_under, resolve_root
 from .settings import PermissionMode, PermissionRule, PermissionSettings
 from .types import (
     AccessTarget,
@@ -57,7 +57,6 @@ __all__ = [
     "ResolvedTarget",
     "ToolAccess",
     "UserInteractionHandler",
-    "forbidden_paths",
     "is_under",
     "normalize_response",
     "resolve_root",

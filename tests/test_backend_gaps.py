@@ -360,7 +360,7 @@ def test_plan_projection_publishes_after_root_lifecycle_and_reset(
     [
         ("default", ["allow", "ask", "ask"], ["ask", "ask", "ask"]),
         ("acceptEdits", ["allow", "allow", "ask"], ["ask", "ask", "ask"]),
-        ("bypass", ["allow", "allow", "allow"], ["allow", "allow", "allow"]),
+        ("bypass", ["allow", "allow", "allow"], ["ask", "ask", "ask"]),
         ("plan", ["allow", "deny", "deny"], ["ask", "deny", "deny"]),
     ],
 )
@@ -373,7 +373,7 @@ def test_permission_summary_defaults_match_actual_policy(
     if interaction in {"ask", "plan"}:
         inside = ["allow", "deny", "deny"]
         outside = [
-            "allow" if mode == "bypass" and interaction == "ask" else "ask",
+            "ask",
             "deny",
             "deny",
         ]
@@ -399,7 +399,7 @@ def test_summary_exposes_conditions_and_bypass_does_not_hide_deny_or_ask():
         deny=[PermissionRule.parse("execute_command(rm *)", effect="deny")],
         ask=[PermissionRule.parse("execute_command(git push*)", effect="ask")],
         allow=[
-            PermissionRule.file_grant("edit_file", "/project", "*.py", ("file_write",))
+            PermissionRule.file_grant("edit_file", "/project", "*.py", ("file_read", "file_write"))
         ],
     )
     policy = PermissionPolicy(settings)
@@ -423,8 +423,8 @@ def test_summary_exposes_conditions_and_bypass_does_not_hide_deny_or_ask():
             == expected
         )
     assert "protected_permission_files" in summary["file_write"]["constraints"]
-    assert "shell_no_filesystem_sandbox" in shell["constraints"]
-    assert not summary["file_read"]["rules"]
+    assert "shell_system_sandbox" in shell["constraints"]
+    assert summary["file_read"]["rules"][0]["conditional"]
     rule = summary["file_write"]["rules"][0]
     assert rule["conditional"] and rule["rule"]["root"] == "/project"
     default = PermissionPolicy(PermissionSettings(allow=settings.allow))
@@ -438,29 +438,25 @@ def test_summary_exposes_conditions_and_bypass_does_not_hide_deny_or_ask():
             tool_name="edit_file",
             subject=path,
             in_scope=path.startswith("/project/"),
-            context=MatchContext(files=((path, "file_write"),)),
+            context=MatchContext(files=((path, "file_read"), (path, "file_write"))),
         )
         assert decision[0] == expected
 
 
-def test_grants_summary_uses_actual_session_roots_not_new_config_defaults(tmp_path):
-    root, granted, configured = (
-        tmp_path / name for name in ("root", "granted", "configured")
-    )
-    session = SimpleNamespace(
-        workspace_dir=root,
-        additional_working_directories=[granted],
-        permission_rules=[],
-        interaction_mode="agent",
-        permission_mode="bypass",
-    )
-    settings = PermissionSettings(additional_directories=[str(configured)])
-    summary = list_grants(session, settings)
-    assert all(
-        item["directories"] == [str(root.absolute()), str(granted.absolute())]
-        for item in summary["effective_policy"]
-    )
-    assert summary["persistent_directories"] == [str(configured)]
+def test_grants_summary_uses_fresh_persisted_scope(tmp_path, monkeypatch):
+    from wright.application.tool_execution.permissions import PermissionService
+    from wright.domain.model.session import Session
+    from wright.domain.policy.permission.types import AuthorizationChange
+    from wright.infrastructure.config.permission_store import FilePermissionRepository
+    monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "home"))
+    root, granted = tmp_path / "root", tmp_path / "granted"
+    session = Session.create("scopes", root)
+    permissions = PermissionService(FilePermissionRepository(root))
+    rule = PermissionRule("*", kind="directory", root=str(granted), recursive=True, operations=("file_read",))
+    permissions.commit(AuthorizationChange(project_rules=(rule.to_persistent(),)), session)
+    summary = list_grants(session, permissions)
+    assert all(item["directories"] == [str(root.absolute()), str(granted.absolute())] for item in summary["effective_policy"])
+    assert summary["grants"][0]["lifetime"] == "project"
 
 
 @pytest.mark.parametrize(
@@ -500,7 +496,7 @@ def test_summary_agrees_with_real_resolver_scopes_and_protected_paths(
     protected = root / "permissions.json"
     monkeypatch.setenv("WRIGHT_PERMISSION_CONFIG", str(protected))
     backend = LocalExecutionBackend(root, lambda: root)
-    scope = AccessScope(root, (extra,))
+    scope = AccessScope(root, (extra,), (protected,))
     policy = PermissionPolicy(PermissionSettings(mode=mode))
     summary = next(
         item
@@ -540,7 +536,7 @@ def test_summary_agrees_with_real_resolver_scopes_and_protected_paths(
         (outside, "outside_scope"),
     ):
         result = resolve(directory / "file.txt")
-        expected = summary["defaults"][key]["decision"]
+        expected = summary["defaults"]["in_scope" if operation == "shell" else key]["decision"]
         assert result.decision == ("allow" if expected == "ask" else expected)
         assert bool(prompts) == (expected == "ask")
         assert (result.grant is not None) == (expected != "deny")
@@ -697,7 +693,7 @@ def test_scripted_web_session_projects_diff_wait_policy_and_history(
         assert edit_event.payload["ok"], edit_event.payload
         assert any(item.type == "session.policy_updated" for item in finished)
         updated_grants = client.get(f"/api/v1/sessions/{session_id}/grants").json()
-        assert updated_grants["session_rules"]
+        assert any(rule["source"] == "session" for rule in updated_grants["grants"])
         write_policy = next(
             item
             for item in updated_grants["effective_policy"]

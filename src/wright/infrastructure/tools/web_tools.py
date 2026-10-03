@@ -88,7 +88,7 @@ def _describe_web_search(args: dict) -> ToolAccess:
     query = str(args.get("query", ""))
     return ToolAccess(
         frozenset({"network_read"}),
-        targets=(AccessTarget("provider", "https://api.tavily.com/search", "network_read", kind="url"),),
+        targets=(AccessTarget("provider", "https://api.tavily.com/search", "network_read", kind="url", http_method="POST"),),
         subject=query,
         risk_flags=("network_read",),
         reason="web search sends a query to the configured provider",

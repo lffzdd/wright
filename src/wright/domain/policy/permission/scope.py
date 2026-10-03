@@ -8,12 +8,11 @@ canonicalisation; this module consumes the canonical strings it returns.
 
 from __future__ import annotations
 
-import os
+import ntpath
+import posixpath
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
-
-from ....core.paths import user_permission_settings_path
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 
 
 class PathClass(str, Enum):
@@ -23,35 +22,34 @@ class PathClass(str, Enum):
     FORBIDDEN = "forbidden"
 
 
-def _absolute(path: Path | str) -> Path:
-    """Normalize a root without following symlinks."""
+def _absolute(path: Path | str) -> PurePath:
+    """Consume canonical absolute paths without environment or filesystem reads."""
+    raw = str(path)
+    result = PureWindowsPath(raw) if PureWindowsPath(raw).is_absolute() else PurePosixPath(raw)
+    if not result.is_absolute():
+        raise ValueError("Access roots must be canonical absolute paths")
+    return result
 
-    return Path(path).expanduser().absolute()
+
+def path_module(value: str):
+    return ntpath if PureWindowsPath(value).is_absolute() else posixpath
 
 
 def _is_under(path: str, root: str) -> bool:
+    module = path_module(root)
     try:
-        return os.path.commonpath((path, root)) == root
+        return module.normcase(module.commonpath((path, root))) == module.normcase(module.normpath(root))
     except ValueError:
         return False
 
 
-def resolve_root(path: Path | str) -> Path:
+def resolve_root(path: Path | str) -> PurePath:
     return _absolute(path)
 
 
 def is_under(path: Path | str, root: Path | str) -> bool:
-    """Pure string containment helper for already-resolved path values."""
-
-    return _is_under(str(_absolute(path)), str(_absolute(root)))
-
-
-def forbidden_paths() -> tuple[Path, ...]:
-    paths = [user_permission_settings_path().absolute()]
-    configured = os.getenv("WRIGHT_PERMISSION_CONFIG", "").strip()
-    if configured:
-        paths.append(Path(configured).expanduser().absolute())
-    return tuple(dict.fromkeys(paths))
+    """Pure containment for canonical backend resource identities."""
+    return _is_under(str(path), str(root))
 
 
 @dataclass(frozen=True)
@@ -60,6 +58,9 @@ class AccessScope:
 
     origin: Path
     additional: tuple[Path, ...] = ()
+    protected: tuple[Path, ...] = ()
+    project_root: Path | None = None
+    read_only: tuple[Path, ...] = ()
 
     def __post_init__(self) -> None:
         origin = _absolute(self.origin)
@@ -86,7 +87,7 @@ class AccessScope:
         return (self.origin, *self.additional)
 
     def with_additional(self, directories: tuple[Path, ...] | list[Path]) -> AccessScope:
-        return AccessScope(self.origin, (*self.additional, *directories))
+        return AccessScope(self.origin, (*self.additional, *directories), self.protected, self.project_root, self.read_only)
 
     def contains(self, path: Path | str) -> bool:
         value = str(path)
@@ -94,7 +95,7 @@ class AccessScope:
 
     def classify(self, path: Path | str) -> PathClass:
         value = str(path)
-        if any(value == str(forbidden) for forbidden in forbidden_paths()):
+        if any(_is_under(value, str(forbidden)) for forbidden in self.protected):
             return PathClass.FORBIDDEN
         if _is_under(value, str(self.origin)):
             return PathClass.IN_ORIGIN

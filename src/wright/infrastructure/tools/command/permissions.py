@@ -69,15 +69,11 @@ def is_execute_command_concurrency_safe(args: dict) -> bool:
 def describe_execute_command_access(args: dict) -> ToolAccess:
     command = str(args.get("command", ""))
     risk_flags = (
-        "writes_files",
-        "accesses_network",
         "executes_shell",
-        "may_modify_git",
-        "may_delete_files",
         *_command_risk_flags(command),
     )
     return ToolAccess(
-        frozenset({"shell"}),
+        frozenset({"shell", "network_write"}) if args.get("network") is True else frozenset({"shell"}),
         (AccessTarget("command", command, "shell", kind="command"),),
         subject=command,
         risk_flags=tuple(dict.fromkeys(risk_flags)),
@@ -94,9 +90,9 @@ def _command_risk_flags(command: str) -> tuple[str, ...]:
     tokens = _shell_tokens(command)
     command_names = _command_names(tokens)
 
-    if {"rm", "rmdir", "unlink"} & command_names:
+    if {"rm", "rmdir", "unlink", "remove-item", "del", "erase"} & command_names:
         flags.append("deletes_files")
-    if "mv" in command_names:
+    if {"mv", "move-item", "move"} & command_names:
         flags.append("moves_files")
     if _has_output_redirection(command):
         flags.append("writes_via_redirection")
@@ -129,7 +125,7 @@ def _command_names(tokens: list[str]) -> set[str]:
         if "=" in token and not token.startswith(("-", "./", "/")) and expect_command:
             continue
         if expect_command:
-            names.add(Path(token).name)
+            names.add(Path(token).name.lower().removesuffix(".exe"))
             expect_command = False
 
     return names

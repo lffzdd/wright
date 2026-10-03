@@ -69,18 +69,8 @@ class ConsolePrompter:
                 answer = "allow_once"
             elif answer == "n" or not answer:
                 answer = "deny"
-            elif answer == "a":
-                answer = next(
-                    (
-                        choice_id
-                        for choice_id in (
-                            "allow_session_directory",
-                            "allow_persistent_directory",
-                        )
-                        if choice_id in choice_ids
-                    ),
-                    "deny",
-                )
+            elif answer.isdecimal() and 1 <= int(answer) <= len(choices):
+                answer = str(choices[int(answer) - 1]["id"])
             return answer if answer in choice_ids else "deny"
         except (EOFError, KeyboardInterrupt):
             return "deny"

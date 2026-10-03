@@ -8,7 +8,10 @@ from pathlib import Path
 import pytest
 
 from wright.application.agent.context import _is_persisted_memory_recall
-from wright.application.memory.prompt import build_memory_instructions, project_core_memory
+from wright.application.memory.prompt import (
+    build_memory_instructions,
+    project_core_memory,
+)
 from wright.application.skills.prompt import catalog_reminder
 from wright.domain.model.skills import SkillMeta
 from wright.domain.model.tool import ToolAccess
@@ -61,7 +64,7 @@ def test_model_instructions_ignore_interface_language():
         "description": ask_user_tool.description,
         "parameters": ask_user_tool.parameters,
     })
-    settings = PermissionSettings.from_dict({"mode": "plan"})
+    settings = PermissionSettings.from_dict({"version": 2, "mode": "plan"})
     denied = PermissionPolicy(settings).evaluate(
         ToolAccess(frozenset({"file_write"})),
         tool_name="write_file",

@@ -9,6 +9,7 @@
 """
 
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -18,16 +19,21 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tests.responses import event, response
-
-from wright.application.agent import build_agent_tools, create_agent, make_spawn_agent_tool
+from wright.application.agent import (
+    build_agent_tools,
+    create_agent,
+    make_spawn_agent_tool,
+)
 from wright.domain.model.llm.events import ContentDone
 from wright.domain.model.session import Session
-from wright.domain.model.tool import ToolResult
+from wright.domain.model.tool import ToolAccess, ToolResult
 from wright.infrastructure.tools.base import Tool
 
-
-_TMP = tempfile.TemporaryDirectory(prefix="wright-subagent-", ignore_cleanup_errors=True)
+_TMP = tempfile.TemporaryDirectory(
+    prefix="wright-subagent-", ignore_cleanup_errors=True
+)
 WORKSPACE = Path(_TMP.name)
+os.environ.setdefault("WRIGHT_HOME", str(WORKSPACE / "wright-state"))
 
 
 class ScriptedLLM:
@@ -54,9 +60,9 @@ def _tool_calls(name: str, **arguments) -> ContentDone:
 
 
 def _many_tool_calls(calls: list[tuple[str, dict]]) -> ContentDone:
-    return response(calls=[
-        {"name": name, "arguments": arguments} for name, arguments in calls
-    ])
+    return response(
+        calls=[{"name": name, "arguments": arguments} for name, arguments in calls]
+    )
 
 
 def _final(answer: str) -> ContentDone:
@@ -64,7 +70,9 @@ def _final(answer: str) -> ContentDone:
 
 
 def _make_session(goal: str = "主任务") -> Session:
-    return Session.create(initial_goal=goal, workspace_dir=WORKSPACE)
+    session = Session.create(initial_goal=goal, workspace_dir=WORKSPACE)
+    session.permission_mode = "bypass"
+    return session
 
 
 def test_spawn_agent_listed_in_parent_tools_but_not_at_max_depth():
@@ -97,11 +105,7 @@ def test_parent_delegates_and_aggregates_child_result():
     assert result == "汇总:子 Agent 算得 5050"
     assert session.current_run_status() == "completed"
     # 父对话里只看得到"委派一次 + 拿回一条 tool_result",中间步骤被隔离在子上下文。
-    tool_results_msgs = [
-        m
-        for m in session.wire_messages()
-        if m.get("role") == "tool"
-    ]
+    tool_results_msgs = [m for m in session.wire_messages() if m.get("role") == "tool"]
     assert len(tool_results_msgs) == 1
     assert llm.seen_tools[0] == llm.seen_tools[2]
     payload = json.loads(tool_results_msgs[0]["content"])
@@ -147,7 +151,13 @@ def test_child_failure_surfaces_as_failed_tool_result():
         ]
     )
 
-    noop = Tool("noop", "", {}, lambda args, runtime: ToolResult.success("ok"))
+    noop = Tool(
+        "noop",
+        "",
+        {},
+        lambda args, runtime: ToolResult.success("ok"),
+        access_descriptor=lambda _: ToolAccess.internal_read(),
+    )
     # 直接造一把 child_max_steps=2 的 spawn 工具,逼子 Agent 快速耗尽步数。
     spawn = make_spawn_agent_tool(
         llm, [noop], depth=0, max_depth=2, child_max_steps=2, render_subagents=False
@@ -158,11 +168,7 @@ def test_child_failure_surfaces_as_failed_tool_result():
     result = agent.run("委派一个跑不完的任务")
 
     assert result == "子 Agent 没做完,主 Agent 如实收尾"
-    tool_results_msgs = [
-        m
-        for m in session.wire_messages()
-        if m.get("role") == "tool"
-    ]
+    tool_results_msgs = [m for m in session.wire_messages() if m.get("role") == "tool"]
     payload = json.loads(tool_results_msgs[0]["content"])
     assert payload["ok"] is False
     assert payload["data"]["status"] == "failed"
@@ -183,10 +189,12 @@ def test_multiple_spawn_agents_run_concurrently_and_preserve_result_order():
             last = messages[-1]["content"]
             if last == "并行委派":
                 yield event(
-                    content=_many_tool_calls([
-                        ("spawn_agent", {"task": "task-a"}),
-                        ("spawn_agent", {"task": "task-b"}),
-                    ])
+                    content=_many_tool_calls(
+                        [
+                            ("spawn_agent", {"task": "task-a"}),
+                            ("spawn_agent", {"task": "task-b"}),
+                        ]
+                    )
                 )
                 return
             if last in {"task-a", "task-b"}:
@@ -203,7 +211,8 @@ def test_multiple_spawn_agents_run_concurrently_and_preserve_result_order():
             if messages[-1].get("role") == "tool":
                 ordered = [
                     json.loads(item["content"])["data"]["result"]
-                    for item in messages if item.get("role") == "tool"
+                    for item in messages
+                    if item.get("role") == "tool"
                 ]
                 yield event(content=_final("|".join(ordered)))
                 return

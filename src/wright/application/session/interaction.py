@@ -66,12 +66,21 @@ class RoutedPrompter:
     def prompt_permission(
         self, permission_prompt: PermissionPrompt
     ) -> str | PermissionResponse:
+        return self.prompt_permission_guarded(permission_prompt)
+
+    def prompt_permission_guarded(self, permission_prompt: PermissionPrompt, validator=None):
         payload = permission_prompt.to_dict()
         interaction = self._interaction
+        if validator is not None:
+            validator()
         if interaction is not None and not self._on_collector_thread():
-            answer = interaction.request("permission", payload)
+            kwargs = {"validator": validator} if validator is not None else {}
+            answer = interaction.request("permission", payload, **kwargs)
             return answer if isinstance(answer, PermissionResponse) else str(answer)
-        return self._fallback.prompt_permission(permission_prompt)
+        answer = self._fallback.prompt_permission(permission_prompt)
+        if validator is not None:
+            validator()
+        return answer
 
     def prompt_user(
         self,

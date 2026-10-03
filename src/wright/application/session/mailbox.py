@@ -100,8 +100,15 @@ class InteractionMailbox:
                 raise
         return item
 
-    def wait(self, item: InteractionRequest) -> Any:
-        item.done.wait()
+    def wait(self, item: InteractionRequest, *, validator=None, resolve=None) -> Any:
+        if validator is None:
+            item.done.wait()
+        else:
+            while not item.done.wait(timeout=0.1):
+                try:
+                    validator()
+                except Exception:
+                    (resolve or self.resolve)(item.request_id, "deny")
         return item.answer
 
     def request(self, kind: InteractionKind, payload: dict[str, Any]) -> Any:

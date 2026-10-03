@@ -112,8 +112,8 @@ test("isolates sessions and completes a structured permission flow", async ({ pa
           principal: sessionId,
           choices: [
             { id: "allow_once", label: "Allow once", scope: "This invocation", persistence: "No save" },
-            { id: "allow_session_directory", label: "Allow directory for this session", scope: "Candidate parent/directory", persistence: "Save in session checkpoint" },
-            { id: "allow_persistent_directory", label: "Allow directory permanently", scope: "Candidate parent/directory", persistence: "Save in user permissions" },
+            { id: "allow_session_directory_write", label: "Conversation", scope: "/tmp/outside", persistence: "Saved", lifetime: "session", resource_kind: "directory", operations: ["file_read", "file_write"] },
+            { id: "allow_project_rule", label: "Project", scope: "/tmp/outside/result.txt", persistence: "Saved", lifetime: "project", resource_kind: "file", operations: ["file_read", "file_write"] },
             { id: "deny", label: "Deny", scope: "No execution", persistence: "No save" },
           ],
         }), 30);
@@ -179,6 +179,30 @@ test("isolates sessions and completes a structured permission flow", async ({ pa
     await route.fulfill({ json: { type: "command.accepted", payload: { duplicate: false } } });
   });
 
+  let permissionVersion = "permission-v1";
+  let authorized = true;
+  let revokeAttempts = 0;
+  const grants = () => ({ effective_policy: [], version: permissionVersion, grants: authorized ? [{
+    id: "external-file", source: "project", lifetime: "project", resource_kind: "file",
+    target: "/tmp/outside/result.txt", operations: ["file_read", "file_write"], recursive: false,
+    tool: "*", version: permissionVersion,
+  }] : [], sandbox: { available: true, state: "ready", provider: "Bubblewrap", platform: "linux" } });
+  await page.route("**/api/v1/sessions/*/grants", (route) => route.fulfill({ json: grants() }));
+  await page.route("**/api/v1/sessions/*/grants/external-file/revoke", async (route) => {
+    const body = route.request().postDataJSON();
+    expect(body.source).toBe("project");
+    expect(body.expected_version).toBe(permissionVersion);
+    revokeAttempts++;
+    if (revokeAttempts === 1) {
+      permissionVersion = "permission-v2";
+      await route.fulfill({ status: 409, json: { detail: { message: "Permissions changed", latest: grants() } } });
+    } else {
+      authorized = false;
+      permissionVersion = "permission-v3";
+      await route.fulfill({ json: grants() });
+    }
+  });
+
   await page.goto("/");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "This checkout" })).toHaveAttribute("aria-pressed", "true");
@@ -188,7 +212,7 @@ test("isolates sessions and completes a structured permission flow", async ({ pa
   await expect(page.getByRole("heading", { name: "First isolated task" })).toBeVisible();
   expect(sessions[0]?.environment).toBe("local");
 
-  await page.getByRole("button", { name: "New session (⌘N)" }).click();
+  await page.getByRole("button", { name: /New session \((?:⌘|Ctrl\+)N\)/ }).click();
   await page.getByLabel("Message Wright").fill("Second isolated task");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByRole("heading", { name: "Second isolated task" })).toBeVisible();
@@ -198,9 +222,31 @@ test("isolates sessions and completes a structured permission flow", async ({ pa
 
   await page.getByLabel("Message Wright").fill("Run deterministic smoke");
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.getByRole("button", { name: "Allow directory for this session" })).toBeVisible();
-  await page.getByRole("button", { name: "Allow directory for this session" }).click();
+  await expect(page.getByRole("button", { name: /Allow once/i })).toBeVisible();
+  await page.getByRole("button", { name: "Remember authorization" }).click();
+  await expect(page.getByText("/tmp/outside/result.txt · Read, Write · This project long term", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Save and allow" }).click();
   await expect(page.getByText("Web smoke passed.", { exact: true })).toHaveCount(1);
+  const permissionsTab = page.getByRole("tab", { name: "Permissions" });
+  if (!(await permissionsTab.isVisible())) await page.getByRole("button", { name: /Open inspector \((?:⌘|Ctrl\+)J\)/ }).click();
+  await permissionsTab.click();
+  await expect(page.getByRole("button", { name: /^Revoke authorization for / })).toBeVisible();
+  await page.getByRole("button", { name: /^Revoke authorization for / }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Permissions changed" })).toBeVisible();
+  await page.getByRole("button", { name: /^Revoke authorization for / }).click();
+  await expect(page.getByRole("button", { name: /^Revoke authorization for / })).toHaveCount(0);
+  expect(revokeAttempts).toBe(2);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: /Open inspector \((?:⌘|Ctrl\+)J\)/ }).click();
+  await permissionsTab.click();
+  await expect(page.getByRole("textbox", { name: "Resource path", exact: true })).toBeVisible();
+  await page.screenshot({ path: "test-results/permissions-narrow-en.png", fullPage: true });
+  await page.route("**/api/v1/preferences", (route) => route.fulfill({ json: { theme: "dark", interface_language: "zh-CN", inspector_open: true } }));
+  await page.reload();
+  await page.getByRole("button", { name: /打开检查器（(?:⌘|Ctrl\+)J）/ }).click();
+  await page.getByRole("tab", { name: "权限", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "资源路径", exact: true })).toBeVisible();
+  await page.screenshot({ path: "test-results/permissions-narrow-zh.png", fullPage: true });
 });
 
 test("switching sessions only changes the view subscription", async ({ page }) => {
@@ -313,7 +359,7 @@ test("switching sessions only changes the view subscription", async ({ page }) =
   await expect(page.getByText("still running", { exact: true })).toBeVisible();
   await page.getByLabel("Message Wright").fill("draft for alpha");
 
-  await page.getByRole("button", { name: "New session (⌘N)" }).click();
+  await page.getByRole("button", { name: /New session \((?:⌘|Ctrl\+)N\)/ }).click();
   await page.getByLabel("Message Wright").fill("Beta task");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByRole("heading", { name: "Beta task" })).toBeVisible();
