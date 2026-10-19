@@ -1,21 +1,21 @@
-"""Application-side adapters for constructing a tool runtime."""
+"""Test-only runtimes for direct adapter tests; production uses PermissionService."""
 
 from __future__ import annotations
 
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from ...domain.policy.permission.scope import AccessScope, is_under
-from ...domain.policy.permission.types import (
+from wright.application.command.execution import CommandExecution
+from wright.application.execution.identity import bind_identity
+from wright.application.session.live_resources import RuntimeResources
+from wright.application.tool_execution.capabilities import assemble_tool_capabilities
+from wright.domain.policy.permission.scope import AccessScope, is_under
+from wright.domain.policy.permission.types import (
     GrantTarget,
     InvocationGrant,
     InvocationIdentity,
 )
-from ...infrastructure.runtime import AuthorizedExecution
-from ...infrastructure.tools.runtime import ToolRuntime
-from ..command.execution import CommandExecution
-from ..execution.identity import bind_identity
-from ..session.live_resources import RuntimeResources
-from .capabilities import assemble_tool_capabilities
+from wright.infrastructure.runtime import AuthorizedExecution
+from wright.infrastructure.tools.runtime import ToolRuntime
 
 
 def tool_runtime_for_session(

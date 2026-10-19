@@ -79,6 +79,10 @@ class AccessScope:
             ]
             seen.add(key)
             unique.append(root)
+        object.__setattr__(self, "protected", tuple(_absolute(path) for path in self.protected))
+        object.__setattr__(self, "read_only", tuple(_absolute(path) for path in self.read_only))
+        if self.project_root is not None:
+            object.__setattr__(self, "project_root", _absolute(self.project_root))
         object.__setattr__(self, "origin", origin)
         object.__setattr__(self, "additional", tuple(unique))
 

@@ -9,10 +9,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from wright.application.permission.workflow import AuthorizationWorkflow
+
 from ...domain.model.agent import AgentProfile, CapabilityCatalog, CapabilitySnapshot
 from ...domain.model.llm import UsageRecord
 from ...domain.model.session import Session
-from ...domain.policy import AuthorizationChange, PermissionResolver
 from ...domain.policy.verifier import Verifier
 from ...domain.prompt import build_system_prompt
 from ...domain.protocol import encode_tools
@@ -51,13 +52,12 @@ def assemble_agent_components(
     tool_timeout: float = 30,
     context_watermark: float = 0.75,
     keep_recent_tool_results: int = 3,
-    permission_resolver: PermissionResolver | None = None,
+    permission_workflow: AuthorizationWorkflow | None = None,
     cancellation_check: Callable[[], bool] | None = None,
     allow_background_tasks: bool = True,
     on_shell_task_done: Callable[[str], None] | None = None,
     lifecycle=None,
     execution_journal=None,
-    authorization_commit: Callable[[AuthorizationChange], None] | None = None,
 ) -> AgentComponents:
     """Build the collaborators bound to one Agent and one execution scope."""
     cancellation = CancellationToken(cancellation_check)
@@ -75,7 +75,7 @@ def assemble_agent_components(
         on_tool_output=events.on_tool_output,
         on_progress=events.on_agent_event,
         on_shell_task_done=on_shell_task_done,
-        permission_resolver=permission_resolver,
+        permission_workflow=permission_workflow,
         session=session_state,
         cancellation_check=cancellation.is_cancelled,
         allow_background_tasks=(
@@ -84,7 +84,6 @@ def assemble_agent_components(
         lifecycle=lifecycle,
         capability_snapshot=prepared.capabilities,
         execution_journal=execution_journal,
-        authorization_commit=authorization_commit,
     )
     return AgentComponents(cancellation, context_builder, tool_dispatcher)
 
@@ -168,7 +167,7 @@ def create_agent(
     context_watermark: float = 0.75,
     keep_recent_tool_results: int = 3,
     max_consecutive_invalid: int = 3,
-    permission_resolver: PermissionResolver | None = None,
+    permission_workflow: AuthorizationWorkflow | None = None,
     cancellation_check: Callable[[], bool] | None = None,
     memory: MemoryManager | None = None,
     verifier: Verifier | None = None,
@@ -185,8 +184,6 @@ def create_agent(
     execution_journal=None,
     execution_journal_factory=None,
     on_run_started: Callable[[str], None] | None = None,
-    authorization_commit: Callable[[AuthorizationChange], None] | None = None,
-    authorization_commit_factory=None,
     assembly: CapabilityAssembly | None = None,
     role_instruction: str = "",
     expose_scheduling: bool = False,
@@ -204,12 +201,9 @@ def create_agent(
             services,
             resources,
             execution_journal_factory=execution_journal_factory,
-            authorization_commit_factory=authorization_commit_factory,
             expose_scheduling=expose_scheduling,
         )
         runtime_resources = assembly.runtime_resources or resources
-    if authorization_commit is None and authorization_commit_factory is not None:
-        authorization_commit = authorization_commit_factory(session_state)
     prepared = prepare_model_tools(session_state, tools, profile)
     ensure_system_prompt(
         session_state,
@@ -225,13 +219,12 @@ def create_agent(
         tool_timeout=tool_timeout,
         context_watermark=context_watermark,
         keep_recent_tool_results=keep_recent_tool_results,
-        permission_resolver=permission_resolver,
+        permission_workflow=permission_workflow,
         cancellation_check=cancellation_check,
         allow_background_tasks=allow_background_tasks,
         on_shell_task_done=on_shell_task_done,
         lifecycle=lifecycle,
         execution_journal=execution_journal,
-        authorization_commit=authorization_commit,
     )
     from .runner import Agent
 
@@ -255,8 +248,6 @@ def create_agent(
         execution_journal=execution_journal,
         execution_journal_factory=execution_journal_factory,
         on_run_started=on_run_started,
-        authorization_commit=authorization_commit,
-        authorization_commit_factory=authorization_commit_factory,
         expose_scheduling=expose_scheduling,
     )
     bind_root_checkpoint(agent)

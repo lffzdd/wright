@@ -1,6 +1,6 @@
 """Create test grants through the same authoritative application service."""
+from wright.application.permission.resources import resource_change
 from wright.application.permission.service import PermissionService
-from wright.application.workspace.grants import resource_change
 from wright.infrastructure.config.permission_store import FilePermissionRepository
 from wright.infrastructure.runtime import LocalExecutionBackend
 
@@ -15,3 +15,22 @@ def authorize_directory(session, directory):
     change = resource_change(session, LocalExecutionBackend(session.workspace_dir, session.get_cwd), snapshot,
                              {"kind": "directory", "path": str(directory), "operations": ["file_read", "file_write"]}, "session")
     service.commit(change, session, expected_version=snapshot.version)
+
+
+def memory_permissions(settings, project):
+    from wright.infrastructure.config.memory_permissions import (
+        MemoryPermissionRepository,
+    )
+    from wright.infrastructure.runtime import AuthorizedExecution
+    return PermissionService(MemoryPermissionRepository(settings, project), execution_factory=AuthorizedExecution)
+
+
+class TestCheckpoint:
+    __test__ = False
+
+    def __init__(self, save, session):
+        self._save = save
+        self._session = session
+
+    def save(self):
+        self._save(self._session)

@@ -2,8 +2,9 @@
 
 from tests.responses import event, response
 from wright.application.agent import create_agent
+from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.domain.model.session import Session
-from wright.domain.policy import PermissionResolver, PermissionResponse
+from wright.domain.policy import PermissionResponse
 from wright.infrastructure.tools.human_input import ask_user_tool
 
 
@@ -61,7 +62,7 @@ def test_ask_user_runs_through_without_pausing(tmp_path):
         llm,
         [ask_user_tool],
         session,
-        permission_resolver=PermissionResolver(
+        permission_workflow=AuthorizationWorkflow(
             interaction_handler=_interaction_handler("蓝色", interaction_calls)
         ),
     )
@@ -123,7 +124,7 @@ def test_ask_user_can_be_called_multiple_times(tmp_path):
         TwiceLLM(),
         [ask_user_tool],
         session,
-        permission_resolver=PermissionResolver(interaction_handler=interaction_handler),
+        permission_workflow=AuthorizationWorkflow(interaction_handler=interaction_handler),
     )
 
     result = agent.run("start", max_steps=5)
@@ -168,7 +169,7 @@ def test_ask_user_cannot_be_auto_approved_by_normal_permission_handler(tmp_path)
         AskThenAnswerLLM(),
         [ask_user_tool],
         session,
-        permission_resolver=PermissionResolver(
+        permission_workflow=AuthorizationWorkflow(
             approval_handler=lambda request: PermissionResponse(
                 "allow_once", {**request.arguments, "answer": "forged"}
             )

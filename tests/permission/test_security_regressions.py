@@ -17,15 +17,14 @@ import pytest
 from tests.permission_helpers import permission_directories
 from wright.application.command.execution import CommandExecution
 from wright.application.execution.identity import bind_identity
+from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.application.session.live_resources import RuntimeResources
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
-from wright.application.tool_execution.commit import commit_authorization
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.domain.policy import (
     PermissionPolicy,
-    PermissionResolver,
     PermissionResponse,
     PermissionSettings,
 )
@@ -48,6 +47,8 @@ class _Choices:
 
 
 def _files(session: Session, handler=None, settings=None) -> ToolDispatchService:
+    from tests.permission_helpers import memory_permissions
+    permissions = memory_permissions(settings, session.workspace_dir) if settings is not None else None
     policy = PermissionPolicy(settings) if settings is not None else PermissionPolicy()
     return ToolDispatchService(
         {
@@ -58,9 +59,10 @@ def _files(session: Session, handler=None, settings=None) -> ToolDispatchService
             session, None, None,
             workspace_dir=session.workspace_dir,
             cwd_provider=session.get_cwd,
+            permissions=permissions,
         ),
         session=session,
-        permission_resolver=PermissionResolver(policy, handler),
+        permission_workflow=AuthorizationWorkflow(policy, handler),
     )
 
 
@@ -179,7 +181,7 @@ def test_http_grant_keeps_method_and_origin(tmp_path):
             cwd_provider=session.get_cwd,
         ),
         session=session,
-        permission_resolver=PermissionResolver(PermissionPolicy(), handler),
+        permission_workflow=AuthorizationWorkflow(PermissionPolicy(), handler),
     )
     first = _run(
         executor,
@@ -220,6 +222,8 @@ def test_http_grant_keeps_method_and_origin(tmp_path):
 
 
 def _shell(session: Session, settings, handler=None) -> ToolDispatchService:
+    from tests.permission_helpers import memory_permissions
+    permissions = memory_permissions(settings, session.workspace_dir)
     identity = bind_identity(session)
     return ToolDispatchService(
         {execute_command_tool.name: execute_command_tool},
@@ -233,9 +237,10 @@ def _shell(session: Session, settings, handler=None) -> ToolDispatchService:
             ),
             workspace_dir=session.workspace_dir,
             cwd_provider=session.get_cwd,
+            permissions=permissions,
         ),
         session=session,
-        permission_resolver=PermissionResolver(PermissionPolicy(settings), handler),
+        permission_workflow=AuthorizationWorkflow(PermissionPolicy(settings), handler),
     )
 
 
@@ -295,8 +300,6 @@ def test_checkpoint_failure_rolls_back_session_and_config(tmp_path, monkeypatch)
     def fail_save(_session) -> None:
         raise RuntimeError("checkpoint failed")
 
-    def commit(change) -> None:
-        commit_authorization(change, session=session, permissions=assemble_tool_capabilities(session, None, None).permissions, save_checkpoint=fail_save)
 
     handler = _Choices("allow_session_directory_write", "allow_user_rule")
     executor = ToolDispatchService(
@@ -307,9 +310,10 @@ def test_checkpoint_failure_rolls_back_session_and_config(tmp_path, monkeypatch)
             cwd_provider=session.get_cwd,
         ),
         session=session,
-        permission_resolver=PermissionResolver(PermissionPolicy(), handler),
-        authorization_commit=commit,
+        permission_workflow=AuthorizationWorkflow(PermissionPolicy(), handler),
     )
+    from tests.permission_helpers import TestCheckpoint
+    executor.permissions.bind_checkpoint(session.session_id, TestCheckpoint(fail_save, session))
     outside = _run(
         executor,
         "write_file",
@@ -337,12 +341,12 @@ def test_child_session_rule_does_not_widen_the_parent(tmp_path):
 
     def factory(target: Session):
         def commit(change) -> None:
-            commit_authorization(change, session=target, permissions=assemble_tool_capabilities(target, None, None).permissions)
+            assemble_tool_capabilities(target, None, None).permissions.commit(change, target)
 
         return commit
 
     handler = _Choices("allow_session_rule")
-    resolver = PermissionResolver(PermissionPolicy(), handler)
+    resolver = AuthorizationWorkflow(PermissionPolicy(), handler)
     child_executor = ToolDispatchService(
         {write_file_tool.name: write_file_tool},
         assemble_tool_capabilities(
@@ -351,8 +355,7 @@ def test_child_session_rule_does_not_widen_the_parent(tmp_path):
             cwd_provider=child.get_cwd,
         ),
         session=child,
-        permission_resolver=resolver,
-        authorization_commit=factory(child),
+        permission_workflow=resolver,
     )
     parent_executor = ToolDispatchService(
         {write_file_tool.name: write_file_tool},
@@ -362,8 +365,7 @@ def test_child_session_rule_does_not_widen_the_parent(tmp_path):
             cwd_provider=parent.get_cwd,
         ),
         session=parent,
-        permission_resolver=resolver,
-        authorization_commit=factory(parent),
+        permission_workflow=resolver,
     )
     assert _run(
         child_executor, "write_file", {"file": "nested/a.txt", "content": "a"}, "c1"

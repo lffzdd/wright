@@ -19,7 +19,6 @@ from uuid import uuid4
 
 from ...domain.model.agent.control import AgentControlPlane
 from ...domain.model.scheduling import JobRun
-from ...domain.policy import PermissionSettings
 from ...infrastructure.file_lock import FileLock, FileLockUnavailable
 from ...infrastructure.llm.llm import LLMClient
 from ...infrastructure.persistence.autonomy_store import AutonomyStore
@@ -34,6 +33,7 @@ from ..execution.directory import (
     DirectoryExecutionCoordinator,
     DirectoryWaitCancelled,
 )
+from ..permission.service import PermissionService
 from ..scheduling.runner import launch_job_run
 from ..scheduling.scheduler import JobScheduler
 from .services import RuntimeServices
@@ -58,7 +58,7 @@ class ApplicationHost:
         store: AutonomyStore,
         llm: LLMClient,
         base_tools: Sequence[Tool],
-        permission_settings: PermissionSettings,
+        permission_service: PermissionService,
         mcp_configs: Sequence[McpServerConfig] = (),
         artifact_store: ArtifactStore | None = None,
         on_event: Callable[[str, object], None] | None = None,
@@ -74,7 +74,7 @@ class ApplicationHost:
         # browser session tears that manager down while this host may live on.
         self.mcp_manager = McpManager(list(mcp_configs), artifact_store=artifact_store)
         self.artifact_store = artifact_store
-        self.permission_settings = permission_settings
+        self.permission_service = permission_service.for_background_execution()
         self.event_queue: queue.Queue[tuple[str, object]] = queue.Queue()
         self.control_plane = AgentControlPlane()
         self.background = AgentBackgroundRuntime(self.event_queue)
@@ -299,7 +299,7 @@ class ApplicationHost:
                 scheduler=scheduler,
                 llm=self.llm,
                 base_tools=self._host_tools,
-                permission_settings=self.permission_settings,
+                permission_service=self.permission_service,
                 background_runtime=self.background,
                 services=replace(
                     self.services, durable_store=store, job_scheduler=scheduler,

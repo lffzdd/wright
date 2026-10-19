@@ -13,6 +13,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from wright.application.permission.workflow import AuthorizationWorkflow
+
 from ...core.logger import get_logger
 from ...domain.gateway.tool_executor import IToolExecutor
 from ...domain.model.agent import CapabilitySnapshot
@@ -23,12 +25,10 @@ from ...domain.model.tool import (
 )
 from ...domain.policy import (
     AccessScope,
-    AuthorizationChange,
     InvocationIdentity,
     PermissionApprovalHandler,
     PermissionPolicy,
     PermissionResolution,
-    PermissionResolver,
     PermissionSubject,
 )
 from ...infrastructure.runtime import (
@@ -87,14 +87,13 @@ class ToolDispatchService:
         on_shell_task_done: Callable[[str], None] | None = None,
         permission_policy: PermissionPolicy | None = None,
         permission_approval_handler: PermissionApprovalHandler | None = None,
-        permission_resolver: PermissionResolver | None = None,
+        permission_workflow: AuthorizationWorkflow | None = None,
         session=None,
         cancellation_check: Callable[[], bool] | None = None,
         allow_background_tasks: bool = True,
         lifecycle=None,
         capability_snapshot: CapabilitySnapshot | None = None,
         execution_journal=None,
-        authorization_commit: Callable[[AuthorizationChange], None] | None = None,
         executor: IToolExecutor | None = None,
     ):
         if tool_timeout <= 0:
@@ -104,9 +103,8 @@ class ToolDispatchService:
         self.execution_journal = execution_journal
         self._active_step_id = ""
         self.tool_timeout = tool_timeout
-        self._authorization_commit = authorization_commit
         self.session = session
-        self.permission_resolver = permission_resolver or PermissionResolver(
+        self.permission_workflow = permission_workflow or AuthorizationWorkflow(
             permission_policy or PermissionPolicy(),
             permission_approval_handler,
         )
@@ -144,13 +142,9 @@ class ToolDispatchService:
     def bind_run(
         self,
         assembly: CapabilityAssembly,
-        *,
-        authorization_commit: Callable[[AuthorizationChange], None] | None = None,
     ) -> None:
         """Install a freshly assembled capability view for the selected Run."""
         self._active_step_id = ""
-        if authorization_commit is not None:
-            self._authorization_commit = authorization_commit
         self._apply_assembly(assembly)
         self.runtime = replace(
             self.runtime,
@@ -163,9 +157,6 @@ class ToolDispatchService:
         self.workspace_dir = assembly.workspace_dir
         self.cwd_provider = assembly.cwd_provider
         self.permissions = assembly.permissions
-        if self.permissions is not None:
-            settings = self.permission_resolver.policy.settings
-            self.permissions.inline_settings = settings if settings is not None and not settings.managed else None
 
     @property
     def backend(self) -> ExecutionBackend:
@@ -314,24 +305,16 @@ class ToolDispatchService:
             effective_call.id,
             self.capabilities.scope.agent_task_id,
         )
-        snapshot = self.permissions.snapshot(self.session) if self._managed_permissions() else None
-        resolver = self.permissions.resolver(self.permission_resolver, snapshot, self.session) if snapshot else self.permission_resolver
-        permission = resolver.resolve(
-            effective_call,
-            PermissionSubject(
-                name=tool.name,
-                requires_user_interaction=tool.requires_user_interaction,
-                describe_access=tool.describe_access,
-                validate=lambda arguments: validate_tool_arguments(tool, arguments),
-            ),
-            backend=backend,
-            scope=snapshot.scope if snapshot else scope,
-            identity=identity,
-            cwd=fixed_cwd,
-            session_rules=snapshot.rules if snapshot else (),
-            interaction_mode=snapshot.interaction_mode if snapshot else "agent",
-            permission_mode=snapshot.mode if snapshot else None,
-        )
+        try:
+            invocation = self.permissions.authorize(self.session, effective_call,
+                PermissionSubject(tool.name, tool.requires_user_interaction, tool.describe_access,
+                    lambda arguments: validate_tool_arguments(tool, arguments), tool.approval_details), backend=backend,
+                workflow=self.permission_workflow, cwd=fixed_cwd, scope=scope, identity=identity,
+                requires_execution="execution" in tool.required_capabilities,
+                requires_network="network" in tool.required_capabilities)
+            permission = invocation.resolution
+        except Exception as exc:
+            return ToolResult.fail(f"Could not authorize invocation: {exc}", data={"display_code": "permission.auth_save_failed", "display_params": {"error": str(exc)}})
         approval_wait_ms = (time.monotonic() - permission_started) * 1_000
         self._emit_lifecycle("permission_decision", {
             "tool_name": effective_call.name,
@@ -362,33 +345,9 @@ class ToolDispatchService:
             return ToolResult.fail(
                 "Permission resolver returned allow without an invocation grant"
             )
-        try:
-            if snapshot:
-                with self.permissions.repository.transaction():
-                    self.permissions.validate(self.session, snapshot.version)
-                    self._commit_authorization_change(permission.changes)
-                    committed_snapshot = self.permissions.snapshot(self.session)
-            else:
-                self._commit_authorization_change(permission.changes)
-        except Exception as exc:
-            return ToolResult.fail(
-                f"Could not save the authorization, so this call was not executed: {exc}",
-                data={
-                    "display_code": "permission.auth_save_failed",
-                    "display_params": {"error": str(exc)},
-                },
-            )
-
-        runtime_scope = self._access_scope()
-        committed_version = committed_snapshot.version if snapshot else ""
-        validate_permission = (lambda: self.permissions.validate(self.session, committed_version)) if snapshot else None
-        authorized: AuthorizedExecution | None = None
-        if "execution" in tool.required_capabilities:
-            try:
-                authorized = AuthorizedExecution(backend, replace(permission.grant, policy_version=committed_version), validator=validate_permission, process_validator=self.permissions.execution_guard(self.session, committed_snapshot, permission.grant) if snapshot else None)
-            except Exception as exc:
-                return ToolResult.fail(f"Could not create authorized execution: {exc}")
-        runtime = replace(runtime, access_scope=runtime_scope, execution=authorized)
+        authorized = invocation.execution
+        validate_permission = invocation.validator
+        runtime = replace(runtime, access_scope=invocation.scope, execution=authorized, network=invocation.network)
         final_arguments = dict(permission.final_arguments)
         try:
             concurrency_safe = bool(tool.is_concurrency_safe(final_arguments))
@@ -408,7 +367,7 @@ class ToolDispatchService:
             final_arguments=final_arguments,
             resolution=permission,
             cwd=permission.grant.cwd,
-            access_scope=runtime_scope,
+            access_scope=invocation.scope,
             concurrency_safe=concurrency_safe,
             approval_wait_ms=approval_wait_ms,
             effective_timeout=effective_timeout,
@@ -417,23 +376,6 @@ class ToolDispatchService:
             execution=authorized,
             before_execute=validate_permission,
         )
-
-    def _commit_authorization_change(self, change: AuthorizationChange) -> None:
-        if change == AuthorizationChange():
-            return
-        if self._authorization_commit is not None:
-            self._authorization_commit(change)
-            return
-        if self.permissions is not None and self.session is not None:
-            self.permissions.commit(change, self.session)
-            return
-        if change.persistent_rules or change.project_rules:
-            raise RuntimeError(
-                "persistent authorization requires an authorization commit callback"
-            )
-        if self.session is None:
-            raise RuntimeError("no session authorization store is configured")
-        raise RuntimeError("No permission repository is configured")
 
     def _current_cwd(self) -> Path:
         try:

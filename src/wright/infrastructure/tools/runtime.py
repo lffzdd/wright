@@ -9,6 +9,7 @@ from typing import Any
 
 from ...domain.policy.permission.scope import AccessScope
 from ..runtime import AuthorizedExecution
+from ..runtime.network import AuthorizedNetwork
 from .capabilities import ToolCapabilities
 
 
@@ -24,6 +25,7 @@ class ToolRuntime:
     tool_call_id: str = ""
     capabilities: ToolCapabilities | None = None
     execution: AuthorizedExecution | None = None
+    network: AuthorizedNetwork | None = None
     access_scope: AccessScope | None = None
     lifecycle: Any = None
     scratch_lock: RLock = field(default_factory=RLock, repr=False)

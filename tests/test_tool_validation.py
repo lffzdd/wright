@@ -1,7 +1,8 @@
+from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.tool import ToolCall, ToolResult
-from wright.domain.policy import PermissionResolver, PermissionResponse, ToolAccess
+from wright.domain.policy import PermissionResponse, ToolAccess
 from wright.infrastructure.tools.base import Tool
 
 
@@ -47,7 +48,7 @@ def test_invalid_arguments_fail_before_permission_and_tool(tmp_path):
     executor = ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
-        permission_resolver=PermissionResolver(approval_handler=approval_handler),
+        permission_workflow=AuthorizationWorkflow(approval_handler=approval_handler),
     )
 
     outcome = executor.execute([
@@ -88,7 +89,7 @@ def test_permission_rewritten_arguments_are_revalidated(tmp_path):
     outcome = ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
-        permission_resolver=PermissionResolver(
+        permission_workflow=AuthorizationWorkflow(
             approval_handler=lambda request: PermissionResponse(
                 "allow_once", {"name": "x", "mode": "delete"}
             )

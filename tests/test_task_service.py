@@ -1,9 +1,9 @@
 import queue
 
+from tests.runtime_helpers import tool_runtime_for_session
 from wright.application.agent import build_agent_tools
 from wright.application.agent.assembly import prepare_model_tools
 from wright.application.agent.operations import agent_completion_notice
-from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.session import Session
 from wright.infrastructure.tools.agent_tools import (
     cancel_agent_tool,

@@ -142,6 +142,7 @@ def edit_file(
 
 edit_file_tool = Tool(
     name="edit_file",
+    approval_details=lambda args, cwd: {"preview": "replace:\n" + str(args.get("old_text", "")) + "\nwith:\n" + str(args.get("new_text", ""))},
     description=(
         "Replace exact text in an existing file. old_text must occur exactly once "
         "unless replace_all is true, and must not include the N| prefixes from "

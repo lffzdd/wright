@@ -326,3 +326,21 @@ def test_session_authorization_has_one_owner_and_codec_has_no_permission_io() ->
     assert not (PACKAGE_ROOT / "application/tool_execution/permissions.py").exists()
     authorization = PACKAGE_ROOT / "domain/model/session/authorization.py"
     assert not any("infrastructure" in module or "application" in module or "interfaces" in module for module in _imports_including_type_checking(authorization))
+
+
+def test_permission_orchestration_is_owned_by_the_application_service():
+    resolver = (PACKAGE_ROOT / "domain/policy/permission/resolver.py").read_text()
+    assert "approval_handler" not in resolver
+    assert "PermissionPrompt" not in resolver
+    assert "tavily" not in resolver.lower()
+    assert "def summarize" not in resolver
+    assert not (PACKAGE_ROOT / "application/tool_execution/commit.py").exists()
+    assert not (PACKAGE_ROOT / "application/tool_execution/runtime.py").exists()
+    for root in (PACKAGE_ROOT / "application", PACKAGE_ROOT / "interfaces"):
+        for path in _py_files(root):
+            text = path.read_text()
+            assert "inline_settings" not in text, path
+            assert "authorization_commit" not in text, path
+            assert "AuthorizedExecution(" not in text, path
+            if path != PACKAGE_ROOT / "application/permission/service.py":
+                assert "_repository.transaction(" not in text, path

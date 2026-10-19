@@ -19,13 +19,14 @@ from wright.application.execution.directory import (
     reset_directory_work,
 )
 from wright.application.execution.identity import ExecutionIdentity
+from wright.application.permission.service import PermissionService
 from wright.application.session.directory import SessionDirectory, SessionDirectoryError
 from wright.application.session.history_projection import project_history
 from wright.application.session.mailbox import InteractionMailbox
 from wright.application.session.publisher import EventPublisher
 from wright.application.session.service import SessionService
 from wright.domain.model.session import SessionAuthorization
-from wright.domain.policy import PermissionSettings
+from wright.infrastructure.config.permission_store import FilePermissionRepository
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 
 
@@ -388,7 +389,7 @@ def test_automation_waits_behind_an_interactive_lease(tmp_path, monkeypatch):
         store=store,
         llm=SimpleNamespace(model="test"),
         base_tools=[],
-        permission_settings=PermissionSettings(),
+        permission_service=PermissionService(FilePermissionRepository(workspace)),
         directory_coordinator=coordinator,
     )
     holder = coordinator.acquire(

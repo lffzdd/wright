@@ -7,8 +7,6 @@ Encoding, link checks, and interrupted-tool recovery live beside it.
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +15,11 @@ from typing import Any
 from ....core.logger import get_logger
 from ....domain.gateway.session_repository import ISessionRepository
 from ....domain.model.session import Session
+from ...permission_transaction import (
+    atomic_write,
+    register_checkpoint_root,
+    transaction,
+)
 from .codec import (
     _SESSION_ID_PATTERN,
     CHECKPOINT_VERSION,
@@ -41,6 +44,9 @@ class FileSessionRepository(ISessionRepository):
     def __init__(self, directory: Path) -> None:
         self.directory = directory.resolve()
         self._save_lock = threading.RLock()
+        register_checkpoint_root(self.directory)
+        with transaction():
+            pass
 
     def path_for(self, session_id: str) -> Path:
         if _SESSION_ID_PATTERN.fullmatch(session_id) is None:
@@ -48,7 +54,7 @@ class FileSessionRepository(ISessionRepository):
         return self.directory / f"{session_id}.json"
 
     def save(self, session: Session) -> Path:
-        with self._save_lock:
+        with transaction(), self._save_lock:
             return self._save_unlocked(session)
 
     def _save_unlocked(self, session: Session) -> Path:
@@ -57,32 +63,16 @@ class FileSessionRepository(ISessionRepository):
             raise _CheckpointError(
                 f"不能保存不可恢复的会话，workspace_dir 不存在: {session.workspace_dir}"
             )
-        self.directory.mkdir(parents=True, exist_ok=True)
         payload = _encode_session(session)
 
-        fd, temporary_name = tempfile.mkstemp(
-            prefix=f".{session.session_id}.",
-            suffix=".tmp",
-            dir=self.directory,
-        )
-        temporary = Path(temporary_name)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle, ensure_ascii=False, indent=2)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.chmod(temporary, 0o600)
-            os.replace(temporary, path)
-        except Exception:
-            temporary.unlink(missing_ok=True)
-            raise
+        atomic_write(path, json.dumps(payload, ensure_ascii=False, indent=2).encode())
         return path
 
     def relabel(self, session_id: str, label: str) -> dict[str, Any]:
         """Write a display name onto a checkpoint without requiring a live workspace."""
 
         path = self.path_for(session_id)
-        with self._save_lock:
+        with transaction(), self._save_lock:
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except FileNotFoundError as exc:
@@ -95,22 +85,7 @@ class FileSessionRepository(ISessionRepository):
             if not isinstance(session, dict):
                 raise _CheckpointError(f"checkpoint 无法读取: {session_id}")
             session["session_label"] = label
-            fd, temporary_name = tempfile.mkstemp(
-                prefix=f".{session_id}.",
-                suffix=".tmp",
-                dir=self.directory,
-            )
-            temporary = Path(temporary_name)
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                    json.dump(data, handle, ensure_ascii=False, indent=2)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.chmod(temporary, 0o600)
-                os.replace(temporary, path)
-            except Exception:
-                temporary.unlink(missing_ok=True)
-                raise
+            atomic_write(path, json.dumps(data, ensure_ascii=False, indent=2).encode())
         return {"session_id": session_id, "user_goal": label, "active": False}
 
     def load(self, session_id: str) -> Session:
@@ -118,13 +93,14 @@ class FileSessionRepository(ISessionRepository):
 
     def load_with_saved_at(self, session_id: str) -> tuple[Session, float]:
         """Return one decoded checkpoint and its observation time atomically."""
-        path = self.path_for(session_id)
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except FileNotFoundError as exc:
-            raise _CheckpointError(f"checkpoint 不存在: {session_id}") from exc
-        except (OSError, json.JSONDecodeError) as exc:
-            raise _CheckpointError(f"checkpoint 无法读取: {exc}") from exc
+        with transaction():
+            path = self.path_for(session_id)
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except FileNotFoundError as exc:
+                raise _CheckpointError(f"checkpoint 不存在: {session_id}") from exc
+            except (OSError, json.JSONDecodeError) as exc:
+                raise _CheckpointError(f"checkpoint 无法读取: {exc}") from exc
         session = _decode_session(data)
         try:
             saved_at = datetime.fromisoformat(data["saved_at"]).timestamp()
@@ -145,10 +121,11 @@ class FileSessionRepository(ISessionRepository):
         return max(candidates, key=lambda path: path.stat().st_mtime_ns).stem
 
     def load_latest(self) -> Session:
-        session_id = self.latest_session_id()
-        if session_id is None:
-            raise _CheckpointError("没有可继续的 checkpoint")
-        return self.load(session_id)
+        with transaction():
+            session_id = self.latest_session_id()
+            if session_id is None:
+                raise _CheckpointError("没有可继续的 checkpoint")
+            return self.load(session_id)
 
     def list_recent_sessions(self, limit: int = 5) -> list[dict[str, Any]]:
         if not self.directory.is_dir():

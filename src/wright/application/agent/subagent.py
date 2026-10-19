@@ -7,12 +7,13 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from wright.application.permission.workflow import AuthorizationWorkflow
+
 from ...domain.model.agent import AgentProfile
 from ...domain.model.agent.control import AgentControlError, AgentTaskRecord
 from ...domain.model.llm import UsageRecord
 from ...domain.model.session import Session
 from ...domain.model.tool import ToolAccess, ToolResult
-from ...domain.policy import PermissionResolver
 from ...infrastructure.llm.llm import LLMClient
 from ...infrastructure.tools.agent_tools import (
     agent_execution_view,
@@ -107,9 +108,9 @@ def make_spawn_agent_tool(
     child_max_steps: int = DEFAULT_CHILD_MAX_STEPS,
     child_timeout: float = DEFAULT_CHILD_TIMEOUT,
     render_subagents: bool = True,
-    permission_resolver: PermissionResolver | None = None,
-    authorization_commit_factory=None,
+    permission_workflow: AuthorizationWorkflow | None = None,
     publisher: EventPublisher | None = None,
+    permission_service=None,
 ) -> Tool:
     if depth < 0 or max_depth < 1 or depth >= max_depth:
         raise ValueError("spawn_agent 只能在 0 <= depth < max_depth 时创建")
@@ -183,12 +184,9 @@ def make_spawn_agent_tool(
             child_max_steps=child_max_steps,
             child_timeout=child_timeout,
             render_subagents=render_subagents,
-            permission_resolver=permission_resolver,
-            authorization_commit_factory=(
-                delegation.authorization_commit_factory
-                or authorization_commit_factory
-            ),
+            permission_workflow=permission_workflow,
             publisher=publisher,
+            permission_service=permission_service,
         )
 
         workspace_dir = Path(access_scope.origin)
@@ -257,25 +255,14 @@ def make_spawn_agent_tool(
                 usage.total_tokens,
             )
 
-        child_authorization_commit = None
-        child_commit_factory = (
-            delegation.authorization_commit_factory or authorization_commit_factory
-        )
-        if child_commit_factory is not None:
-            child_authorization_commit = child_commit_factory(child_session)
-
         child_commands = CommandExecution(
             child_session,
             bind_identity(child_session),
             allow_background=False,
         )
-        child_assembly = assemble_tool_capabilities(
-            child_session,
-            None,
-            RuntimeResources(child_session.session_id, commands=child_commands),
-            execution_journal_factory=journal_factory,
-            authorization_commit_factory=child_commit_factory,
-        )
+        child_resources = RuntimeResources(child_session.session_id, commands=child_commands)
+        child_assembly = delegation.assemble_child(child_session, child_resources, journal_factory) if delegation.assemble_child else assemble_tool_capabilities(
+            child_session, None, child_resources, execution_journal_factory=journal_factory, permissions=permission_service)
         child_profile = AgentProfile(
             "child", frozenset(tool.name for tool in child_tools),
             max_steps=record.step_budget, allow_delegation=child_depth < max_depth,
@@ -288,12 +275,11 @@ def make_spawn_agent_tool(
             events=child_events_for_agent,
             prepared=child_prepared,
             assembly=child_assembly,
-            permission_resolver=permission_resolver,
+            permission_workflow=permission_workflow,
             cancellation_check=cancelled,
             allow_background_tasks=False,
             lifecycle=runtime.lifecycle,
             execution_journal=child_journal,
-            authorization_commit=child_authorization_commit,
         )
         child_agent = Agent(
             llm,
@@ -308,8 +294,6 @@ def make_spawn_agent_tool(
             services=None,
             execution_journal=child_journal,
             execution_journal_factory=journal_factory,
-            authorization_commit=child_authorization_commit,
-            authorization_commit_factory=child_commit_factory,
         )
 
         def run_child() -> ToolResult:
@@ -454,10 +438,10 @@ def build_agent_tools(
     child_max_steps: int = DEFAULT_CHILD_MAX_STEPS,
     child_timeout: float = DEFAULT_CHILD_TIMEOUT,
     render_subagents: bool = True,
-    permission_resolver: PermissionResolver | None = None,
-    authorization_commit_factory=None,
+    permission_workflow: AuthorizationWorkflow | None = None,
     enable_scheduling: bool = False,
     publisher: EventPublisher | None = None,
+    permission_service=None,
 ) -> list[Tool]:
     if depth < 0 or max_depth < 1 or depth > max_depth:
         raise ValueError("需要满足 0 <= depth <= max_depth 且 max_depth >= 1")
@@ -472,9 +456,9 @@ def build_agent_tools(
                 child_max_steps=child_max_steps,
                 child_timeout=child_timeout,
                 render_subagents=render_subagents,
-                permission_resolver=permission_resolver,
-                authorization_commit_factory=authorization_commit_factory,
+                permission_workflow=permission_workflow,
                 publisher=publisher,
+                permission_service=permission_service,
             )
         )
     # 只有 root 读取全树；子 Agent 只通过自己的 spawn 结果观察直接孩子。

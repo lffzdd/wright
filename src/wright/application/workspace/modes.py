@@ -8,6 +8,7 @@ operations even when the session permission mode is bypass.
 from __future__ import annotations
 
 from ...domain.model.session.authorization import InteractionMode
+from ...domain.policy.permission.limits import ASK_OPERATIONS, PLAN_OPERATIONS
 
 ASK_TOOLS = frozenset({
     "read_file",
@@ -39,14 +40,6 @@ PLAN_TOOLS = ASK_TOOLS | frozenset({
     "replan",
 })
 
-ASK_OPERATIONS = frozenset({
-    "file_read",
-    "internal_read",
-    "network_read",
-    "user_interaction",
-})
-
-PLAN_OPERATIONS = ASK_OPERATIONS | frozenset({"plan_update"})
 
 
 def interaction_mode_of(session: object | None) -> InteractionMode:

@@ -8,19 +8,20 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
-import threading
 from collections.abc import Callable
-from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 
 from ...core.paths import user_permission_settings_path
 from ...domain.policy.permission.settings import PermissionSettings
-from ..file_lock import FileLock
-
-_CONFIG_LOCK = threading.RLock()
-_TRANSACTION_STATE = threading.local()
+from ..permission_transaction import (
+    _ensure_directory,
+    atomic_write,
+    journal_directory,
+    read_bytes,
+    transaction,
+    unit_of_work,
+)
 
 
 def load_permission_settings(path: Path | None = None) -> PermissionSettings:
@@ -80,47 +81,24 @@ def remove_allow_rule(rule: dict, path: Path | None = None) -> None:
 
 
 def _update_settings(update: Callable[[dict], None], path: Path | None) -> None:
-    """Read, merge and atomically replace settings.
-
-    The cross-platform file lock is the cross-process critical section. The in-process
-    lock only keeps threads from opening the lock file twice. Neither lock
-    is a transaction by itself; the exclusive lock plus one ``os.replace``
-    is what keeps a concurrent update from being lost.
-    """
-
+    """Merge settings under the common recovery and transaction lock."""
     target = path or default_settings_path()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = target.with_name(f"{target.name}.lock")
-    with _CONFIG_LOCK:
-        with FileLock(lock_path):
-            if target.is_file():
-                data = json.loads(target.read_text(encoding="utf-8"))
-            elif path is None and _packaged_path().is_file():
-                data = json.loads(_packaged_path().read_text(encoding="utf-8"))
-            else:
-                data = {"version": 2, "mode": "default", "permissions": {"allow": [], "deny": []}}
-            PermissionSettings.from_dict(data)
-            before = json.dumps(data, ensure_ascii=False, sort_keys=True)
-            update(data)
-            PermissionSettings.from_dict(data)
-            if target.is_file() and json.dumps(data, ensure_ascii=False, sort_keys=True) == before:
-                return
-            data["revision"] = uuid4().hex
-            descriptor, temporary_name = tempfile.mkstemp(
-                prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
-            )
-            temporary = Path(temporary_name)
-            try:
-                with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                    json.dump(data, handle, ensure_ascii=False, indent=2)
-                    handle.write("\n")
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.chmod(temporary, 0o600)
-                os.replace(temporary, target)
-            except Exception:
-                temporary.unlink(missing_ok=True)
-                raise
+    with transaction():
+        current = read_bytes(target)
+        if current is not None:
+            data = json.loads(current)
+        elif path is None and _packaged_path().is_file():
+            data = json.loads(_packaged_path().read_text(encoding="utf-8"))
+        else:
+            data = {"version": 2, "mode": "default", "permissions": {"allow": [], "deny": []}}
+        PermissionSettings.from_dict(data)
+        before = json.dumps(data, ensure_ascii=False, sort_keys=True)
+        update(data)
+        PermissionSettings.from_dict(data)
+        if target.is_file() and json.dumps(data, ensure_ascii=False, sort_keys=True) == before:
+            return
+        data["revision"] = uuid4().hex
+        atomic_write(target, (json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode())
 
 
 def _env_path() -> Path | None:
@@ -140,14 +118,14 @@ def protected_permission_paths(project: Path | None = None) -> tuple[Path, ...]:
     from ...core.paths import project_permission_settings_path, wright_home
 
     paths = [default_settings_path(), _user_path(), _packaged_path(),
-             wright_home() / "sandbox", wright_home() / "projects", wright_home() / "permission-transaction.lock"]
+             wright_home() / "sandbox", wright_home() / "projects", wright_home() / "permission-transaction.lock", journal_directory()]
     if project is not None:
         paths.append(project_permission_settings_path(project))
     return tuple(dict.fromkeys(path.resolve() for path in paths))
 
 
 class FilePermissionRepository:
-    """Two trusted stores outside the checkout, read on every resolution."""
+    """Authoritative user, project and session stores with light revision probes."""
 
     def __init__(self, project: Path):
         from ...core.paths import project_permission_settings_path
@@ -157,21 +135,11 @@ class FilePermissionRepository:
         from ...core.paths import project_id
         self.project_identity = project_id(project)
 
-    @contextmanager
     def transaction(self):
-        from ...core.paths import wright_home
-        target = wright_home() / "permission-transaction.lock"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with _CONFIG_LOCK:
-            if getattr(_TRANSACTION_STATE, "active", False):
-                yield
-                return
-            with FileLock(target):
-                _TRANSACTION_STATE.active = True
-                try:
-                    yield
-                finally:
-                    _TRANSACTION_STATE.active = False
+        return transaction()
+
+    def unit_of_work(self):
+        return unit_of_work()
 
     def read(self) -> tuple[PermissionSettings, tuple[str, ...]]:
         from dataclasses import replace
@@ -180,7 +148,7 @@ class FilePermissionRepository:
         # This also prevents creating a previously absent permission file via Shell.
         from ...core.paths import wright_home
         for directory in (wright_home() / "projects", wright_home() / "sandbox"):
-            directory.mkdir(parents=True, exist_ok=True)
+            _ensure_directory(directory)
         if not default_settings_path().exists():
             _update_settings(lambda _: None, None)
         if not _user_path().exists():
@@ -208,6 +176,16 @@ class FilePermissionRepository:
             settings.deny.extend(replace(rule, lifetime="project") for rule in project.deny)
             settings.ask.extend(replace(rule, lifetime="project") for rule in project.ask)
         return settings, tuple(str(path) for path in protected_permission_paths(self.project))
+
+    def revision_token(self, identities: tuple[str, ...]):
+        paths = (default_settings_path(), _user_path(), _packaged_path(), self.project_path, *(self._session_path(identity) for identity in identities))
+        def stamp(path):
+            try:
+                info = path.stat()
+                return (str(path), info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+            except FileNotFoundError:
+                return (str(path), None)
+        return (tuple(stamp(path) for path in paths), tuple(str(p) for p in protected_permission_paths(self.project)))
 
     def _session_path(self, identity: str) -> Path:
         if not identity or not all(char.isalnum() or char in "-_" for char in identity):

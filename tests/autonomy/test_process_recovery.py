@@ -16,6 +16,7 @@ import pytest
 
 from tests.autonomy.test_host_persistence import ScriptLLM
 from tests.paths import REPO_ROOT, SRC_ROOT
+from tests.permission_helpers import memory_permissions
 from wright.application.composition.host import ApplicationHost
 from wright.domain.policy import PermissionSettings
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
@@ -180,6 +181,7 @@ def test_real_host_process_lock_is_released_for_takeover_after_crash(tmp_path):
         from wright.infrastructure.persistence.autonomy_store import AutonomyStore
         from wright.domain.model.scheduling import TriggerSpec
         from wright.domain.policy import PermissionSettings
+        from tests.permission_helpers import memory_permissions
         class Fake:
             context_limit = 128000
             model = "fake"
@@ -190,7 +192,7 @@ def test_real_host_process_lock_is_released_for_takeover_after_crash(tmp_path):
         workspace, db = map(Path, sys.argv[1:])
         store = AutonomyStore(db, session_id="child", workspace_dir=workspace)
         host = ApplicationHost(workspace_dir=workspace, store=store, llm=Fake(),
-                               base_tools=[], permission_settings=PermissionSettings())
+                               base_tools=[], permission_service=memory_permissions(PermissionSettings(), workspace))
         host.start()
         print("READY", flush=True)
         sys.stdin.read()
@@ -206,7 +208,7 @@ def test_real_host_process_lock_is_released_for_takeover_after_crash(tmp_path):
         second_store = AutonomyStore(db, session_id="parent", workspace_dir=workspace)
         second = ApplicationHost(
             workspace_dir=workspace, store=second_store, llm=ScriptLLM("done"),
-            base_tools=[], permission_settings=PermissionSettings(),
+            base_tools=[], permission_service=memory_permissions(PermissionSettings(), workspace),
         )
         with pytest.raises(RuntimeError, match="already owns"):
             second.start()
@@ -215,7 +217,7 @@ def test_real_host_process_lock_is_released_for_takeover_after_crash(tmp_path):
         takeover_store = AutonomyStore(db, session_id="takeover", workspace_dir=workspace)
         takeover = ApplicationHost(
             workspace_dir=workspace, store=takeover_store, llm=ScriptLLM("done"),
-            base_tools=[], permission_settings=PermissionSettings(),
+            base_tools=[], permission_service=memory_permissions(PermissionSettings(), workspace),
         )
         takeover.start()
         assert takeover.state == "running"
@@ -238,6 +240,7 @@ def test_real_process_child_agent_side_effect_becomes_unknown_without_replay(tmp
         from wright.infrastructure.persistence.autonomy_store import AutonomyStore
         from wright.domain.model.scheduling import TriggerSpec
         from wright.domain.policy import PermissionSettings
+        from tests.permission_helpers import memory_permissions
         from tests.responses import event, response
         from wright.infrastructure.tools.base import Tool
         from wright.domain.model.tool import ToolResult, ToolAccess
@@ -284,7 +287,7 @@ def test_real_process_child_agent_side_effect_becomes_unknown_without_replay(tmp
         host = ApplicationHost(
             workspace_dir=workspace, store=store, llm=Model(),
                                base_tools=[Tool("effect", "append a marker", {"type": "object"}, effect, access_descriptor=lambda _: ToolAccess(frozenset({"persistent_write"})))],
-                               permission_settings=PermissionSettings(mode="bypass"), poll_interval=0.01,
+                               permission_service=memory_permissions(PermissionSettings(mode="bypass"), workspace), poll_interval=0.01,
         )
         host.start()
         while True:

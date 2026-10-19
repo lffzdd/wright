@@ -12,7 +12,6 @@ from ...domain.model.llm.events import (
     UsageEvent,
 )
 from ...domain.model.session import Session
-from ...domain.policy import AuthorizationChange
 from ...domain.policy.verifier import Verifier
 from ...domain.protocol import encode_tools
 from ...infrastructure.llm.llm import LLMClient
@@ -77,8 +76,6 @@ class Agent:
         execution_journal=None,
         execution_journal_factory=None,
         on_run_started: Callable[[str], None] | None = None,
-        authorization_commit: Callable[[AuthorizationChange], None] | None = None,
-        authorization_commit_factory=None,
         expose_scheduling: bool = False,
     ):
         self.llm = llm
@@ -86,8 +83,6 @@ class Agent:
         self.ui = events
         self.services = services
         self._execution_journal_factory = execution_journal_factory
-        self._authorization_commit_factory = authorization_commit_factory
-        self._authorization_commit = authorization_commit
         self.runtime_resources = assembly.runtime_resources or runtime_resources
         if self.runtime_resources is None:
             self.runtime_resources = RuntimeResources(session_state.session_id)
@@ -409,10 +404,6 @@ class Agent:
 
     def _bind_executor_run(self) -> None:
         """Reassemble tool capabilities after the active Run is known."""
-        if self._authorization_commit_factory is not None:
-            self._authorization_commit = self._authorization_commit_factory(
-                self.session_state
-            )
         assembly = assemble_tool_capabilities(
             self.session_state,
             self.services,
@@ -421,12 +412,11 @@ class Agent:
             cwd_provider=self.session_state.get_cwd,
             execution_backend=self.executor.backend,
             execution_journal_factory=self._execution_journal_factory,
-            authorization_commit_factory=self._authorization_commit_factory,
             expose_scheduling=self._expose_scheduling,
             permissions=self.executor.permissions,
         )
         self.executor.bind_run(
-            assembly, authorization_commit=self._authorization_commit
+            assembly,
         )
 
     def _is_cancelled(self) -> bool:

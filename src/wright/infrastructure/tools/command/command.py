@@ -69,6 +69,7 @@ def _project(outcome: CommandOutcome) -> ToolResult:
 
 execute_command_tool = Tool(
     name="execute_command",
+    approval_details=lambda args, cwd: {"command": str(args.get("command", ""))},
     description=(
         "Execute a shell command in the workspace, offline and isolated by default. "
         "The working directory persists across calls (cd works) and is returned as cwd "

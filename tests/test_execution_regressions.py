@@ -9,10 +9,10 @@ import threading
 import time
 from pathlib import Path
 
+from tests.runtime_helpers import tool_runtime_for_session
 from wright.application.command.execution import CommandExecution
 from wright.application.execution.identity import bind_identity
 from wright.application.session.live_resources import RuntimeResources
-from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.scheduling import TriggerSpec
 from wright.domain.model.session import Session
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore

@@ -4,13 +4,13 @@ import os
 from dataclasses import replace
 
 from tests.permission_helpers import authorize_directory
+from tests.runtime_helpers import tool_runtime_for_session
+from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
-from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall
 from wright.domain.policy import (
-    PermissionResolver,
     PermissionResponse,
 )
 from wright.infrastructure.tools.file import (
@@ -204,7 +204,7 @@ def test_always_allow_outside_write_then_edit_in_same_extra_root(tmp_path):
 
 
 def _file_executor(session, tools, handler=None):
-    resolver = PermissionResolver(approval_handler=handler)
+    resolver = AuthorizationWorkflow(approval_handler=handler)
     return ToolDispatchService(
         {tool.name: tool for tool in tools},
         assemble_tool_capabilities(
@@ -213,7 +213,7 @@ def _file_executor(session, tools, handler=None):
             cwd_provider=session.get_cwd,
         ),
         session=session,
-        permission_resolver=resolver,
+        permission_workflow=resolver,
     )
 
 

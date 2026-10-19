@@ -13,6 +13,8 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from wright.application.permission.workflow import AuthorizationWorkflow
+
 from ...core.logger import get_logger
 from ...core.paths import (
     artifact_dir,
@@ -28,15 +30,11 @@ from ...core.paths import (
 )
 from ...domain.model.session import Session
 from ...domain.policy import (
-    AuthorizationChange,
     PermissionRequest,
-    PermissionResolver,
     PermissionResponse,
-    PermissionSettings,
 )
 from ...domain.policy.verifier import Verifier
 from ...domain.prompt import get_role_instruction
-from ...infrastructure.config import load_permission_settings
 from ...infrastructure.lifecycle.loader import load_lifecycle_manager
 from ...infrastructure.llm.llm import LLMClient
 from ...infrastructure.persistence.autonomy_store import AutonomyStore
@@ -102,7 +100,6 @@ class WrightRuntime:
     mcp_manager: McpManager
     checkpoint_store: FileSessionRepository
     autonomy_store: AutonomyStore
-    permission_settings: PermissionSettings
     permissions: PermissionService
     assembled_base_tools: list[Tool]
     llm: LLMClient
@@ -543,7 +540,6 @@ def assemble_runtime(
 
     # Permission policy is centralized in the resolver.  Approval adapters only
     # collect a structured choice and never mutate settings themselves.
-    settings = load_permission_settings()
     env_interactive = os.getenv("WRIGHT_PERMISSION_INTERACTIVE")
     tty_interactive = (
         env_interactive == "1" if env_interactive is not None else sys.stdin.isatty()
@@ -561,24 +557,12 @@ def assemble_runtime(
         if interactive else None
     )
 
-    def authorization_commit_factory(target_session: Session):
-        """Create the commit route owned by one root or child Session."""
+    from ..permission.checkpoint import SessionCheckpoint
+    if not config.no_session_persistence:
+        permissions.bind_checkpoint(session_state.session_id, SessionCheckpoint(checkpoint_store, session_state))
+    permissions.policy_updated = lambda owner_id, payload: publisher.publish("session.policy_updated", payload)
 
-        def commit_authorization(change: AuthorizationChange) -> None:
-            permissions.commit(
-                change, target_session, save_checkpoint=(
-                    None if config.no_session_persistence else checkpoint_store.save
-                ),
-            )
-            if target_session is session_state and change != AuthorizationChange():
-                publisher.publish("session.policy_updated", {})
-
-        return commit_authorization
-
-    commit_authorization = authorization_commit_factory(session_state)
-
-    permission_resolver = PermissionResolver(
-        settings=settings,
+    permission_workflow = AuthorizationWorkflow(
         approval_handler=approval_handler,
         interaction_handler=(
             _make_interaction_handler(user_prompter) if interactive else None
@@ -613,10 +597,10 @@ def assemble_runtime(
         assembled_base,
         depth=0,
         max_depth=1,
-        permission_resolver=permission_resolver,
-        authorization_commit_factory=authorization_commit_factory,
+        permission_workflow=permission_workflow,
         enable_scheduling=True,
         publisher=publisher,
+        permission_service=permissions,
     )
 
     # ask_user、manage_loop、记忆与 load_skill 只给主 Agent:都在 build_agent_tools 之后
@@ -652,7 +636,7 @@ def assemble_runtime(
             # Host builds its own MCP wrappers and never retains tools bound
             # to the Session-owned manager above.
             base_tools=[*active_base_tools, *knowledge_tools],
-            permission_settings=settings,
+            permission_service=permissions,
             mcp_configs=mcp_configs,
             artifact_store=artifact_store,
             directory_coordinator=coordinator,
@@ -667,7 +651,6 @@ def assemble_runtime(
         services,
         runtime_resources,
         workspace_dir=workspace_dir,
-        authorization_commit_factory=authorization_commit_factory,
         expose_scheduling=True,
         permissions=permissions,
     )
@@ -681,13 +664,12 @@ def assemble_runtime(
         prepared=prepared,
         assembly=assembly,
         keep_recent_tool_results=3,
-        permission_resolver=permission_resolver,
+        permission_workflow=permission_workflow,
         cancellation_check=cancellation_event.is_set,
         allow_background_tasks=True,
         on_shell_task_done=lambda task_id: event_queue.put(("TASK_DONE", task_id)),
         lifecycle=lifecycle,
         execution_journal=None,
-        authorization_commit=commit_authorization,
     )
     agent = Agent(
         llm_client,
@@ -707,8 +689,6 @@ def assemble_runtime(
         skills=skill_registry if skill_tools else None,
         services=services,
         runtime_resources=runtime_resources,
-        authorization_commit=commit_authorization,
-        authorization_commit_factory=authorization_commit_factory,
         expose_scheduling=True,
     )
     bind_root_checkpoint(agent)
@@ -736,7 +716,6 @@ def assemble_runtime(
         mcp_manager=mcp_manager,
         checkpoint_store=checkpoint_store,
         autonomy_store=autonomy_store,
-        permission_settings=settings,
         permissions=agent.executor.permissions,
         assembled_base_tools=assembled_base,
         llm=llm_client,

@@ -19,11 +19,12 @@ from tests.responses import response
 from wright.application.agent import create_agent
 from wright.application.memory.assembly import assemble_memory_manager, memory_tools
 from wright.application.memory.memory_service import MemoryService
+from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.core.paths import project_id
 from wright.domain.model.memory import CoreMemoryStoreError
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall
-from wright.domain.policy import PermissionResolver, PermissionResponse
+from wright.domain.policy import PermissionResponse
 from wright.domain.policy.memory import CoreMemoryPolicy
 from wright.infrastructure.persistence.memory import (
     CORE_MEMORY_FILE,
@@ -567,7 +568,7 @@ def test_tool_update_refreshes_next_request_and_preserves_history(tmp_path, lega
         })
     agent = create_agent(
         llm, memory_tools(manager), session, memory=manager,
-        permission_resolver=PermissionResolver(
+        permission_workflow=AuthorizationWorkflow(
             approval_handler=lambda _: PermissionResponse("allow_once"),
         ),
     )
@@ -613,7 +614,7 @@ def test_anchor_update_is_on_the_next_request_and_not_another_project(tmp_path):
         memory_tools(manager),
         session,
         memory=manager,
-        permission_resolver=PermissionResolver(
+        permission_workflow=AuthorizationWorkflow(
             approval_handler=lambda _: PermissionResponse("allow_once"),
         ),
     )

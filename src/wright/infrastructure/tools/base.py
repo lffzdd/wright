@@ -45,6 +45,7 @@ class Tool:
     list_in_system_prompt: bool = True
     source: str = "builtin"
     required_capabilities: frozenset[str] = frozenset()
+    approval_details: Callable[[dict, str], dict] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {

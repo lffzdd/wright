@@ -14,6 +14,7 @@ from ...model.tool import (  # noqa: F401
     ToolAccess,
     ToolResult,
 )
+from .settings import PermissionRule
 
 PermissionDecision = Literal["allow", "deny", "ask"]
 
@@ -26,6 +27,7 @@ class PermissionSubject:
     requires_user_interaction: bool
     describe_access: Callable[[dict], ToolAccess]
     validate: Callable[[dict], ToolResult | None]
+    approval_details: Callable[[dict, str], dict] | None = None
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,13 @@ class GrantTarget:
     path: ExecutionPath
     operation: PermissionOperation
     recursive: bool = False
+
+
+@dataclass(frozen=True)
+class NetworkTarget:
+    url: str
+    method: str
+    operation: PermissionOperation
 
 
 @dataclass(frozen=True)
@@ -60,15 +69,28 @@ class InvocationGrant:
     network_enabled: bool = False
     policy_version: str = ""
     shell_readonly: tuple[ExecutionPath, ...] = ()
+    network_targets: tuple[NetworkTarget, ...] = ()
 
 
 @dataclass(frozen=True)
 class AuthorizationChange:
     """A directory/config update committed only after final allow."""
 
-    session_rules: tuple[dict[str, object], ...] = ()
-    persistent_rules: tuple[dict[str, object], ...] = ()
-    project_rules: tuple[dict[str, object], ...] = ()
+    session_rules: tuple[PermissionRule, ...] = ()
+    persistent_rules: tuple[PermissionRule, ...] = ()
+    project_rules: tuple[PermissionRule, ...] = ()
+
+    def __post_init__(self) -> None:
+        for name in ("session_rules", "persistent_rules", "project_rules"):
+            rules = tuple(getattr(self, name))
+            if any(not isinstance(rule, PermissionRule) for rule in rules):
+                raise TypeError("Authorization changes require typed permission rules")
+            lifetime = {"session_rules": "session", "project_rules": "project", "persistent_rules": "user"}[name]
+            for rule in rules:
+                rule.validate_value()
+                if rule.lifetime != lifetime:
+                    raise ValueError("Authorization rule lifetime disagrees with its change")
+            object.__setattr__(self, name, rules)
 
 
 @dataclass(frozen=True)

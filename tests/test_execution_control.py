@@ -28,6 +28,7 @@ def _executor(session, services=None):
         commands=CommandExecution(session, identity),
         identity=identity,
     )
+    session.authorization.set_modes(permission_mode="bypass", interaction_mode="agent")
     return ToolDispatchService(
         {
             tool.name: tool

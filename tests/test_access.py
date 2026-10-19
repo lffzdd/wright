@@ -6,9 +6,9 @@ import threading
 from pathlib import Path
 
 from tests.permission_helpers import authorize_directory
+from tests.runtime_helpers import tool_runtime_for_session
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
-from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.domain.policy import (

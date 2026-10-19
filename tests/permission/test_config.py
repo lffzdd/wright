@@ -1,12 +1,12 @@
 import json
 from pathlib import Path
 
+from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.tool import ToolCall
 from wright.domain.policy import (
     PermissionPolicy,
-    PermissionResolver,
     PermissionRule,
     PermissionSettings,
     ToolAccess,
@@ -25,7 +25,7 @@ def _executor(tool, settings: PermissionSettings, tmp_path: Path) -> ToolDispatc
         assemble_tool_capabilities(
             None, None, None, workspace_dir=tmp_path, cwd_provider=lambda: tmp_path,
         ),
-        permission_resolver=PermissionResolver(settings=settings),
+        permission_workflow=AuthorizationWorkflow(settings=settings),
     )
 
 
@@ -162,7 +162,7 @@ def test_cwd_outside_workspace_does_not_deny_an_origin_target(tmp_path):
             assemble_tool_capabilities(
                 None, None, None, workspace_dir=workspace, cwd_provider=lambda: tmp_path,
             ),
-            permission_resolver=PermissionResolver(
+            permission_workflow=AuthorizationWorkflow(
                 settings=PermissionSettings(mode="bypass")
             ),
         ),

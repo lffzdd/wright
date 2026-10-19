@@ -64,6 +64,7 @@ def write_file(
 
 write_file_tool = Tool(
     name="write_file",
+    approval_details=lambda args, cwd: {"preview": str(args.get("content", ""))},
     description=(
         "Create or overwrite a workspace file. Creates parent directories. "
         "Overwriting an existing file requires a complete read_file first."

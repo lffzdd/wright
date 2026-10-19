@@ -7,9 +7,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.runtime_helpers import tool_runtime_for_session
+from wright.application.permission.projection import summarize_policy
+from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.application.planning.projection import bind_plan_events, project_plan
 from wright.application.session.publisher import EventPublisher
-from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.application.workspace.grants import list_grants
 from wright.domain.gateway.execution import ExecutionPath
 from wright.domain.model.planning import PlanError, PlanManager
@@ -17,7 +19,6 @@ from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolAccess, ToolCall
 from wright.domain.policy.permission.resolver import (
     PermissionPolicy,
-    PermissionResolver,
 )
 from wright.domain.policy.permission.scope import AccessScope
 from wright.domain.policy.permission.settings import (
@@ -369,7 +370,7 @@ def test_permission_summary_defaults_match_actual_policy(
     mode, inside, outside, interaction
 ):
     policy = PermissionPolicy(PermissionSettings(mode=mode))
-    summary = policy.summarize(roots=["/project"], interaction_mode=interaction)
+    summary = summarize_policy(policy,roots=["/project"], interaction_mode=interaction)
     if interaction in {"ask", "plan"}:
         inside = ["allow", "deny", "deny"]
         outside = [
@@ -403,7 +404,7 @@ def test_summary_exposes_conditions_and_bypass_does_not_hide_deny_or_ask():
         ],
     )
     policy = PermissionPolicy(settings)
-    summary = {item["operation"]: item for item in policy.summarize(roots=["/project"])}
+    summary = {item["operation"]: item for item in summarize_policy(policy,roots=["/project"])}
     shell = summary["shell"]
     assert shell["defaults"]["in_scope"]["decision"] == "allow"
     assert [item["effect"] for item in shell["rules"]] == ["deny", "ask"]
@@ -452,8 +453,8 @@ def test_grants_summary_uses_fresh_persisted_scope(tmp_path, monkeypatch):
     root, granted = tmp_path / "root", tmp_path / "granted"
     session = Session.create("scopes", root)
     permissions = PermissionService(FilePermissionRepository(root))
-    rule = PermissionRule("*", kind="directory", root=str(granted), recursive=True, operations=("file_read",))
-    permissions.commit(AuthorizationChange(project_rules=(rule.to_persistent(),)), session)
+    rule = PermissionRule("*", kind="directory", root=str(granted), recursive=True, operations=("file_read",), lifetime="project")
+    permissions.commit(AuthorizationChange(project_rules=(rule,)), session)
     summary = list_grants(session, permissions)
     assert all(item["directories"] == [str(root.absolute()), str(granted.absolute())] for item in summary["effective_policy"])
     assert summary["grants"][0]["lifetime"] == "project"
@@ -500,7 +501,7 @@ def test_summary_agrees_with_real_resolver_scopes_and_protected_paths(
     policy = PermissionPolicy(PermissionSettings(mode=mode))
     summary = next(
         item
-        for item in policy.summarize(
+        for item in summarize_policy(policy,
             roots=[str(root), str(extra)], interaction_mode=interaction
         )
         if item["operation"] == operation
@@ -511,7 +512,7 @@ def test_summary_agrees_with_real_resolver_scopes_and_protected_paths(
         prompts.append(request.prompt)
         return "allow_once"
 
-    resolver = PermissionResolver(policy, approve)
+    resolver = AuthorizationWorkflow(policy, approve)
     subject = PermissionSubject(tool.name, False, tool.describe_access, lambda _: None)
 
     def resolve(path):

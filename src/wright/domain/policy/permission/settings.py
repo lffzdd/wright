@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from fnmatch import fnmatch
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Literal
@@ -248,6 +248,48 @@ class PermissionRule:
     exact: bool = False
     cwd: str = ""
     sandbox_key: str = ""
+
+    def validate_value(self) -> None:
+        # Rule values stay typed here; raw record validation belongs to codecs.
+        for descriptor in fields(self):
+            value = getattr(self, descriptor.name)
+            if not isinstance(value, (str, int, bool, tuple, type(None))):
+                raise TypeError("Session rules must contain immutable values")
+            if isinstance(value, tuple) and any(
+                not isinstance(item, str) for item in value
+            ):
+                raise TypeError("Session rule collections must contain strings")
+    def validate_grant(self) -> None:
+        self.validate_value()
+        if (
+            self.unresolved
+            or not self.tool_name
+            or self.kind not in {"tool", "file", "directory", "network", "shell"}
+        ):
+            raise ValueError("Session rules require a known, resolved resource")
+        if self.kind in {"file", "directory"}:
+            if not self.operations or not set(self.operations) <= {
+                "file_read",
+                "file_write",
+            }:
+                raise ValueError("File rules require file operations")
+            if self.root_kind == "absolute":
+                if not (
+                    PurePosixPath(self.root).is_absolute()
+                    or PureWindowsPath(self.root).is_absolute()
+                ):
+                    raise ValueError("Session resource roots must be absolute")
+            elif self.root_kind != "workspace" or self.root:
+                raise ValueError("Workspace rules cannot contain an absolute root")
+            pattern = self.pattern.replace("\\", "/")
+            if (
+                ".." in PurePosixPath(pattern).parts
+                or PureWindowsPath(pattern).drive
+                or PurePosixPath(pattern).is_absolute()
+            ):
+                raise ValueError("Resource pattern must stay within its root")
+            if self.kind == "file" and not pattern:
+                raise ValueError("File rules require a resource pattern")
 
     @classmethod
     def parse(cls, raw: str, *, effect: str = "allow") -> PermissionRule:
@@ -616,3 +658,27 @@ def _load_rule(item: object, effect: str) -> PermissionRule:
     if effect == "allow" and rule.tool_name == "execute_command" and (rule.kind != "shell" or not rule.exact or rule.lifetime != "session" or not rule.sandbox_key):
         raise ValueError("Shell grants require an exact session command, cwd and sandbox capability")
     return rule
+
+
+@dataclass(frozen=True)
+class PermissionConfiguration:
+    """Immutable policy input; mutable settings exist only at the decoding boundary."""
+    mode: PermissionMode
+    allow: tuple[PermissionRule, ...]
+    deny: tuple[PermissionRule, ...]
+    ask: tuple[PermissionRule, ...]
+    project_rules: tuple[PermissionRule, ...]
+    revision: str
+
+    def __post_init__(self) -> None:
+        for name in ("allow", "deny", "ask", "project_rules"):
+            rules = tuple(getattr(self, name))
+            for rule in rules:
+                if not isinstance(rule, PermissionRule):
+                    raise TypeError("Policy input requires permission rule values")
+                rule.validate_value()
+            object.__setattr__(self, name, rules)
+
+    @classmethod
+    def from_settings(cls, settings: PermissionSettings) -> PermissionConfiguration:
+        return cls(settings.mode, tuple(settings.allow), tuple(settings.deny), tuple(settings.ask), tuple(settings.project_rules), settings.revision)

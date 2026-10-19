@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from wright.application.memory.memory_service import MemoryService
+from wright.application.permission.resources import resource_change
 from wright.application.permission.service import PermissionService
 from wright.application.workspace.catalog import WorkspaceCatalog
 from wright.application.workspace.context_usage import classify_context
@@ -24,7 +25,7 @@ from wright.application.workspace.files import (
     list_directory,
     resolve_inside,
 )
-from wright.application.workspace.grants import list_grants, resource_change
+from wright.application.workspace.grants import list_grants
 from wright.application.workspace.journal import SessionChangeJournal
 from wright.application.workspace.memory_view import (
     create_semantic,
@@ -237,8 +238,10 @@ def test_ask_ceiling_survives_bypass_and_grant_revoke_is_scoped(tmp_path: Path, 
     assert plan[0] != "deny"
     assert not tool_visible("write_file", SimpleNamespace(authorization=SessionAuthorization("visibility", interaction_mode="ask", permission_mode="bypass")))
     assert tool_visible("update_plan", SimpleNamespace(authorization=SessionAuthorization("visibility", interaction_mode="plan", permission_mode="bypass")))
-    assert PermissionPolicy._ASK_OPERATIONS == ASK_OPERATIONS
-    assert PermissionPolicy._PLAN_OPERATIONS == PLAN_OPERATIONS
+    from wright.domain.policy.permission.limits import ASK_OPERATIONS as domain_ask
+    assert domain_ask == ASK_OPERATIONS
+    from wright.domain.policy.permission.limits import PLAN_OPERATIONS as domain_plan
+    assert domain_plan == PLAN_OPERATIONS
 
     session = Session.create("grants", tmp_path)
     permissions = PermissionService(FilePermissionRepository(tmp_path))

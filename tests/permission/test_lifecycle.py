@@ -3,16 +3,18 @@
 
 import pytest
 
+from wright.application.permission.resources import resource_change
 from wright.application.permission.service import (
     PermissionConflict,
     PermissionService,
 )
+from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
-from wright.application.workspace.grants import list_grants, resource_change
+from wright.application.workspace.grants import list_grants
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall
-from wright.domain.policy import PermissionResolver, PermissionResponse
+from wright.domain.policy import PermissionResponse
 from wright.domain.policy.permission.types import AuthorizationChange
 from wright.infrastructure.config.permission_store import (
     FilePermissionRepository,
@@ -57,7 +59,7 @@ def executor(setup, handler=None):
     session, _, _ = setup
     return ToolDispatchService({tool.name: tool for tool in (read_file_tool, write_file_tool, edit_file_tool)},
                                assemble_tool_capabilities(session, None, None), session=session,
-                               permission_resolver=PermissionResolver(settings=load_permission_settings(), approval_handler=handler))
+                               permission_workflow=AuthorizationWorkflow(settings=load_permission_settings(), approval_handler=handler))
 
 
 def write(dispatch, path, identity="call"):
@@ -112,7 +114,7 @@ def test_configured_restrictions_report_user_and_project_scope(setup):
 
     session, service, _ = setup
     service.snapshot(session)
-    for path, tool in ((user_permission_settings_path(), "write_file"), (service.repository.project_path, "edit_file")):
+    for path, tool in ((user_permission_settings_path(), "write_file"), (FilePermissionRepository(session.project_root).project_path, "edit_file")):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"version": 2, "permissions": {"deny": [tool]}}), encoding="utf-8")
     groups = {group["operation"]: group for group in list_grants(session, service)["effective_policy"]}
@@ -178,7 +180,7 @@ def test_project_worktree_rules_rebase_to_execution_root(setup, tmp_path):
     assert write(dispatch, "a.txt").ok
     assert not write(dispatch, session.workspace_dir / "a.txt", "other_tree").ok
     unrelated = Session.create("other project", tmp_path / "other")
-    assert PermissionService(FilePermissionRepository(unrelated.project_root)).snapshot(unrelated).settings.project_rules == []
+    assert PermissionService(FilePermissionRepository(unrelated.project_root)).snapshot(unrelated).settings.project_rules == ()
     assert service.snapshot(session).settings.project_rules[0].project_id
 
 
@@ -219,8 +221,10 @@ def test_save_failure_rolls_back_only_this_commit(setup):
     change = resource_change(session, backend, snapshot, {"kind": "file", "path": "new.txt", "operations": ["file_read"]}, "project")
     def fail(_):
         raise OSError("checkpoint failed")
+    from tests.permission_helpers import TestCheckpoint
+    service.bind_checkpoint(session.session_id, TestCheckpoint(fail, session))
     with pytest.raises(OSError):
-        service.commit(change, session, fail, expected_version=snapshot.version)
+        service.commit(change, session, expected_version=snapshot.version)
     assert [row["id"] for row in list_grants(session, service)["grants"]] == [prior["id"]]
 
 
@@ -299,7 +303,7 @@ def test_shell_session_grant_is_bound_to_command_cwd_and_profile(setup, tmp_path
         return PermissionResponse("allow_session_rule" if len(offered) == 1 else "deny")
     tool = replace(execute_command_tool, call=lambda *_: ToolResult.success())
     dispatch = ToolDispatchService({tool.name: tool}, assemble_tool_capabilities(session, None, None), session=session,
-                                   permission_resolver=PermissionResolver(settings=load_permission_settings(), approval_handler=approve))
+                                   permission_workflow=AuthorizationWorkflow(settings=load_permission_settings(), approval_handler=approve))
     assert dispatch.execute([ToolCall(tool.name, {"command": "echo hello"}, "one")])[0].result.ok
     assert dispatch.execute([ToolCall(tool.name, {"command": "echo hello"}, "two")])[0].result.ok
     assert len(offered) == 1

@@ -1,21 +1,21 @@
 import time
 
 from tests.responses import event, response
+from tests.runtime_helpers import tool_runtime_for_session
 from wright.application.agent import (
     build_agent_tools,
     create_agent,
     make_spawn_agent_tool,
 )
+from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
-from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.agent.control import AgentControlConfig, AgentControlPlane
 from wright.domain.model.llm.events import UsageEvent
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall
 from wright.domain.policy import (
     PermissionPolicy,
-    PermissionResolver,
     PermissionSettings,
 )
 from wright.infrastructure.persistence.session.repository import FileSessionRepository
@@ -49,17 +49,18 @@ def test_nested_agents_form_one_shared_task_tree(tmp_path):
         _final("root done"),
     ])
     session = Session.create("root", tmp_path)
-    permission_resolver = PermissionResolver(
+    session.authorization.set_modes(permission_mode="bypass", interaction_mode="agent")
+    permission_workflow = AuthorizationWorkflow(
         PermissionPolicy(PermissionSettings(mode="bypass"))
     )
     tools = build_agent_tools(
         llm, [], max_depth=2, render_subagents=False,
-        permission_resolver=permission_resolver,
+        permission_workflow=permission_workflow,
     )
 
     result = create_agent(
         llm, tools, session,
-        permission_resolver=permission_resolver,
+        permission_workflow=permission_workflow,
     ).run("root task")
 
     assert result == "root done"
@@ -126,6 +127,7 @@ def test_executor_deadline_propagates_to_child_control_state(tmp_path):
         SlowFinalLLM(), [], max_depth=1, child_timeout=0.01,
         render_subagents=False
     )
+    session.authorization.set_modes(permission_mode="bypass", interaction_mode="agent")
     executor = ToolDispatchService(
         {"spawn_agent": spawn},
         assemble_tool_capabilities(session, None, None),

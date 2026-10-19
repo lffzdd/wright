@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Iterable
-from dataclasses import dataclass, fields
-from pathlib import PurePosixPath, PureWindowsPath
+from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass
 from typing import Literal
 
 from ...policy.permission.settings import PermissionRule
@@ -95,44 +95,7 @@ class SessionAuthorization:
             raise TypeError("Session authorization requires PermissionRule values")
         if not rule.id or rule.lifetime != "session":
             raise ValueError("Session rules require a stable id and session lifetime")
-        # Rule values stay typed here; raw record validation belongs to codecs.
-        for descriptor in fields(rule):
-            value = getattr(rule, descriptor.name)
-            if not isinstance(value, (str, int, bool, tuple, type(None))):
-                raise TypeError("Session rules must contain immutable values")
-            if isinstance(value, tuple) and any(
-                not isinstance(item, str) for item in value
-            ):
-                raise TypeError("Session rule collections must contain strings")
-        if (
-            rule.unresolved
-            or not rule.tool_name
-            or rule.kind not in {"tool", "file", "directory", "network", "shell"}
-        ):
-            raise ValueError("Session rules require a known, resolved resource")
-        if rule.kind in {"file", "directory"}:
-            if not rule.operations or not set(rule.operations) <= {
-                "file_read",
-                "file_write",
-            }:
-                raise ValueError("File rules require file operations")
-            if rule.root_kind == "absolute":
-                if not (
-                    PurePosixPath(rule.root).is_absolute()
-                    or PureWindowsPath(rule.root).is_absolute()
-                ):
-                    raise ValueError("Session resource roots must be absolute")
-            elif rule.root_kind != "workspace" or rule.root:
-                raise ValueError("Workspace rules cannot contain an absolute root")
-            pattern = rule.pattern.replace("\\", "/")
-            if (
-                ".." in PurePosixPath(pattern).parts
-                or PureWindowsPath(pattern).drive
-                or PurePosixPath(pattern).is_absolute()
-            ):
-                raise ValueError("Resource pattern must stay within its root")
-            if rule.kind == "file" and not pattern:
-                raise ValueError("File rules require a resource pattern")
+        rule.validate_grant()
 
     def replace_rules(self, rules: Iterable[PermissionRule]) -> None:
         values = tuple(rules)
@@ -197,8 +160,17 @@ class SessionAuthorization:
                 self._interaction_mode,
             )
 
-    def effective_modes(self, default: str) -> tuple[str, InteractionMode]:
-        states = tuple(item.snapshot() for item in self.lineage())
+    @contextmanager
+    def locked_lineage(self):
+        """Keep topology and every authorization state coherent during capture."""
+        with self._topology_lock, ExitStack() as locks:
+            nodes = self.lineage()
+            for node in reversed(nodes):
+                locks.enter_context(node._lock)
+            yield nodes
+
+    @staticmethod
+    def combine_modes(states: tuple[AuthorizationState, ...], default: str) -> tuple[str, InteractionMode]:
         mode = next(
             (
                 state.permission_mode
@@ -214,6 +186,10 @@ class SessionAuthorization:
             if any(state.interaction_mode == "ask" for state in states)
             else "plan"
             if any(state.interaction_mode == "plan" for state in states)
-            else self.interaction_mode
+            else states[0].interaction_mode
         )
         return mode, interaction
+
+    def effective_modes(self, default: str) -> tuple[str, InteractionMode]:
+        with self.locked_lineage() as nodes:
+            return self.combine_modes(tuple(node.snapshot() for node in nodes), default)

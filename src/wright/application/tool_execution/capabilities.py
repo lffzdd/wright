@@ -11,12 +11,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ...domain.policy.permission.types import AuthorizationChange
 from ...infrastructure.runtime import (
     AuthorizedExecution,
     ExecutionBackend,
     LocalExecutionBackend,
 )
+from ...infrastructure.runtime.network import AuthorizedNetwork
 from ...infrastructure.tools.capabilities import (
     AgentOperations,
     CommandOperations,
@@ -57,9 +57,6 @@ def assemble_tool_capabilities(
     cwd_provider: Callable[[], Path] | None = None,
     execution_backend: ExecutionBackend | None = None,
     execution_journal_factory: Callable[[str, str], Any] | None = None,
-    authorization_commit_factory: (
-        Callable[[Session], Callable[[AuthorizationChange], None]] | None
-    ) = None,
     expose_scheduling: bool = False,
     permissions: PermissionService | None = None,
 ) -> CapabilityAssembly:
@@ -72,7 +69,9 @@ def assemble_tool_capabilities(
     backend = execution_backend or LocalExecutionBackend(workspace, cwd)
     if permissions is None:
         from ...infrastructure.config.permission_store import FilePermissionRepository
-        permissions = PermissionService(FilePermissionRepository(getattr(session, "project_root", None) or workspace), execution_factory=AuthorizedExecution)
+        permissions = PermissionService(FilePermissionRepository(getattr(session, "project_root", None) or workspace), execution_factory=AuthorizedExecution, network_factory=AuthorizedNetwork)
+    if permissions.network_factory is None:
+        permissions.network_factory = AuthorizedNetwork
     if session is None:
         return CapabilityAssembly(
             ToolCapabilities(RunScope("")),
@@ -144,7 +143,7 @@ def assemble_tool_capabilities(
                 session,
                 services,
                 execution_journal_factory,
-                authorization_commit_factory,
+                permissions,
             ),
             loop_registry=services.loop_registry if services is not None else None,
         ),
@@ -170,7 +169,7 @@ def _command_operations(resources: RuntimeResources | None) -> CommandOperations
     )
 
 
-def _delegation(session, services, journal_factory, authorization_factory) -> DelegationOperations:
+def _delegation(session, services, journal_factory, permission_service) -> DelegationOperations:
     control = session.control_plane
     background = services.agent_background if services is not None else None
 
@@ -206,12 +205,13 @@ def _delegation(session, services, journal_factory, authorization_factory) -> De
         is_cancelled=lambda task_id: control.is_cancelled(task_id),
         cancellation_reason=lambda task_id: control.cancellation_reason(task_id),
         inherit_permissions=lambda child: child.authorization.bind_parent(session.authorization),
+        assemble_child=lambda child, resources, journal: assemble_tool_capabilities(child, None, resources,
+            execution_journal_factory=journal, permissions=permission_service),
         share_control_plane=share_control_plane,
         limits=lambda: control.config.to_dict(),
         tree=lambda root_turn_id: control.tree_summary(root_turn_id),
         submit_background=submit_background if background is not None else None,
         execution_journal_factory=journal_factory,
-        authorization_commit_factory=authorization_factory,
     )
 
 

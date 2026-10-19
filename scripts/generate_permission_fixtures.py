@@ -6,11 +6,12 @@ import json
 import posixpath
 from pathlib import Path, PurePosixPath
 
+from wright.application.permission.projection import summarize_policy
+from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.domain.gateway.execution import ExecutionPath
 from wright.domain.model.tool import ToolCall
 from wright.domain.policy.permission.resolver import (
     PermissionPolicy,
-    PermissionResolver,
 )
 from wright.domain.policy.permission.scope import AccessScope
 from wright.domain.policy.permission.settings import PermissionRule, PermissionSettings
@@ -57,7 +58,7 @@ def permission_fixtures() -> dict:
         ),
         ("shell", execute_command_tool, {"command": "echo hello"}),
     ):
-        result = PermissionResolver().resolve(
+        result = AuthorizationWorkflow().resolve(
             ToolCall(tool.name, arguments, f"approval-{name}"),
             tool,
             backend=FixturePaths(),
@@ -81,7 +82,7 @@ def permission_fixtures() -> dict:
     settings = PermissionSettings(allow=list(records[1:]))
     return {
         "prompts": prompts,
-        "effective_policy": PermissionPolicy(settings).summarize(
+        "effective_policy": summarize_policy(PermissionPolicy(settings),
             roots=["/project"], session_rules=records[:1]
         ),
     }

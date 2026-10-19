@@ -13,13 +13,14 @@ from copy import copy
 from dataclasses import dataclass
 from typing import Any
 
+from wright.application.permission.workflow import AuthorizationWorkflow
+
 from ...core.logger import get_logger
 from ...domain.model.agent import AgentProfile
 from ...domain.model.agent.control import AgentControlError, AgentControlPlane
 from ...domain.model.llm import UsageRecord
 from ...domain.model.scheduling import JobRun
 from ...domain.model.session import Session
-from ...domain.policy import PermissionResolver, PermissionSettings
 from ...infrastructure.llm.llm import LLMClient, resolve_transport
 from ...infrastructure.tools.base import Tool
 from ..agent import (
@@ -184,12 +185,6 @@ def _user_prompt_for_run(scheduler: JobScheduler, run_id: str) -> str:
     return f"{prompt}\n\n<durable-trigger>\n{meta}\n</durable-trigger>"
 
 
-def _fail_closed_resolver(settings: PermissionSettings) -> PermissionResolver:
-    # The policy is the single source of truth.  With no approval adapter,
-    # every policy-level ask fails closed without an interactive fallback.
-    return PermissionResolver(settings=settings)
-
-
 def _commit_job_run(
     *,
     scheduler: JobScheduler,
@@ -240,7 +235,7 @@ def launch_job_run(
     scheduler: JobScheduler,
     llm: LLMClient,
     base_tools: Sequence[Tool],
-    permission_settings: PermissionSettings,
+    permission_service,
     background_runtime: AgentBackgroundRuntime,
     lifecycle: Any = None,
     services: RuntimeServices,
@@ -305,20 +300,7 @@ def launch_job_run(
         release_directory()
         return None
 
-    permission_resolver = _fail_closed_resolver(permission_settings)
-
-    def authorization_commit_factory(target_session: Session):
-        def commit_authorization(change) -> None:
-            from ...infrastructure.config.permission_store import (
-                FilePermissionRepository,
-            )
-            from ..permission.service import PermissionService
-
-            # Durable runs have no checkpoint; the live authorization chain
-            # determines which conversation owns remembered session grants.
-            PermissionService(FilePermissionRepository(target_session.project_root or target_session.workspace_dir)).commit(change, target_session)
-
-        return commit_authorization
+    permission_workflow = AuthorizationWorkflow()
 
     root_journal = _RunJournal(
         execution, run_id, agent_task_id=record.id
@@ -333,9 +315,9 @@ def launch_job_run(
         depth=1,
         max_depth=min(max_depth, control.config.max_depth),
         render_subagents=False,
-        permission_resolver=permission_resolver,
-        authorization_commit_factory=authorization_commit_factory,
+        permission_workflow=permission_workflow,
         enable_scheduling=False,
+        permission_service=permission_service,
     )
     child_session = Session.create(
         initial_goal=prompt,
@@ -390,7 +372,7 @@ def launch_job_run(
         None,
         RuntimeResources(child_session.session_id, commands=durable_commands),
         execution_journal_factory=child_journal_factory,
-        authorization_commit_factory=authorization_commit_factory,
+        permissions=permission_service,
     )
     durable_profile = AgentProfile(
         "durable", frozenset(tool.name for tool in child_tools),
@@ -405,12 +387,11 @@ def launch_job_run(
         events=child_events,
         prepared=durable_prepared,
         assembly=child_assembly,
-        permission_resolver=permission_resolver,
+        permission_workflow=permission_workflow,
         cancellation_check=cancelled,
         allow_background_tasks=False,
         lifecycle=lifecycle,
         execution_journal=root_journal,
-        authorization_commit=authorization_commit_factory(child_session),
     )
     child_agent = Agent(
         run_llm,
@@ -425,8 +406,6 @@ def launch_job_run(
         services=None,
         execution_journal=root_journal,
         execution_journal_factory=child_journal_factory,
-        authorization_commit=authorization_commit_factory(child_session),
-        authorization_commit_factory=authorization_commit_factory,
     )
     user_prompt = _user_prompt_for_run(scheduler, run_id)
 

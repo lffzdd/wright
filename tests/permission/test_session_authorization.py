@@ -4,8 +4,8 @@ from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
+from wright.application.permission.resources import resource_change
 from wright.application.permission.service import PermissionConflict, PermissionService
-from wright.application.workspace.grants import resource_change
 from wright.application.workspace.modes import tool_visible
 from wright.domain.model.session import Session, SessionAuthorization
 from wright.domain.policy.permission.settings import PermissionRule
@@ -105,14 +105,16 @@ def test_mode_changes_are_atomic_and_checkpoint_failure_rolls_back(tmp_path):
     def fail(_):
         raise OSError("checkpoint failed")
 
+    from tests.permission_helpers import TestCheckpoint
+    service.bind_checkpoint(session.session_id, TestCheckpoint(fail, session))
     with pytest.raises(OSError):
         service.set_modes(
             session,
             interaction_mode="plan",
             permission_mode="bypass",
-            save_checkpoint=fail,
         )
     assert service.snapshot(session).version == original.version
+    service._checkpoints.clear()
     service.set_modes(session, interaction_mode="ask")
     with pytest.raises(PermissionConflict):
         service.validate(session, original.version)

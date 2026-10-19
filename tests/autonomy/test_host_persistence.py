@@ -3,9 +3,11 @@ import time
 
 import pytest
 
+from tests.permission_helpers import memory_permissions
 from tests.responses import event, response
 from wright.application.agent import create_agent
 from wright.application.composition.host import ApplicationHost
+from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.scheduling import TriggerSpec
@@ -13,7 +15,6 @@ from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolAccess, ToolCall, ToolResult
 from wright.domain.policy import (
     PermissionPolicy,
-    PermissionResolver,
     PermissionSettings,
 )
 from wright.infrastructure.persistence.autonomy_store import (
@@ -138,7 +139,7 @@ def test_application_host_runs_persisted_automation_without_source_session(tmp_p
         store=store,
         llm=ScriptLLM("headless result"),
         base_tools=[],
-        permission_settings=PermissionSettings(),
+        permission_service=memory_permissions(PermissionSettings(), workspace),
         poll_interval=0.01,
     )
     host.start()
@@ -175,7 +176,7 @@ def test_second_application_host_cannot_recover_a_live_owner(tmp_path):
     workspace, store = _store(tmp_path)
     first = ApplicationHost(
         workspace_dir=workspace, store=store, llm=ScriptLLM("done"), base_tools=[],
-        permission_settings=PermissionSettings(),
+        permission_service=memory_permissions(PermissionSettings(), workspace),
     )
     first.start()
     second_store = AutonomyStore(
@@ -183,7 +184,7 @@ def test_second_application_host_cannot_recover_a_live_owner(tmp_path):
     )
     second = ApplicationHost(
         workspace_dir=workspace, store=second_store, llm=ScriptLLM("done"), base_tools=[],
-        permission_settings=PermissionSettings(),
+        permission_service=memory_permissions(PermissionSettings(), workspace),
     )
     with pytest.raises(RuntimeError, match="already owns"):
         second.start()
@@ -195,7 +196,7 @@ def test_second_source_session_cannot_run_same_execution_environment(tmp_path):
     workspace, store = _store(tmp_path)
     first = ApplicationHost(
         workspace_dir=workspace, store=store, llm=ScriptLLM("done"), base_tools=[],
-        permission_settings=PermissionSettings(),
+        permission_service=memory_permissions(PermissionSettings(), workspace),
     )
     first.start()
     second_store = AutonomyStore(
@@ -203,7 +204,7 @@ def test_second_source_session_cannot_run_same_execution_environment(tmp_path):
     )
     second = ApplicationHost(
         workspace_dir=workspace, store=second_store, llm=ScriptLLM("done"), base_tools=[],
-        permission_settings=PermissionSettings(),
+        permission_service=memory_permissions(PermissionSettings(), workspace),
     )
     with pytest.raises(RuntimeError, match="already owns"):
         second.start()
@@ -214,7 +215,7 @@ def test_host_defers_store_close_until_its_worker_actually_exits(tmp_path):
     workspace, store = _store(tmp_path)
     host = ApplicationHost(
         workspace_dir=workspace, store=store, llm=ScriptLLM("done"), base_tools=[],
-        permission_settings=PermissionSettings(),
+        permission_service=memory_permissions(PermissionSettings(), workspace),
     )
     host.start()
     started, release = threading.Event(), threading.Event()
@@ -282,11 +283,13 @@ def test_result_persistence_failure_stops_agent_without_retrying_effect(tmp_path
         def __call__(self, _messages, **_kwargs):
             yield event(response(calls=[{"name": "effect", "arguments": {}}]))
 
+    session = Session.create("effect", tmp_path)
+    session.authorization.set_modes(permission_mode="bypass", interaction_mode="agent")
     agent = create_agent(
         ToolLLM(),
         [Tool("effect", "effect", {"type": "object"}, lambda _args, _rt: calls.append("ran") or ToolResult.success(), access_descriptor=lambda _: ToolAccess(frozenset({"persistent_write"})))],
-        Session.create("effect", tmp_path),
-        permission_resolver=PermissionResolver(
+        session,
+        permission_workflow=AuthorizationWorkflow(
             PermissionPolicy(PermissionSettings(mode="bypass"))
         ),
         execution_journal=ResultFailJournal(),
@@ -337,7 +340,7 @@ def test_host_does_not_retry_unknown_effect_even_with_retry_policy(tmp_path, mon
     host = ApplicationHost(
         workspace_dir=workspace, store=store, llm=Model(),
         base_tools=[Tool("effect", "append marker", {"type": "object"}, effect, access_descriptor=lambda _: ToolAccess(frozenset({"persistent_write"})))],
-        permission_settings=PermissionSettings(mode="bypass"), poll_interval=0.01,
+        permission_service=memory_permissions(PermissionSettings(mode="bypass"), workspace), poll_interval=0.01,
         on_event=lambda *_: finished.set(),
     )
     try:
@@ -411,7 +414,7 @@ def test_sessions_sharing_host_share_dispatch_capacity(tmp_path):
     host = ApplicationHost(
         workspace_dir=workspace, store=first, llm=Model(),
         base_tools=[Tool("effect", "work", {"type": "object"}, effect, access_descriptor=lambda _: ToolAccess(frozenset({"persistent_write"})))],
-        permission_settings=PermissionSettings(mode="bypass"), poll_interval=0.01, on_event=completed,
+        permission_service=memory_permissions(PermissionSettings(mode="bypass"), workspace), poll_interval=0.01, on_event=completed,
     )
     try:
         first.create_job(name="first", prompt="work", trigger=TriggerSpec(type="once", run_at=0))

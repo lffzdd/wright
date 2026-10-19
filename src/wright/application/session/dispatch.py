@@ -496,7 +496,7 @@ def process_session_event(
                 scheduler=job_scheduler,
                 llm=rt.llm,
                 base_tools=rt.assembled_base_tools,
-                permission_settings=rt.permission_settings,
+                permission_service=rt.permissions,
                 background_runtime=background_runtime,
                 lifecycle=rt.lifecycle,
                 services=services,

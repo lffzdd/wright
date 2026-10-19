@@ -42,8 +42,6 @@ from .permission import (
 )
 from .verifier import Verifier
 
-SecurityPolicy = PermissionResolver
-
 __all__ = [
     "AccessScope",
     "AccessTarget",
@@ -71,7 +69,6 @@ __all__ = [
     "PermissionRule",
     "PermissionSettings",
     "PermissionSubject",
-    "SecurityPolicy",
     "SemanticExtractPolicy",
     "SemanticMemoryPolicy",
     "TokenBudgetPolicy",

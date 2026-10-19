@@ -1,15 +1,15 @@
 import os
 from typing import Any
 
-import httpx
-
 from ...domain.model.tool import AccessTarget, ToolAccess, ToolResult
+from ..runtime.network import request_target
 from .base import Tool
 
+SEARCH_ENDPOINT = "https://api.tavily.com/search"
 
-def web_search(query: str, max_results: int, timeout: int = 20):
-    resp = httpx.post(
-        url="https://api.tavily.com/search",
+def web_search(query: str, max_results: int, *, network, timeout: int = 20):
+    resp = network.request(
+        "POST", SEARCH_ENDPOINT, operation="network_read",
         headers={
             "Authorization": f"Bearer {os.environ['TAVILY_API_KEY']}",
             "Content-Type": "application/json",
@@ -42,6 +42,7 @@ def http_request(
     body: dict | str | None = None,
     headers: dict | None = None,
     timeout: int = 20,
+    *, network,
 ):
     kwargs: dict[str, Any] = {"params": params, "headers": headers, "timeout": timeout}
 
@@ -50,7 +51,8 @@ def http_request(
     elif isinstance(body, str):
         kwargs["content"] = body
 
-    resp = httpx.request(method, url, **kwargs)
+    operation = "network_read" if method.upper() in {"GET", "HEAD", "OPTIONS"} else "network_write"
+    resp = network.request(method, url, operation=operation, **kwargs)
     resp.raise_for_status()
 
     content_type = resp.headers.get("content-type", "")
@@ -77,7 +79,7 @@ def _describe_http_request(args: dict) -> ToolAccess:
     url = str(args.get("url", ""))
     return ToolAccess(
         frozenset({operation}),
-        targets=(AccessTarget("url", url, operation, kind="url"),),
+        targets=(AccessTarget("url", request_target(method, url, args.get("params")), operation, kind="url", http_method=method),),
         subject=url,
         risk_flags=flags,
         reason=f"HTTP {method} request",
@@ -88,7 +90,7 @@ def _describe_web_search(args: dict) -> ToolAccess:
     query = str(args.get("query", ""))
     return ToolAccess(
         frozenset({"network_read"}),
-        targets=(AccessTarget("provider", "https://api.tavily.com/search", "network_read", kind="url", http_method="POST"),),
+        targets=(AccessTarget("provider", SEARCH_ENDPOINT, "network_read", kind="url", http_method="POST"),),
         subject=query,
         risk_flags=("network_read",),
         reason="web search sends a query to the configured provider",
@@ -109,8 +111,10 @@ web_search_tool = Tool(
         },
         "required": ["query", "max_results"],
     },
-    call=lambda args, runtime: web_search(**args),
+    call=lambda args, runtime: web_search(**args, network=runtime.network),
     access_descriptor=_describe_web_search,
+    required_capabilities=frozenset({"network"}),
+    approval_details=lambda args, cwd: {"http_method": "POST", "http_target": SEARCH_ENDPOINT},
     is_concurrency_safe=lambda args: True,
 )
 
@@ -140,8 +144,10 @@ http_request_tool = Tool(
         },
         "required": ["url"],
     },
-    call=lambda args, runtime: http_request(**args),
+    call=lambda args, runtime: http_request(**args, network=runtime.network),
     access_descriptor=_describe_http_request,
+    required_capabilities=frozenset({"network"}),
+    approval_details=lambda args, cwd: {"http_method": str(args.get("method", "GET")).upper(), "http_target": args.get("url", ""), "header_count": len(args.get("headers") or {}), "has_body": args.get("body") not in (None, "", {})},
     is_concurrency_safe=lambda args: str(args.get("method", "GET")).upper()
     in {"GET", "HEAD"},
 )

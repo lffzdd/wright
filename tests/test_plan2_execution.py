@@ -2,20 +2,20 @@ import threading
 
 from tests.permission_helpers import authorize_directory, permission_directories
 from tests.responses import event, response
+from tests.runtime_helpers import tool_runtime_for_session
 from wright.application.agent import make_spawn_agent_tool
 from wright.application.command.execution import CommandExecution
 from wright.application.execution.identity import bind_identity
 from wright.application.permission.service import PermissionService
+from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.application.session.live_resources import RuntimeResources
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
-from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.domain.policy import (
     AccessTarget,
     PermissionPolicy,
-    PermissionResolver,
     PermissionResponse,
     PermissionSettings,
     ToolAccess,
@@ -84,11 +84,11 @@ def test_approval_rewrites_are_prepared_before_any_execution(tmp_path):
         return PermissionResponse("allow_once", {"mode": "write", "token": "ok"})
 
     tool = _mode_tool(call)
-    resolver = PermissionResolver(approval_handler=approve)
+    resolver = AuthorizationWorkflow(approval_handler=approve)
     outcomes = ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
-        permission_resolver=resolver,
+        permission_workflow=resolver,
     ).execute([
         ToolCall(tool.name, {"mode": "read", "token": "one"}, "c1"),
         ToolCall(tool.name, {"mode": "read", "token": "two"}, "c2"),
@@ -128,7 +128,7 @@ def test_final_safe_calls_overlap_after_sequential_preparation(tmp_path):
     outcomes = ToolDispatchService(
         {tool.name: tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
-        permission_resolver=PermissionResolver(approval_handler=approve),
+        permission_workflow=AuthorizationWorkflow(approval_handler=approve),
     ).execute([
         ToolCall(tool.name, {"mode": "read", "token": "one"}, "c1"),
         ToolCall(tool.name, {"mode": "read", "token": "two"}, "c2"),
@@ -147,7 +147,7 @@ def test_denied_rewrite_does_not_commit_or_execute(tmp_path):
 
     tool = _mode_tool(call)
     session = Session.create("deny", tmp_path)
-    resolver = PermissionResolver(
+    resolver = AuthorizationWorkflow(
         approval_handler=lambda _request: PermissionResponse(
             "deny", {"mode": "write", "token": "outside"}
         )
@@ -156,8 +156,7 @@ def test_denied_rewrite_does_not_commit_or_execute(tmp_path):
         {tool.name: tool},
         assemble_tool_capabilities(session, None, None, workspace_dir=tmp_path),
         session=session,
-        permission_resolver=resolver,
-        authorization_commit=lambda _change: called.append("commit"),
+        permission_workflow=resolver,
     ).execute([ToolCall(tool.name, {"mode": "read", "token": "one"}, "c1")])[0]
 
     assert not outcome.result.ok
@@ -200,6 +199,8 @@ def test_child_uses_fixed_local_cwd_and_own_scope_snapshot(tmp_path):
         required_capabilities=frozenset({"execution"}),
     )
 
+    from wright.infrastructure.runtime import AuthorizedExecution
+
     class ChildLLM:
         context_limit = 128_000
 
@@ -214,9 +215,11 @@ def test_child_uses_fixed_local_cwd_and_own_scope_snapshot(tmp_path):
         def __call__(self, _messages, **_kwargs):
             yield event(self.script.pop(0))
 
+    permission_service = PermissionService(FilePermissionRepository(workspace), execution_factory=AuthorizedExecution)
     spawn = make_spawn_agent_tool(
         ChildLLM(), [inspect_tool], max_depth=1, render_subagents=False,
-        permission_resolver=PermissionResolver(
+        permission_service=permission_service,
+        permission_workflow=AuthorizationWorkflow(
             PermissionPolicy(PermissionSettings(mode="bypass"))
         ),
     )
@@ -285,22 +288,19 @@ def test_one_executor_refreshes_scope_for_shell_and_child(tmp_path):
         def __call__(self, _messages, **_kwargs):
             yield event(self.script.pop(0))
 
-    def authorization_commit_factory(target_session):
-        def commit(change):
-            PermissionService(FilePermissionRepository(target_session.project_root or target_session.workspace_dir)).commit(change, target_session)
-
-        return commit
+    from wright.infrastructure.runtime import AuthorizedExecution
+    permission_service = PermissionService(FilePermissionRepository(workspace), execution_factory=AuthorizedExecution)
 
     def approve(request):
         if request.tool_call.name == "write_file":
             return PermissionResponse("allow_session_directory_write")
         return PermissionResponse("allow_once")
 
-    resolver = PermissionResolver(PermissionPolicy(PermissionSettings()), approve)
+    resolver = AuthorizationWorkflow(PermissionPolicy(PermissionSettings()), approve)
     spawn = make_spawn_agent_tool(
         ChildLLM(), [inspect_tool], max_depth=1, render_subagents=False,
-        permission_resolver=resolver,
-        authorization_commit_factory=authorization_commit_factory,
+        permission_service=permission_service,
+        permission_workflow=resolver,
     )
     identity = bind_identity(parent)
     executor = ToolDispatchService(
@@ -319,11 +319,10 @@ def test_one_executor_refreshes_scope_for_shell_and_child(tmp_path):
             ),
             workspace_dir=workspace,
             cwd_provider=parent.get_cwd,
-            authorization_commit_factory=authorization_commit_factory,
+            permissions=permission_service,
         ),
         session=parent,
-        permission_resolver=resolver,
-        authorization_commit=authorization_commit_factory(parent),
+        permission_workflow=resolver,
     )
     outcomes = executor.execute([
         ToolCall(
@@ -359,13 +358,16 @@ def test_agent_child_persistent_directory_uses_child_checkpoint(tmp_path, monkey
     parent.begin_user_turn("parent")
     sessions = {}
 
-    def authorization_commit_factory(target_session):
-        sessions[target_session.session_id] = target_session
-
-        def commit(change):
-            PermissionService(FilePermissionRepository(target_session.project_root or target_session.workspace_dir)).commit(change, target_session, checkpoints.save)
-
-        return commit
+    from wright.application.permission.checkpoint import SessionCheckpoint
+    from wright.infrastructure.runtime import AuthorizedExecution
+    permission_service = PermissionService(FilePermissionRepository(workspace), execution_factory=AuthorizedExecution)
+    permission_service.bind_checkpoint(parent.session_id, SessionCheckpoint(checkpoints, parent))
+    original_create = Session.create
+    def track_child(*args, **kwargs):
+        child = original_create(*args, **kwargs)
+        sessions[child.session_id] = child
+        return child
+    monkeypatch.setattr(Session, "create", track_child)
 
     class ChildLLM:
         context_limit = 128_000
@@ -391,13 +393,13 @@ def test_agent_child_persistent_directory_uses_child_checkpoint(tmp_path, monkey
             return PermissionResponse("allow_project_directory_write")
         return PermissionResponse("allow_once")
 
-    resolver = PermissionResolver(
+    resolver = AuthorizationWorkflow(
         PermissionPolicy(PermissionSettings()), approve
     )
     spawn = make_spawn_agent_tool(
         ChildLLM(), [write_file_tool], max_depth=1, render_subagents=False,
-        permission_resolver=resolver,
-        authorization_commit_factory=authorization_commit_factory,
+        permission_service=permission_service,
+        permission_workflow=resolver,
     )
     outcome = ToolDispatchService(
         {spawn.name: spawn},
@@ -405,11 +407,10 @@ def test_agent_child_persistent_directory_uses_child_checkpoint(tmp_path, monkey
             parent, None, None,
             workspace_dir=workspace,
             cwd_provider=parent.get_cwd,
-            authorization_commit_factory=authorization_commit_factory,
+            permissions=permission_service,
         ),
         session=parent,
-        permission_resolver=resolver,
-        authorization_commit=authorization_commit_factory(parent),
+        permission_workflow=resolver,
     ).execute([ToolCall(spawn.name, {"task": "write outside"}, "spawn")])[0]
 
     assert outcome.result.ok
@@ -420,7 +421,8 @@ def test_agent_child_persistent_directory_uses_child_checkpoint(tmp_path, monkey
     assert len(child_sessions) == 1
     child = child_sessions[0]
     assert child.authorization.rules == ()
-    assert checkpoints.load(child.session_id).authorization.rules == ()
+    assert checkpoints.load(parent.session_id).authorization.rules == ()
+    assert not checkpoints.path_for(child.session_id).exists()
     effective = PermissionService(FilePermissionRepository(workspace)).snapshot(child)
     assert effective.scope.additional == (extra.resolve(),)
 
@@ -428,7 +430,7 @@ def test_agent_child_persistent_directory_uses_child_checkpoint(tmp_path, monkey
 def test_project_approval_uses_repository_without_custom_callback(tmp_path):
     session = Session.create("independent", tmp_path)
     outside = tmp_path.parent / "a.txt"
-    resolver = PermissionResolver(
+    resolver = AuthorizationWorkflow(
         approval_handler=lambda _request: PermissionResponse(
             "allow_project_directory_write"
         )
@@ -437,7 +439,7 @@ def test_project_approval_uses_repository_without_custom_callback(tmp_path):
         {write_file_tool.name: write_file_tool},
         assemble_tool_capabilities(session, None, None, workspace_dir=tmp_path),
         session=session,
-        permission_resolver=resolver,
+        permission_workflow=resolver,
     ).execute([
         ToolCall(
             write_file_tool.name,
@@ -461,16 +463,20 @@ def test_authorization_commit_failure_prevents_tool_execution(tmp_path):
         called.append(True)
         raise OSError("checkpoint unavailable")
 
-    resolver = PermissionResolver(
+    resolver = AuthorizationWorkflow(
         approval_handler=lambda _request: PermissionResponse(
             "allow_session_directory_write"
         )
     )
+    from tests.permission_helpers import TestCheckpoint
+    session = Session.create("failure", tmp_path)
+    assembly = assemble_tool_capabilities(session, None, None, workspace_dir=tmp_path)
+    assembly.permissions.bind_checkpoint(session.session_id, TestCheckpoint(failing_commit, session))
     outcome = ToolDispatchService(
         {write_file_tool.name: write_file_tool},
-        assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
-        permission_resolver=resolver,
-        authorization_commit=failing_commit,
+        assembly,
+        session=session,
+        permission_workflow=resolver,
     ).execute([
         ToolCall(
             write_file_tool.name,
@@ -481,7 +487,7 @@ def test_authorization_commit_failure_prevents_tool_execution(tmp_path):
 
     assert called == [True]
     assert not outcome.result.ok
-    assert "Could not save the authorization" in outcome.result.err
+    assert "Could not authorize invocation" in outcome.result.err
     assert not outside.exists()
 
 

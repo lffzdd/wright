@@ -9,14 +9,15 @@ from pathlib import Path
 
 import pytest
 
+from tests.runtime_helpers import tool_runtime_for_session
 from wright.application.lifecycle import HookDecision
+from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
-from wright.application.tool_execution.runtime import tool_runtime_for_session
 from wright.domain.model.agent import AgentProfile, CapabilitySnapshot
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
-from wright.domain.policy import PermissionResolver, PermissionResponse, ToolAccess
+from wright.domain.policy import PermissionResponse, ToolAccess
 from wright.infrastructure.runtime import ExecutionPath, LocalExecutionBackend
 from wright.infrastructure.runtime import local as local_execution
 from wright.infrastructure.tools.base import Tool
@@ -99,7 +100,7 @@ def test_approval_failure_is_published_once_and_does_not_execute(
     outside = tmp_path / "outside.txt"
     workspace.mkdir()
     lifecycle = _RecordingLifecycle()
-    resolver = PermissionResolver(
+    resolver = AuthorizationWorkflow(
         approval_handler=(
             lambda _request: PermissionResponse(
                 "deny", "rejected by test"
@@ -115,12 +116,16 @@ def test_approval_failure_is_published_once_and_does_not_execute(
         if approval_failure == "commit":
             raise OSError("checkpoint unavailable")
 
+    from tests.permission_helpers import TestCheckpoint
+    session = Session.create("approval failure", workspace)
+    assembly = assemble_tool_capabilities(session, None, None, workspace_dir=workspace)
+    assembly.permissions.bind_checkpoint(session.session_id, TestCheckpoint(commit, session))
     callbacks = []
     outcome = ToolDispatchService(
         {write_file_tool.name: write_file_tool},
-        assemble_tool_capabilities(None, None, None, workspace_dir=workspace),
-        permission_resolver=resolver,
-        authorization_commit=commit,
+        assembly,
+        session=session,
+        permission_workflow=resolver,
         lifecycle=lifecycle,
     ).execute(
         [

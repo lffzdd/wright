@@ -104,6 +104,9 @@ class SessionService:
         self.runtime = runtime
         self._event_processor = event_processor
         self.publisher = runtime.publisher
+        permissions = getattr(runtime, "permissions", None)
+        if permissions is not None and permissions.policy_updated is None:
+            permissions.policy_updated = lambda owner_id, payload: self.publisher.publish("session.policy_updated", payload)
         self.interactions = runtime.interaction_broker
         self._lock = threading.RLock()
         self._commands: set[str] = set()
@@ -601,8 +604,7 @@ class SessionService:
         state = self.runtime.session_state
         permissions = self.runtime.permissions
         try:
-            permissions.set_modes(state, interaction_mode=interaction_mode, permission_mode=permission_mode,
-                                  save_checkpoint=lambda _: self._checkpoint())
+            permissions.set_modes(state, interaction_mode=interaction_mode, permission_mode=permission_mode)
         except ValueError as exc:
             raise SessionServiceError(str(exc)) from exc
         result = {
@@ -611,7 +613,6 @@ class SessionService:
             "permission_mode": state.authorization.permission_mode,
             "effective": "next permission resolution",
         }
-        self.publisher.publish("session.policy_updated", result)
         return result
 
     def add_document(self, session_id: str, filename: str, data: bytes) -> dict[str, Any]:

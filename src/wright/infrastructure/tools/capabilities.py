@@ -76,8 +76,8 @@ class DelegationOperations:
     tree: Callable[..., list]
     submit_background: Callable[..., None] | None = None
     execution_journal_factory: Callable[[str, str], Any] | None = None
-    authorization_commit_factory: Callable[..., Any] | None = None
     inherit_permissions: Callable[[Any], None] | None = None
+    assemble_child: Callable[..., Any] | None = None
 
 
 @dataclass(frozen=True)

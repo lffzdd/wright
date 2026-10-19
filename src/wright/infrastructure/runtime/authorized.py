@@ -63,6 +63,8 @@ class AuthorizedExecution:
             raise PermissionError("path belongs to another execution environment")
         current = self._backend.revalidate_path(path)
         self._ensure_not_blocked(current)
+        if operation == "file_write":
+            self._ensure_writable(current)
         if not any(
             item.operation == operation and _matches(current, item)
             for item in self.grant.targets
@@ -117,6 +119,7 @@ class AuthorizedExecution:
         self._operation("file_write")
         current = self._backend.revalidate_path(path)
         self._ensure_not_blocked(current)
+        self._ensure_writable(current)
         if not any(
             item.operation == "file_write"
             and (
@@ -234,7 +237,7 @@ class AuthorizedExecution:
             self.grant.subject != command or self.grant.command != command
         ):
             raise PermissionError("shell command differs from the approved command")
-        for path in (*self.grant.shell_readable, *self.grant.shell_writable, *self.grant.shell_readonly):
+        for path in (*self.grant.shell_readable, *self.grant.shell_writable, *self.grant.shell_readonly, *self.grant.blocked_paths):
             if self._backend.revalidate_path(path) != path:
                 raise PermissionError("Sandbox resource changed since approval")
         cwd = self.cwd()
@@ -255,7 +258,17 @@ class AuthorizedExecution:
             threading.Thread(target=monitor, daemon=True).start()
         return handle
 
+    def _ensure_writable(self, path: ExecutionPath) -> None:
+        for root in self.grant.shell_readonly:
+            if self._backend.revalidate_path(root) != root:
+                raise PermissionError("Read-only boundary changed since approval")
+            if _is_under(path, root):
+                raise PermissionError("path is read-only")
+
     def _ensure_not_blocked(self, path: ExecutionPath) -> None:
+        for root in self.grant.blocked_paths:
+            if self._backend.revalidate_path(root) != root:
+                raise PermissionError("Protected boundary changed since approval")
         if any(_is_under(path, blocked) for blocked in self.grant.blocked_paths):
             raise PermissionError("path is protected from this invocation")
 

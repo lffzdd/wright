@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..permission.resources import GrantError
 from ..permission.service import PermissionConflict
 from ..session.errors import SessionServiceError
 from .documents import DocumentError
-from .grants import GrantError, list_grants, resource_change
+from .grants import list_grants
 from .journal import ChangeJournalError, SessionChangeJournal
 from .memory_view import bound_project
 
@@ -36,16 +37,11 @@ def add_grant(service: Any, resource: dict[str, Any], *, lifetime: str, expected
     permissions = _permissions(service)
     session = service.runtime.session_state
     try:
-        with permissions.repository.transaction():
-            permissions.validate(session, expected_version)
-            snapshot = permissions.snapshot(session)
-            change = resource_change(session, service.runtime.agent.executor.backend, snapshot, resource, lifetime)
-            permissions.commit(change, session, lambda _: service.persist(), expected_version=expected_version)
+        permissions.grant_resource(session, service.runtime.agent.executor.backend, resource, lifetime, expected_version)
     except PermissionConflict:
         raise
     except (GrantError, TypeError, ValueError, OSError) as exc:
         raise SessionServiceError(str(exc)) from exc
-    service.publisher.publish("session.policy_updated", {})
     return session_grants(service)
 
 
@@ -53,7 +49,7 @@ def revoke_grant(service: Any, rule_id: str, *, source: str, expected_version: s
     permissions = _permissions(service)
     session = service.runtime.session_state
     try:
-        permissions.revoke(session, rule_id, source, expected_version, lambda _: service.persist())
+        permissions.revoke(session, rule_id, source, expected_version)
     except PermissionConflict:
         raise
     except (ValueError, OSError) as exc:
@@ -63,7 +59,6 @@ def revoke_grant(service: Any, rule_id: str, *, source: str, expected_version: s
         for request in interactions.snapshot():
             if request.get("kind") == "permission":
                 interactions.resolve(request["request_id"], "deny")
-    service.publisher.publish("session.policy_updated", {})
     return session_grants(service)
 
 

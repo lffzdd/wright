@@ -1,10 +1,10 @@
 from tests.permission_helpers import permission_directories
+from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.application.tool_execution.approval import InteractiveApprovalHandler
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall
-from wright.domain.policy import PermissionResolver
 from wright.infrastructure.tools.file import (
     edit_file_tool,
     read_file_tool,
@@ -48,7 +48,7 @@ def _approval(renderer: _MockRenderer) -> InteractiveApprovalHandler:
 
 
 def _executor(session: Session, renderer: _MockRenderer) -> ToolDispatchService:
-    resolver = PermissionResolver(approval_handler=_approval(renderer))
+    resolver = AuthorizationWorkflow(approval_handler=_approval(renderer))
     return ToolDispatchService(
         {
             write_file_tool.name: write_file_tool,
@@ -61,7 +61,7 @@ def _executor(session: Session, renderer: _MockRenderer) -> ToolDispatchService:
             cwd_provider=session.get_cwd,
         ),
         session=session,
-        permission_resolver=resolver,
+        permission_workflow=resolver,
     )
 
 
@@ -158,8 +158,7 @@ def test_session_rule_choice_is_scoped_and_reused_by_the_same_resolver(tmp_path)
 def test_persistent_rule_choice_is_returned_to_the_commit_adapter(tmp_path):
     session = Session.create("permission", tmp_path)
     renderer = _MockRenderer("allow_user_rule")
-    changes = []
-    resolver = PermissionResolver(approval_handler=_approval(renderer))
+    resolver = AuthorizationWorkflow(approval_handler=_approval(renderer))
     executor = ToolDispatchService(
         {
             write_file_tool.name: write_file_tool,
@@ -172,8 +171,7 @@ def test_persistent_rule_choice_is_returned_to_the_commit_adapter(tmp_path):
             cwd_provider=session.get_cwd,
         ),
         session=session,
-        permission_resolver=resolver,
-        authorization_commit=changes.append,
+        permission_workflow=resolver,
     )
 
     result = _run(
@@ -186,13 +184,13 @@ def test_persistent_rule_choice_is_returned_to_the_commit_adapter(tmp_path):
     )
 
     assert result.ok
-    rule = changes[0].persistent_rules[0]
+    rule = executor.permissions.snapshot(session).settings.allow[0].to_persistent()
     assert rule["kind"] == "file"
     assert rule["tool_name"] == "*"
     assert rule["pattern"] == "nested/a.txt"
     assert rule["root"] == str(tmp_path.resolve())
     assert rule["operations"] == ["file_read", "file_write"]
-    assert changes[0].session_rules == ()
+    assert session.authorization.rules == ()
 
 
 def test_cancelled_permission_is_denied(tmp_path):

@@ -1,6 +1,7 @@
 import queue
 import time
 
+from tests.permission_helpers import memory_permissions
 from tests.responses import event, response
 from wright.application.agent import (
     AgentBackgroundRuntime,
@@ -8,6 +9,7 @@ from wright.application.agent import (
     create_agent,
 )
 from wright.application.composition.services import RuntimeServices
+from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.application.scheduling.runner import _RunJournal, launch_job_run
 from wright.application.scheduling.scheduler import JobScheduler
 from wright.application.skills import SkillRegistry
@@ -17,7 +19,6 @@ from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolAccess, ToolResult
 from wright.domain.policy import (
     PermissionPolicy,
-    PermissionResolver,
     PermissionSettings,
 )
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
@@ -120,7 +121,7 @@ def test_durable_run_leaves_root_session_untouched(tmp_path):
         scheduler=scheduler,
         llm=ScriptLLM(["autonomous result"]),
         base_tools=[],
-        permission_settings=PermissionSettings(),
+        permission_service=memory_permissions(PermissionSettings(), workspace),
         background_runtime=background,
         services=services,
     )
@@ -149,7 +150,7 @@ def test_durable_run_leaves_root_session_untouched(tmp_path):
 
 
 def test_durable_run_does_not_block_root_user_input(tmp_path):
-    _workspace, store, session, scheduler, events, background, services = _runtime(tmp_path)
+    workspace, store, session, scheduler, events, background, services = _runtime(tmp_path)
     run_id = _claim_run(store, prompt="slow work")
     started = time.monotonic()
     launch = launch_job_run(
@@ -159,7 +160,7 @@ def test_durable_run_does_not_block_root_user_input(tmp_path):
         scheduler=scheduler,
         llm=SlowLLM("autonomous result"),
         base_tools=[],
-        permission_settings=PermissionSettings(),
+        permission_service=memory_permissions(PermissionSettings(), workspace),
         background_runtime=background,
         services=services,
     )
@@ -183,7 +184,7 @@ def test_durable_run_does_not_block_root_user_input(tmp_path):
 
 
 def test_durable_session_omits_ask_user_and_schedule_tools(tmp_path):
-    _workspace, store, session, scheduler, events, background, services = _runtime(tmp_path)
+    workspace, store, session, scheduler, events, background, services = _runtime(tmp_path)
     run_id = _claim_run(store)
     memory_tools = build_memory_tools(tmp_path / "memory")
     write_skill(
@@ -211,7 +212,7 @@ def test_durable_session_omits_ask_user_and_schedule_tools(tmp_path):
             *build_knowledge_tools(FakeKnowledge()),
             *build_skill_tools(SkillRegistry(tmp_path / "skills")),
         ],
-        permission_settings=PermissionSettings(),
+        permission_service=memory_permissions(PermissionSettings(), workspace),
         background_runtime=background,
         services=services,
     )
@@ -243,7 +244,7 @@ def test_durable_session_omits_ask_user_and_schedule_tools(tmp_path):
 
 
 def test_cancelled_dispatched_run_is_not_started(tmp_path):
-    _workspace, store, session, scheduler, _events, background, services = _runtime(tmp_path)
+    workspace, store, session, scheduler, _events, background, services = _runtime(tmp_path)
     run_id = _claim_run(store, prompt="should not execute", name="cancel me")
     store.cancel_run(run_id, "external cancellation")
     launch = launch_job_run(
@@ -253,7 +254,7 @@ def test_cancelled_dispatched_run_is_not_started(tmp_path):
         scheduler=scheduler,
         llm=ScriptLLM([]),
         base_tools=[],
-        permission_settings=PermissionSettings(),
+        permission_service=memory_permissions(PermissionSettings(), workspace),
         background_runtime=background,
         services=services,
     )
@@ -297,7 +298,8 @@ def test_durable_run_persists_history_and_child_side_effect_identity(tmp_path):
 
     llm = Script()
     root_journal = _RunJournal(store, run_id, agent_task_id="root-task")
-    permission_resolver = PermissionResolver(
+    session.authorization.set_modes(permission_mode="bypass", interaction_mode="agent")
+    permission_workflow = AuthorizationWorkflow(
         PermissionPolicy(PermissionSettings(mode="bypass"))
     )
     tools = build_agent_tools(
@@ -305,14 +307,14 @@ def test_durable_run_persists_history_and_child_side_effect_identity(tmp_path):
         [Tool("write_marker", "write marker", {"type": "object"}, write_marker, access_descriptor=lambda _: ToolAccess(frozenset({"persistent_write"})))],
         max_depth=1,
         render_subagents=False,
-        permission_resolver=permission_resolver,
+        permission_workflow=permission_workflow,
     )
     root = create_agent(
         llm,
         tools,
         session,
         services=services,
-        permission_resolver=permission_resolver,
+        permission_workflow=permission_workflow,
         execution_journal=root_journal,
         execution_journal_factory=lambda task_id, parent_id: root_journal.child(task_id, parent_id),
         profile=AgentProfile(

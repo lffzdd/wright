@@ -1,10 +1,10 @@
 # 权限与原生 Shell 隔离
 
-权限判断只在领域层实现；应用层 PermissionService 统一生成版本快照、保存授权和撤销；基础设施仓储及系统沙箱在组合入口注入。界面只选择服务端提供的选项 ID。
+权限判断只在领域层实现；应用层 PermissionService 统一决策编排、审批、参数重判、版本快照、授权提交和执行能力签发；基础设施仓储及系统沙箱在组合入口注入。界面只选择服务端提供的选项 ID。
 
 ## 会话授权状态与恢复
 
-`Session.authorization` 持有领域模型 `SessionAuthorization`，统一管理类型化会话规则、权限模式、Agent/Plan/Ask 执行限制与父级授权关系。父级引用仅指向授权对象；规则以不可变快照提供。交互子 Agent 的会话批准归属根用户会话，父级撤销和硬限制实时生效。Project 与用户授权独立存储，由 `application/permission/PermissionService` 在每次决策时组合成有效快照，不复制进会话模型。
+`Session.authorization` 持有领域模型 `SessionAuthorization`，统一管理类型化会话规则、权限模式、Agent/Plan/Ask 执行限制与父级授权关系。父级引用仅指向授权对象；规则以不可变快照提供。交互子 Agent 的会话批准归属根用户会话，父级撤销和硬限制实时生效。Project 与用户授权独立存储，由 `application/permission/PermissionService` 组合成完全不可变的有效快照；通过文件轻量修订、继承和边界变化使缓存立即失效，不复制进会话模型。
 
 检查点仅支持版本 8，权限状态保存在嵌套 `authorization` 中。旧检查点明确报错，不迁移、不改写或删除文件。独立权限仓储仍使用版本 2。编解码及历史预览不读取权限仓储；开始执行前，应用服务重新加载当前授权并校验 cwd，仓储中的撤销结果优先于检查点快照。不存在、受保护或超出当前目录范围的 cwd 恢复到执行根；执行根本身不可用时拒绝恢复。
 
@@ -27,6 +27,14 @@ Web 权限文案和审批测试数据由 `uv run python scripts/generate_permiss
 权限文件独立使用版本 2，不改变会话 checkpoint 版本。旧授权格式、additionalDirectories 和含糊规则直接报错，不迁移、不扩大授权。新记录携带稳定 ID、lifetime、project_id、资源、操作和来源。会话、项目、用户授权各自保存，不把长期记录复制成会话记录。
 
 管理接口添加授权传入 resource、lifetime、expected_version；撤销传入稳定 ID、source、expected_version。旧版本更新返回 409 及最新状态。审批完成、保存之后及实际执行之前都检查版本；跨进程修改会被重新读取。撤销取消待审批请求，令待执行调用失效，并停止依赖该授权的后台 Shell；已完成副作用不回滚。
+
+## 调用、网络与事务边界
+
+Dispatcher 准备工具与调度执行，调用 `PermissionService.authorize` 得到 `AuthorizedInvocation`。文件引用共用这个入口，界面资源授权使用 `grant_resource`。纯领域 Resolver 解析资源、判断准入并描述许可事实；应用 `AuthorizationWorkflow` 使用注入的审批适配器，重新判断被改写的参数。工具提供审批详情描述器，应用投影生成现有审批卡和策略摘要。Ask/Plan 操作上限来自同一份领域定义。
+
+内置 `http_request` 和 `web_search` 使用注入的受限网络接口。不可变许可绑定规范请求目标、查询参数、方法、语义操作及调用身份；发送前核验版本和目标。Web 搜索仍以 POST 执行 `network_read`。不自动重试或跟随重定向，供应商凭据由基础设施获取，不进入授权规则或审批投影。Knowledge 和 MCP 保持当前外部调用审批边界。
+
+专用权限工作单元将授权文件与显式登记的检查点参与者放入同一个事务。基础设施版本 1 日志记录参与文件前后内容与校验和，执行 `PREPARED → 原子替换 → COMMITTED → 清理`，同步文件及目录。未提交事务回滚，已提交事务完成新内容；恢复可重复执行，逐项收集补偿失败。恢复不完整时禁止签发许可。普通检查点保存、重命名、执行检查点读取和授权操作共享锁顺序与恢复协调，避免旧日志覆盖后来的合法写入。日志目录属于保护范围，恢复只写登记的权限或检查点文件。
 
 ## Shell 后端
 
