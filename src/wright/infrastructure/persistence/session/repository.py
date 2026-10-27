@@ -35,6 +35,30 @@ from .errors import CheckpointError as _CheckpointError
 
 logger = get_logger(__name__)
 
+_PLACEHOLDER_LABEL = "(interactive session)"
+
+
+def _checkpoint_title(session_info: dict[str, Any]) -> str:
+    """The name a person would recognize: their label, else the latest request.
+
+    Open sessions are titled by their current goal; a closed one must not fall
+    back to the placeholder label every interactive session starts with.
+    """
+    label = str(session_info.get("session_label") or "")
+    if label and label != _PLACEHOLDER_LABEL:
+        return label
+    runs = session_info.get("runs")
+    if isinstance(runs, dict):
+        goals = [
+            str(run.get("goal") or "")
+            for run in runs.values()
+            if isinstance(run, dict) and run.get("source") == "user_input" and run.get("goal")
+        ]
+        if goals:
+            return goals[-1]
+    return label
+
+
 # Files the session directory also holds that are not checkpoints.
 _NON_CHECKPOINT_STEMS = frozenset({"open_requests"})
 
@@ -170,9 +194,7 @@ class FileSessionRepository(ISessionRepository):
                     "session_id": path.stem,
                     "saved_at": saved_at_str,
                     "status": _checkpoint_run_status(session_info),
-                    "user_goal": session_info.get(
-                        "session_label", ""
-                    ),
+                    "user_goal": _checkpoint_title(session_info),
                     "environment": session_info.get("environment", "local"),
                     "execution_root": session_info.get("workspace_dir", ""),
                     "recoverable": bool(

@@ -1,6 +1,7 @@
+import type React from "react";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api";
-import { useT } from "../i18n";
+import { t, useT } from "../i18n";
 import type { Grants, SandboxStatus } from "../types";
 
 export function useShellReadiness(sessionId: string, enabled: boolean) {
@@ -98,13 +99,22 @@ export function PermissionGrants({ sessionId, grants, update }: { sessionId: str
       </div>}
     </article>}
     <div className="card-kicker"><span>{tr("web.saved_grants")}</span><span>{grants.grants?.length ?? 0}</span></div>
-    {(grants.grants ?? []).map((grant) => <article className={`policy-card ${grant.lifetime === "user" ? "warn" : ""}`} key={`${grant.source}:${grant.id}`}>
-      <div><strong className="mono policy-path">{grant.target}</strong><button type="button" disabled={busy} className="text-button" aria-label={tr("web.revoke_target", { target: grant.target })} onClick={() => mutate(() => api.revokeGrant(sessionId, grant.id, grant.source, grants.version), "web.grant_revoked")}>{tr("web.revoke")}</button></div>
-      <small><ResourceOperations kind={grant.resource_kind} operations={grant.operations} tool={grant.tool} /> · {tr(`web.lifetime.${grant.lifetime}`)}</small>
-      {grant.http_methods?.length ? <small className="mono">{grant.http_methods.join(", ")}</small> : null}
-      {grant.cwd && <small className="mono">{grant.cwd}</small>}
-      {grant.lifetime === "user" && <small>{tr("web.cross_project")}</small>}
-    </article>)}
+    {!(grants.grants ?? []).length && <p className="empty-small">{tr("web.no_saved_grants")}</p>}
+    {(["session", "project", "user"] as const).map((lifetime) => {
+      const items = (grants.grants ?? []).filter((grant) => grant.lifetime === lifetime);
+      if (!items.length) return null;
+      return <div className="grant-group" key={lifetime}>
+        <div className="grant-group-label">{tr(`web.approval.lifetime.${lifetime}`)}</div>
+        {items.map((grant) => <article className={`policy-card grant-row ${grant.lifetime === "user" ? "warn" : ""}`} key={`${grant.source}:${grant.id}`}>
+          <div className="grant-row-main"><span className="grant-line">{describeGrant(grant)}</span>
+            <button type="button" disabled={busy} className="text-button" aria-label={tr("web.revoke_target", { target: grant.target })} onClick={() => mutate(() => api.revokeGrant(sessionId, grant.id, grant.source, grants.version), "web.grant_revoked")}>{tr("web.revoke")}</button></div>
+          {grant.cwd && <small className="mono">{tr("web.approval.in_folder", { path: grant.cwd })}</small>}
+          {grant.tool && grant.tool !== "*" && <small>{tr("web.tool_restriction", { tool: grant.tool })}</small>}
+          {grant.lifetime === "user" && <small>{tr("web.cross_project")}</small>}
+        </article>)}
+      </div>;
+    })}
+    <details className="grant-add"><summary>{tr("web.add_rule")}</summary>
     <form className="policy-card grant-form" onSubmit={(event) => { event.preventDefault(); mutate(() => api.addGrant(sessionId, { kind, path: path.trim(), operations: write ? ["file_read", "file_write"] : ["file_read"] }, lifetime, grants.version), "web.grant_added", true); }}>
       <strong>{tr("web.add_grant")}</strong>
       <label>{tr("web.scope_label")}<select value={kind} onChange={(event) => setKind(event.target.value)}><option value="file">{tr("web.grant_kind.file")}</option><option value="directory">{tr("web.grant_kind.directory")}</option></select></label>
@@ -116,5 +126,97 @@ export function PermissionGrants({ sessionId, grants, update }: { sessionId: str
       {lifetime === "user" && <small>{tr("web.cross_project")}</small>}
       <button className="button primary" disabled={busy || !path.trim()}>{tr(busy ? "web.submitting" : "web.add_grant")}</button>
     </form>
+    </details>
   </section>;
+}
+
+const MODES = ["default", "acceptEdits", "bypass"] as const;
+
+type Decision = "allow" | "ask" | "deny";
+
+function decisionOf(grants: Grants | null, operation: "file_read" | "file_write" | "shell", where: "in_scope" | "outside_scope"): Decision | null {
+  const policy = grants?.effective_policy?.find((item) => item.operation === operation);
+  const value = policy?.defaults?.[where]?.decision;
+  return value === "allow" || value === "ask" || value === "deny" ? value : null;
+}
+
+/**
+ * The Permissions tab answers three questions in this order: what happens
+ * without asking, which rules I saved, and what is always blocked. The full
+ * decision matrix stays available, folded, for auditing.
+ */
+export function PermissionsPanel({ sessionId, grants, update, interactionMode, permissionMode, detail }: {
+  sessionId: string;
+  grants: Grants | null;
+  update: (value: Grants) => void;
+  interactionMode: string;
+  permissionMode: string;
+  detail?: React.ReactNode;
+}) {
+  const tr = useT();
+  const [saving, setSaving] = useState("");
+  const [error, setError] = useState("");
+  const readOnly = interactionMode !== "agent";
+  const mode = grants?.permission_mode ?? permissionMode ?? "default";
+  const setMode = async (next: string) => {
+    if (next === mode || saving) return;
+    setSaving(next); setError("");
+    try {
+      await api.policy(sessionId, { permission_mode: next });
+      update(await api.grants(sessionId));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally { setSaving(""); }
+  };
+  const rows: Array<{ key: string; decision: Decision | null; note?: string }> = [
+    { key: "read_inside", decision: decisionOf(grants, "file_read", "in_scope") },
+    { key: "edit_inside", decision: readOnly ? "deny" : decisionOf(grants, "file_write", "in_scope") },
+    { key: "shell_inside", decision: readOnly ? "deny" : decisionOf(grants, "shell", "in_scope"), note: tr("web.glance.sandboxed") },
+    { key: "outside", decision: decisionOf(grants, "file_write", "outside_scope") ?? decisionOf(grants, "file_read", "outside_scope") },
+    { key: "network", decision: readOnly ? "deny" : "ask" },
+  ];
+  const blocked = (grants?.effective_policy ?? []).flatMap((policy) => policy.rules
+    .filter((rule) => rule.effect === "deny")
+    .map((rule) => ({ ...rule, operation: policy.operation })));
+  return <div className="permissions-panel">
+    <section className="perm-section">
+      <div className="section-label"><span>{tr("web.glance.title")}</span></div>
+      <div className="perm-modes" role="radiogroup" aria-label={tr("web.permission_mode")}>
+        {MODES.map((item) => <button key={item} type="button" role="radio" aria-checked={mode === item}
+          className={`perm-mode ${mode === item ? "active" : ""}`} disabled={readOnly || Boolean(saving)} onClick={() => void setMode(item)}>
+          <strong>{tr(`web.perm.${item}`)}</strong>
+          <small>{tr(`web.perm_help.${item}`)}</small>
+        </button>)}
+      </div>
+      {readOnly && <p className="hint">{tr("web.perm_locked", { mode: tr(`web.mode.${interactionMode}`) })}</p>}
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <ul className="glance">
+        {rows.map((row) => <li key={row.key} className={`glance-row ${row.decision ?? "unknown"}`}>
+          <span>{tr(`web.glance.${row.key}`)}</span>
+          <span className="glance-decision">{row.decision ? tr(`web.glance.decision.${row.decision}`) : tr("web.unknown")}{row.decision === "allow" && row.note ? ` · ${row.note}` : ""}</span>
+        </li>)}
+      </ul>
+    </section>
+    {grants && <PermissionGrants sessionId={sessionId} grants={grants} update={update} />}
+    {blocked.length > 0 && <details className="perm-section perm-fold">
+      <summary>{tr("web.glance.always_blocked", { count: blocked.length })}</summary>
+      <ul className="blocked-list">
+        {blocked.map((rule, index) => <li key={`${rule.operation}:${index}`}><code>{rule.target}</code><small>{tr(`web.lifetime.${rule.scope}`)}{rule.conditional ? ` · ${tr("web.policy_conditional")}` : ""}</small></li>)}
+      </ul>
+    </details>}
+    {detail && <details className="perm-section perm-fold">
+      <summary>{tr("web.glance.how_decided")}</summary>
+      {detail}
+    </details>}
+  </div>;
+}
+
+/** A saved rule as a sentence: what may happen, and where. */
+export function describeGrant(grant: Grants["grants"][number]): string {
+  const writes = grant.operations.includes("file_write");
+  if (grant.resource_kind === "directory") return t(writes ? "web.grant_line.dir_write" : "web.grant_line.dir_read", { path: grant.target });
+  if (grant.resource_kind === "file") return t(writes ? "web.grant_line.file_write" : "web.grant_line.file_read", { path: grant.target });
+  if (grant.resource_kind === "shell") return t("web.grant_line.shell", { command: grant.target });
+  if (grant.resource_kind === "network") return t("web.grant_line.network", { target: grant.target, methods: grant.http_methods?.join(", ") || "GET" });
+  return grant.target;
 }

@@ -339,7 +339,9 @@ class Agent:
             )
             stream = self.llm(request, tools=self.tool_schemas)
             for event in stream:
-                if self._is_cancelled():
+                # A complete response that already arrived is kept: the normal
+                # cancellation path records it and closes its tool calls.
+                if self._is_cancelled() and not isinstance(event, (ContentDone, UsageEvent)):
                     # Stop reading as soon as the person presses Stop. Closing
                     # the generator closes the provider stream underneath.
                     close = getattr(stream, "close", None)
@@ -777,7 +779,10 @@ class Agent:
 
     def _fail_run(self, exc: BaseException, *, record_memory: bool) -> None:
         detail = describe_model_error(exc)
-        logger.warning("run failed: %s", detail, exc_info=exc)
+        # The reason reaches every surface through the Run; the traceback is
+        # for debugging only and must not be printed into a terminal UI.
+        logger.warning("run failed: %s", detail)
+        logger.debug("run failure traceback", exc_info=exc)
         self.last_error = detail
         if self.session_state.current_run_status() in {"completed", "failed", "cancelled", "interrupted"}:
             return

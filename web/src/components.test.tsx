@@ -86,6 +86,14 @@ describe("draft environment", () => {
 });
 
 describe("InteractionCard", () => {
+  it("shows a specific reason when the server gives one", () => {
+    render(<InteractionCard sessionId="s" interaction={{
+      request_id: "r0", kind: "permission", tool_name: "execute_command", command: "pip install x",
+      reason_code: "permission.network_requested", reason: "network", choices: [],
+    }} respond={() => true} />);
+    expect(screen.getByText("This command requests network access")).toBeDefined();
+  });
+
   const interaction = {
     request_id: "r1",
     kind: "permission" as const,
@@ -105,8 +113,8 @@ describe("InteractionCard", () => {
   it("shows the reason, grant and preview as text and ignores a second click", () => {
     const respond = vi.fn(() => new Promise<boolean>(() => undefined));
     const { container } = render(<InteractionCard sessionId="s" interaction={interaction} respond={respond} />);
-    expect(screen.getByText("Reason: needs approval")).toBeDefined();
-    expect(screen.getByText("Grant: Adds file root /tmp/project/nested")).toBeDefined();
+    // A reason that only says "needs approval" is noise; it is not shown.
+    expect(screen.queryByText(/needs approval/)).toBeNull();
     expect(screen.getByText("hello <script>alert(1)</script>")).toBeDefined();
     expect(container.querySelector("script")).toBeNull();
     const allow = screen.getByRole("button", { name: /Allow once/i });

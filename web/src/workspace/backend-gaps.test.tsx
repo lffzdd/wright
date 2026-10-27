@@ -106,8 +106,10 @@ describe("backend data in workspace panels", () => {
     const { rerender } = render(inspector(state));
     fireEvent.click(screen.getByRole("tab", { name: /Permissions/ }));
     expect(await screen.findByText("File Write")).toBeTruthy();
-    expect(screen.getByText(/Conditional rule/)).toBeTruthy();
-    expect(screen.getByText(/Conditional rule/).textContent).toContain("This project long term");
+    // The rule appears in the folded "Always blocked" summary and in the full matrix.
+    const conditional = screen.getAllByText(/Conditional rule/);
+    expect(conditional.length).toBeGreaterThan(0);
+    expect(conditional.every((node) => node.textContent?.includes("This project long term"))).toBe(true);
     expect(screen.getByText(/Read-only directory: \/external-ro/)).toBeTruthy();
     expect(screen.getByText("Only through edit_file")).toBeTruthy();
     expect(screen.getByText("Protected permission files remain blocked.")).toBeTruthy();
@@ -116,7 +118,7 @@ describe("backend data in workspace panels", () => {
     const bypass = { ...state, session: { ...state.session, permission_mode: "bypass" } };
     rerender(inspector(bypass));
     await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText("Fewer confirmations")).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole("radio", { name: /Auto-approve edits \+ commands/ }).getAttribute("aria-checked")).toBe("true"));
     rerender(inspector({ ...bypass, connection: "reconnecting" }));
     await waitFor(() => expect(request).toHaveBeenCalledTimes(3));
     rerender(inspector({ ...bypass, connection: "connected" }));

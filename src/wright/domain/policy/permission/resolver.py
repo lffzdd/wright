@@ -102,7 +102,7 @@ class PermissionPolicy:
             )
 
         if "shell" in access.operations and access.operations & {"network_read", "network_write"}:
-            return "ask", "This command requests network capability", "policy", "permission.needs_approval", {}
+            return "ask", "This command requests network access", "policy", "permission.network_requested", {}
         if access.operations & {"external_unknown", "unknown"}:
             return "ask", "Unknown or undeclared external effects need approval for this invocation", "policy", "permission.unknown_operation", {}
 

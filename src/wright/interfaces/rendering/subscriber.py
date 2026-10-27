@@ -98,6 +98,8 @@ class RendererEventSubscriber:
                 )
             else:
                 self.renderer.on_system_notice(_notice_text(payload))
+        elif event.type == "turn.failed" and payload.get("error"):
+            self.renderer.on_system_notice(t("notice.turn_failed", detail=str(payload.get("error"))))
         elif event.type == "system.checkpoint_error":
             self.renderer.on_checkpoint_error(str(payload.get("error", "")))
         elif event.type == "task.updated":

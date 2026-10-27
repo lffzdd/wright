@@ -4,7 +4,7 @@ import { MarkdownContent } from "../Markdown";
 import { parseDiff } from "../diff";
 import { present, t, useT } from "../i18n";
 import type { Interaction, TimelineItem, ToolState } from "../types";
-import { useShellReadiness } from "./permissions";
+import { PermissionApproval } from "./approval";
 
 function textOf(value: unknown): string {
   if (typeof value === "string") return value;
@@ -262,85 +262,26 @@ export function toolCardFromState(tool: ToolState) {
   return <ToolCard key={tool.call_id} name={tool.name} phase={tool.phase} args={tool.arguments} data={tool.data} output={toolOutput(tool)} />;
 }
 
-export function InteractionCard({ sessionId, interaction, respond }: {
+export function InteractionCard({ sessionId, interaction, respond, root }: {
   sessionId: string;
+  interaction: Interaction;
+  respond: (requestId: string, answer: unknown) => boolean | Promise<boolean>;
+  root?: string;
+}) {
+  if (interaction.kind === "permission") {
+    return <PermissionApproval sessionId={sessionId} interaction={interaction} respond={respond} root={root} />;
+  }
+  return <QuestionCard interaction={interaction} respond={respond} />;
+}
+
+function QuestionCard({ interaction, respond }: {
   interaction: Interaction;
   respond: (requestId: string, answer: unknown) => boolean | Promise<boolean>;
 }) {
   const [answer, setAnswer] = useState("");
   const [submitting, setSubmitting] = useState("");
-  const [error, setError] = useState("");
-  const [kept, setKept] = useState("");
-  const [more, setMore] = useState(false);
-  const [advanced, setAdvanced] = useState(false);
-  const [rememberId, setRememberId] = useState("");
-  const [network, setNetwork] = useState(false);
-  const sending = useRef(false);
-  const moreRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { if (more) moreRef.current?.scrollIntoView?.({ block: "nearest" }); }, [more]);
   const tr = useT();
-  const isPermission = interaction.kind === "permission";
-  const reason = present(interaction.reason_code, interaction.reason_params, interaction.reason ?? "");
-  const grant = present(interaction.summary_code, interaction.summary_params, interaction.grant_summary ?? "");
-  const isShell = interaction.tool_name === "execute_command";
-  const isHttp = Boolean(interaction.http_target);
-  const isFile = interaction.operation?.includes("file_") || ["write_file", "edit_file", "read_file"].includes(interaction.tool_name || "");
-  const action = isShell ? "shell" : isHttp ? "http" : isFile ? interaction.operation?.includes("file_write") || ["write_file", "edit_file"].includes(interaction.tool_name || "") ? "file_write" : "file_read" : "tool";
-  const target = isShell ? interaction.command || "" : isHttp ? `${interaction.http_method} ${interaction.http_target}` : (interaction.targets?.length ? [...new Set(interaction.targets)].join("\n") : interaction.subject || interaction.tool_name || "");
-  const shell = useShellReadiness(sessionId, isPermission && isShell);
-  const shellBlocked = isShell && shell.status?.available !== true;
-  const risks = interaction.risk_flags ?? [];
-  const choices = interaction.choices ?? [];
-  const denies = choices.filter((choice) => choice.id === "deny");
-  const allows = choices.filter((choice) => choice.id !== "deny");
-  const visible = allows.filter((choice) => choice.id === "allow_once");
-  const extra = allows.filter((choice) => choice.id !== "allow_once" && choice.id !== "allow_once_network");
-  const remembered = extra.find((choice) => choice.id === rememberId) || extra.find((choice) => choice.lifetime === "project") || extra[0];
-  const offered = extra.filter((choice) => advanced || choice.lifetime !== "user");
-  const scopeKey = (choice: typeof remembered) => choice ? `${choice.resource_kind}:${choice.scope}` : "";
-  const scopes = offered.filter((choice, index, items) => items.findIndex((item) => scopeKey(item) === scopeKey(choice)) === index);
-  const capabilities = offered.filter((choice) => scopeKey(choice) === scopeKey(remembered)).filter((choice, index, items) => items.findIndex((item) => item.operations?.join() === choice.operations?.join()) === index);
-  const lifetimes = offered.filter((choice) => scopeKey(choice) === scopeKey(remembered) && choice.operations?.join() === remembered?.operations?.join());
-  const networkChoice = allows.find((choice) => choice.id === "allow_once_network");
-  const hasGlobalChoices = extra.some((choice) => choice.lifetime === "user");
-  const setOption = (field: "scope" | "operations" | "lifetime", value: string) => {
-    const options = offered.filter((choice) => field === "scope" ? scopeKey(choice) === value : field === "operations" ? scopeKey(choice) === scopeKey(remembered) && choice.operations?.join() === value : scopeKey(choice) === scopeKey(remembered) && choice.operations?.join() === remembered?.operations?.join() && choice.lifetime === value);
-    const candidate = options.find((choice) => choice.lifetime === remembered?.lifetime) || options.find((choice) => choice.lifetime === "project") || options[0];
-    if (candidate) setRememberId(candidate.id);
-  };
-  const riskLevel = tr(`web.risk_level.${interaction.risk_level || "review"}`);
-  const riskNote = risks.length ? risks.map(describeRisk).join(" · ") : tr("web.risk_unspecified");
-  const scopeFallback = visible[0] ? tr("permission.scope.once") : "";
-  const scopeDetail = risks.includes("recursive_delete")
-    ? t("web.scope_note.recursive_delete")
-    : scopeFallback && scopeFallback !== grant ? scopeFallback : "";
-  const choose = (choiceId: string) => {
-    if (sending.current || (shellBlocked && choiceId !== "deny")) return;
-    sending.current = true;
-    setSubmitting(choiceId);
-    setError("");
-    setKept(choiceId);
-    Promise.resolve(respond(interaction.request_id, choiceId)).then((accepted) => {
-      if (accepted === false) {
-        sending.current = false;
-        setSubmitting("");
-        setError(t("web.decision_failed"));
-      }
-    }).catch(() => {
-      sending.current = false;
-      setSubmitting("");
-      setError(t("web.decision_failed"));
-    });
-  };
-  const choiceButton = (choice: { id: string; label: string }, tone: "primary" | "session" | "deny") => (
-    <button key={choice.id} type="button" className={`perm-choice ${tone}`} disabled={Boolean(submitting) || (shellBlocked && tone !== "deny")} onClick={() => choose(choice.id === "allow_once" && network && networkChoice ? networkChoice.id : choice.id)}>
-      {tone === "primary" && <Check size={13} weight="bold" />}{tone === "deny" && <X size={12} weight="bold" />}
-      {submitting === choice.id || (choice.id === "allow_once" && submitting === networkChoice?.id) ? tr("web.submitting") : choice.id === "allow_once" ? tr(network ? "web.allow_once_network" : "web.allow_once") : choice.id === "deny" ? tr("permission.choice.deny") : choice.label}
-      {tone === "primary" && <kbd>{/Mac/i.test(navigator.platform) ? "⌥↵" : "Alt+Enter"}</kbd>}{tone === "deny" && <kbd>Esc</kbd>}
-    </button>
-  );
-  if (!isPermission) {
-    return <section className="interaction-card ask-card" role="alert">
+  return <section className="interaction-card ask-card" role="alert">
       <div className="perm-head"><strong>{tr("web.needs_input")}</strong></div>
       <form className="perm-body ask-form" onSubmit={(event) => {
         event.preventDefault();
@@ -349,6 +290,7 @@ export function InteractionCard({ sessionId, interaction, respond }: {
         Promise.resolve(respond(interaction.request_id, answer.trim())).then((accepted) => { if (accepted === false) setSubmitting(""); });
       }}>
         <p>{interaction.question}</p>
+        {interaction.context && <p className="hint">{interaction.context}</p>}
         {interaction.options?.map((option) => <button type="button" className="option-button" key={option} disabled={Boolean(submitting)} onClick={() => {
           if (submitting) return;
           setSubmitting(option);
@@ -358,69 +300,4 @@ export function InteractionCard({ sessionId, interaction, respond }: {
         <button className="button primary" aria-label={tr("web.submit_answer")} disabled={Boolean(submitting)}>{tr("web.submit_answer")}</button>
       </form>
     </section>;
-  }
-  return <div className="tl-indent">
-    <section className="interaction-card" role="alert" tabIndex={0} onKeyDown={(event) => {
-      if (event.target instanceof HTMLElement && event.target.closest("input,select,textarea")) return;
-      if (event.key === "Escape" && denies.length) { event.preventDefault(); choose(denies[0].id); }
-      if (event.altKey && event.key === "Enter" && visible.length) { event.preventDefault(); choose(network && networkChoice ? networkChoice.id : visible[0].id); }
-    }}>
-      <div className="perm-head">
-        <span className="perm-title"><span className="perm-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg></span><strong>{tr("web.permission_required")}</strong><span className="perm-blocked">{tr("web.action_blocked")}</span></span>
-        <span className="perm-paused">{tr("web.agent_paused")}<span className="dot pulse" /></span>
-      </div>
-      <div className="perm-body">
-        <div>
-          <div className="perm-kicker">{tr(`web.permission_action.${action}`)}</div>
-          <div className="perm-command">{isShell && <span className="muted">$</span>}<span className="perm-target">{target}</span><button type="button" className="copy-command" aria-label={tr("web.copy_target")} onClick={() => navigator.clipboard?.writeText(target).catch(() => undefined)}>{t("web.copy")}</button></div>
-          {interaction.preview && <details className="permission-preview" open><summary>{tr("web.content_preview")}</summary><pre>{interaction.preview}</pre>{interaction.preview_truncated && <p role="status">{tr("web.preview_truncated")}</p>}</details>}
-        </div>
-        <div className="perm-grid">
-          <div>
-            <span className="perm-label">{tr("web.reason_label")}</span>
-            <span className="sr-only">{reason ? tr("web.reason", { value: reason }) : tr("web.reason_missing")}</span>
-            <span>{reason || tr("web.reason_missing")}</span>
-          </div>
-          <div>
-            <span className="perm-label">{tr("web.scope_label")}</span>
-            <span className="sr-only">{grant ? tr("web.grant", { value: grant }) : (visible[0]?.scope || tr("web.scope_missing"))}</span>
-            <span className="mono scope-value">{grant || visible[0]?.scope || tr("web.scope_missing")}</span>
-            {scopeDetail ? <small>{scopeDetail}</small> : null}
-          </div>
-          <div>
-            <span className="perm-label">{tr("web.risk_label")}</span>
-            <span className="risk-level"><i />{riskLevel}</span>
-            <small>{riskNote}</small>
-          </div>
-        </div>
-        {interaction.shell_note && <p>{present("permission.shell_note", { cwd: interaction.cwd || "" }, interaction.shell_note)}</p>}
-        {isShell && <div className="shell-readiness" role="status">
-          <strong>{shell.status ? tr(`web.sandbox.${shell.status.state}`) : tr(shell.checked ? "web.sandbox.unavailable" : "web.sandbox.checking")}</strong>
-          {shell.status?.detail && <small>{shell.status.detail}</small>}
-          {shell.error && <p className="form-error" role="alert">{shell.error}</p>}
-          {shellBlocked && <p>{tr("web.sandbox.approval_hint")}</p>}
-          {shellBlocked && shell.status?.platform === "win32" && shell.status.state !== "initializing" && <button type="button" className="button" disabled={Boolean(shell.busy) || Boolean(submitting)} onClick={() => void shell.initialize()}>{tr("web.sandbox.initialize")}</button>}
-          {shell.error && <button type="button" className="text-button" disabled={Boolean(shell.busy)} onClick={shell.refresh}>{tr("web.sandbox.refresh")}</button>}
-        </div>}
-        {networkChoice && <label className="network-capability"><input type="checkbox" checked={network} onChange={(event) => setNetwork(event.target.checked)} disabled={Boolean(submitting) || shellBlocked} />{tr("web.command_network")}</label>}
-        {network && extra.length > 0 && <p className="hint" role="status">{tr("web.network_once_only")}</p>}
-        {error && <p role="alert">{error}{kept ? tr("web.kept_choice", { choice: choices.find((choice) => choice.id === kept)?.lifetime ? tr(`web.lifetime.${choices.find((choice) => choice.id === kept)?.lifetime}`) : tr(kept === "deny" ? "permission.choice.deny" : "web.allow_once") }) : ""}</p>}
-        <div className="interaction-actions">
-          {visible.map((choice, index) => choiceButton(choice, index === 0 ? "primary" : "session"))}
-          {denies.map((choice) => choiceButton(choice, "deny"))}
-          {extra.length > 0 && <button type="button" className="text-button perm-more" onClick={() => setMore((value) => !value)}>{tr("web.more_grants")}</button>}
-        </div>
-        <small className="audit-note">{tr("web.audit_recorded")}</small>
-        {more && remembered && <div ref={moreRef} className="more-grants grant-form">
-          <label>{tr("web.scope_label")}<select value={scopeKey(remembered)} onChange={(event) => setOption("scope", event.target.value)}>{scopes.map((choice) => <option key={scopeKey(choice)} value={scopeKey(choice)}>{tr(`web.grant_kind.${choice.resource_kind}`)} · {choice.scope}</option>)}</select></label>
-          <label>{tr("web.operations")}<select value={remembered.operations?.join() || ""} onChange={(event) => setOption("operations", event.target.value)}>{capabilities.map((choice) => <option key={choice.id} value={choice.operations?.join() || ""}>{choice.operations?.map((operation) => tr(`web.operation.${operation}`)).join(", ") || tr(`web.grant_kind.${choice.resource_kind}`)}</option>)}</select></label>
-          <label>{tr("web.lifetime")}<select value={remembered.lifetime || "session"} onChange={(event) => setOption("lifetime", event.target.value)}>{lifetimes.map((choice) => <option key={choice.id} value={choice.lifetime}>{tr(`web.lifetime.${choice.lifetime}`)}</option>)}</select></label>
-          {hasGlobalChoices && <button type="button" className="text-button" onClick={() => { if (advanced && remembered.lifetime === "user") setRememberId(extra.find((choice) => scopeKey(choice) === scopeKey(remembered) && choice.lifetime === "project")?.id || extra[0].id); setAdvanced(!advanced); }}>{tr("web.advanced")}</button>}
-          <p className="grant-summary" aria-live="polite">{remembered.scope} · {remembered.operations?.map((operation) => tr(`web.operation.${operation}`)).join(", ")} · {tr(`web.lifetime.${remembered.lifetime}`)}</p>
-          {remembered.lifetime === "user" && <small>{tr("web.cross_project")}</small>}
-          <button type="button" className="button primary" disabled={Boolean(submitting) || shellBlocked || network} onClick={() => choose(remembered.id)}>{tr("web.remember_allow")}</button>
-        </div>}
-      </div>
-    </section>
-  </div>;
 }

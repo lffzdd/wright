@@ -42,6 +42,8 @@ Repository = "https://github.com/lffzdd/wright"
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.15"]
+# Browser end-to-end tests (tests/e2e_web), opt-in with WRIGHT_E2E_WEB=1.
+e2e = ["playwright>=1.50"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/wright"]

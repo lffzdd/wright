@@ -173,6 +173,17 @@ uv run python scripts/smoke_agent.py
 uv run python scripts/smoke_subagent.py
 ```
 
+Browser end-to-end tests drive the real web console in headless Chromium against
+a scripted OpenAI-compatible model (`tests/e2e_web/fake_llm.py`), including
+provider quirks such as HTTP errors, slow streams and non-standard tool-call
+fragments. They are opt-in:
+
+```bash
+uv sync --group dev --group e2e --extra web
+uv run playwright install chromium
+WRIGHT_E2E_WEB=1 uv run pytest tests/e2e_web
+```
+
 Knowledge search is off unless `WRIGHT_KNOWLEDGE_ENABLED=1`. It is an optional
 adapter: set `WRIGHT_RAG_DIR` / `WRIGHT_KNOWLEDGE_INDEX` if you have an external
 RAG package. Wright does not vendor that stack.

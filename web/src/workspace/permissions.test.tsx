@@ -17,24 +17,57 @@ const grants: Grants = { effective_policy: [], version: "revision-a", grants: [{
 beforeEach(() => setLocale("en"));
 afterEach(() => { cleanup(); vi.restoreAllMocks(); setLocale("en"); });
 
+it("offers the narrowest useful session rule as a one-click choice", async () => {
+  const respond = vi.fn().mockResolvedValue(true);
+  const sessionChoices: Interaction["choices"] = [
+    ...(choices ?? []).slice(0, 1),
+    { id: "allow_session_rule", label: "Session", scope: "/project/src/a.ts", persistence: "", lifetime: "session", resource_kind: "file", operations: ["file_read", "file_write"] },
+    { id: "allow_session_directory_write", label: "Session", scope: "/project/src", persistence: "", lifetime: "session", resource_kind: "directory", operations: ["file_read", "file_write"] },
+    ...(choices ?? []).slice(1),
+  ];
+  render(<InteractionCard sessionId="s" root="/project" interaction={{ request_id: "r", kind: "permission", tool_name: "edit_file", operation: "file_write", targets: ["/project/src/a.ts"], choices: sessionChoices }} respond={respond} />);
+  expect(screen.getByText("Wright wants to change a file")).toBeTruthy();
+  expect(document.querySelector(".perm-target")?.textContent).toBe("src/a.ts");
+  fireEvent.click(screen.getByRole("button", { name: /Allow edits to everything in src\/ for this session/ }));
+  await waitFor(() => expect(respond).toHaveBeenCalledWith("r", "allow_session_directory_write"));
+});
+
+it("keeps outside-project access narrow: the quick rule is the single file", async () => {
+  const respond = vi.fn().mockResolvedValue(true);
+  render(<InteractionCard sessionId="s" root="/project" interaction={{
+    request_id: "r", kind: "permission", tool_name: "read_file", operation: "file_read", targets: ["/etc/hosts"], risk_flags: ["reads_files", "path_outside_scope"],
+    choices: [
+      { id: "allow_once", label: "Once", scope: "", persistence: "", lifetime: "once" },
+      { id: "allow_session_rule", label: "", scope: "/etc/hosts", persistence: "", lifetime: "session", resource_kind: "file", operations: ["file_read"] },
+      { id: "allow_session_directory_read", label: "", scope: "/etc", persistence: "", lifetime: "session", resource_kind: "directory", operations: ["file_read"] },
+      { id: "deny", label: "Deny", scope: "", persistence: "" },
+    ],
+  }} respond={respond} />);
+  expect(screen.getByText("Outside this project")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: /Allow reads of \/etc\/hosts for this session/ }));
+  await waitFor(() => expect(respond).toHaveBeenCalledWith("r", "allow_session_rule"));
+});
+
 it("defaults remembered approval to exact file and project and hides global authority", async () => {
   const respond = vi.fn().mockResolvedValue(true);
   render(<InteractionCard sessionId="s" interaction={{ request_id: "r", kind: "permission", choices }} respond={respond} />);
-  expect(screen.queryByRole("combobox")).toBeNull();
-  fireEvent.click(screen.getByText("Remember authorization"));
-  const selections = screen.getAllByRole("combobox") as HTMLSelectElement[];
-  expect(selections[0].value).toBe("file:/project/a");
-  expect(selections[2].value).toBe("project");
-  expect(screen.queryByRole("option", { name: "All projects long term" })).toBeNull();
+  expect(screen.queryByRole("radio")).toBeNull();
+  fireEvent.click(screen.getByText("More options"));
+  const radios = screen.getAllByRole("radio") as HTMLInputElement[];
+  expect(radios).toHaveLength(2);
+  expect(radios[0].checked).toBe(true);
+  expect(screen.queryByText(/in all projects/)).toBeNull();
   fireEvent.click(screen.getByText("Save and allow"));
   await waitFor(() => expect(respond).toHaveBeenCalledWith("r", "allow_project_rule"));
 });
 
-it("uses server option IDs for explicit directory expansion", async () => {
+it("uses server option IDs for explicit directory expansion and shows global rules only on request", async () => {
   const respond = vi.fn().mockResolvedValue(true);
   render(<InteractionCard sessionId="s" interaction={{ request_id: "r", kind: "permission", choices }} respond={respond} />);
-  fireEvent.click(screen.getByText("Remember authorization"));
-  fireEvent.change(screen.getAllByRole("combobox")[0], { target: { value: "directory:/project" } });
+  fireEvent.click(screen.getByText("More options"));
+  fireEvent.click(screen.getByText("Show options for all projects"));
+  expect(screen.getAllByRole("radio")).toHaveLength(3);
+  fireEvent.click(screen.getByLabelText(/everything in \/project\//));
   fireEvent.click(screen.getByText("Save and allow"));
   await waitFor(() => expect(respond).toHaveBeenCalledWith("r", "allow_project_directory_write"));
 });
@@ -88,9 +121,9 @@ it("keeps file target and content separate, including long paths and a shortened
   const { container } = render(<InteractionCard sessionId="s" interaction={{ request_id: "file", kind: "permission", tool_name: "write_file", operation: "file_write", subject: path, targets: [path, path], preview: "new file content", preview_truncated: true, choices }} respond={vi.fn()} />);
   expect(container.querySelector(".perm-target")?.textContent).toBe(path);
   expect(container.querySelector(".permission-preview pre")?.textContent).toBe("new file content");
-  expect(screen.getByText("Write or edit a file")).toBeTruthy();
+  expect(screen.getByText("Wright wants to change a file")).toBeTruthy();
   expect(screen.getByRole("status").textContent).toContain("Approval applies to the complete content");
-  expect(container.querySelector(".perm-command")?.textContent).not.toContain("$");
+  expect(container.querySelector(".approval-target")?.textContent).not.toContain("$");
 });
 
 it("blocks Shell click and keyboard approval until setup is ready, then requires a new explicit approval", async () => {
@@ -125,9 +158,12 @@ it("network opt-in sends the server network choice and cannot silently save offl
   const respond = vi.fn(() => new Promise<boolean>(() => undefined));
   render(<InteractionCard sessionId="s" interaction={shellInteraction} respond={respond} />);
   await waitFor(() => expect((screen.getByRole("button", { name: /Allow once/i }) as HTMLButtonElement).disabled).toBe(false));
-  fireEvent.click(screen.getByText("Remember authorization"));
-  expect(screen.queryByText("Advanced: all projects")).toBeNull();
+  expect(screen.getByRole("button", { name: /Allow “echo hello” for this session/ })).toBeTruthy();
   fireEvent.click(screen.getByRole("checkbox"));
+  // With network on, nothing that would be remembered is offered directly.
+  expect(screen.queryByRole("button", { name: /for this session/ })).toBeNull();
+  fireEvent.click(screen.getByText("More options"));
+  expect(screen.queryByText("Show options for all projects")).toBeNull();
   const save = screen.getByRole("button", { name: "Save and allow" }) as HTMLButtonElement;
   expect(save.disabled).toBe(true);
   expect(screen.getByText(/Network is for this invocation only/)).toBeTruthy();
@@ -138,21 +174,22 @@ it("network opt-in sends the server network choice and cannot silently save offl
   expect(screen.getByRole("button", { name: /Submitting/ })).toBeTruthy();
 });
 
-it("localizes the server risk level without assigning danger from generic capabilities", async () => {
+it("shows only the facts that change the decision, localized", async () => {
   setLocale("zh-CN");
   vi.spyOn(api, "grants").mockResolvedValue(readyGrants);
-  const { rerender } = render(<InteractionCard sessionId="s" interaction={shellInteraction} respond={vi.fn()} />);
-  expect(screen.getByText("需要确认")).toBeTruthy();
-  expect(screen.queryByText("Medium")).toBeNull();
-  rerender(<InteractionCard sessionId="s" interaction={{ ...shellInteraction, risk_level: "elevated", risk_flags: ["deletes_files"] }} respond={vi.fn()} />);
-  expect(screen.getByText("删除或修改外部状态")).toBeTruthy();
+  const { rerender, container } = render(<InteractionCard sessionId="s" interaction={shellInteraction} respond={vi.fn()} />);
+  // "Runs a shell command" is already said by the title; no badge repeats it.
+  expect(container.querySelectorAll(".approval-badge")).toHaveLength(0);
+  rerender(<InteractionCard sessionId="s" interaction={{ ...shellInteraction, risk_level: "elevated", risk_flags: ["executes_shell", "deletes_files"] }} respond={vi.fn()} />);
+  expect(screen.getByText("删除文件")).toBeTruthy();
+  expect(container.querySelector(".approval-card.elevated")).toBeTruthy();
 });
 
 it("does not approve while the user is using a scope selector", () => {
   const respond = vi.fn();
   render(<InteractionCard sessionId="s" interaction={{ request_id: "file", kind: "permission", choices }} respond={respond} />);
-  fireEvent.click(screen.getByText("Remember authorization"));
-  fireEvent.keyDown(screen.getAllByRole("combobox")[0], { key: "Enter", altKey: true });
+  fireEvent.click(screen.getByText("More options"));
+  fireEvent.keyDown(screen.getAllByRole("radio")[0], { key: "Enter", altKey: true });
   expect(respond).not.toHaveBeenCalled();
 });
 

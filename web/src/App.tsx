@@ -12,6 +12,12 @@ import {
 } from "./workspace/widgets";
 import type { FileReference } from "./types";
 
+
+/** The server no longer has this session open; its checkpoint remains. */
+function sessionGone(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 404;
+}
+
 export type { Draft };
 export { Composer, Inspector, InteractionCard, visibleModels } from "./workspace/widgets";
 
@@ -340,7 +346,13 @@ export default function App() {
             if (!owned()) return;
             setState({ ...initialView(fresh), connection: "reconnecting" });
             connect(fresh, attempt + 1);
-          }).catch(() => { if (owned()) connect(snapshot, attempt + 1); });
+          }).catch((error) => {
+            if (!owned()) return;
+            // The session was closed (for example to make room). Its history is
+            // still on disk: show it instead of reconnecting forever.
+            if (sessionGone(error)) { setBrowsing("preview"); refreshSessions().catch(() => undefined); return; }
+            connect(snapshot, attempt + 1);
+          });
         }, Math.min(10_000, 500 * (2 ** Math.min(attempt, 5))));
       };
       ws.onmessage = (message) => {
@@ -387,7 +399,11 @@ export default function App() {
       streamId.current = snapshot.stream_id;
       setState(initialView(snapshot));
       connect(snapshot);
-    }).catch((error) => { if (owned()) setFatal(String(error)); });
+    }).catch((error) => {
+      if (!owned()) return;
+      if (sessionGone(error)) { setBrowsing("preview"); refreshSessions().catch(() => undefined); return; }
+      setFatal(String(error));
+    });
     return () => { epoch.current += 1; if (retryTimer !== undefined) window.clearTimeout(retryTimer); socket.current?.close(); };
   }, [selected, browsing, refreshSessions, updateDraft]);
 
@@ -588,7 +604,9 @@ export default function App() {
       streamId.current = snapshot.stream_id;
       setState({ ...initialView(snapshot), connection: "connected" });
     }).catch((error) => {
-      if (epoch.current === generation) setFatal(String(error));
+      if (epoch.current !== generation) return;
+      if (sessionGone(error)) { setBrowsing("preview"); return; }
+      setFatal(String(error));
     });
   }, [state?.resync, selected]);
 
@@ -743,6 +761,7 @@ export default function App() {
             <InteractionDock
               sessionId={state.session.session_id}
               pending={state.pending_interactions}
+              root={state.session.execution_root}
               respond={(requestId, answer) => respondToInteraction(requestId, answer)}
             />
           )}

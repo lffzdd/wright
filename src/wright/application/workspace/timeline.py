@@ -100,10 +100,10 @@ def _with_run_outcomes(session: Any, items: list[dict[str, Any]]) -> list[dict[s
     ]
     if not runs or not user_positions:
         return items
-    pairs = list(zip(reversed(user_positions), reversed(runs)))
+    pairs = list(zip(reversed(user_positions), reversed(runs), strict=False))
     inserts: dict[int, dict[str, Any]] = {}
-    boundaries = user_positions[1:] + [len(items)]
-    end_of = dict(zip(user_positions, boundaries))
+    boundaries = [*user_positions[1:], len(items)]
+    end_of = dict(zip(user_positions, boundaries, strict=True))
     for position, run in pairs:
         status = str(getattr(run, "status", ""))
         if status not in _UNSUCCESSFUL:

@@ -1,4 +1,4 @@
-import { PermissionGrants, ResourceOperations } from "./permissions";
+import { PermissionsPanel, ResourceOperations } from "./permissions";
 import {
   Archive, Check, Circle, DotsThreeVertical, Folder, Image, Paperclip, PaperPlaneRight, Plus, Square, Warning, X,
 } from "@phosphor-icons/react";
@@ -109,14 +109,15 @@ export function visibleModels(models: string[], currentModel: string, extras: st
 
 export { InteractionCard };
 
-export function InteractionDock({ sessionId, pending, respond }: {
+export function InteractionDock({ sessionId, pending, respond, root }: {
   sessionId: string;
+  root?: string;
   pending: ViewState["pending_interactions"];
   respond: (requestId: string, answer: unknown) => boolean | Promise<boolean>;
 }) {
   if (!pending.length) return null;
   return <div className="interaction-dock" aria-live="polite">
-    {pending.map((item) => <InteractionCard key={item.request_id} sessionId={sessionId} interaction={item} respond={respond} />)}
+    {pending.map((item) => <InteractionCard key={item.request_id} sessionId={sessionId} interaction={item} respond={respond} root={root} />)}
   </div>;
 }
 
@@ -203,6 +204,7 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }:
         {state.active_turn.content ? <AssistantMessage text={state.active_turn.content} /> : <p className="empty-small">{tr("web.working")}</p>}
       </div>}
     </>}
+    {state.session.execution === "queued" && <p className="hint queue-reason" role="status">{tr("web.queued_reason", { reason: state.session.queue_reason || tr("web.queued_default") })}</p>}
     {(state.agents ?? []).map((agent) => <section className="agent-progress" key={agent.task_id}><strong>Subagent {agent.task_id} · {agent.status}</strong>{agent.content && <MarkdownContent content={agent.content} />}</section>)}
     {state.queued_commands.map((item) => <div className="queue-item" key={item.command_id}><span>{item.prompt}</span><button type="button" className="button" onClick={() => cancelQueued(item.command_id)}>{tr("web.remove_queued")}</button></div>)}
     {state.notices.slice(-5).map((notice) => <div className="system-notice" role="status" key={notice.id}>{present(notice.code, notice.params, notice.text)}</div>)}
@@ -395,19 +397,23 @@ export function Composer({
         <span className="hint">{draft.reason || (uploading ? tr("web.uploading") : "") || (draft.phase === "awaiting" ? tr("web.awaiting_accept") : "") || (offline ? tr("web.offline_hint") : "")}</span>
       </div>
       <div className="row-actions">
-        <select className="select select-mode" aria-label={tr("web.interaction_mode")} value={interactionMode} onChange={(event) => onPolicy?.({ interaction_mode: event.target.value }).catch((error) => updateDraft(sessionId, (item) => ({ ...item, reason: String(error) })))}>
-          <option value="agent">⚡ {tr("web.mode.agent")}</option>
-          <option value="plan">📐 {tr("web.mode.plan")}</option>
-          <option value="ask">💬 {tr("web.mode.ask")}</option>
+        <select className="select select-mode" aria-label={tr("web.interaction_mode")} title={tr(`web.mode_help.${interactionMode}`)} value={interactionMode} onChange={(event) => onPolicy?.({ interaction_mode: event.target.value }).catch((error) => updateDraft(sessionId, (item) => ({ ...item, reason: String(error) })))}>
+          <option value="agent" title={tr("web.mode_help.agent")}>⚡ {tr("web.mode.agent")}</option>
+          <option value="plan" title={tr("web.mode_help.plan")}>📐 {tr("web.mode.plan")}</option>
+          <option value="ask" title={tr("web.mode_help.ask")}>💬 {tr("web.mode.ask")}</option>
         </select>
         <select className="select select-model" aria-label={tr("web.model")} value={currentModel} onChange={(event) => onModel?.(event.target.value)}>
           {visibleModels(models, currentModel).map((model) => <option key={model} value={model}>{model}</option>)}
         </select>
-        <select className="select select-permissions" aria-label={tr("web.permission_mode")} value={permissionMode || "default"} onChange={(event) => onPolicy?.({ permission_mode: event.target.value }).catch((error) => updateDraft(sessionId, (item) => ({ ...item, reason: String(error) })))}>
-          <option value="default">{tr("web.perm.default")}</option>
-          <option value="acceptEdits">{tr("web.perm.acceptEdits")}</option>
-          <option value="plan">{tr("web.perm.plan")}</option>
-          <option value="bypass">{tr("web.perm.bypass")}</option>
+        {/* Plan and Ask are read-only ceilings, so the permission level only matters in Agent mode. */}
+        <select className="select select-permissions" aria-label={tr("web.permission_mode")}
+          title={interactionMode === "agent" ? tr(`web.perm_help.${permissionMode || "default"}`) : tr("web.perm_locked", { mode: tr(`web.mode.${interactionMode}`) })}
+          disabled={interactionMode !== "agent"}
+          value={permissionMode || "default"} onChange={(event) => onPolicy?.({ permission_mode: event.target.value }).catch((error) => updateDraft(sessionId, (item) => ({ ...item, reason: String(error) })))}>
+          <option value="default" title={tr("web.perm_help.default")}>{tr("web.perm.default")}</option>
+          <option value="acceptEdits" title={tr("web.perm_help.acceptEdits")}>{tr("web.perm.acceptEdits")}</option>
+          <option value="bypass" title={tr("web.perm_help.bypass")}>{tr("web.perm.bypass")}</option>
+          {permissionMode === "plan" && <option value="plan" title={tr("web.perm_help.plan")}>{tr("web.perm.plan")}</option>}
         </select>
         {running && <button type="button" className="button stop" onClick={() => { cancel().catch(() => undefined); }}><Square size={11} weight="fill" />{tr("web.stop")}<kbd>{tr("web.shortcut_key", { key: "." })}</kbd></button>}
         {running && cancelAll && <button type="button" className="button stop" onClick={() => { cancelAll().catch(() => undefined); }}>{tr("web.stop_all")}</button>}
@@ -674,9 +680,11 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
       {wide && selected && <div className="wide-diff"><button type="button" className="button" onClick={() => setWide(false)}>{tr("web.close")}</button><DiffViewer patch={patch} filename={selected} /></div>}
     </div>}
     {tab === "permissions" && <div className="inspector-body">
-      <div className="section-label"><span>{tr("web.security_policy")}</span></div>
       {panelError && <p className="form-error" role="alert">{panelError}</p>}
-      <article className="policy-card"><div><strong>{tr("web.permission_mode")}</strong><span>{tr(`web.perm.${grants?.permission_mode ?? state.session.permission_mode ?? "default"}`)}</span></div><small>{tr(`web.mode.${grants?.interaction_mode ?? state.session.interaction_mode ?? "agent"}`)}</small></article>
+      <PermissionsPanel sessionId={sessionId} grants={grants} update={setGrants}
+        interactionMode={grants?.interaction_mode ?? state.session.interaction_mode ?? "agent"}
+        permissionMode={state.session.permission_mode ?? "default"}
+        detail={<>
       {grants?.effective_policy?.map((policy) => <section className="policy-group" key={policy.operation}>
         <div className="card-kicker"><span>{tr(`web.policy_operation.${policy.operation}`)}</span></div>
         <article className="policy-card effective-policy">
@@ -693,7 +701,7 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
         <div className="card-kicker"><span>{tr("web.enforced_boundaries")}</span></div>
         {boundaries.map((item) => <article className="policy-card policy-boundary" key={item}><span className="policy-check"><Check size={12} weight="bold" /></span><span>{tr(item)}</span></article>)}
       </section>}
-      {grants && <PermissionGrants sessionId={sessionId} grants={grants} update={setGrants} />}
+        </>} />
     </div>}
     {tab === "context" && <div className="inspector-body">
       <div className="section-label"><span>{tr("web.token_breakdown")}</span></div>
