@@ -68,6 +68,7 @@ def project_timeline(session: Any, pending: list[dict[str, Any]] | None = None) 
         if call_id in seen_calls:
             continue
         items.append(_tool_item(execution, len(records) + offset))
+    items = _with_run_outcomes(session, items)
     for offset, interaction in enumerate(pending or []):
         items.append({
             "id": str(interaction.get("request_id") or f"approval:{offset}"),
@@ -77,6 +78,54 @@ def project_timeline(session: Any, pending: list[dict[str, Any]] | None = None) 
             "order": len(records) + len(ordered) + offset,
         })
     return items
+
+
+_UNSUCCESSFUL = frozenset({"failed", "cancelled", "interrupted"})
+
+
+def _with_run_outcomes(session: Any, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Insert one status item where each failed or cancelled user turn ended.
+
+    Runs are created in the order people sent messages, so the n-th user Run
+    belongs to the n-th user message. Alignment starts from the newest turn,
+    which keeps recent history right even if an old Run never recorded input.
+    """
+    runs = [
+        run for run in (getattr(session, "runs", {}) or {}).values()
+        if getattr(run, "source", "") == "user_input"
+    ]
+    user_positions = [
+        index for index, item in enumerate(items)
+        if item.get("kind") == "text" and item.get("role") == "user"
+    ]
+    if not runs or not user_positions:
+        return items
+    pairs = list(zip(reversed(user_positions), reversed(runs)))
+    inserts: dict[int, dict[str, Any]] = {}
+    boundaries = user_positions[1:] + [len(items)]
+    end_of = dict(zip(user_positions, boundaries))
+    for position, run in pairs:
+        status = str(getattr(run, "status", ""))
+        if status not in _UNSUCCESSFUL:
+            continue
+        inserts[end_of[position]] = {
+            "id": f"{run.run_id}:status",
+            "kind": "status",
+            "status": status,
+            "run_id": run.run_id,
+            "text": str(getattr(run, "error", "") or "") if status != "cancelled" else "",
+            "order": items[end_of[position] - 1].get("order", 0) if end_of[position] else 0,
+        }
+    if not inserts:
+        return items
+    result: list[dict[str, Any]] = []
+    for index, item in enumerate(items):
+        if index in inserts:
+            result.append(inserts[index])
+        result.append(item)
+    if len(items) in inserts:
+        result.append(inserts[len(items)])
+    return result
 
 
 def _tool_item(execution: Any, order: int) -> dict[str, Any]:

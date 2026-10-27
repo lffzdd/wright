@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -157,6 +158,10 @@ def test_duplicate_frontmatter_key_is_rejected(tmp_path: Path):
         load_skill_file(path, "release-check")
 
 
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root can read files regardless of permission bits",
+)
 def test_malformed_yaml_utf8_and_unreadable_files_stay_isolated(tmp_path: Path):
     write_skill(tmp_path, "good", name="good", description="可用", body="步骤")
     broken = tmp_path / "broken"

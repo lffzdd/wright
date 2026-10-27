@@ -413,7 +413,7 @@ def test_automation_waits_behind_an_interactive_lease(tmp_path, monkeypatch):
     store.close()
 
 
-def test_two_local_sessions_share_a_host_and_capacity_does_not_close_them(tmp_path, monkeypatch):
+def test_two_local_sessions_share_a_host_and_capacity_does_not_close_busy_ones(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "wright.application.session.directory.shutdown_runtime", lambda _runtime: None,
     )
@@ -433,7 +433,10 @@ def test_two_local_sessions_share_a_host_and_capacity_does_not_close_them(tmp_pa
     try:
         assert first.runtime.application_host is second.runtime.application_host
         assert created[0].starts == 1
-        with pytest.raises(SessionDirectoryError, match="capacity") as caught:
+        # Both sessions are busy: nothing may be closed to make room.
+        first.runtime.agent_idle.clear()
+        second.runtime.agent_idle.clear()
+        with pytest.raises(SessionDirectoryError, match="busy") as caught:
             directory.open(environment="local")
         assert caught.value.kind == "capacity"
         assert len([item for item in directory.list_sessions() if item["active"]]) == 2
@@ -443,6 +446,8 @@ def test_two_local_sessions_share_a_host_and_capacity_does_not_close_them(tmp_pa
         assert first.session_id in {
             item["session_id"] for item in directory.list_sessions() if item["active"]
         }
+        first.runtime.agent_idle.set()
+        second.runtime.agent_idle.set()
         directory.close(first.session_id)
         assert created[0].closed == 0
     finally:
@@ -450,6 +455,29 @@ def test_two_local_sessions_share_a_host_and_capacity_does_not_close_them(tmp_pa
     assert created[0].closed == 1
     directory.close(first.session_id)
     directory.close("missing")
+
+
+def test_full_capacity_closes_the_least_recently_used_idle_session(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "wright.application.session.directory.shutdown_runtime", lambda _runtime: None,
+    )
+
+    def assemble(_config, *, session_id=None, application_host=None, interaction_broker=None, publisher=None, project_context=None, **_kwargs):
+        host = application_host or _Host()
+        host.start()
+        return _scripted_open_runtime(session_id, project_context.execution_root, host, interaction_broker, publisher)
+
+    directory = SessionDirectory(tmp_path, capacity=2, assemble=assemble)
+    first = directory.open(environment="local")
+    second = directory.open(environment="local")
+    try:
+        second.service.touch()
+        third = directory.open(environment="local")
+        active = {item["session_id"] for item in directory.list_sessions() if item["active"]}
+        assert active == {second.session_id, third.session_id}
+        assert first.service.runner.state == "closed"
+    finally:
+        directory.shutdown()
 
 
 def test_failed_open_rolls_back_a_new_worktree(tmp_path, monkeypatch):

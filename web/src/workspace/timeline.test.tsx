@@ -100,8 +100,14 @@ describe("real timeline projection", () => {
       arguments: { path: "src/middleware/" }, duration_ms: 24,
       result: { output: "auth.ts\nrate-limiter.ts\nsession.ts\ntelemetry.ts\nconfig.ts" },
     }));
-    expect(screen.getByText("5 files (24ms)")).toBeTruthy();
+    expect(screen.getByText("5 entries (24ms)")).toBeTruthy();
     rerender(toolCardFromState({ call_id: "read", name: "read_file", phase: "succeeded", data: "line one\nline two" }));
-    expect(screen.queryByText("2 files")).toBeNull();
+    expect(screen.queryByText("2 entries")).toBeNull();
+    // The real tool returns structured entries; count those, not JSON lines.
+    rerender(toolCardFromTimeline({
+      id: "dir2", kind: "tool", name: "list_directory", phase: "succeeded", arguments: {},
+      result: { ok: true, data: { directory: ".", entries: [{ name: "a" }, { name: "src" }], truncated: false } },
+    }));
+    expect(screen.getByText("2 entries")).toBeTruthy();
   });
 });

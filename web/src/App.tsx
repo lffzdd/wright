@@ -1,6 +1,6 @@
 import { Brain, Clock, DotsThreeVertical, Gear, GitBranch, MagnifyingGlass, Moon, Scroll, SidebarSimple, Sun, Warning, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, bootstrap } from "./api";
+import { api, ApiError, bootstrap } from "./api";
 import { setLocale, useT } from "./i18n";
 import { parseEvent } from "./protocol";
 import { applyEvent } from "./reducer";
@@ -177,7 +177,12 @@ export default function App() {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setPanel("search");
-      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
+      } else if (
+        // Browsers reserve Ctrl+N for a new window and never deliver it to the
+        // page, so Alt+N is the shortcut that works in a tab.
+        (event.altKey && !event.ctrlKey && !event.metaKey && event.code === "KeyN")
+        || ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n")
+      ) {
         event.preventDefault();
         setBrowsing("draft");
         setSelected(null);
@@ -509,10 +514,15 @@ export default function App() {
       }
       return "accepted" as const;
     } catch (error) {
+      // A 4xx answer is a definite "no" with a reason the person can act on
+      // (for example: every session slot is busy). Only network failures and
+      // 5xx answers leave the outcome unknown.
+      const definite = error instanceof ApiError && error.status >= 400 && error.status < 500;
       if (projectKey() === surface && epoch.current === generation) {
-        updateDraft(owner, (item) => ({ ...item, phase: "unknown", reason: String(error) }));
+        const reason = error instanceof Error ? error.message : String(error);
+        updateDraft(owner, (item) => ({ ...item, phase: definite ? "rejected" : "unknown", reason }));
       }
-      return "unknown" as const;
+      return definite ? "rejected" as const : "unknown" as const;
     }
   };
   const changeModel = async (newModel: string) => {

@@ -67,8 +67,25 @@ def _status_rows(raw: bytes) -> list[dict[str, Any]]:
     return rows
 
 
+def _is_git_work_tree(root: Path) -> bool:
+    result = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
+        check=False, capture_output=True,
+    )
+    return result.returncode == 0 and result.stdout.strip() == b"true"
+
+
 def list_changes(context: ProjectContext) -> dict[str, Any]:
     root = context.execution_root
+    if not _is_git_work_tree(root):
+        # Not an error: the workspace simply has no version history to diff.
+        return {
+            "environment": context.environment,
+            "baseline": "",
+            "local_warning": False,
+            "changes": [],
+            "git": False,
+        }
     status = _status_rows(_git(root, "status", "--porcelain=v1", "-z"))
     if context.environment == "worktree" and context.base_commit:
         tracked_raw = _git(
@@ -110,6 +127,7 @@ def list_changes(context: ProjectContext) -> dict[str, Any]:
         "baseline": baseline,
         "local_warning": context.environment == "local",
         "changes": changes,
+        "git": True,
     }
 
 

@@ -169,6 +169,17 @@ export function ReasoningRow({ text, durationMs }: { text: string; durationMs?: 
   return <SummaryRow text={text} durationMs={durationMs} />;
 }
 
+/** Number of entries a list_directory result reports, from its data. */
+function directoryEntryCount(result?: Record<string, unknown> | null, data?: unknown): number {
+  const candidates = [data, result?.data, result];
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === "object" && Array.isArray((candidate as { entries?: unknown }).entries)) {
+      return ((candidate as { entries: unknown[] }).entries).length;
+    }
+  }
+  return 0;
+}
+
 export function ToolCard({
   name, phase, args, result, data, duration, output, kind,
 }: {
@@ -195,7 +206,9 @@ export function ToolCard({
   const bodyLines = body.split("\n").filter(Boolean);
   const added = family === "edit" && typeof metricSource?.additions === "number" ? metricSource.additions : family === "edit" ? bodyLines.filter((line) => line.startsWith("+")).length : 0;
   const deleted = family === "edit" && typeof metricSource?.deletions === "number" ? metricSource.deletions : family === "edit" ? bodyLines.filter((line) => line.startsWith("-")).length : 0;
-  const directoryCount = family === "read" && /directory/i.test(name) ? bodyLines.length : 0;
+  const directoryCount = family === "read" && /directory/i.test(name)
+    ? directoryEntryCount(result, data) || (typeof result?.output === "string" && !result.output.trim().startsWith("{") ? bodyLines.length : 0)
+    : 0;
   const testFailed = family === "shell" && code !== null && code !== 0 && looksLikeTestFailure(body);
   const durationLabel = typeof duration === "number" ? formatDuration(duration) : "";
   return <div className="tl-indent">

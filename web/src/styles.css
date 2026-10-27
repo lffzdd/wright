@@ -667,3 +667,11 @@ html.light .tool-card .diff-body > div + div { border-top-color: var(--border-su
 .shell-readiness p { margin: 6px 0; }
 .shell-readiness small { display: block; overflow-wrap: anywhere; }
 .perm-choice, .copy-command, .permission-preview summary { min-height: 32px; }
+
+/* Turn outcome, shown inline where the turn ended. */
+.turn-outcome { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 12px 36px; padding: 8px 12px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); background: color-mix(in srgb, var(--danger) 8%, transparent); font-size: 13px; }
+.turn-outcome strong { color: var(--danger); font-weight: 600; }
+.turn-outcome.cancelled { border-color: var(--line-strong); background: transparent; }
+.turn-outcome.cancelled strong { color: var(--muted); }
+.turn-outcome-detail { color: var(--muted); font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+.working-indicator { margin-left: 36px; }

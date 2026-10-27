@@ -199,7 +199,7 @@ def test_manager_rejects_capacity_and_duplicate_resume_without_blocking_idle_loc
     manager = RuntimeManager(tmp_path, capacity=1, base_args=args)
     manager.directory._sessions["active"] = SimpleNamespace()
 
-    with pytest.raises(RuntimeManagerError, match="capacity"):
+    with pytest.raises(RuntimeManagerError, match="busy"):
         manager.create(environment="local")
     manager.directory.capacity = 2
     with pytest.raises(RuntimeManagerError, match="already active"):

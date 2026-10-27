@@ -131,6 +131,7 @@ def test_optional_knowledge_tools_explicit_switches(monkeypatch):
 
 def test_assemble_runtime_mode_and_rag(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://127.0.0.1:9/v1")
     monkeypatch.delenv("WRIGHT_KNOWLEDGE_ENABLED", raising=False)
 
     # 1. Default Coding mode without RAG

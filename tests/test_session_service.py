@@ -333,3 +333,61 @@ def test_attachment_commit_rolls_back_and_blocks_inflight_references(tmp_path):
     service.remove_attachment("session", "att-1")
     assert "att-1" not in runtime.session_state.attachments
     assert runtime.attachment_store.removed == ["att-1"]
+
+
+def _events(publisher):
+    _subscriber, inbox = publisher.subscribe()
+    return inbox
+
+
+def test_one_failing_event_does_not_close_the_session():
+    runtime = _runtime()
+    seen = []
+
+    def process(rt, event_type, payload):
+        if event_type == "EXIT":
+            return True
+        seen.append(payload)
+        if payload == "boom":
+            raise RuntimeError("provider exploded")
+        return False
+
+    service = SessionService(runtime, shutdown=lambda _: None)
+    service._event_processor = process
+    service.start()
+    runtime.event_queue.put(("USER_INPUT", "boom"))
+    runtime.event_queue.put(("USER_INPUT", "after"))
+    deadline = time.monotonic() + 2
+    while seen != ["boom", "after"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert seen == ["boom", "after"]
+    assert service.runner.state == "running"
+    assert service.close(wait_timeout=1)
+
+
+def test_resumed_running_checkpoint_is_marked_interrupted_not_continued():
+    runtime = _runtime()
+    runtime.resumed = True
+    marks, continued, saved = [], [], []
+    runtime.session_state.current_run_status = lambda: "running"
+    runtime.session_state.mark_interrupted = lambda error="": marks.append(error)
+    runtime.agent.continue_run = lambda: continued.append(True)
+    runtime.agent.checkpoint = lambda: saved.append(True)
+    service = SessionService(runtime, shutdown=lambda _: None)
+    service.start()
+    assert service.close(wait_timeout=1)
+    assert continued == []
+    assert len(marks) == 1 and saved == [True]
+
+
+def test_durable_hosts_may_opt_in_to_continue_a_resumed_run():
+    runtime = _runtime()
+    runtime.resumed = True
+    runtime.auto_continue_resumed = True
+    continued = []
+    runtime.session_state.current_run_status = lambda: "running"
+    runtime.agent.continue_run = lambda: continued.append(True)
+    service = SessionService(runtime, shutdown=lambda _: None)
+    service.start()
+    assert service.close(wait_timeout=1)
+    assert continued == [True]

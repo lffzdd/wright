@@ -360,6 +360,11 @@ class CommandExecution:
             "task": body,
         }
 
+    def has_live(self) -> bool:
+        """Whether a command started by this session is still running."""
+        with self._lock:
+            return any(not live.done.is_set() for live in self._live.values())
+
     def close(self) -> tuple[str, ...]:
         with self._lock:
             if self._closed:

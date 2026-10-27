@@ -245,6 +245,11 @@ class AgentControlPlane:
         self._lock = threading.RLock()
         self._on_change: Callable[[], None] | None = None
 
+    def has_live_tasks(self) -> bool:
+        """Whether any child Agent in this session is still pending or running."""
+        with self._lock:
+            return any(record.status in {"pending", "running"} for record in self._tasks.values())
+
     def set_on_change(self, callback: Callable[[], None] | None) -> None:
         with self._lock:
             self._on_change = callback

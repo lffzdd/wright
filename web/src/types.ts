@@ -67,6 +67,8 @@ export type ActiveTurn = {
   reasoning: string;
   content: string;
   tools: ToolState[];
+  /** Index of the assistant text block being streamed in this turn. */
+  segment?: number;
 };
 
 export type HistoryTurn = {
@@ -145,7 +147,9 @@ export type TimelineItem = {
   turn_id?: string;
   attachments?: Attachment[];
   output?: string;
-  kind: "text" | "reasoning" | "tool" | "shell" | "edit" | "approval";
+  kind: "text" | "reasoning" | "tool" | "shell" | "edit" | "approval" | "status";
+  status?: string;
+  run_id?: string;
   role?: string;
   text?: string;
   name?: string;

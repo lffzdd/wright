@@ -64,6 +64,9 @@ async def handle_session_stream(
         return
 
     await websocket.accept()
+    touch = getattr(getattr(handle, "service", None), "touch", None)
+    if callable(touch):
+        touch()
     subscriber_id, inbox = handle.publisher.subscribe()
     try:
         stream_id = websocket.query_params.get("stream_id")

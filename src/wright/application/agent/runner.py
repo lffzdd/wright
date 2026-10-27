@@ -14,7 +14,7 @@ from ...domain.model.llm.events import (
 from ...domain.model.session import Session
 from ...domain.policy.verifier import Verifier
 from ...domain.protocol import encode_tools
-from ...infrastructure.llm.llm import LLMClient
+from ...infrastructure.llm.llm import LLMClient, describe_model_error
 from ...infrastructure.llm.usage import usage_from_provider
 from ...infrastructure.storage.attachments import (
     MAX_ATTACHMENTS_PER_TURN,
@@ -95,6 +95,7 @@ class Agent:
         self.max_verification_retries = max_verification_retries
         self.checkpoint_store = checkpoint_store
         self.last_checkpoint_error: Exception | None = None
+        self.last_error: str = ""
         self._usage_observer = usage_observer
         self._execution_journal = execution_journal
         if self.memory is not None:
@@ -321,6 +322,8 @@ class Agent:
             ),
         })
         started = time.monotonic()
+        self._partial_content: list[str] = []
+        self._partial_reasoning: list[str] = []
         try:
             run_config = (
                 self.session_state.active_run().model_config
@@ -334,10 +337,25 @@ class Agent:
                 model=run_config.get("model") or None,
                 transport=run_config.get("transport") or None,
             )
-            for event in self.llm(request, tools=self.tool_schemas):
+            stream = self.llm(request, tools=self.tool_schemas)
+            for event in stream:
+                if self._is_cancelled():
+                    # Stop reading as soon as the person presses Stop. Closing
+                    # the generator closes the provider stream underneath.
+                    close = getattr(stream, "close", None)
+                    if callable(close):
+                        close()
+                    response = ContentDone(
+                        "".join(self._partial_content),
+                        reasoning="".join(self._partial_reasoning),
+                        finish_reason="cancelled",
+                    )
+                    break
                 if isinstance(event, ReasoningDelta):
+                    self._partial_reasoning.append(event.piece)
                     self.ui.on_reasoning_delta(event.piece)
                 elif isinstance(event, ContentDelta):
+                    self._partial_content.append(event.piece)
                     self.ui.on_content_delta(event.piece)
                 elif isinstance(event, ContentDone):
                     response = event
@@ -454,6 +472,7 @@ class Agent:
         attachment_ids: Sequence[str] = (),
     ) -> str | None:
         """执行新任务。"""
+        self.last_error = ""
         max_steps = self.session_state.max_steps if max_steps is None else max_steps
         if self.profile.max_steps is not None:
             max_steps = min(max_steps, self.profile.max_steps)
@@ -756,6 +775,27 @@ class Agent:
         self._checkpoint()
         self._emit_agent_stop(status, reason=reason)
 
+    def _fail_run(self, exc: BaseException, *, record_memory: bool) -> None:
+        detail = describe_model_error(exc)
+        logger.warning("run failed: %s", detail, exc_info=exc)
+        self.last_error = detail
+        if self.session_state.current_run_status() in {"completed", "failed", "cancelled", "interrupted"}:
+            return
+        self.session_state.mark_failed(error=detail)
+        active_run = self.session_state.active_run()
+        if active_run is not None:
+            self.runtime_resources.responses.finish_response(active_run.run_id)
+        if record_memory:
+            try:
+                self._finalize_memory(None, extract_semantic=False, termination_reason="failed")
+            except Exception:
+                logger.warning("memory finalize after failure failed", exc_info=True)
+        self._checkpoint()
+        try:
+            self._emit_agent_stop("failed", reason=detail)
+        except Exception:
+            logger.warning("agent_stop hook failed", exc_info=True)
+
     def _turn_control(self, *, record_memory: bool) -> TurnControl:
         def finalize_memory(answer: str | None, *, extract_semantic: bool) -> None:
             if record_memory:
@@ -847,6 +887,15 @@ class Agent:
     ) -> str | None:
         try:
             return self._run_loop_impl(max_steps, record_memory=record_memory)
+        except Exception as exc:
+            # A failed model request or tool round ends this Run, not the
+            # session. The Run records why it failed so every surface (and a
+            # later resume) sees a terminal state instead of "running".
+            if self._is_cancelled():
+                self._stop_if_cancelled(record_memory=record_memory)
+                return None
+            self._fail_run(exc, record_memory=record_memory)
+            return None
         finally:
             if render_summary:
                 self._render_usage_summary()
@@ -878,6 +927,23 @@ class Agent:
                 )
                 return None
             content = response.content
+            if response.finish_reason == "cancelled":
+                # Keep what was already shown, so history matches the screen.
+                if content.strip():
+                    self.session_state.record_assistant_turn(
+                        assistant_raw=content,
+                        parsed={
+                            "content": content,
+                            "reasoning": response.reasoning,
+                            "tool_calls": [],
+                            "final_answer": None,
+                            "finish_reason": "cancelled",
+                        },
+                        assistant_message={"role": "assistant", "content": content},
+                        route="final",
+                    )
+                self._stop_if_cancelled(record_memory=record_memory)
+                return None
             try:
                 turn = parse_turn(response)
                 if any(

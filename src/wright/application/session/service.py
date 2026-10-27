@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+import time
 from collections import deque
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -112,6 +113,7 @@ class SessionService:
         self._commands: set[str] = set()
         self._command_order: deque[str] = deque(maxlen=2_000)
         self._queued: dict[str, dict[str, Any]] = {}
+        self.last_activity = time.monotonic()
         self._cancelled: set[str] = set()
         self._active_command: str | None = None
         self._active_attachment_ids: set[str] = set()
@@ -413,6 +415,7 @@ class SessionService:
         references: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         self._require_accepting_input()
+        self.touch()
         cleaned = prompt.strip()
         attachment_ids = list(attachment_ids or [])
         attachments = self._attachments(attachment_ids)
@@ -677,6 +680,34 @@ class SessionService:
             "active": lifecycle_state not in {"closing", "closed"},
         }
 
+    def touch(self) -> None:
+        """Record that someone used or looked at this session."""
+        self.last_activity = time.monotonic()
+
+    def is_evictable(self) -> bool:
+        """Idle with nothing queued, pending, or running in the background.
+
+        Such a session is fully described by its checkpoint, so the host may
+        close it to make room and reopen it later without losing anything.
+        """
+        if self.runner.state not in {"new", "running"}:
+            return True
+        if self._execution("open")[0] != "idle":
+            return False
+        with self._lock:
+            if self._queued or self._active_command:
+                return False
+        resources = getattr(self.runtime, "runtime_resources", None)
+        commands = getattr(resources, "commands", None)
+        has_live = getattr(commands, "has_live", None)
+        if callable(has_live) and has_live():
+            return False
+        plane = getattr(self.runtime.session_state, "control_plane", None)
+        live_tasks = getattr(plane, "has_live_tasks", None)
+        if callable(live_tasks) and live_tasks():
+            return False
+        return True
+
     def _execution(self, lifecycle: str) -> tuple[str, str | None]:
         if lifecycle != "open":
             return "idle", None
@@ -815,6 +846,7 @@ class SessionService:
             method()
 
     def _consume(self, event_type: str, payload: object) -> bool:
+        self.last_activity = time.monotonic()
         command_id = (
             str(payload.get("command_id", ""))
             if event_type == "USER_INPUT" and isinstance(payload, dict)

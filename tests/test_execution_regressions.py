@@ -9,6 +9,8 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 from tests.runtime_helpers import tool_runtime_for_session
 from wright.application.command.execution import CommandExecution
 from wright.application.execution.identity import bind_identity
@@ -38,29 +40,50 @@ def _stopped(pid: int) -> bool:
     return False
 
 
+def _host_pids_matching(marker: str) -> list[int]:
+    """Find processes by command line from the host's view.
+
+    A PID printed inside the sandbox belongs to its PID namespace and means
+    nothing to os.kill() out here, so the child is found by a unique argv.
+    """
+    found = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/cmdline", "rb") as handle:
+                argv = handle.read().split(b"\0")
+        except OSError:
+            continue
+        if marker.encode() in argv:
+            found.append(int(entry))
+    return found
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc"), reason="needs /proc")
 def test_parent_exit_does_not_leave_owned_children(tmp_path):
     session = _session(tmp_path)
     runtime = _runtime(session, tmp_path)
-    pidfile = tmp_path / "child.pid"
+    marker = f"30.{os.getpid()}{int(time.time() * 1000) % 100000}"
     launched = execute_command(
-        f"sleep 30 & echo $! > {shlex.quote(str(pidfile))}",
+        f"sleep {marker} & wait",
         run_in_background=True,
         runtime=runtime,
     )
     assert launched.ok
     command_id = launched.data["command_id"]
-    deadline = time.monotonic() + 2
-    while not pidfile.exists() and time.monotonic() < deadline:
+    deadline = time.monotonic() + 3
+    while not _host_pids_matching(marker) and time.monotonic() < deadline:
         time.sleep(0.02)
-    child = int(pidfile.read_text().strip())
+    assert _host_pids_matching(marker)
     observed = get_command(command_id, runtime=runtime)
     assert observed.data["status"] == "running"
     terminated = terminate_command(command_id, runtime=runtime)
     assert terminated.data["terminated"] is True
-    deadline = time.monotonic() + 2
-    while time.monotonic() < deadline and not _stopped(child):
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline and _host_pids_matching(marker):
         time.sleep(0.02)
-    assert _stopped(child)
+    assert not _host_pids_matching(marker)
 
 
 def test_ignored_sigterm_is_escalated_on_the_owned_group(tmp_path):

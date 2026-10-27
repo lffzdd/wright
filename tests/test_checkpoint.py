@@ -236,11 +236,15 @@ def test_latest_checkpoint_uses_most_recent_file(tmp_path):
     assert store.load_latest().session_id == second.session_id
 
 
+class SimulatedProcessDeath(BaseException):
+    """Stands in for the process dying mid-request (not a handled error)."""
+
+
 class CrashLLM:
     context_limit = 128_000
 
     def __call__(self, messages, **kwargs):
-        raise RuntimeError("simulated process crash")
+        raise SimulatedProcessDeath("simulated process crash")
         yield
 
 
@@ -264,7 +268,7 @@ def test_agent_continues_running_checkpoint_without_new_user_message(tmp_path):
         CrashLLM(), [], first_session, checkpoint_store=store
     )
 
-    with pytest.raises(RuntimeError, match="simulated process crash"):
+    with pytest.raises(SimulatedProcessDeath, match="simulated process crash"):
         first_agent.run("survive this", max_steps=3)
 
     restored = store.load(first_session.session_id)

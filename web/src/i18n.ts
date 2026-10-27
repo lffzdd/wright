@@ -6,6 +6,7 @@ export type Locale = "en" | "zh-CN";
 const EN: Record<string, string> = {
   ...permissionCopy.en,
   "web.shortcut_key": "⌘{key}",
+  "web.alt_shortcut_key": "⌥{key}",
   "web.permission_action.shell": "Run a shell command",
   "web.permission_action.file_write": "Write or edit a file",
   "web.permission_action.file_read": "Read a file or directory",
@@ -123,7 +124,7 @@ const EN: Record<string, string> = {
   "web.sessions": "SESSIONS",
   "web.close_sessions": "Close sessions",
   "web.close_sessions_title": "Close sessions (Esc)",
-  "web.new_session": "New session (⌘N)",
+  "web.new_session": "New session (⌥N)",
   "web.no_active": "No active sessions",
   "web.queued_directory": "Queued for this directory",
   "web.waiting": "Waiting for permission or a reply",
@@ -224,7 +225,7 @@ const EN: Record<string, string> = {
   "web.awaiting_permission": "Awaiting permission",
   "web.just_now": "Just now",
   "web.step_of": "Step {current}/{total}",
-  "web.n_files": "{count} files",
+  "web.n_files": "{count} entries",
   "web.bug_confirmed": "Bug Confirmed",
   "web.loading_session": "Loading session…",
   "web.status.paused": "Paused",
@@ -350,6 +351,7 @@ const EN: Record<string, string> = {
   "web.permission_mode": "Permission mode",
   "web.turn_failed": "This turn failed.",
   "web.turn_cancelled": "This turn was cancelled.",
+  "web.turn_interrupted": "This turn was interrupted when Wright stopped.",
   "web.archive_confirm": "Archive {label}? A clean isolated worktree may be removed. The project directory stays.",
   "web.uncommitted": "{count} uncommitted",
   "web.register_prompt": "Project directory to register. Files stay on disk, and a running task keeps its execution root.",
@@ -384,6 +386,7 @@ const EN: Record<string, string> = {
 const ZH: Record<string, string> = {
   ...permissionCopy["zh-CN"],
   "web.shortcut_key": "⌘{key}",
+  "web.alt_shortcut_key": "⌥{key}",
   "web.permission_action.shell": "执行 Shell 命令",
   "web.permission_action.file_write": "写入或编辑文件",
   "web.permission_action.file_read": "读取文件或目录",
@@ -501,7 +504,7 @@ const ZH: Record<string, string> = {
   "web.sessions": "会话",
   "web.close_sessions": "关闭会话列表",
   "web.close_sessions_title": "关闭会话列表（Esc）",
-  "web.new_session": "新建会话（⌘N）",
+  "web.new_session": "新建会话（⌥N）",
   "web.no_active": "没有活跃会话",
   "web.queued_directory": "正在等待该目录",
   "web.waiting": "等待权限或回复",
@@ -602,7 +605,7 @@ const ZH: Record<string, string> = {
   "web.awaiting_permission": "等待授权",
   "web.just_now": "刚刚",
   "web.step_of": "第 {current}/{total} 步",
-  "web.n_files": "{count} 个文件",
+  "web.n_files": "{count} 项",
   "web.bug_confirmed": "已复现",
   "web.loading_session": "正在加载会话…",
   "web.status.paused": "已暂停",
@@ -728,6 +731,7 @@ const ZH: Record<string, string> = {
   "web.permission_mode": "权限模式",
   "web.turn_failed": "这一轮失败了。",
   "web.turn_cancelled": "这一轮已取消。",
+  "web.turn_interrupted": "Wright 停止时这一轮被中断了。",
   "web.archive_confirm": "归档 {label}？干净的隔离工作树可能被删除。项目目录保留。",
   "web.uncommitted": "{count} 个未提交",
   "web.register_prompt": "输入要登记的项目目录路径。文件不会移动，运行中的任务保留原有执行根目录。",
@@ -784,7 +788,7 @@ export function t(key: string, params: Record<string, string | number> = {}): st
   const translated = template.replace(/\{(\w+)\}/g, (match, name: string) => (
     params[name] === undefined || params[name] === null ? match : String(params[name])
   ));
-  return /Mac/i.test(navigator.platform) ? translated : translated.replace(/⌘(?=[A-Z.])/g, "Ctrl+");
+  return /Mac/i.test(navigator.platform) ? translated : translated.replace(/⌘(?=[A-Z.])/g, "Ctrl+").replace(/⌥(?=[A-Z.])/g, "Alt+");
 }
 
 export function present(code: string | undefined, params: Record<string, string> | undefined, fallback: string): string {

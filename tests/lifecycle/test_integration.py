@@ -1,7 +1,5 @@
 import json
 
-import pytest
-
 from tests.responses import event, response
 from tests.runtime_helpers import tool_runtime_for_session
 from wright.application.agent import create_agent, make_spawn_agent_tool
@@ -127,7 +125,12 @@ def test_agent_stop_hook_can_reject_candidate_and_continue(tmp_path):
     assert calls == 2
 
 
-def test_llm_failure_is_traced_without_destroying_resumable_state(tmp_path):
+def test_llm_failure_ends_the_run_with_a_recorded_reason(tmp_path):
+    """A failed model call ends the Run (not the process or the session).
+
+    The Run is left in a terminal state with the reason, so no surface
+    re-executes it on its own when the checkpoint is opened again.
+    """
     recorder = TraceRecorder(tmp_path / "trace.jsonl")
     lifecycle = LifecycleManager("session", recorder)
     session = Session.create("goal", tmp_path)
@@ -135,14 +138,16 @@ def test_llm_failure_is_traced_without_destroying_resumable_state(tmp_path):
         BrokenLLM(), [], session, lifecycle=lifecycle
     )
 
-    with pytest.raises(RuntimeError, match="provider unavailable"):
-        agent.run("do it")
-    assert session.current_run_status() == "running"
+    assert agent.run("do it") is None
+    assert session.current_run_status() == "failed"
+    assert "provider unavailable" in session.current_run().error
+    assert "provider unavailable" in agent.last_error
     assert [row["event"] for row in recorder.read()] == [
         "user_prompt_submit",
         "agent_start",
         "llm_start",
         "llm_error",
+        "agent_stop",
     ]
 
 

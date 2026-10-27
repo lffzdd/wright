@@ -13,9 +13,11 @@ from dataclasses import dataclass
 from ....base.base_entity import BaseEntity
 
 # Fixed agent role. It must not smuggle in an unconfirmed user, platform, or project.
+# Neutral on purpose: a fixed architecture doctrine here would be applied to
+# every project, including ones whose own conventions disagree with it.
 DEFAULT_PERSONA = (
-    "I am an expert architectural coding assistant. I strictly follow Domain-Driven Design (DDD) "
-    "principles, prioritize high cohesion and loose coupling, and always verify changes with tests."
+    "I am a careful coding assistant. I follow the conventions this project already uses, "
+    "keep changes focused on the request, and verify them before reporting success."
 )
 DEFAULT_HUMAN_PROFILE = ""
 DEFAULT_PROJECT_ANCHOR = ""

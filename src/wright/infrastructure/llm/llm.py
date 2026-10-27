@@ -175,6 +175,16 @@ class LLMClient(ILLMProvider):
             max_wait=self.max_wait,
         )
 
+        try:
+            yield from self._consume_chat_stream(resp)
+        finally:
+            # Also runs when the consumer stops early (cancellation): release
+            # the HTTP connection instead of draining the rest of the answer.
+            close = getattr(resp, "close", None)
+            if callable(close):
+                close()
+
+    def _consume_chat_stream(self, resp) -> Iterator[LLMEvent]:
         content: list[str] = []
         reasoning: list[str] = []
         tool_calls: dict[int, dict] = {}
@@ -186,17 +196,7 @@ class LLMClient(ILLMProvider):
                 finish_reason = choice.finish_reason or finish_reason
                 delta = choice.delta
                 for call in delta.tool_calls or []:
-                    target = tool_calls.setdefault(call.index, {
-                        "id": "", "type": "function",
-                        "function": {"name": "", "arguments": ""},
-                    })
-                    if call.id:
-                        target["id"] += call.id
-                    if call.type:
-                        target["type"] = call.type
-                    if call.function:
-                        target["function"]["name"] += call.function.name or ""
-                        target["function"]["arguments"] += call.function.arguments or ""
+                    merge_tool_call_delta(tool_calls, call)
                 reasoning_piece = getattr(delta, "reasoning_content", None)
                 content_piece = delta.content or getattr(delta, "refusal", None) or ""
                 if reasoning_piece:
@@ -286,6 +286,14 @@ class LLMClient(ILLMProvider):
             ),
             max_attempts=self.max_attempts, base_wait=self.base_wait, max_wait=self.max_wait,
         )
+        try:
+            yield from self._consume_responses_stream(response)
+        finally:
+            close = getattr(response, "close", None)
+            if callable(close):
+                close()
+
+    def _consume_responses_stream(self, response) -> Iterator[LLMEvent]:
         completed = None
         for event in response:
             events, finished, error = self.responses_adapter.decode_stream_event(event)
@@ -301,6 +309,81 @@ class LLMClient(ILLMProvider):
         if getattr(completed, "usage", None):
             yield UsageEvent(completed.usage)
         yield self.responses_adapter.decode_response(completed)
+
+
+def merge_tool_call_delta(tool_calls: dict[int, dict], call: Any) -> None:
+    """Fold one streamed tool-call fragment into the calls seen so far.
+
+    OpenAI sends ``index`` on every fragment, ``id``/``name`` once, and
+    ``arguments`` as consecutive pieces. OpenAI-compatible servers vary:
+    some omit ``index`` (one complete call per fragment), some repeat
+    ``id`` and ``name`` on every fragment, some resend cumulative text.
+    """
+    index = getattr(call, "index", None)
+    call_id = getattr(call, "id", None) or ""
+    if index is None:
+        known = next(
+            (key for key, value in tool_calls.items() if call_id and value["id"] == call_id),
+            None,
+        )
+        if known is not None:
+            index = known
+        elif call_id or not tool_calls:
+            index = len(tool_calls)
+        else:
+            index = max(tool_calls)
+    target = tool_calls.setdefault(index, {
+        "id": "", "type": "function",
+        "function": {"name": "", "arguments": ""},
+    })
+    if call_id and not target["id"]:
+        target["id"] = call_id
+    if getattr(call, "type", None):
+        target["type"] = call.type
+    function = getattr(call, "function", None)
+    if function is None:
+        return
+    target["function"]["name"] = _merge_piece(
+        target["function"]["name"], getattr(function, "name", None) or "", repeated_is_whole=True
+    )
+    target["function"]["arguments"] = _merge_piece(
+        target["function"]["arguments"], getattr(function, "arguments", None) or "", repeated_is_whole=False
+    )
+
+
+def _merge_piece(current: str, piece: str, *, repeated_is_whole: bool) -> str:
+    if not piece:
+        return current
+    if not current:
+        return piece
+    if repeated_is_whole and piece == current:
+        return current  # the name was sent again, not extended
+    if len(piece) > len(current) and piece.startswith(current):
+        return piece  # cumulative resend
+    return current + piece
+
+
+def describe_model_error(exception: BaseException) -> str:
+    """One readable line for a failed model request, safe to show to people.
+
+    SDK errors carry a dict body whose repr is noisy; prefer the provider's
+    own message and the HTTP status when they exist.
+    """
+    if isinstance(exception, APIStatusError):
+        message = ""
+        body = getattr(exception, "body", None)
+        if isinstance(body, dict):
+            error = body.get("error", body)
+            if isinstance(error, dict):
+                message = str(error.get("message") or "")
+            elif isinstance(error, str):
+                message = error
+        message = message or str(getattr(exception, "message", "") or exception)
+        return f"Model request failed (HTTP {exception.status_code}): {message}"[:2_000]
+    if isinstance(exception, APIConnectionError):
+        return f"Could not reach the model endpoint: {exception}"[:2_000]
+    text = str(exception) or type(exception).__name__
+    return f"{type(exception).__name__}: {text}"[:2_000]
 
 
 def is_retryable(exception: Exception) -> bool:

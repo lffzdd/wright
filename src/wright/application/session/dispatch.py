@@ -314,6 +314,10 @@ def _publish_turn_terminal(
         rt.publisher.publish("turn.completed", payload, turn_id=identity)
     else:
         payload["status"] = session.current_run_status()
+        run = session.current_run()
+        detail = getattr(run, "error", "") if run is not None else ""
+        if detail:
+            payload["error"] = detail
         rt.publisher.publish("turn.failed", payload, turn_id=identity)
 
 
@@ -435,8 +439,17 @@ def process_session_event(
             )
             _publish_turn_terminal(rt, command_id, turn_id)
         except Exception as exc:
-            _publish_turn_terminal(rt, command_id, turn_id, error=str(exc))
-            raise
+            # The turn failed before the Agent could record it (for example
+            # while preparing the Run). Record and report it, but keep the
+            # session alive: one bad turn must not close the conversation.
+            logger.warning("turn failed outside the agent loop", exc_info=True)
+            detail = f"{type(exc).__name__}: {exc}"
+            if session_state.current_run_status() not in {"completed", "failed", "cancelled", "interrupted", "idle"}:
+                session_state.mark_failed(error=detail)
+                checkpoint = getattr(rt.agent, "checkpoint", None)
+                if callable(checkpoint):
+                    checkpoint()
+            _publish_turn_terminal(rt, command_id, turn_id, error=detail)
         finally:
             if token is not None:
                 reset_directory_work(token)

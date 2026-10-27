@@ -110,6 +110,36 @@ function applyAgent(state: ViewState, event: UiEvent, identity: { taskId: string
   return { ...state, agents: updated };
 }
 
+function turnKey(state: ViewState, event: UiEvent): string {
+  return state.active_turn?.turn_id || event.turn_id || event.event_id;
+}
+
+/** Assistant text is shown as one block per model step, in order with tools. */
+function segmentId(state: ViewState, event: UiEvent): string {
+  return `${turnKey(state, event)}:assistant:${state.active_turn?.segment ?? 0}`;
+}
+
+function upsertSegment(state: ViewState, event: UiEvent, text: (previous: string) => string): ViewState {
+  if (!state.timeline) return state;
+  const id = segmentId(state, event);
+  const index = state.timeline.findIndex((item) => item.id === id);
+  const previous = index >= 0 ? state.timeline[index].text ?? "" : "";
+  const value = text(previous);
+  if (index < 0 && !value) return state;
+  const item = { id, turn_id: turnKey(state, event), kind: "text" as const, role: "assistant", text: value };
+  return {
+    ...state,
+    timeline: index >= 0 ? state.timeline.map((old, i) => i === index ? item : old) : [...state.timeline, item],
+  };
+}
+
+function closeSegment(state: ViewState, event: UiEvent): ViewState {
+  if (!state.active_turn || !state.timeline) return state;
+  const open = state.timeline.some((item) => item.id === segmentId(state, event) && item.text);
+  if (!open) return state;
+  return { ...state, active_turn: { ...state.active_turn, segment: (state.active_turn.segment ?? 0) + 1 } };
+}
+
 export function applyEvent(state: ViewState, event: UiEvent): ViewState {
   if (state.resync) return state;
   if (event.version !== 2) return { ...state, resync: true };
@@ -142,7 +172,10 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
       reasoning: "",
       content: "",
       tools: [],
+      segment: 0,
     };
+    // Notices belong to the turn that produced them; a new turn starts clean.
+    next.notices = [];
     next.session = { ...state.session, status: "running" };
     if (next.timeline) next.timeline = [...next.timeline, {
       id: `${event.turn_id || event.event_id}:user`, kind: "text", role: "user",
@@ -154,16 +187,22 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
   } else if (event.type === "reasoning.delta" && next.active_turn) {
     next.active_turn = { ...next.active_turn, reasoning: next.active_turn.reasoning + String(event.payload.piece ?? "") };
   } else if (event.type === "content.delta" && next.active_turn) {
-    next.active_turn = { ...next.active_turn, content: next.active_turn.content + String(event.payload.piece ?? "") };
+    const piece = String(event.payload.piece ?? "");
+    next.active_turn = { ...next.active_turn, content: next.active_turn.content + piece };
+    next = upsertSegment(next, event, (previous) => previous + piece);
   } else if (event.type === "content.final" && next.active_turn) {
-    next.active_turn = { ...next.active_turn, content: String(event.payload.content ?? "") };
+    const content = String(event.payload.content ?? "");
+    next.active_turn = { ...next.active_turn, content };
+    next = upsertSegment(next, event, () => content);
   } else if (event.type.startsWith("tool.") && next.active_turn) {
+    if (event.type === "tool.planned" || event.type === "tool.awaiting_approval" || event.type === "tool.running") next = closeSegment(next, event);
     const phase = event.type === "tool.output" ? undefined : event.type === "tool.finished"
       ? (event.payload.ok ? "succeeded" : "failed")
       : event.type.slice("tool.".length);
+    const active = next.active_turn as NonNullable<ViewState["active_turn"]>;
     next.active_turn = {
-      ...next.active_turn,
-      tools: upsertTool(next.active_turn.tools, { ...event.payload, ...(phase ? { phase } : {}) }),
+      ...active,
+      tools: upsertTool(active.tools, { ...event.payload, ...(phase ? { phase } : {}) }),
     };
   } else if (["turn.completed", "turn.failed", "turn.cancelled"].includes(event.type)) {
     if (next.active_turn) {
@@ -186,9 +225,17 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
     if (finished && next.timeline && !next.timeline.some((item) => item.role === "assistant" && item.turn_id === turnId)) {
       next.timeline = [...next.timeline, { id: `${turnId || event.event_id}:assistant`, turn_id: turnId, kind: "text", role: "assistant", text: finished }];
     }
+    if (event.type !== "turn.completed" && next.timeline) {
+      // The outcome sits where the turn ended, not pinned under later turns.
+      const runId = String(event.payload.run_id ?? next.active_turn?.run_id ?? "");
+      const status = event.type === "turn.cancelled" ? "cancelled" : "failed";
+      const detail = event.type === "turn.failed" ? String(event.payload.error ?? "") : "";
+      const id = `${runId || turnId || event.event_id}:status`;
+      next.timeline = [...next.timeline.filter((item) => item.id !== id), { id, turn_id: turnId, run_id: runId, kind: "status", status, text: detail }];
+    }
     next.active_turn = null;
     next.session = { ...next.session, status: "idle", agent_status: event.type.split(".")[1] };
-    if (event.type !== "turn.completed") next = addNotice(next, event);
+    if (event.type !== "turn.completed" && !next.timeline) next = addNotice(next, event);
   } else if (event.type === "interaction.requested") {
     next.pending_interactions = [...next.pending_interactions, event.payload as Interaction];
   } else if (event.type === "interaction.resolved") {
@@ -284,7 +331,7 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
       next.timeline = index >= 0 ? next.timeline.map((old, i) => i === index ? item : old) : [...next.timeline, item];
     }
   }
-  if (next.timeline && event.type === "content.final") {
+  if (next.timeline && event.type === "content.final" && !state.active_turn) {
     const text = String(event.payload.content ?? "");
     const turnId = next.active_turn?.turn_id || event.turn_id;
     const id = `${turnId || event.event_id}:assistant`;

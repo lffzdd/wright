@@ -35,6 +35,9 @@ from .errors import CheckpointError as _CheckpointError
 
 logger = get_logger(__name__)
 
+# Files the session directory also holds that are not checkpoints.
+_NON_CHECKPOINT_STEMS = frozenset({"open_requests"})
+
 __all__ = ["FileSessionRepository"]
 
 
@@ -108,14 +111,21 @@ class FileSessionRepository(ISessionRepository):
             raise _CheckpointError("checkpoint saved_at must be an ISO timestamp") from exc
         return session, saved_at
 
-    def latest_session_id(self) -> str | None:
+    def _checkpoint_paths(self) -> list[Path]:
+        """Checkpoint files only; other bookkeeping shares this directory."""
         if not self.directory.is_dir():
-            return None
-        candidates = [
+            return []
+        return [
             path
             for path in self.directory.glob("*.json")
             if _SESSION_ID_PATTERN.fullmatch(path.stem)
+            and path.stem not in _NON_CHECKPOINT_STEMS
         ]
+
+    def latest_session_id(self) -> str | None:
+        if not self.directory.is_dir():
+            return None
+        candidates = self._checkpoint_paths()
         if not candidates:
             return None
         return max(candidates, key=lambda path: path.stat().st_mtime_ns).stem
@@ -130,11 +140,7 @@ class FileSessionRepository(ISessionRepository):
     def list_recent_sessions(self, limit: int = 5) -> list[dict[str, Any]]:
         if not self.directory.is_dir():
             return []
-        candidates = [
-            path
-            for path in self.directory.glob("*.json")
-            if _SESSION_ID_PATTERN.fullmatch(path.stem)
-        ]
+        candidates = self._checkpoint_paths()
         if not candidates:
             return []
         sorted_paths = sorted(
@@ -145,7 +151,9 @@ class FileSessionRepository(ISessionRepository):
         for path in sorted_paths:
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
-                session_info = data.get("session", {})
+                session_info = data.get("session") if isinstance(data, dict) else None
+                if not isinstance(session_info, dict):
+                    continue  # not a session checkpoint
                 saved_at = data.get("saved_at", "")
                 saved_at_str = saved_at
                 if saved_at:

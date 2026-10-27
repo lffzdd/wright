@@ -540,9 +540,14 @@ class Session:
         if self.active_run() is not None:
             self.active_run().finish("failed", error="max steps reached")
 
-    def mark_failed(self) -> None:
+    def mark_failed(self, error: str = "") -> None:
         if self.active_run() is not None:
-            self.active_run().finish("failed")
+            self.active_run().finish("failed", error=error)
+
+    def mark_interrupted(self, error: str = "") -> None:
+        """A run whose process stopped before it reached a terminal state."""
+        if self.active_run() is not None:
+            self.active_run().finish("interrupted", error=error)
 
     def mark_cancelled(self) -> None:
         if self.active_run() is not None:

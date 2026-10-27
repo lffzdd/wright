@@ -120,6 +120,21 @@ export function InteractionDock({ sessionId, pending, respond }: {
   </div>;
 }
 
+function TurnOutcome({ status, detail }: { status?: string; detail?: string }) {
+  const tr = useT();
+  const label = status === "cancelled" ? tr("web.turn_cancelled") : status === "interrupted" ? tr("web.turn_interrupted") : tr("web.turn_failed");
+  return <div className={`turn-outcome ${status === "cancelled" ? "cancelled" : "failed"}`} role="status">
+    <strong>{label}</strong>
+    {detail && <span className="turn-outcome-detail">{detail}</span>}
+  </div>;
+}
+
+function RecentMark({ outcome }: { outcome?: string }) {
+  if (outcome === "failed" || outcome === "interrupted") return <X className="recent-mark fail" size={12} weight="bold" />;
+  if (outcome === "completed") return <Check className="recent-mark ok" size={12} weight="bold" />;
+  return <Circle className="recent-mark" size={10} weight="bold" />;
+}
+
 export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }: {
   state: ViewState;
   respond: (requestId: string, answer: unknown) => boolean | Promise<boolean>;
@@ -150,6 +165,12 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }:
   const timeline = state.timeline ?? [];
   const known = new Set(timeline.map((item) => item.id));
   const liveTools = (state.active_turn?.tools ?? []).filter((tool) => !known.has(tool.call_id));
+  // The snapshot can be taken after the turn started but before the server
+  // recorded the user message; show the prompt until the record arrives.
+  const lastUser = [...timeline].reverse().find((item) => item.kind === "text" && item.role === "user");
+  const pendingPrompt = state.active_turn?.prompt && lastUser?.text !== state.active_turn.prompt
+    && !timeline.some((item) => item.role === "user" && item.turn_id !== undefined && item.turn_id === state.active_turn?.turn_id)
+    ? state.active_turn.prompt : "";
   const liveText = state.active_turn?.content && !timeline.some((item) => item.role === "assistant" && item.turn_id === state.active_turn?.turn_id && item.turn_id !== undefined) ? state.active_turn.content : "";
   return <div className="timeline" ref={scroller} onScroll={onScroll}>
     {!timeline.length && !state.history.length && !state.active_turn && <p className="empty-small">{tr("web.empty_timeline")}</p>}
@@ -159,12 +180,14 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }:
         if (item.kind === "reasoning") return <ReasoningRow key={item.id} text={item.text || ""} durationMs={item.duration_ms} />;
         if (item.kind === "text") return <AssistantMessage key={item.id} text={item.text || ""} />;
         if (item.kind === "approval") return null;
+        if (item.kind === "status") return <TurnOutcome key={item.id} status={item.status} detail={item.text} />;
         return toolCardFromTimeline(item);
       })}
+      {pendingPrompt && <UserMessage text={pendingPrompt} userLabel={userLabel} timestamp={timestamp} />}
       {liveTools.map((tool) => toolCardFromState(tool))}
       {state.active_turn?.reasoning && <ReasoningRow text={state.active_turn.reasoning} />}
       {liveText && <AssistantMessage text={liveText} />}
-      {state.history.filter((turn) => turn.status === "failed" || turn.status === "cancelled").map((turn) => <p className="form-error" key={turn.turn_id || turn.status}>{turn.status === "cancelled" ? tr("web.turn_cancelled") : tr("web.turn_failed")}</p>)}
+      {state.active_turn && !liveText && !liveTools.length && !timeline.some((item) => item.turn_id !== undefined && item.turn_id === state.active_turn?.turn_id && item.role === "assistant") && <p className="empty-small working-indicator">{tr("web.working")}</p>}
     </> : <>
       {state.history.map((turn, index) => <div className="turn" key={turn.turn_id || index}>
         {turn.user && <UserMessage text={turn.user} />}
@@ -269,9 +292,9 @@ export function Composer({
         ...item,
         commandId: next.keepId ? commandId : null,
         phase: next.phase,
-        reason: next.phase === "rejected"
+        reason: item.reason || (next.phase === "rejected"
           ? tr("web.command_rejected_hint")
-          : tr("web.command_unknown_hint"),
+          : tr("web.command_unknown_hint")),
       }));
     } finally {
       sending.current = false;
@@ -770,7 +793,7 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
   const renderHistory = () => <>
     <div className="section-label"><span>{tr("web.recent_tasks")}</span>{history.some((session) => isToday(session.saved_at)) && <span>{tr("web.today")}</span>}</div>
     {visibleHistory.map((session) => <div className="session-entry" key={session.session_id}>
-      <button className="recent-row" onClick={() => onSelect(session)}>{session.status === "failed" ? <X className="recent-mark fail" size={12} weight="bold" /> : <Check className="recent-mark ok" size={12} weight="bold" />}{sessionTitle(session, tr)}</button>
+      <button className="recent-row" onClick={() => onSelect(session)}><RecentMark outcome={session.agent_status || session.status} />{sessionTitle(session, tr)}</button>
       {selected !== session.session_id && <SessionMenu session={session} onRename={onRename} onArchive={onArchive} />}
     </div>)}
     {!showAllHistory && history.length > visibleHistory.length && <button type="button" className="recent-more" onClick={() => setShowAllHistory(true)}>{tr("web.show_all_tasks", { count: history.length - visibleHistory.length })}</button>}
@@ -778,7 +801,7 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
   </>;
   return <aside className={`sidebar ${open ? "responsive-open" : ""}`}>
     <div className="sidebar-scroll">
-      <button className="primary-action" onClick={onCreate} aria-label={tr("web.new_session")}><span className="primary-action-label"><Plus size={14} weight="bold" /><span>{tr("web.new_task")}</span></span><kbd>{tr("web.shortcut_key", { key: "N" })}</kbd></button>
+      <button className="primary-action" onClick={onCreate} aria-label={tr("web.new_session")}><span className="primary-action-label"><Plus size={14} weight="bold" /><span>{tr("web.new_task")}</span></span><kbd>{tr("web.alt_shortcut_key", { key: "N" })}</kbd></button>
       <div>{renderActive()}</div>
       <div>{renderHistory()}</div>
       {workspaces.length > 0 && <div>

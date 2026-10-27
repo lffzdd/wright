@@ -25,7 +25,8 @@ class ParsedTurn:
 
 
 def parse_turn(response: ContentDone) -> ParsedTurn:
-    if response.finish_reason not in {None, "stop", "tool_calls"}:
+    # "function_call" is the legacy name some compatible servers still send.
+    if response.finish_reason not in {None, "stop", "tool_calls", "function_call"}:
         raise TurnAbort(f"Response did not complete: {response.finish_reason}")
 
     message = assistant_message(response)
@@ -44,8 +45,15 @@ def parse_turn(response: ContentDone) -> ParsedTurn:
             or not function["name"]
         ):
             raise TurnAbort(f"Missing function name for {call_id}")
+        raw_arguments = function.get("arguments")
+        if raw_arguments is None or (isinstance(raw_arguments, str) and not raw_arguments.strip()):
+            # Several OpenAI-compatible servers send "" for a call without
+            # parameters. That is an empty object, not malformed JSON.
+            raw_arguments = "{}"
+        if isinstance(raw_arguments, dict):
+            raw_arguments = json.dumps(raw_arguments)
         try:
-            arguments = json.loads(function["arguments"])
+            arguments = json.loads(raw_arguments)
         except (KeyError, TypeError, json.JSONDecodeError) as exc:
             raise TurnAbort(
                 f"Invalid JSON arguments for {function['name']}: {exc}"
@@ -67,7 +75,7 @@ def parse_turn(response: ContentDone) -> ParsedTurn:
     }
     if calls:
         return ParsedTurn("tool_calls", parsed, message, tool_calls=calls)
-    if response.finish_reason == "tool_calls" or not response.content.strip():
+    if response.finish_reason in {"tool_calls", "function_call"} or not response.content.strip():
         raise TurnAbort("Response contains neither tool calls nor a final answer")
     return ParsedTurn("final", parsed, message, final_answer=response.content)
 

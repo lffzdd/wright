@@ -210,4 +210,31 @@ describe("UI event reducer", () => {
     expect(next.timeline?.some((item) => item.text === "Preview turn completed.")).toBe(true);
     expect(next.active_turn).toBeNull();
   });
+
+  it("keeps each step's narration as its own block, in order with tools", () => {
+    let next = applyEvent({ ...state, timeline: [] }, event(1, "turn.started", { prompt: "fix it" }));
+    next = applyEvent(next, event(2, "content.delta", { piece: "Reading first." }));
+    next = applyEvent(next, event(3, "tool.planned", { call_id: "a", name: "read_file" }));
+    next = applyEvent(next, event(4, "tool.finished", { call_id: "a", name: "read_file", ok: true }));
+    next = applyEvent(next, event(5, "content.delta", { piece: "Now editing." }));
+    next = applyEvent(next, event(6, "tool.planned", { call_id: "b", name: "edit_file" }));
+    next = applyEvent(next, event(7, "tool.finished", { call_id: "b", name: "edit_file", ok: true }));
+    next = applyEvent(next, event(8, "content.delta", { piece: "Do" }));
+    next = applyEvent(next, event(9, "content.final", { content: "Done." }));
+    next = applyEvent(next, event(10, "turn.completed", {}));
+    expect(next.timeline?.map((item) => item.kind === "text" ? `${item.role}:${item.text}` : item.id)).toEqual([
+      "user:fix it", "assistant:Reading first.", "a", "assistant:Now editing.", "b", "assistant:Done.",
+    ]);
+  });
+
+  it("places a failed turn's outcome after that turn only", () => {
+    let next = applyEvent({ ...state, timeline: [] }, event(1, "turn.started", { prompt: "one", run_id: "r1" }));
+    next = applyEvent(next, event(2, "turn.failed", { run_id: "r1", error: "Model request failed (HTTP 400): bad" }));
+    expect(next.notices).toHaveLength(0);
+    next = applyEvent(next, event(3, "turn.started", { prompt: "two" }, "abc:2"));
+    next = applyEvent(next, event(4, "content.final", { content: "fine" }, "abc:2"));
+    next = applyEvent(next, event(5, "turn.completed", {}, "abc:2"));
+    const kinds = next.timeline?.map((item) => item.kind === "status" ? `status:${item.status}:${item.text}` : `${item.role}:${item.text}`);
+    expect(kinds).toEqual(["user:one", "status:failed:Model request failed (HTTP 400): bad", "user:two", "assistant:fine"]);
+  });
 });

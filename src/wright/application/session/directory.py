@@ -105,9 +105,40 @@ class SessionDirectory:
         self._request_locks: dict[str, threading.Lock] = {}
         self._lock = threading.RLock()
 
+    def _prune_closed_locked(self) -> None:
+        """Forget sessions whose worker has already stopped.
+
+        A worker can stop on its own (shutdown, an unexpected failure). Its
+        checkpoint is on disk, so the entry must not keep holding a capacity
+        slot or block reopening the same session.
+        """
+        for key, opened in list(self._sessions.items()):
+            runner = getattr(getattr(opened, "service", None), "runner", None)
+            if getattr(runner, "state", None) == "closed":
+                self._sessions.pop(key, None)
+
+    def _make_room(self) -> None:
+        """Close the least recently used idle session when capacity is full."""
+        with self._lock:
+            self._prune_closed_locked()
+            if len(self._sessions) < self.capacity:
+                return
+            candidates = []
+            for opened in self._sessions.values():
+                service = getattr(opened, "service", None)
+                evictable = getattr(service, "is_evictable", None)
+                if callable(evictable) and evictable():
+                    candidates.append(opened)
+            if not candidates:
+                return
+            victim = min(candidates, key=lambda item: getattr(item.service, "last_activity", 0.0))
+        logger.info("closing idle session %s to make room", victim.session_id)
+        self.close(victim.session_id)
+
     def project(self) -> dict[str, Any]:
         base_model = process_model_name(getattr(self.base_args, "model", None))
         with self._lock:
+            self._prune_closed_locked()
             active_count = len(self._sessions)
         return {
             "project_id": project_id(self.project_root),
@@ -186,11 +217,13 @@ class SessionDirectory:
                 resume = reused
         created_worktree = False
         context: ProjectContext | None = None
+        self._make_room()
         with self._lock:
+            self._prune_closed_locked()
             if len(self._sessions) >= self.capacity:
                 raise SessionDirectoryError(
-                    f"active session capacity {self.capacity} reached; "
-                    "close a session before opening another",
+                    f"All {self.capacity} session slots are busy with running work; "
+                    "stop or close one before opening another",
                     kind="capacity",
                 )
             resume_id = (resume or "").strip()
@@ -298,6 +331,7 @@ class SessionDirectory:
                     host.close()
                 raise
             with self._lock:
+                self._prune_closed_locked()
                 conflict = session_id in self._sessions
                 over_capacity = len(self._sessions) >= self.capacity
                 if not conflict and not over_capacity:
@@ -394,6 +428,7 @@ class SessionDirectory:
 
     def get(self, session_id: str) -> OpenSession:
         with self._lock:
+            self._prune_closed_locked()
             opened = self._sessions.get(session_id)
         if opened is None:
             raise SessionDirectoryError("session is not active", kind="not_found")
@@ -422,6 +457,7 @@ class SessionDirectory:
 
     def list_sessions(self) -> list[dict[str, Any]]:
         with self._lock:
+            self._prune_closed_locked()
             active = {
                 key: {**value.service.summary(), "recoverable": True}
                 for key, value in self._sessions.items()
@@ -430,7 +466,12 @@ class SessionDirectory:
         for saved in self.checkpoints.list_recent_sessions(limit=100):
             if saved["session_id"] in active:
                 continue
-            results.append({**saved, "active": False, "status": "closed", "lifecycle": "closed"})
+            results.append({
+                **saved,
+                # Keep the run outcome; "status" describes the session lifecycle.
+                "agent_status": saved.get("status"),
+                "active": False, "status": "closed", "lifecycle": "closed",
+            })
         return results
 
     def run_history(self, run_id: str) -> dict[str, Any]:
