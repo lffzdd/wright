@@ -696,7 +696,7 @@ def test_one_selector_per_user_turn(tmp_path: Path):
     manager = _manager(tmp_path)
     manager.episode_store.save(EpisodeRecord(
         id="ep-turn",
-        session_id=session.session_id,
+        session_id="an-earlier-session",
         goal="修复登录",
         status="completed",
         outcome="cookie",
@@ -729,7 +729,37 @@ def test_one_selector_per_user_turn(tmp_path: Path):
     session.begin_user_turn("下一个任务")
     session.append_message({"role": "user", "content": "下一个任务"})
     manager.recall_for_turn(session)
+    assert counter.calls == 1  # unrelated later turn: nothing new to select
+    session.begin_user_turn("修复登录的回归")
+    session.append_message({"role": "user", "content": "修复登录的回归"})
+    manager.recall_for_turn(session)
     assert counter.calls == 2
+
+
+def test_episodes_from_the_current_session_are_not_recalled(tmp_path: Path):
+    """Those turns are already in the conversation; recalling them only costs a call."""
+    session = _session(tmp_path, "修复登录")
+    pid = project_id(session.project_root)
+    manager = _manager(tmp_path)
+    manager.episode_store.save(EpisodeRecord(
+        id="ep-same-session", session_id=session.session_id, goal="修复登录", status="completed",
+        outcome="cookie", started_step=0, ended_step=1, created_at="2026-01-01T00:00:00Z",
+        plan={}, tools=(), agents=(), verification=(),
+        usage={"prompt_tokens": 1, "completion_tokens": 0, "total_tokens": 1},
+        project_id=pid, project_root=str(session.project_root),
+    ))
+    calls = []
+
+    class _Count:
+        def select(self, **kwargs):
+            calls.append(kwargs)
+            return SelectorChoice(episode_ids=())
+
+    manager.bind_project(session.project_root)
+    manager.service.selector = _Count()
+    context = manager.recall_for_turn(session)
+    assert calls == []
+    assert context.selected_episode_ids == ()
 
 
 def test_meter_separates_calls_and_does_not_invent_cost():

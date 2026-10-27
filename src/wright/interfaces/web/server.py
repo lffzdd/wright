@@ -127,5 +127,6 @@ def run_web(args: Any) -> None:
         create_app(manager, auth),
         host="127.0.0.1",
         port=port,
-        log_level="info",
+        # Request access lines would bury the URL and real warnings.
+        log_level="warning",
     )

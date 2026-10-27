@@ -150,7 +150,11 @@ class MemoryManager:
             context = self.service.reproject_semantic(cached)
             self._recall_by_turn[key] = context
             return context
-        context = self._prepare_context(_goal(session_state), project_id=current)
+        context = self._prepare_context(
+            _goal(session_state), project_id=current,
+            session_id=str(getattr(session_state, "session_id", "") or ""),
+            include_recent=_first_user_turn(session_state),
+        )
         if key:
             self._recall_by_turn[key] = context
         return context
@@ -283,10 +287,14 @@ class MemoryManager:
             if saved is not None and snapshot.get("extract_requested"):
                 self._extract_snapshot(session_state, snapshot)
 
-    def _prepare_context(self, task: str, *, project_id: str) -> MemoryContextDTO:
+    def _prepare_context(
+        self, task: str, *, project_id: str, session_id: str = "", include_recent: bool = True,
+    ) -> MemoryContextDTO:
         self._side_call = None
         try:
-            context = self.service.prepare_memory_context(task, project_id=project_id)
+            context = self.service.prepare_memory_context(
+                task, project_id=project_id, session_id=session_id, include_recent=include_recent,
+            )
         except Exception as exc:
             logger.info("episode_recall failure_type=%s", type(exc).__name__)
             usage = (self._side_call or {}).get("usage")
@@ -511,6 +519,13 @@ def _project_root_of(session_state: Any) -> Path:
     root = getattr(session_state, "project_root", None) or session_state.workspace_dir
     return Path(root).expanduser().resolve()
 
+
+def _first_user_turn(session_state: Any) -> bool:
+    """Whether the current Run is the first user request of this session."""
+    runs = getattr(session_state, "runs", None)
+    if not isinstance(runs, dict):
+        return True
+    return sum(1 for run in runs.values() if getattr(run, "source", "") == "user_input") <= 1
 
 def _goal(session_state: Any) -> str:
     reader = getattr(session_state, "current_goal", None)

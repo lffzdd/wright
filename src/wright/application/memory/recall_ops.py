@@ -35,8 +35,18 @@ class RecallCoordinator:
         *,
         project_id: str = "",
         max_memories: int = 200,
+        session_id: str = "",
+        include_recent: bool = True,
     ) -> MemoryContextDTO:
         """Select semantic and episode recall for one task.
+
+        Two kinds of episode candidate are dropped before the selector, so it
+        is not asked (and paid for) when there is nothing new to judge:
+        episodes from ``session_id``, whose turns are already in the
+        conversation, and, when ``include_recent`` is false, recent episodes
+        with no lexical match to the task. Recency alone is a reason to look
+        at the start of a session ("continue where we left off"), not on every
+        later turn of it.
 
         Core memory is returned for callers and is injected by the system-prompt
         projection, not by this recall block. Semantic candidates are filtered
@@ -50,6 +60,11 @@ class RecallCoordinator:
         candidates = (
             self.episodes._episode_candidates(current_task, project_id) if project_id else []
         )
+        candidates = [
+            hit for hit in candidates
+            if not (session_id and getattr(hit.episode, "session_id", "") == session_id)
+            and (include_recent or hit.lexical_score > 0)
+        ]
         selected_memories: list[SemanticMemoryRecord] = []
         selected_episodes: list[EpisodeRecord] = []
         selector_attempted = False

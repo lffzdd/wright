@@ -104,3 +104,30 @@ def test_one_session_rule_covers_repeated_edits(stack, console):
     console.page.get_by_text("Permissions", exact=True).first.click()
     console.page.wait_for_timeout(1500)
     assert "Edit anything in" in console.page.inner_text("body")
+
+
+def test_reading_outside_the_project_makes_no_failing_requests(stack, console):
+    failures: list[str] = []
+
+    def record(response) -> None:
+        if response.status >= 400 and "/api/" in response.url:
+            failures.append(f"{response.status} {response.url}")
+
+    console.page.on("response", record)
+    try:
+        console.new_task()
+        stack.script([
+            {"tool_calls": [tool_call("o1", "read_file", {"file": "/etc/hostname"})]},
+            {"content": "read it", "finish_reason": "stop"},
+        ])
+        console.send("read a system file", wait_ms=3500)
+        card = console.page.inner_text(".approval-card")
+        assert "Outside this project" in card
+        console.page.get_by_role("button", name="Allow Once").first.click()
+        console.page.wait_for_timeout(3000)
+        console.page.get_by_text("Task", exact=True).first.click()
+        console.page.wait_for_timeout(2500)
+        assert "read it" in console.timeline()
+    finally:
+        console.page.remove_listener("response", record)
+    assert not [item for item in failures if "/tree" in item or "/changes" in item], failures

@@ -877,7 +877,12 @@ def test_agent_injects_episode_without_writing_transcript(tmp_path: Path):
     })
     assert selector.recall_calls == after_first
 
+    # Later in the same session, an unrelated request has nothing new for the
+    # selector to judge: recency alone only counts at the start of a session.
     assert agent.run("再看一个问题") == "done"
+    assert selector.recall_calls == after_first
+    # A related request still gets the selector.
+    assert agent.run("登录测试还是失败") == "done"
     assert selector.recall_calls == after_first + 1
     assert manager.episode_store.get(seeded.id).outcome == "改用 session cookie"
 

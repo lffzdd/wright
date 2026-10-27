@@ -112,8 +112,13 @@ class MemoryService:
     *,
     project_id: str = "",
     max_memories: int = 200,
+    session_id: str = "",
+    include_recent: bool = True,
 ) -> MemoryContextDTO:
-        return self._recall.prepare_memory_context(current_task, project_id=project_id, max_memories=max_memories)
+        return self._recall.prepare_memory_context(
+            current_task, project_id=project_id, max_memories=max_memories,
+            session_id=session_id, include_recent=include_recent,
+        )
 
     def reproject_semantic(self, previous: MemoryContextDTO) -> MemoryContextDTO:
         return self._recall.reproject_semantic(previous)

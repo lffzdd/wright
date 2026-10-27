@@ -111,3 +111,15 @@ describe("real timeline projection", () => {
     expect(screen.getByText("2 entries")).toBeTruthy();
   });
 });
+
+describe("projectRelative", () => {
+  it("keeps project paths and drops everything outside the project", async () => {
+    const { projectRelative } = await import("./widgets");
+    expect(projectRelative("src/a.ts", "/p")).toBe("src/a.ts");
+    expect(projectRelative("/p/src/a.ts", "/p")).toBe("src/a.ts");
+    expect(projectRelative("/etc/hosts", "/p")).toBeNull();
+    expect(projectRelative("../other/a.ts", "/p")).toBeNull();
+    expect(projectRelative("C:\\work\\p\\src\\a.ts", "C:\\work\\p")).toBe("src/a.ts");
+    expect(projectRelative("D:\\elsewhere\\a.ts", "C:\\work\\p")).toBeNull();
+  });
+});

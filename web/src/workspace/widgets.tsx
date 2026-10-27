@@ -425,6 +425,16 @@ export function Composer({
 
 type InspectorTab = "task" | "files" | "changes" | "permissions" | "context";
 
+/** A path relative to the project, or null when it lies outside it. */
+export function projectRelative(path: string, root?: string): string | null {
+  const normalized = path.replace(/\\/g, "/");
+  const absolute = normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized);
+  if (!absolute) return normalized.split("/").includes("..") ? null : normalized;
+  const base = (root ?? "").replace(/\\/g, "/").replace(/\/+$/, "");
+  if (base && normalized.startsWith(`${base}/`)) return normalized.slice(base.length + 1);
+  return null;
+}
+
 export function Inspector({ state, sessionId, open, narrow = false, focusPath = null, close }: { state: ViewState; sessionId: string; open: boolean; narrow?: boolean; focusPath?: string | null; close: () => void }) {
   const tr = useT();
   const [tab, setTab] = useState<InspectorTab>("task");
@@ -500,9 +510,13 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
   }, [tab, sessionId, state.session.permission_mode, state.session.interaction_mode, state.permissions_revision, state.connection, state.pending_interactions]);
   useEffect(() => {
     let current = true;
-    const accessed = (state.accessed_files ?? []).slice(-8);
+    // Only files inside the project can be listed or diffed; asking about
+    // /etc or another checkout just produces failed requests.
+    const accessed = (state.accessed_files ?? []).slice(-8)
+      .map((item) => ({ ...item, path: projectRelative(item.path, state.session.execution_root) }))
+      .filter((item): item is typeof item & { path: string } => item.path !== null);
     const folders = [...new Set(accessed.map((item) => {
-      const path = item.path.replace(/\\/g, "/");
+      const path = item.path;
       return path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
     }))];
     const writePaths = new Set((changes ?? []).map((item) => item.path));
