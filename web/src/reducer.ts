@@ -114,19 +114,19 @@ function turnKey(state: ViewState, event: UiEvent): string {
   return state.active_turn?.turn_id || event.turn_id || event.event_id;
 }
 
-/** Assistant text is shown as one block per model step, in order with tools. */
-function segmentId(state: ViewState, event: UiEvent): string {
-  return `${turnKey(state, event)}:assistant:${state.active_turn?.segment ?? 0}`;
+/** Text and reasoning share a model-step cursor and retain their timeline positions. */
+function segmentId(state: ViewState, event: UiEvent, kind: "text" | "reasoning" = "text"): string {
+  return `${turnKey(state, event)}:${kind === "text" ? "assistant" : "reasoning"}:${state.active_turn?.segment ?? 0}`;
 }
 
-function upsertSegment(state: ViewState, event: UiEvent, text: (previous: string) => string): ViewState {
+function upsertSegment(state: ViewState, event: UiEvent, text: (previous: string) => string, kind: "text" | "reasoning" = "text"): ViewState {
   if (!state.timeline) return state;
-  const id = segmentId(state, event);
+  const id = segmentId(state, event, kind);
   const index = state.timeline.findIndex((item) => item.id === id);
   const previous = index >= 0 ? state.timeline[index].text ?? "" : "";
   const value = text(previous);
   if (index < 0 && !value) return state;
-  const item = { id, turn_id: turnKey(state, event), kind: "text" as const, role: "assistant", text: value };
+  const item = { id, turn_id: turnKey(state, event), kind, role: "assistant", text: value };
   return {
     ...state,
     timeline: index >= 0 ? state.timeline.map((old, i) => i === index ? item : old) : [...state.timeline, item],
@@ -135,9 +135,9 @@ function upsertSegment(state: ViewState, event: UiEvent, text: (previous: string
 
 function closeSegment(state: ViewState, event: UiEvent): ViewState {
   if (!state.active_turn || !state.timeline) return state;
-  const open = state.timeline.some((item) => item.id === segmentId(state, event) && item.text);
+  const open = state.timeline.some((item) => (item.id === segmentId(state, event) || item.id === segmentId(state, event, "reasoning")) && item.text);
   if (!open) return state;
-  return { ...state, active_turn: { ...state.active_turn, segment: (state.active_turn.segment ?? 0) + 1 } };
+  return { ...state, active_turn: { ...state.active_turn, segment: (state.active_turn.segment ?? 0) + 1, content: "", reasoning: "" } };
 }
 
 export function applyEvent(state: ViewState, event: UiEvent): ViewState {
@@ -185,7 +185,9 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
     next.queued_commands = next.queued_commands.filter((item) => item.command_id !== commandId);
     next.queue_depth = next.queued_commands.length;
   } else if (event.type === "reasoning.delta" && next.active_turn) {
-    next.active_turn = { ...next.active_turn, reasoning: next.active_turn.reasoning + String(event.payload.piece ?? "") };
+    const piece = String(event.payload.piece ?? "");
+    next.active_turn = { ...next.active_turn, reasoning: next.active_turn.reasoning + piece };
+    next = upsertSegment(next, event, (previous) => previous + piece, "reasoning");
   } else if (event.type === "content.delta" && next.active_turn) {
     const piece = String(event.payload.piece ?? "");
     next.active_turn = { ...next.active_turn, content: next.active_turn.content + piece };
@@ -222,7 +224,7 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
     }
     const finished = next.active_turn?.content ?? "";
     const turnId = next.active_turn?.turn_id || event.turn_id;
-    if (finished && next.timeline && !next.timeline.some((item) => item.role === "assistant" && item.turn_id === turnId)) {
+    if (finished && next.timeline && !next.timeline.some((item) => item.kind === "text" && item.role === "assistant" && item.turn_id === turnId)) {
       next.timeline = [...next.timeline, { id: `${turnId || event.event_id}:assistant`, turn_id: turnId, kind: "text", role: "assistant", text: finished }];
     }
     if (event.type !== "turn.completed" && next.timeline) {
@@ -298,6 +300,7 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
       ...(permission === "default" || permission === "acceptEdits" || permission === "bypass" || permission === "plan" ? { permission_mode: permission } : {}),
     };
   } else if (event.type === "session.status_changed") {
+    if (event.payload.status === "model_turn_started") next = closeSegment(next, event);
     const model = event.payload.model;
     const execution = event.payload.execution;
     const lifecycle = event.payload.lifecycle;

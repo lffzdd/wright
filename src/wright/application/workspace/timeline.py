@@ -12,7 +12,10 @@ _SHELL = frozenset({"execute_command"})
 _EDIT = frozenset({"edit_file", "write_file"})
 
 
-def project_timeline(session: Any, pending: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+def project_timeline(
+    session: Any, pending: list[dict[str, Any]] | None = None,
+    *, live_turn: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     records = getattr(session, "message_records", None)
     if not isinstance(records, list):
         return []
@@ -69,6 +72,14 @@ def project_timeline(session: Any, pending: list[dict[str, Any]] | None = None) 
             continue
         items.append(_tool_item(execution, len(records) + offset))
     items = _with_run_outcomes(session, items)
+    # The live fold owns this turn until its terminal event. Records may already
+    # contain a completed model step, so replace the suffix rather than append
+    # another copy of its reasoning and tools. The boundary is captured before
+    # the user command starts, not inferred from possibly repeated prompt text.
+    if live_turn is not None and isinstance(live_turn.get("message_index"), int):
+        start = live_turn["message_index"]
+        items = [item for item in items if item.get("order", 0) < start]
+        items.extend(live_turn["timeline"])
     for offset, interaction in enumerate(pending or []):
         items.append({
             "id": str(interaction.get("request_id") or f"approval:{offset}"),

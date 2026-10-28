@@ -76,7 +76,7 @@ def test_snapshot_uses_live_response_projection_after_event_ring_eviction(
     run = session.active_run()
     assert run is not None
     runtime.publisher.publish(
-        "turn.started", {"prompt": "active goal", "run_id": run.run_id}, turn_id="turn-1",
+        "turn.started", {"prompt": "active goal", "run_id": run.run_id, "message_index": 0}, turn_id="turn-1",
     )
     runtime.publisher.publish("reasoning.delta", {"piece": "reasoning survives"})
     runtime.publisher.publish("content.delta", {"piece": "complete streamed response"})
@@ -89,8 +89,12 @@ def test_snapshot_uses_live_response_projection_after_event_ring_eviction(
 
     assert snapshot["active_turn"]["run_id"] == run.run_id
     assert snapshot["active_turn"]["prompt"] == "active goal"
-    assert snapshot["active_turn"]["reasoning"] == "reasoning survives"
-    assert snapshot["active_turn"]["content"] == "complete streamed response"
+    assert snapshot["active_turn"]["reasoning"] == ""
+    assert [item.get("text") for item in snapshot["timeline"][:3]] == [
+        "active goal", "reasoning survives", "complete streamed response",
+    ]
+    assert snapshot["active_turn"]["content"] == ""
+    assert snapshot["active_turn"]["segment"] == 1
     assert snapshot["active_turn"]["tools"][0]["call_id"] == "call_1"
     assert snapshot["active_turn"]["tools"][0]["name"] == "read_file"
     assert runtime.publisher.replay(runtime.publisher.stream_id, 0) is None
@@ -421,3 +425,51 @@ def test_closed_local_session_can_be_replaced_without_losing_its_schedules(monke
     finally:
         manager.shutdown()
     assert first_store.closed and second_store.closed
+
+
+def test_reasoning_snapshot_preserves_order_without_duplicating_committed_steps(monkeypatch, tmp_path):
+    monkeypatch.setattr(runtime_module, "shutdown_runtime", lambda runtime: None)
+    runtime = _fake_runtime("reasoning-order", tmp_path)
+    session = Session.create("repeat", tmp_path, session_id="reasoning-order")
+    session.begin_user_turn("repeat")
+    session.append_user_message("repeat")
+    session.record_assistant_turn("Earlier answer", {}, "final")
+    session.mark_completed()
+    runtime.session_state = session
+    publisher = runtime.publisher
+    start = len(session.message_records)
+    publisher.publish("turn.started", {"prompt": "repeat", "message_index": start}, turn_id="turn-2")
+    session.begin_user_turn("repeat")
+    session.append_user_message("repeat")
+    publisher.publish("reasoning.delta", {"piece": "Before tool"})
+    call = ToolCall("read_file", {"path": "note.md"}, "call-1")
+    session.record_assistant_turn("", {}, "tool_calls", [call], assistant_message={
+        "role": "assistant", "content": "", "reasoning": "Before tool",
+        "tool_calls": [{"id": call.id}],
+    })
+    publisher.publish("tool.planned", {"call_id": call.id, "name": call.name, "arguments": call.arguments})
+    result = ToolResult.success("file contents")
+    session.record_tool_execution(call.id, result)
+    publisher.publish("tool.finished", {"call_id": call.id, **result.to_dict()})
+    publisher.publish("session.status_changed", {"status": "model_turn_started"})
+    publisher.publish("reasoning.delta", {"piece": "After tool"})
+    handle = SessionHandle(runtime)
+    captured = handle.snapshot()
+    assert [item.get("text", item.get("call_id")) for item in captured["timeline"]] == [
+        "repeat", "Earlier answer", "repeat", "Before tool", "call-1", "After tool",
+    ]
+    assert captured["active_turn"]["segment"] == 1
+    publisher.publish("reasoning.delta", {"piece": " continued"})
+    assert captured["timeline"][-1]["text"] == "After tool"
+    publisher.publish("content.final", {"content": "Done"})
+    session.record_assistant_turn("Done", {}, "final", assistant_message={
+        "role": "assistant", "content": "Done", "reasoning": "After tool continued",
+    })
+    session.mark_completed()
+    publisher.publish("turn.completed", {}, turn_id="turn-2")
+    finished = handle.snapshot()
+    assert finished["active_turn"] is None
+    assert [item.get("text", item.get("call_id")) for item in finished["timeline"]] == [
+        "repeat", "Earlier answer", "repeat", "Before tool", "call-1", "After tool continued", "Done",
+    ]
+    handle.close()

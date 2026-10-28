@@ -422,6 +422,7 @@ def process_session_event(
             "turn.started",
             {
                 "prompt": user_input,
+                "message_index": len(session_state.message_records),
                 "command_id": command_id,
                 "references": captured,
                 "attachments": [

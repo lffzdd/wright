@@ -74,6 +74,66 @@ describe("real timeline projection", () => {
     expect(screen.getAllByText("Inspecting the input").length).toBeGreaterThan(0);
   });
 
+  it.each(["turn.completed", "turn.failed", "turn.cancelled"])("keeps ordered reasoning after %s and the next turn", (outcome) => {
+    let state = emit(fresh(), "turn.started", { prompt: "Check it" });
+    state = emit(state, "reasoning.delta", { piece: "Before " });
+    state = emit(state, "reasoning.delta", { piece: "tools" });
+    state = emit(state, "content.delta", { piece: "I will inspect" });
+    for (const call_id of ["a", "b"]) {
+      state = emit(state, "tool.planned", { call_id, name: "read_file" });
+      state = emit(state, "tool.running", { call_id });
+      state = emit(state, "tool.finished", { call_id, ok: true });
+    }
+    state = emit(state, "session.status_changed", { status: "model_turn_started" });
+    state = emit(state, "reasoning.delta", { piece: "After tools" });
+    state = emit(state, "content.delta", { piece: "Final draft" });
+    state = emit(state, "content.final", { content: "Final answer" });
+    const expected = ["Check it", "Before tools", "I will inspect", "a", "b", "After tools", "Final answer"];
+    const order = () => state.timeline?.map((item) => item.text ?? item.call_id);
+    expect(order()).toEqual(expected);
+    const { container, rerender } = render(transcript(state));
+    expect(container.querySelectorAll(".reasoning-card")).toHaveLength(2);
+    const first = screen.getByText("Before tools").closest(".reasoning-card")!;
+    fireEvent.click(first.querySelector("button")!);
+    state = emit(state, outcome, {});
+    rerender(transcript(state));
+    expect(container.querySelectorAll(".reasoning-card")).toHaveLength(2);
+    expect(first.classList.contains("open")).toBe(true);
+    expect(order()?.slice(0, expected.length)).toEqual(expected);
+    expect(screen.getAllByText("Final answer")).toHaveLength(1);
+    state = emit(state, "turn.started", { prompt: "Next" }, "turn-2");
+    rerender(transcript(state));
+    expect(container.querySelectorAll(".reasoning-card")).toHaveLength(2);
+  });
+
+  it("continues a snapshot reasoning segment without duplicating it", () => {
+    let state: ViewState = {
+      ...fresh(),
+      active_turn: { turn_id: "turn-1", prompt: "Check", attachments: [], reasoning: "Partial", content: "", tools: [], segment: 1 },
+      timeline: [
+        { id: "turn-1:user", kind: "text", role: "user", turn_id: "turn-1", text: "Check" },
+        { id: "turn-1:reasoning:0", kind: "reasoning", role: "assistant", turn_id: "turn-1", text: "Before" },
+        { id: "c", kind: "tool", call_id: "c", name: "read_file", phase: "succeeded" },
+        { id: "turn-1:reasoning:1", kind: "reasoning", role: "assistant", turn_id: "turn-1", text: "Partial" },
+      ],
+    };
+    state = emit(state, "reasoning.delta", { piece: " continued" });
+    state = emit(state, "content.final", { content: "Done" });
+    state = emit(state, "turn.completed", {});
+    const { container } = render(transcript(state));
+    expect(container.querySelectorAll(".reasoning-card")).toHaveLength(2);
+    expect(screen.getAllByText("Partial continued")).toHaveLength(1);
+    expect(screen.getAllByText("Done")).toHaveLength(1);
+  });
+
+  it("separates model retries even without tools", () => {
+    let state = emit(fresh(), "turn.started", { prompt: "Check" });
+    state = emit(state, "reasoning.delta", { piece: "Attempt one" });
+    state = emit(state, "session.status_changed", { status: "model_turn_started" });
+    state = emit(state, "reasoning.delta", { piece: "Attempt two" });
+    expect(state.timeline?.filter((item) => item.kind === "reasoning").map((item) => item.text)).toEqual(["Attempt one", "Attempt two"]);
+  });
+
   it("renders failed snapshot and live tool results with the same error and exit code", () => {
     const result = { ok: false, err: "Process failed", data: { stdout: "failure details", stderr: "problem on stderr", returncode: 2 } };
     const { container, rerender } = render(toolCardFromTimeline({ id: "c", kind: "shell", name: "execute_command", phase: "failed", arguments: { command: "false" }, result }));

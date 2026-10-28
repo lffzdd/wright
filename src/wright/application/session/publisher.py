@@ -6,6 +6,7 @@ import queue
 import threading
 from collections import deque
 from collections.abc import Callable
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -64,6 +65,14 @@ class DisplayFold:
                 "reasoning": "",
                 "content": "",
                 "tools": {},
+                "segment": 0,
+                "message_index": payload.get("message_index"),
+                "timeline": [{
+                    "id": f"{event.turn_id or event.event_id}:user",
+                    "turn_id": event.turn_id, "kind": "text", "role": "user",
+                    "text": str(payload.get("prompt") or ""),
+                    "attachments": list(payload.get("attachments") or []),
+                }],
             }
         elif self.root is None:
             if event.type == "usage.request":
@@ -101,6 +110,52 @@ class DisplayFold:
                 "completion_tokens": payload.get("completion_tokens"),
                 "total_tokens": payload.get("total_tokens"),
             }
+
+        if self.root is not None:
+            self._fold_timeline(event)
+
+    def _fold_timeline(self, event: UiEventEnvelope) -> None:
+        """Keep active transcript order independently of the bounded replay ring."""
+        root = self.root
+        assert root is not None
+        items = root["timeline"]
+        payload = event.payload
+        prefix = root["turn_id"] or event.turn_id or event.event_id
+        text_id = f"{prefix}:assistant:{root['segment']}"
+        reasoning_id = f"{prefix}:reasoning:{root['segment']}"
+        boundary = event.type in {"tool.planned", "tool.awaiting_approval", "tool.running"} or (
+            event.type == "session.status_changed" and payload.get("status") == "model_turn_started"
+        )
+        if boundary and any(item["id"] in {text_id, reasoning_id} for item in items):
+            root["segment"] += 1
+            root["content"] = ""
+            root["reasoning"] = ""
+        if event.type in {"reasoning.delta", "content.delta", "content.final"}:
+            reasoning = event.type == "reasoning.delta"
+            item_id = reasoning_id if reasoning else text_id
+            value = str(payload.get("content" if event.type == "content.final" else "piece") or "")
+            item = next((item for item in items if item["id"] == item_id), None)
+            if item is None:
+                if not value:
+                    return
+                item = {"id": item_id, "turn_id": root["turn_id"],
+                        "kind": "reasoning" if reasoning else "text", "role": "assistant", "text": ""}
+                items.append(item)
+            item["text"] = value if event.type == "content.final" else item["text"] + value
+        elif event.type.startswith("tool."):
+            call_id = str(payload.get("call_id") or "")
+            if not call_id:
+                return
+            item = next((item for item in items if item["id"] == call_id), None)
+            if item is None:
+                item = {"id": call_id, "kind": "tool", "call_id": call_id}
+                items.append(item)
+            tool = root["tools"][call_id]
+            for key in ("name", "phase", "arguments", "output"):
+                if key in tool:
+                    item[key] = deepcopy(tool[key])
+            if event.type == "tool.finished":
+                item["result"] = deepcopy(payload)
 
     def _usage_request(self, payload: dict[str, Any]) -> None:
         self.request_usage = {
@@ -153,7 +208,7 @@ class DisplayFold:
     def view(self) -> dict[str, Any]:
         root = None
         if self.root is not None:
-            root = {**self.root, "tools": list(self.root["tools"].values())}
+            root = deepcopy({**self.root, "tools": list(self.root["tools"].values())})
         agents = []
         for agent in self.agents.values():
             agents.append({**agent, "tools": list(agent["tools"].values())})

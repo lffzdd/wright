@@ -10,14 +10,16 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
-from ...domain.policy.permission.types import InvocationGrant
+from ...domain.policy.permission.types import InvocationGrant, InvocationIdentity
 from .sandbox_profile import (
     SandboxUnavailable,
     clean_environment,
     profile_paths,
     runtime_roots,
 )
+from .types import ExecutionPath
 
 
 def _provider() -> str:
@@ -36,10 +38,26 @@ def _provider() -> str:
 
 @lru_cache(maxsize=1)
 def _probe(provider: str) -> tuple[bool, str]:
-    argv = ([provider, "-p", "(version 1)(deny default)(allow process-exec)(allow file-read*)", "/usr/bin/true"]
-            if sys.platform == "darwin" else
-            [provider, "--ro-bind", "/", "/", "--unshare-all", "--cap-drop", "ALL", "--die-with-parent", "--", "/usr/bin/true"])
     try:
+        if sys.platform == "darwin":
+            # Exercise the same shell, profile and cwd writeback as a real launch.
+            # This temporary authority never enters a session or permission store.
+            with TemporaryDirectory(prefix="wright-sandbox-probe-") as temporary:
+                scratch = Path(temporary).resolve()
+                cwd = ExecutionPath("local", str(scratch))
+                grant = InvocationGrant(InvocationIdentity("sandbox-probe"), "local", cwd,
+                                        frozenset({"shell"}), shell_readable=(cwd,), shell_writable=(cwd,))
+                cwd_file = scratch / "cwd"
+                argv = macos_argv("/usr/bin/true", grant, scratch, cwd_file)
+                result = subprocess.run(argv, cwd=scratch, capture_output=True, timeout=5,
+                                        env=_sandbox_environment(scratch), check=False)
+                detail = result.stderr.decode("utf-8", errors="replace").strip()
+                if result.returncode:
+                    return False, detail or f"Sandbox shell exited with status {result.returncode}"
+                if not cwd_file.is_file() or cwd_file.read_text().strip() != str(scratch):
+                    return False, "Sandbox shell did not write its working directory"
+                return True, detail
+        argv = [provider, "--ro-bind", "/", "/", "--unshare-all", "--cap-drop", "ALL", "--die-with-parent", "--", "/usr/bin/true"]
         result = subprocess.run(argv, capture_output=True, timeout=5, env=clean_environment(), check=False)
         return result.returncode == 0, result.stderr.decode("utf-8", errors="replace").strip()
     except (OSError, subprocess.TimeoutExpired) as error:
@@ -97,16 +115,23 @@ def macos_argv(command: str, grant: InvocationGrant, scratch: Path, cwd_file: Pa
     readable, writable = profile_paths(grant)
     def quote(value):
         return json.dumps(str(value), ensure_ascii=True)
+    # Seatbelt matches canonical paths. Resolve trusted runtime installations and
+    # private scratch, preserving the immutable paths issued by authorization.
+    runtime = tuple(path.resolve() for path in runtime_roots())
+    scratch = scratch.resolve()
     profile = ['(version 1)', '(deny default)', '(allow process-fork process-exec signal)',
                '(allow sysctl-read)', '(allow file-read-metadata)', '(allow mach-lookup (global-name "com.apple.system.logger"))']
-    for path in (*runtime_roots(), *readable):
+    # dyld's libignition opens the root directory to locate the system cryptex.
+    # A literal match allows that directory (including listing), never its children.
+    profile.append('(allow file-read-data (literal "/"))')
+    for path in (*runtime, *readable):
         profile.append(f'(allow file-read* (subpath {quote(path)}))')
     for path in (*writable, scratch):
         profile.append(f'(allow file-read* file-write* (subpath {quote(path)}))')
     for path in ("/dev/null", "/dev/zero", "/dev/random", "/dev/urandom"):
         profile.append(f'(allow file-read* (literal {quote(path)}))')
     profile.append('(allow file-write* (literal "/dev/null"))')
-    for path in runtime_roots():
+    for path in runtime:
         profile.append(f'(deny file-write* (subpath {quote(path)}))')
     for path in grant.shell_readonly:
         profile.append(f'(deny file-write* (subpath {quote(path.value)}))')
@@ -148,13 +173,18 @@ def _spawn(argv, cwd, env, *, pass_fds=()):
         start_new_session=True, pass_fds=pass_fds).result()
 
 
+def _sandbox_environment(scratch: Path) -> dict[str, str]:
+    env = clean_environment()
+    env.update(HOME=str(scratch), TMPDIR=str(scratch), TMP=str(scratch), TEMP=str(scratch))
+    return env
+
+
 def launch(command: str, grant: InvocationGrant, scratch: Path, cwd_file: Path):
     if sys.platform == "win32":
         from .windows_sandbox import launch as windows_launch
         return windows_launch(command, grant, scratch, cwd_file)
     argv = macos_argv(command, grant, scratch, cwd_file) if sys.platform == "darwin" else linux_argv(command, grant, scratch, cwd_file)
-    env = clean_environment()
-    env.update(HOME=str(scratch), TMPDIR=str(scratch), TMP=str(scratch), TEMP=str(scratch))
+    env = _sandbox_environment(scratch)
     if sys.platform == "linux" and not grant.network_enabled:
         filter_file = scratch / "socket-filter.bpf"
         filter_file.write_bytes(offline_socket_filter())

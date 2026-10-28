@@ -250,6 +250,10 @@ class PermissionService:
                 raise PermissionConflict("Permission mode changed")
             if current.scope.protected != baseline.scope.protected:
                 raise PermissionConflict("Protected boundaries changed")
+            if (current.scope.origin, current.scope.project_root) != (
+                baseline.scope.origin, baseline.scope.project_root
+            ):
+                raise PermissionConflict("Execution boundaries changed")
             if current.scope.read_only != baseline.scope.read_only:
                 raise PermissionConflict("Read-only boundaries changed")
             previous = {
@@ -314,7 +318,10 @@ class PermissionService:
                 snapshot = self.snapshot(session)
             elif resolution.changes != AuthorizationChange():
                 raise PermissionError("Remembered authorization requires a session")
-            validator = (lambda: self.validate(session, snapshot.version)) if snapshot else None
+            # The version is an optimistic concurrency token for approval and
+            # commit. An issued invocation remains valid across additive grants,
+            # but must still observe revocation and changed restrictions.
+            validator = self.execution_guard(session, snapshot) if snapshot else None
             grant = replace(resolution.grant, policy_version=snapshot.version if snapshot else "")
             resolution = replace(resolution, grant=grant)
             execution = None

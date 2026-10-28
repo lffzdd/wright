@@ -172,7 +172,7 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }:
   const pendingPrompt = state.active_turn?.prompt && lastUser?.text !== state.active_turn.prompt
     && !timeline.some((item) => item.role === "user" && item.turn_id !== undefined && item.turn_id === state.active_turn?.turn_id)
     ? state.active_turn.prompt : "";
-  const liveText = state.active_turn?.content && !timeline.some((item) => item.role === "assistant" && item.turn_id === state.active_turn?.turn_id && item.turn_id !== undefined) ? state.active_turn.content : "";
+  const liveText = state.active_turn?.content && !timeline.some((item) => item.kind === "text" && item.role === "assistant" && item.turn_id === state.active_turn?.turn_id && item.turn_id !== undefined) ? state.active_turn.content : "";
   return <div className="timeline" ref={scroller} onScroll={onScroll}>
     {!timeline.length && !state.history.length && !state.active_turn && <p className="empty-small">{tr("web.empty_timeline")}</p>}
     {timeline.length > 0 ? <>
@@ -186,7 +186,6 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }:
       })}
       {pendingPrompt && <UserMessage text={pendingPrompt} userLabel={userLabel} timestamp={timestamp} />}
       {liveTools.map((tool) => toolCardFromState(tool))}
-      {state.active_turn?.reasoning && <ReasoningRow text={state.active_turn.reasoning} />}
       {liveText && <AssistantMessage text={liveText} />}
       {state.active_turn && !liveText && !liveTools.length && !timeline.some((item) => item.turn_id !== undefined && item.turn_id === state.active_turn?.turn_id && item.role === "assistant") && <p className="empty-small working-indicator">{tr("web.working")}</p>}
     </> : <>

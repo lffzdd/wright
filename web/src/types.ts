@@ -67,7 +67,7 @@ export type ActiveTurn = {
   reasoning: string;
   content: string;
   tools: ToolState[];
-  /** Index of the assistant text block being streamed in this turn. */
+  /** Index of the model step whose text and reasoning are being streamed. */
   segment?: number;
 };
 

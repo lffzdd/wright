@@ -236,7 +236,13 @@ class SessionHandle:
             state = self.runtime.session_state
             service_snapshot = self.service.snapshot()
             view = self.publisher.display.view()
-            active = view["active_turn"]
+            # The transcript is delivered once, in timeline; active_turn only
+            # carries the streaming cursor and execution metadata.
+            active = (
+                {key: value for key, value in view["active_turn"].items()
+                 if key not in {"timeline", "message_index"}}
+                if view["active_turn"] is not None else None
+            )
             authoritative_run = service_snapshot["active_run"]
             if active is None and authoritative_run is not None:
                 active = {
@@ -332,7 +338,7 @@ class SessionHandle:
                 },
                 "context_breakdown": breakdown,
                 "timeline": project_timeline(
-                    state, service_snapshot["pending_interactions"],
+                    state, service_snapshot["pending_interactions"], live_turn=view["active_turn"],
                 ),
                 "subagents": project_subagents(state),
                 "accessed_files": project_accessed_files(state),
