@@ -449,9 +449,15 @@ def test_reasoning_snapshot_preserves_order_without_duplicating_committed_steps(
         "tool_calls": [{"id": call.id}],
     })
     publisher.publish("tool.planned", {"call_id": call.id, "name": call.name, "arguments": call.arguments})
-    result = ToolResult.success("file contents")
+    artifact = ArtifactRef("art-1", "text/plain", "note.md", 13, storage_path="private/note.md")
+    result = ToolResult.success(
+        "file contents", summary="Read note", content=({"type": "text", "text": "file contents"},),
+        artifacts=(artifact,), retention="instruction", retention_key="note",
+    )
     session.record_tool_execution(call.id, result)
-    publisher.publish("tool.finished", {"call_id": call.id, **result.to_dict()})
+    publisher.publish("tool.finished", {
+        "call_id": call.id, "name": call.name, "arguments": call.arguments, **result.to_dict(),
+    })
     publisher.publish("session.status_changed", {"status": "model_turn_started"})
     publisher.publish("reasoning.delta", {"piece": "After tool"})
     handle = SessionHandle(runtime)
@@ -460,6 +466,12 @@ def test_reasoning_snapshot_preserves_order_without_duplicating_committed_steps(
         "repeat", "Earlier answer", "repeat", "Before tool", "call-1", "After tool",
     ]
     assert captured["active_turn"]["segment"] == 1
+    expected_result = {**result.to_dict(), "artifacts": [
+        {key: value for key, value in artifact.to_dict().items() if key != "storage_path"},
+    ]}
+    captured_tool = next(item for item in captured["timeline"] if item.get("call_id") == call.id)
+    assert captured_tool["phase"] == "succeeded"
+    assert captured_tool["result"] == expected_result
     publisher.publish("reasoning.delta", {"piece": " continued"})
     assert captured["timeline"][-1]["text"] == "After tool"
     publisher.publish("content.final", {"content": "Done"})
@@ -470,6 +482,9 @@ def test_reasoning_snapshot_preserves_order_without_duplicating_committed_steps(
     publisher.publish("turn.completed", {}, turn_id="turn-2")
     finished = handle.snapshot()
     assert finished["active_turn"] is None
+    finished_tool = next(item for item in finished["timeline"] if item.get("call_id") == call.id)
+    assert finished_tool["phase"] == captured_tool["phase"]
+    assert finished_tool["result"] == captured_tool["result"]
     assert [item.get("text", item.get("call_id")) for item in finished["timeline"]] == [
         "repeat", "Earlier answer", "repeat", "Before tool", "call-1", "After tool continued", "Done",
     ]

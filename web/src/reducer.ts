@@ -75,6 +75,17 @@ function eventOutput(previous: string | undefined, payload: Record<string, unkno
   return `${previous ?? ""}${String(payload.output ?? "")}`;
 }
 
+function toolResult(payload: Record<string, unknown>): Record<string, unknown> {
+  // These are the fields serialized by backend ToolResult.to_dict().
+  const fields = ["ok", "err", "data", "summary", "content", "artifacts", "retention", "retention_key"];
+  const result = Object.fromEntries(fields.filter((key) => key in payload).map((key) => [key, payload[key]]));
+  if (Array.isArray(result.artifacts)) {
+    result.artifacts = result.artifacts.map((artifact: unknown) => artifact && typeof artifact === "object"
+      ? Object.fromEntries(Object.entries(artifact).filter(([key]) => key !== "storage_path")) : artifact);
+  }
+  return result;
+}
+
 function childIdentity(event: UiEvent): { taskId: string; depth: number } | null {
   const taskId = String(event.payload.agent_task_id ?? "");
   const depth = Number(event.payload.agent_depth ?? 0);
@@ -331,7 +342,7 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
         arguments: event.payload.arguments as Record<string, unknown> | undefined ?? previous.arguments,
         output: eventOutput(previous.output, event.payload),
         // Keep the same ToolResult envelope as the server snapshot.
-        result: event.type === "tool.finished" ? event.payload : previous.result,
+        result: event.type === "tool.finished" ? toolResult(event.payload) : previous.result,
       };
       next.timeline = index >= 0 ? next.timeline.map((old, i) => i === index ? item : old) : [...next.timeline, item];
     }

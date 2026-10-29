@@ -141,6 +141,13 @@ describe("real timeline projection", () => {
     expect(screen.getByText("Exit 2")).toBeTruthy();
     expect(screen.getByText(/Process failed/).textContent).toContain("problem on stderr");
     expect(screen.queryByText(/Bug Confirmed/)).toBeNull();
+    let state = emit(fresh(), "turn.started", { prompt: "Check failure" });
+    state = emit(state, "tool.planned", { call_id: "c", name: "execute_command", arguments: { command: "false" } });
+    state = emit(state, "tool.finished", { call_id: "c", name: "execute_command", ...result });
+    const liveTool = state.timeline!.find((item) => item.call_id === "c")!;
+    expect(liveTool.result).toEqual(result);
+    rerender(toolCardFromTimeline(liveTool));
+    expect(container.textContent).toBe(snapshotText);
     rerender(toolCardFromState({ call_id: "c", name: "execute_command", phase: "failed", arguments: { command: "false" }, ...result }));
     expect(container.textContent).toBe(snapshotText);
   });

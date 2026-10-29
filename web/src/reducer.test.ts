@@ -72,6 +72,30 @@ describe("UI event reducer", () => {
     expect(applyEvent(once, delta)).toBe(once);
   });
 
+  it.each([true, false])("keeps only the snapshot ToolResult envelope after tool.finished (ok=%s)", (ok) => {
+    const artifact = { id: "art-1", name: "report.md", media_type: "text/markdown", size: 42 };
+    const result = {
+      ok, err: ok ? "" : "failed", data: { output: "report" }, summary: "Report",
+      content: [{ type: "text", text: "report" }], artifacts: [artifact],
+      retention: "instruction", retention_key: "report",
+    };
+    let next = applyEvent({ ...state, timeline: [] }, event(1, "turn.started", { prompt: "report" }));
+    next = applyEvent(next, event(2, "tool.running", { call_id: "c", name: "write_report", arguments: { path: "report.md" } }));
+    next = applyEvent(next, event(3, "tool.finished", {
+      call_id: "c", name: "write_report", arguments: { path: "report.md" }, phase: "running",
+      storage_path: "private/report.md", agent_depth: 0, ...result,
+      artifacts: [{ ...artifact, storage_path: "private/report.md" }],
+    }));
+    const tool = next.timeline?.find((item) => item.call_id === "c");
+    expect(tool?.result).toEqual(result);
+    expect(tool?.phase).toBe(ok ? "succeeded" : "failed");
+    expect(tool?.arguments).toEqual({ path: "report.md" });
+    next = applyEvent(next, event(4, "tool.output", { call_id: "c", output: "tail" }));
+    expect(next.timeline?.find((item) => item.call_id === "c")?.result).toEqual(result);
+    next = applyEvent(next, event(5, "turn.completed", {}));
+    expect(next.timeline?.find((item) => item.call_id === "c")?.result).toEqual(result);
+  });
+
   it("applies model from session.status_changed", () => {
     const next = applyEvent(state, event(1, "session.status_changed", { session_id: "abc", model: "gpt-4o-mini" }));
     expect(next.session.model).toBe("gpt-4o-mini");

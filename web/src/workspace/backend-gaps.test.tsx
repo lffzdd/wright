@@ -31,7 +31,14 @@ afterEach(() => {
 describe("backend data in workspace panels", () => {
   it("renders the same structured diff from live and snapshot tool envelopes", () => {
     const data = { file: "file.txt", diff: "--- a/file.txt\n+++ b/file.txt\n@@ -5,2 +7,3 @@\n context\n-old\n+new\n+\n\\ No newline at end of file\n", additions: 2, deletions: 1, diff_truncated: true };
-    const { container, rerender } = render(toolCardFromState({ call_id: "c", name: "edit_file", phase: "succeeded", data, arguments: { file: "file.txt" } }));
+    const state = applyEvent({ ...view(), timeline: [] }, {
+      version: 2, stream_id: "stream", event_id: "finished", seq: 1, emitted_at: "now",
+      project_id: "p", session_id: "session", type: "tool.finished",
+      payload: { call_id: "c", name: "edit_file", arguments: { file: "file.txt" }, ok: true, data },
+    });
+    const liveTool = state.timeline!.find((item) => item.call_id === "c")!;
+    expect(liveTool.result).toEqual({ ok: true, data });
+    const { container, rerender } = render(toolCardFromTimeline(liveTool));
     expect(container.querySelector(".diff-del .diff-line-old")?.textContent).toBe("6");
     expect(container.querySelector(".diff-add .diff-line-new")?.textContent).toBe("8");
     expect(container.querySelectorAll(".diff-add")).toHaveLength(2);

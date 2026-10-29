@@ -29,6 +29,7 @@ from ...application.session.service import (
     SessionService,
     SessionServiceError,
 )
+from ...application.session.tool_projection import tool_phase
 from ...core.paths import project_id
 from ...domain.model.tool import ArtifactRef
 from ...infrastructure.storage.attachments import AttachmentError, AttachmentRecord
@@ -40,14 +41,10 @@ def _tool_state(item: dict[str, Any]) -> dict[str, Any]:
     """Map a run tool record onto the frontend ToolState fields."""
 
     result = item.get("result") if isinstance(item.get("result"), dict) else {}
-    raw = str(item.get("phase") or item.get("status") or "planned")
-    phase = {"pending": "planned", "timeout": "failed"}.get(raw, raw)
-    if phase not in {"planned", "awaiting_approval", "running", "succeeded", "failed"}:
-        phase = "failed"
     tool: dict[str, Any] = {
         "call_id": item.get("call_id"),
         "name": item.get("name") or item.get("tool_name") or "tool",
-        "phase": phase,
+        "phase": tool_phase(item.get("phase") or item.get("status") or "planned"),
     }
     if "arguments" in item:
         tool["arguments"] = item["arguments"]

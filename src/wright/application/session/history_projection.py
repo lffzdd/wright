@@ -10,14 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from ...domain.model.session.run import TERMINAL_RUN_STATUSES
-
-_PHASES = {
-    "pending": "planned",
-    "running": "running",
-    "succeeded": "succeeded",
-    "failed": "failed",
-    "timeout": "failed",
-}
+from .tool_projection import tool_phase
 
 _USER_SOURCE = "user_input"
 
@@ -181,7 +174,7 @@ def _run_tools(session: Any, run_id: str) -> list[dict[str, Any]]:
             "call_id": execution.call.id,
             "name": execution.call.name,
             "arguments": dict(execution.call.arguments),
-            "phase": _PHASES.get(str(execution.status), "failed"),
+            "phase": tool_phase(execution.status),
         }
         if execution.result is not None:
             tool.update(_without_storage(execution.result.to_dict()))

@@ -717,6 +717,10 @@ def test_scripted_web_session_projects_diff_wait_policy_and_history(
             item for item in current["timeline"] if item.get("name") == "edit_file"
         )
         assert timeline_edit["result"]["data"]["diff"] == data["diff"]
+        assert timeline_edit["phase"] == "succeeded"
+        assert timeline_edit["result"] == {
+            key: value for key, value in edit_event.payload.items() if key not in {"call_id", "name"}
+        }
         with client.websocket_connect(
             f"/api/v1/sessions/{session_id}/stream?stream_id=fresh", headers=headers
         ) as socket:
@@ -736,5 +740,6 @@ def test_scripted_web_session_projects_diff_wait_policy_and_history(
             item for item in history["timeline"] if item.get("name") == "edit_file"
         )
         assert historic_edit["result"]["data"]["diff"] == data["diff"]
+        assert historic_edit["result"] == timeline_edit["result"]
     finally:
         manager.shutdown()

@@ -21,6 +21,7 @@ from .events import (
     _json_value,
 )
 from .live_resources import RuntimeResources
+from .tool_projection import public_tool_result, tool_phase
 
 
 class DisplayFold:
@@ -97,7 +98,7 @@ class DisplayFold:
                 tool["output"] = str(tool.get("output") or "") + str(payload.get("output") or "")
             else:
                 tool.update(payload)
-                tool["phase"] = (
+                tool["phase"] = tool_phase(
                     "succeeded" if event.type == "tool.finished" and payload.get("ok")
                     else "failed" if event.type == "tool.finished"
                     else event.type.removeprefix("tool.")
@@ -155,7 +156,7 @@ class DisplayFold:
                 if key in tool:
                     item[key] = deepcopy(tool[key])
             if event.type == "tool.finished":
-                item["result"] = deepcopy(payload)
+                item["result"] = deepcopy(public_tool_result(payload))
 
     def _usage_request(self, payload: dict[str, Any]) -> None:
         self.request_usage = {

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..session.tool_projection import public_tool_result, tool_phase
+
 _SHELL = frozenset({"execute_command"})
 _EDIT = frozenset({"edit_file", "write_file"})
 
@@ -160,10 +162,10 @@ def _tool_item(execution: Any, order: int) -> dict[str, Any]:
         "name": name,
         "call_id": call.id,
         "arguments": dict(call.arguments),
-        "phase": str(getattr(execution, "status", "")),
+        "phase": tool_phase(getattr(execution, "status", "")),
         "run_id": getattr(execution, "run_id", ""),
         "duration_ms": duration_ms,
-        "result": _public_result(result),
+        "result": public_tool_result(result),
         "order": order,
     }
 
@@ -234,13 +236,6 @@ def _paths(arguments: dict[str, Any]) -> list[str]:
 def _text(message: dict[str, Any]) -> str:
     content = message.get("content", "")
     return content.strip() if isinstance(content, str) else ""
-
-
-def _public_result(result: dict[str, Any] | None) -> dict[str, Any] | None:
-    if result is None:
-        return None
-    cleaned = {key: value for key, value in result.items() if key != "storage_path"}
-    return cleaned
 
 
 __all__ = ["project_accessed_files", "project_subagents", "project_timeline"]
