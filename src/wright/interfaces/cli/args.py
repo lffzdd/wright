@@ -20,6 +20,7 @@ def parse_cli_args() -> argparse.Namespace:
     sandbox_group.add_argument("--sandbox-setup", action="store_true", help="Initialize native Shell isolation (Windows requests administrator setup)")
     sandbox_group.add_argument("--sandbox-cleanup", action="store_true", help="Remove the dedicated Windows sandbox accounts and network filters")
     sandbox_group.add_argument("--sandbox-status", action="store_true", help="Show native Shell isolation availability")
+    parser.add_argument("--execution-mode", choices=("sandbox", "host"), default=None, help="Shell isolation for a new conversation; resumed conversations keep their saved mode")
     resume_group = parser.add_mutually_exclusive_group()
     resume_group.add_argument(
         "--resume",
@@ -130,6 +131,7 @@ def runtime_config_from_args(args: argparse.Namespace) -> RuntimeConfig:
     hooks = getattr(args, "hooks_config", None)
     return RuntimeConfig(
         workspace=getattr(args, "workspace", None),
+        execution_mode=getattr(args, "execution_mode", None),
         resume=getattr(args, "resume", None),
         continue_latest=bool(getattr(args, "continue_latest", False)),
         no_session_persistence=bool(getattr(args, "no_session_persistence", False)),

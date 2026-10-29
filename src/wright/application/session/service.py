@@ -592,6 +592,7 @@ class SessionService:
         *,
         interaction_mode: str | None = None,
         permission_mode: str | None = None,
+        execution_mode: str | None = None,
     ) -> dict[str, Any]:
         """Apply mode changes only while this session is idle.
 
@@ -599,24 +600,29 @@ class SessionService:
         is used the next time permission is resolved.
         """
 
-        self._require_accepting_input()
-        if not self.runtime.agent_idle.is_set() or self._interaction_snapshot():
-            raise SessionServiceError(
-                "a turn is still executing; change the mode when the session is idle"
-            )
-        state = self.runtime.session_state
-        permissions = self.runtime.permissions
-        try:
-            permissions.set_modes(state, interaction_mode=interaction_mode, permission_mode=permission_mode)
-        except ValueError as exc:
-            raise SessionServiceError(str(exc)) from exc
-        result = {
-            "session_id": state.session_id,
-            "interaction_mode": state.authorization.interaction_mode,
-            "permission_mode": state.authorization.permission_mode,
-            "effective": "next permission resolution",
-        }
-        return result
+        with self._lock:
+            self._require_accepting_input()
+            if not self.runtime.agent_idle.is_set() or self._interaction_snapshot():
+                raise SessionServiceError(
+                    "a turn is still executing; change the mode when the session is idle"
+                )
+            state = self.runtime.session_state
+            if execution_mode is not None and execution_mode != state.execution_mode:
+                if state.agent_task_id is not None or not self.is_evictable():
+                    raise SessionServiceError("execution mode requires an idle conversation with no queued work, live commands or child tasks")
+            permissions = self.runtime.permissions
+            try:
+                permissions.set_modes(state, interaction_mode=interaction_mode, permission_mode=permission_mode, execution_mode=execution_mode)
+            except (ValueError, OSError, RuntimeError) as exc:
+                raise SessionServiceError(str(exc)) from exc
+            result = {
+                "session_id": state.session_id,
+                "interaction_mode": state.authorization.interaction_mode,
+                "permission_mode": state.authorization.permission_mode,
+                "execution_mode": state.execution_mode,
+                "effective": "next permission resolution",
+            }
+            return result
 
     def add_document(self, session_id: str, filename: str, data: bytes) -> dict[str, Any]:
         self._require_accepting_input()
@@ -668,6 +674,7 @@ class SessionService:
             "model": state.model_name,
             "interaction_mode": state.authorization.interaction_mode,
             "permission_mode": state.authorization.permission_mode,
+            "execution_mode": state.execution_mode,
             "transport": getattr(state, "llm_transport", None),
             "environment": state.environment,
             "execution_root": str(state.workspace_dir),

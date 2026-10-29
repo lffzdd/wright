@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import shlex
 from dataclasses import dataclass, field, fields
 from fnmatch import fnmatch
 from pathlib import PurePosixPath, PureWindowsPath
@@ -30,6 +32,9 @@ class MatchContext:
     method: str = ""
     cwd: str = ""
     sandbox_key: str = ""
+    operations: tuple[str, ...] = ()
+    executable: str = ""
+    executable_target: str = ""
 
 
 @dataclass(frozen=True)
@@ -132,6 +137,61 @@ def shell_rule_matches(pattern: str | None, command: str, *, effect: str) -> boo
     return any(fnmatch(segment, pattern) for segment in analysis.segments)
 
 
+def direct_command_argv(command: str, *, dialect: str = "posix") -> tuple[str, ...] | None:
+    """Decode one literal POSIX command, never interpret shell syntax as argv.
+
+    Quoted script arguments may contain shell punctuation. Expansions, shell
+    control syntax and wrappers require the exact whole-command approval path.
+    """
+    if dialect != "posix" or "\x00" in command:
+        return None
+    quote = ""
+    escaped = False
+    for index, char in enumerate(command):
+        if char == "\\" and quote != "'" and index + 1 < len(command) and (command[index + 1] in "\n\r" or (quote == '"' and command[index + 1] in "$`")):
+            return None
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and quote != "'":
+            escaped = True
+            continue
+        if quote == "'":
+            if char == "'":
+                quote = ""
+            continue
+        if quote == '"':
+            if char == '"':
+                quote = ""
+            elif char in "$`":
+                return None
+            continue
+        if char in "\"'":
+            quote = char
+        elif char in ";|&<>()$`\n\r*?[]{}~#":
+            return None
+    if quote or escaped:
+        return None
+    try:
+        argv = tuple(shlex.split(command, posix=True))
+    except ValueError:
+        return None
+    if not argv or not argv[0] or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", argv[0]):
+        return None
+    # These words alter command resolution or execution context, rather than
+    # directly naming the program the user is being offered authority for.
+    wrappers = {"env", "command", "exec", "sudo", "su", "doas", "nohup", "nice", "time", "timeout", "xargs", "eval", "source", ".", "cd", "export", "unset", "alias", "unalias", "set", "builtin", "function", "if", "then", "for", "while", "until", "case", "!"}
+    if PurePosixPath(argv[0]).name in wrappers or argv[0].startswith("-"):
+        return None
+    return argv
+
+
+def command_dialect(cwd: str) -> str:
+    # Production POSIX launchers use bash; Windows launches PowerShell and must
+    # never match a rule parsed with POSIX quoting semantics.
+    return "powershell" if PureWindowsPath(cwd).drive or "\\" in cwd else "posix"
+
+
 def parse_http_origin(url: str) -> tuple[str, str, int] | None:
     """Return scheme, host and port. Userinfo is not part of the origin."""
 
@@ -229,7 +289,7 @@ class PermissionRule:
 
     tool_name: str
     subject_glob: str | None = None
-    kind: Literal["tool", "file", "directory", "network", "shell"] = "tool"
+    kind: Literal["tool", "file", "directory", "network", "shell", "command"] = "tool"
     root: str = ""
     pattern: str = ""
     operations: tuple[str, ...] = ()
@@ -248,6 +308,13 @@ class PermissionRule:
     exact: bool = False
     cwd: str = ""
     sandbox_key: str = ""
+    execution_mode: str = "sandbox"
+    argv: tuple[str, ...] = ()
+    command_match: str = "executable"
+    dialect: str = "posix"
+    executable_target: str = ""
+    path: str = ""
+    path_match: str = "origin"
 
     def validate_value(self) -> None:
         # Rule values stay typed here; raw record validation belongs to codecs.
@@ -264,9 +331,19 @@ class PermissionRule:
         if (
             self.unresolved
             or not self.tool_name
-            or self.kind not in {"tool", "file", "directory", "network", "shell"}
+            or self.kind not in {"tool", "file", "directory", "network", "shell", "command"}
         ):
             raise ValueError("Session rules require a known, resolved resource")
+        if self.execution_mode not in {"sandbox", "host"}:
+            raise ValueError("execution_mode must be sandbox or host")
+        if self.kind == "command":
+            if (self.tool_name != "execute_command" or self.command_match not in {"executable", "argv_prefix"}
+                or self.dialect != "posix" or not self.argv or any(not isinstance(arg, str) for arg in self.argv)
+                or not PurePosixPath(self.argv[0]).is_absolute() or not PurePosixPath(self.executable_target).is_absolute() or not self.cwd or not self.sandbox_key
+                or (self.command_match == "executable" and len(self.argv) != 1)
+                or (self.command_match == "argv_prefix" and len(self.argv) < 2)
+                or self.operations != ("shell",)) :
+                raise ValueError("Command grants require literal argv, cwd and sandbox capabilities")
         if self.kind in {"file", "directory"}:
             if not self.operations or not set(self.operations) <= {
                 "file_read",
@@ -340,7 +417,7 @@ class PermissionRule:
         for key in ("recursive", "exact", "unresolved"):
             if key in data and not isinstance(data[key], bool):
                 raise ValueError(f"{key} must be a boolean")
-        if kind not in {"tool", "file", "directory", "network", "shell"} or not tool_name:
+        if kind not in {"tool", "file", "directory", "network", "shell", "command"} or not tool_name:
             raise ValueError("a permission rule requires a known kind and a tool_name")
         lifetime = data.get("lifetime", "session")
         root_kind = data.get("root_kind", "absolute")
@@ -348,6 +425,9 @@ class PermissionRule:
             raise ValueError("invalid permission lifetime or root kind")
         operations = data.get("operations", [])
         methods = data.get("methods", [])
+        argv = data.get("argv", [])
+        if not isinstance(argv, (list, tuple)) or any(not isinstance(arg, str) for arg in argv):
+            raise TypeError("argv must be an array of strings")
         if not isinstance(operations, (list, tuple)) or not isinstance(methods, (list, tuple)):
             raise TypeError("operations and methods must be arrays")
         if any(op not in {"file_read", "file_write", "shell", "network_read", "network_write"} for op in operations):
@@ -365,7 +445,7 @@ class PermissionRule:
                 raise ValueError("Resource pattern must stay within its root")
             if kind == "file" and not pattern:
                 raise ValueError("file pattern must stay within its root")
-        for key in ("id", "project_id", "source", "cwd", "sandbox_key", "scheme", "host", "pattern"):
+        for key in ("id", "project_id", "source", "cwd", "sandbox_key", "execution_mode", "scheme", "host", "pattern", "command_match", "dialect", "executable_target", "path", "path_match"):
             if key in data and not isinstance(data[key], str):
                 raise TypeError(f"{key} must be a string")
         if any(not isinstance(method, str) or not method.isalpha() for method in methods):
@@ -376,9 +456,13 @@ class PermissionRule:
                 raise ValueError("Invalid network scheme or port")
             if host and (not port or any(char in host for char in "/@* ") or not methods):
                 raise ValueError("Network authorizations require an exact host, port and methods")
+        path_match = data.get("path_match", "origin")
+        path = data.get("path", "")
+        if kind == "network" and (path_match not in {"origin", "exact"} or not isinstance(path, str) or (path_match == "exact" and (not path.startswith("/") or "?" in path or "#" in path))):
+            raise ValueError("Network paths require exact absolute URL paths or origin scope")
         common = {"source": data.get("source", "approval"), "id": data.get("id", ""), "lifetime": lifetime,
                   "project_id": data.get("project_id", ""), "root_kind": root_kind, "recursive": data.get("recursive", False),
-                  "exact": data.get("exact", False), "cwd": data.get("cwd", ""), "sandbox_key": data.get("sandbox_key", "")}
+                  "exact": data.get("exact", False), "cwd": data.get("cwd", ""), "sandbox_key": data.get("sandbox_key", ""), "execution_mode": data.get("execution_mode", "sandbox")}
 
         if data.get("unresolved"):
             raise ValueError("Ambiguous permission records are unsupported; approve access again")
@@ -401,14 +485,19 @@ class PermissionRule:
                 host=str(data.get("host", "")),
                 port=int(data.get("port", 0)),
                 methods=tuple(str(item).upper() for item in data.get("methods", ())),
+                path=path, path_match=path_match,
                 **common,
             )
+        if kind == "command":
+            rule = cls(tool_name, kind="command", argv=tuple(argv), command_match=data.get("command_match", "executable"), dialect=data.get("dialect", "posix"), executable_target=data.get("executable_target", ""), operations=tuple(operations), **common)
+            rule.validate_grant()
+            return rule
         if kind == "shell":
             pattern = str(data.get("pattern", ""))
             if common["exact"] and (not pattern or not common["cwd"]):
                 raise ValueError("remembered shell commands require an exact command and cwd")
             return cls(tool_name, pattern or None, kind="shell", pattern=pattern, **common)
-        return cls(tool_name, None, kind="tool", **common)
+        return cls(tool_name, None, kind="tool", operations=tuple(operations), **common)
 
     @classmethod
     def file_grant(
@@ -460,7 +549,12 @@ class PermissionRule:
                 host=self.host,
                 port=self.port,
                 methods=list(self.methods),
+                path=self.path, path_match=self.path_match,
             )
+        elif self.kind == "command":
+            payload.update(argv=list(self.argv), command_match=self.command_match, dialect=self.dialect, executable_target=self.executable_target, operations=list(self.operations))
+        elif self.kind == "tool" and self.operations:
+            payload.update(operations=list(self.operations))
         elif self.kind == "shell":
             payload.update(pattern=self.subject_glob or self.pattern)
         if self.unresolved:
@@ -468,6 +562,8 @@ class PermissionRule:
             payload["legacy_text"] = self.legacy_text or self.tool_name
         payload.update(id=self.id, lifetime=self.lifetime, project_id=self.project_id, source=self.source, root_kind=self.root_kind,
                        recursive=self.recursive, exact=self.exact, cwd=self.cwd, sandbox_key=self.sandbox_key)
+        if self.kind in {"shell", "command"}:
+            payload["execution_mode"] = self.execution_mode
         return payload
 
     def resource_root(self, workspace: str) -> str:
@@ -481,17 +577,23 @@ class PermissionRule:
         if self.kind == "directory":
             return self.resource_root(workspace)
         if self.kind == "network":
-            return f"{self.scheme}://{self.host}:{self.port}" if self.host else f"{self.scheme}://*"
+            return (f"{self.scheme}://{self.host}:{self.port}" + (self.path if self.path_match == "exact" else "")) if self.host else f"{self.scheme}://*"
+        if self.kind == "command":
+            return shlex.join(self.argv)
         if self.kind == "shell":
             return self.pattern
         return self.tool_name
 
     def describe(self) -> str:
+        if self.kind == "command":
+            scope = "any arguments" if self.command_match == "executable" else "argv prefix"
+            boundary = "on the host without OS isolation" if self.execution_mode == "host" else "within the sandbox"
+            return f"{shlex.join(self.argv)} ({scope}; cwd {self.cwd}; includes scripts and subprocesses {boundary})"
         if self.kind == "network" and not self.unresolved:
             methods = ", ".join(self.methods) or "no methods"
             return (
-                f"{self.tool_name} {methods} {self.scheme}://{self.host}:{self.port} "
-                "(this origin and these methods only; userinfo is not part of the grant)"
+                f"{self.tool_name} {methods} {self.scheme}://{self.host}:{self.port}{self.path if self.path_match == 'exact' else ''} "
+                f"({self.path_match} scope and these methods only; userinfo is not part of the grant)"
             )
         if self.kind in {"file", "directory"} and not self.unresolved:
             operations = ", ".join(self.operations) or "the approved file operation"
@@ -502,6 +604,8 @@ class PermissionRule:
         if self.kind == "shell" and self.subject_glob:
             return f"{self.tool_name} one simple command matching {self.subject_glob}"
         if self.kind == "tool":
+            if self.operations:
+                return f"{self.tool_name} ({', '.join(self.operations)} only)"
             return f"{self.tool_name} (explicit full-tool rule)"
         return self.legacy_text or self.tool_name
 
@@ -520,7 +624,12 @@ class PermissionRule:
             # deny/ask stays in force for this tool instead of being dropped.
             return effect != "allow"
         if self.kind == "tool":
-            return True
+            return not self.operations or (context is not None and set(context.operations) <= set(self.operations))
+        if self.kind == "command":
+            if context is None or command_dialect(context.cwd) != self.dialect or context.cwd != self.cwd or context.sandbox_key != self.sandbox_key or context.executable_target != self.executable_target:
+                return False
+            argv = direct_command_argv(subject, dialect=self.dialect)
+            return argv is not None and (context.executable, *argv[1:])[:len(self.argv)] == self.argv
         if self.kind == "shell":
             if self.exact:
                 return subject == self.pattern and context is not None and context.cwd == self.cwd and (not self.sandbox_key or context.sandbox_key == self.sandbox_key)
@@ -547,6 +656,8 @@ def _network_matches(rule: PermissionRule, subject: str, context: MatchContext |
     if origin != (rule.scheme, rule.host, rule.port):
         return False
     method = (context.method if context is not None and context.method else "GET").upper()
+    if rule.path_match == "exact" and (urlsplit(target).path or "/") != rule.path:
+        return False
     if rule.methods and method not in rule.methods:
         return False
     return True
@@ -655,7 +766,7 @@ def _load_rule(item: object, effect: str) -> PermissionRule:
         raise TypeError("permission rule must be a string or an object")
     if rule.unresolved:
         raise ValueError("Ambiguous permission syntax is unsupported; use a bounded resource record")
-    if effect == "allow" and rule.tool_name == "execute_command" and (rule.kind != "shell" or not rule.exact or rule.lifetime != "session" or not rule.sandbox_key):
+    if effect == "allow" and rule.tool_name == "execute_command" and rule.kind != "command" and (rule.kind != "shell" or not rule.exact or rule.lifetime != "session" or not rule.sandbox_key):
         raise ValueError("Shell grants require an exact session command, cwd and sandbox capability")
     return rule
 

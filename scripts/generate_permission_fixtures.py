@@ -18,6 +18,7 @@ from wright.domain.policy.permission.settings import PermissionRule, PermissionS
 from wright.domain.policy.permission.types import InvocationIdentity
 from wright.infrastructure.tools.command import execute_command_tool
 from wright.infrastructure.tools.file import write_file_tool
+from wright.infrastructure.tools.web_tools import http_request_tool, web_search_tool
 from wright.interfaces.i18n.catalog import EN, ZH
 
 
@@ -33,6 +34,9 @@ def permission_copy() -> dict:
 
 
 class FixturePaths:
+    def resolve_executable(self, program: str, *, cwd: ExecutionPath) -> str | None:
+        return f"/usr/bin/{program}" if program in {"echo", "python3", "git"} else None
+
     def cwd(self) -> ExecutionPath:
         return ExecutionPath("fixture", "/project")
 
@@ -57,6 +61,9 @@ def permission_fixtures() -> dict:
             },
         ),
         ("shell", execute_command_tool, {"command": "echo hello"}),
+        ("python", execute_command_tool, {"command": "python3 -c 'print(1)'"}),
+        ("http", http_request_tool, {"url": "https://example.com/api/item?token=redacted", "method": "GET"}),
+        ("search", web_search_tool, {"query": "example"}),
     ):
         result = AuthorizationWorkflow().resolve(
             ToolCall(tool.name, arguments, f"approval-{name}"),

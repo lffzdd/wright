@@ -190,6 +190,7 @@ def _delegation(session, services, journal_factory, permission_service) -> Deleg
 
     def share_control_plane(child) -> None:
         child.control_plane = control
+        child.execution_mode = session.execution_mode
 
     def submit_background(task_id: str, run) -> None:
         if background is None:

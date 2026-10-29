@@ -323,6 +323,9 @@ def make_spawn_agent_tool(
                 final_answer = None
                 task_status, error = "failed", f"Child Agent error: {type(exc).__name__}: {exc}"
 
+            # Keep the task live until its process tree has been cleaned up.
+            # Root execution-mode changes use this liveness boundary.
+            child_commands.close()
             finished = delegation.finish_task(
                 record.id, status=task_status, steps_used=child_session.step_count,
                 result=final_answer or "", error=error,

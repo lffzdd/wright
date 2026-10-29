@@ -19,6 +19,8 @@ from .settings import (
     PermissionConfiguration,
     PermissionRule,
     PermissionSettings,
+    command_dialect,
+    direct_command_argv,
     parse_http_origin,
     relative_to_root,
 )
@@ -195,11 +197,17 @@ class PreparedPermission:
     source: str
     reason_code: str
     reason_params: tuple[tuple[str, str], ...]
+    executable: str = ""
+    executable_target: str = ""
+    command_rule: bool = False
 
 class PermissionResolver:
     """Pure resource preparation and invocation authority construction."""
 
-    def __init__(self, policy: PermissionPolicy | None = None):
+    def __init__(self, policy: PermissionPolicy | None = None, *, execution_mode: str = "sandbox"):
+        if execution_mode not in {"sandbox", "host"}:
+            raise ValueError("execution_mode must be sandbox or host")
+        self.execution_mode = execution_mode
         self.policy = policy or PermissionPolicy()
 
     def prepare(
@@ -278,8 +286,13 @@ class PermissionResolver:
         access_subject = access.subject or _subject_from_arguments(arguments)
         if effective_access.subject != access_subject:
             effective_access = replace(effective_access, subject=access_subject)
-        sandbox_key = hashlib.sha256(json.dumps([str(path) for path in (*scope.roots, *scope.read_only, *scope.protected)]).encode()).hexdigest()
-        context = replace(_match_context(arguments, resolved, scope), cwd=fixed_cwd.value, sandbox_key=sandbox_key)
+        sandbox_key = hashlib.sha256(json.dumps([self.execution_mode, *[str(path) for path in (*scope.roots, *scope.read_only, *scope.protected)]]).encode()).hexdigest()
+        argv = direct_command_argv(access_subject, dialect=command_dialect(fixed_cwd.value)) if "shell" in access.operations else None
+        resolve_executable = getattr(backend, "resolve_executable", None)
+        executable = resolve_executable(argv[0], cwd=fixed_cwd) if argv and callable(resolve_executable) else None
+        executable_target = backend.resolve_path(executable, cwd=fixed_cwd).value if executable else ""
+        context = replace(_match_context(arguments, resolved, scope), cwd=fixed_cwd.value, sandbox_key=sandbox_key,
+                          operations=tuple(sorted(access.operations)), executable=executable or "", executable_target=executable_target)
         all_rules = (*session_rules, *(self.policy.settings.allow if self.policy.settings else ()))
         for rule in all_rules:
             root = rule.resource_root(str(scope.origin))
@@ -303,7 +316,7 @@ class PermissionResolver:
             subject.name, arguments, effective_access, resolved, scope
         )
         if "shell" in effective_access.operations and not effective_access.operations & {"network_read", "network_write"}:
-            remember_rule = PermissionRule(subject.name, kind="shell", pattern=access_subject, exact=True, cwd=fixed_cwd.value, sandbox_key=sandbox_key)
+            remember_rule = PermissionRule(subject.name, kind="shell", pattern=access_subject, exact=True, cwd=fixed_cwd.value, sandbox_key=sandbox_key, execution_mode=self.execution_mode)
 
         if subject.requires_user_interaction and decision != "deny":
             decision = "ask"
@@ -313,7 +326,7 @@ class PermissionResolver:
                 reason_params = {}
             source = "user_interaction"
 
-        return PreparedPermission(arguments, effective_access, resolved, fixed_cwd, identity, scope, remember_rule, decision, reason, source, reason_code, _pairs(reason_params))
+        return PreparedPermission(arguments, effective_access, resolved, fixed_cwd, identity, scope, remember_rule, decision, reason, source, reason_code, _pairs(reason_params), executable or "", executable_target, any(rule.kind == "command" and rule.matches(subject.name, access_subject, context=context) for rule in all_rules))
 
     def _resolve_targets(
         self,
@@ -353,6 +366,8 @@ class PermissionResolver:
         network_enabled: bool = False,
         reason_code: str = "",
         reason_params: dict[str, str] | None = None,
+        command_argv: tuple[str, ...] = (),
+        executable_target: str = "",
     ) -> PermissionResolution:
         grant_targets = tuple(
             GrantTarget(item.path, item.declaration.operation, item.declaration.recursive)
@@ -372,6 +387,9 @@ class PermissionResolver:
             tuple(backend.resolve_path(str(root), cwd=cwd) for root in scope.roots
                   if not any(is_under(str(root), str(readonly)) for readonly in scope.read_only)) if backend else (),
             network_enabled,
+            execution_mode=self.execution_mode,
+            command_argv=command_argv,
+            executable_target=executable_target,
             shell_readonly=tuple(ExecutionPath(cwd.environment_id, str(path)) for path in scope.read_only),
             network_targets=tuple(NetworkTarget(str(item.declaration.value), item.declaration.http_method or "GET", item.declaration.operation) for item in targets if item.declaration.kind == "url"),
 
@@ -434,6 +452,8 @@ def _rememberable_rule(
 ) -> PermissionRule | None:
     """Return a bounded rule. The pattern is built from the canonical path."""
 
+    if tool_name in {"web_search", "knowledge_search"} and access.operations == frozenset({"network_read"}):
+        return PermissionRule(tool_name, kind="tool", operations=("network_read",))
     if access.operations & {
         "shell",
         "network_write",

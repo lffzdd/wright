@@ -17,6 +17,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { present, t, useT } from "../i18n";
 import type { Interaction } from "../types";
 import { useShellReadiness } from "./permissions";
+import { commandRuleDetails, commandRuleLabel, networkRuleLabel } from "./permission-resource";
 
 type Choice = NonNullable<Interaction["choices"]>[number];
 type Action = "shell" | "http" | "file_write" | "file_read" | "tool";
@@ -73,7 +74,14 @@ export function describeChoice(choice: Choice, root?: string): string {
     const [command] = choice.scope.split(" · ");
     return t("web.approval.rule_shell", { command: command || choice.scope, lifetime });
   }
-  if (kind === "network") return t("web.approval.rule_network", { target: choice.scope, lifetime });
+  if (kind === "command") return `${commandRuleLabel(choice.resource ?? {}, choice.scope)} · ${lifetime}`;
+  if (kind === "network") {
+    // Scope from older prompts includes the method; structured resources keep
+    // that method separate from the URL so authority is readable at a glance.
+    const target = choice.scope.replace(/^[A-Z]+(?:, [A-Z]+)* /, "");
+    return `${networkRuleLabel(choice.resource ?? {}, target)} · ${lifetime}`;
+  }
+  if (kind === "tool") return t("web.approval.rule_tool", { tool: choice.resource?.tool_name || choice.scope, lifetime });
   return `${choice.label} · ${lifetime}`;
 }
 
@@ -83,6 +91,12 @@ export function describeChoice(choice: Choice, root?: string): string {
  */
 export function quickChoice(choices: Choice[], outsideScope: boolean): Choice | undefined {
   const session = choices.filter((choice) => choice.lifetime === "session");
+  const prefix = session.find((choice) => choice.resource_kind === "command" && choice.resource?.command_match === "argv_prefix");
+  if (prefix) return prefix;
+  const executable = session.find((choice) => choice.resource_kind === "command" && choice.resource?.command_match === "executable");
+  if (executable) return executable;
+  const origin = session.find((choice) => choice.resource_kind === "network" && choice.resource?.path_match !== "exact");
+  if (origin) return origin;
   if (!outsideScope) {
     const folder = session.find((choice) => choice.resource_kind === "directory" && choice.operations?.includes("file_write"))
       ?? session.find((choice) => choice.resource_kind === "directory");
@@ -94,7 +108,7 @@ export function quickChoice(choices: Choice[], outsideScope: boolean): Choice | 
 }
 
 const LIFETIME_ORDER: Record<string, number> = { session: 0, project: 1, user: 2 };
-const KIND_ORDER: Record<string, number> = { file: 0, directory: 1, shell: 2, network: 3 };
+const KIND_ORDER: Record<string, number> = { file: 0, directory: 1, shell: 2, command: 3, network: 4, tool: 5 };
 
 /** Narrow and short-lived first: the list reads from least to most authority. */
 function rank(choice: Choice): number {
@@ -137,13 +151,14 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
   const risks = interaction.risk_flags ?? [];
   const outsideScope = risks.includes("path_outside_scope") || interaction.reason_code === "permission.outside_scope";
   const elevated = interaction.risk_level === "elevated";
-  const shell = useShellReadiness(sessionId, action === "shell");
-  const shellBlocked = action === "shell" && shell.status?.available !== true;
+  const host = interaction.execution_mode === "host";
+  const shell = useShellReadiness(sessionId, action === "shell" && !host);
+  const shellBlocked = action === "shell" && !host && shell.status?.available !== true;
 
   const choices = interaction.choices ?? [];
   const deny = choices.find((choice) => choice.id === "deny");
   const once = choices.find((choice) => choice.id === "allow_once");
-  const onceNetwork = choices.find((choice) => choice.id === "allow_once_network");
+  const onceNetwork = host ? undefined : choices.find((choice) => choice.id === "allow_once_network");
   const remembered = useMemo(
     () => choices.filter((choice) => !["deny", "allow_once", "allow_once_network"].includes(choice.id)),
     [choices],
@@ -153,9 +168,8 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
     .filter((choice) => showGlobal || choice.lifetime !== "user")
     .sort((a, b) => rank(a) - rank(b));
   const hasGlobal = remembered.some((choice) => choice.lifetime === "user");
-  const defaultPick = remembered.find((choice) => choice.resource_kind === "file" && choice.lifetime === "project")
-    ?? remembered.find((choice) => choice.lifetime === "project")
-    ?? remembered[0];
+  // Saving a project or all-project rule always requires selecting it.
+  const defaultPick = quick;
   const selected = remembered.find((choice) => choice.id === picked) ?? defaultPick;
 
   const reasonCode = interaction.reason_code || "";
@@ -219,6 +233,11 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
           }}>{copied ? <Check size={12} weight="bold" /> : <Copy size={12} />}</button>
         </div>
         {action === "shell" && interaction.cwd && displayPath(interaction.cwd, root) !== "." && <p className="approval-meta">{tr("web.approval.in_folder", { path: displayPath(interaction.cwd, root) })}</p>}
+        {action === "shell" && host && <p className="approval-warn">{tr("web.execution.host_help")}</p>}
+        {quick?.resource_kind === "command" && <p className="hint">
+          {commandRuleDetails(quick.resource ?? {})} {tr(host ? "web.approval.host_command_boundary" : "web.approval.command_boundary", { path: displayPath(quick.resource?.cwd || interaction.cwd || "", root) })}
+        </p>}
+        {quick?.resource_kind === "directory" && <p className="hint">{tr("web.approval.directory_recursive")}</p>}
 
         {interaction.preview && <details className="permission-preview approval-preview" open={action === "file_write"}>
           <summary>{tr("web.content_preview")}</summary>
@@ -271,7 +290,14 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
           <legend>{tr("web.approval.remember_legend")}</legend>
           {listed.map((choice) => <label key={choice.id} className={`approval-option ${choice.lifetime === "user" ? "global" : ""}`}>
             <input type="radio" name={`remember-${interaction.request_id}`} checked={selected?.id === choice.id} onChange={() => setPicked(choice.id)} />
-            <span>{sentence(describeChoice(choice, root))}</span>
+            <span>{sentence(describeChoice(choice, root))}
+              {choice.resource_kind === "directory" && <><br /><small>{tr("web.approval.directory_recursive")}</small></>}
+              {(choice.resource_kind === "command" || choice.resource_kind === "shell") && <><br /><small>
+                {choice.resource_kind === "command" && `${commandRuleDetails(choice.resource ?? {})} `}
+                {tr(host ? "web.approval.host_command_boundary" : "web.approval.command_boundary", { path: displayPath(choice.resource?.cwd || interaction.cwd || "", root) })}
+              </small></>}
+              {choice.resource_kind === "tool" && <><br /><small>{tr("web.approval.tool_operations", { operations: (choice.operations ?? []).map((operation) => tr(`web.operation.${operation}`)).join(", ") })}</small></>}
+            </span>
           </label>)}
         </fieldset>
         <div className="approval-more-actions">

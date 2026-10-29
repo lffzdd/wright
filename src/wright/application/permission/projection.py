@@ -6,7 +6,7 @@ from ...domain.policy.permission.settings import PermissionRule, PermissionSetti
 
 def summarize_policy(
     policy: PermissionPolicy, *, roots: list[str], read_only: tuple[str, ...] = (), session_rules: tuple[PermissionRule, ...] = (),
-    interaction_mode: str = "agent", permission_mode: str | None = None,
+    interaction_mode: str = "agent", permission_mode: str | None = None, execution_mode: str = "sandbox",
 ) -> list[dict]:
     """Describe defaults and conditional overrides without granting an invocation.
 
@@ -49,7 +49,7 @@ def summarize_policy(
         if operation != "shell":
             constraints.append("protected_permission_files")
         else:
-            constraints.append("shell_system_sandbox")
+            constraints.append("shell_system_sandbox" if execution_mode == "sandbox" else "shell_host_access")
         if defaults["in_scope"]["decision"] == "deny":
             constraints.append("mode_ceiling")
         result.append({

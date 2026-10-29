@@ -293,9 +293,11 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
   } else if (event.type === "session.policy_updated") {
     const interaction = event.payload.interaction_mode;
     const permission = event.payload.permission_mode;
+    const executionMode = event.payload.execution_mode;
     next.permissions_revision = event.seq;
     next.session = {
       ...next.session,
+      ...(executionMode === "sandbox" || executionMode === "host" ? { execution_mode: executionMode } : {}),
       ...(interaction === "agent" || interaction === "plan" || interaction === "ask" ? { interaction_mode: interaction } : {}),
       ...(permission === "default" || permission === "acceptEdits" || permission === "bypass" || permission === "plan" ? { permission_mode: permission } : {}),
     };

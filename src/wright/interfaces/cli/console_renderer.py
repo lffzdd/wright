@@ -510,6 +510,7 @@ class ConsoleRenderer(Renderer):
         http_method: str = "",
         http_target: str = "",
         shell_note: str = "",
+        execution_mode: str = "sandbox",
         reason_code: str = "",
         reason_params: dict | None = None,
         summary_code: str = "",
@@ -518,7 +519,7 @@ class ConsoleRenderer(Renderer):
         reason_text = present(reason_code, reason_params or {}, fallback=reason)
         summary_text = present(summary_code, summary_params or {}, fallback=grant_summary)
         shell_text = (
-            present("permission.shell_note", {"cwd": cwd}, fallback=shell_note)
+            present("permission.host_shell_note" if execution_mode == "host" else "permission.shell_note", {"cwd": cwd}, fallback=shell_note)
             if shell_note
             else ""
         )

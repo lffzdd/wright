@@ -307,7 +307,7 @@ def test_shell_session_grant_is_bound_to_command_cwd_and_profile(setup, tmp_path
     assert dispatch.execute([ToolCall(tool.name, {"command": "echo hello"}, "one")])[0].result.ok
     assert dispatch.execute([ToolCall(tool.name, {"command": "echo hello"}, "two")])[0].result.ok
     assert len(offered) == 1
-    assert not any(choice.lifetime in {"project", "user"} for choice in offered[0].choices)
+    assert not any(choice.lifetime in {"project", "user"} for choice in offered[0].choices if choice.resource_kind == "shell")
     assert not dispatch.execute([ToolCall(tool.name, {"command": "echo changed"}, "three")])[0].result.ok
     assert len(offered) == 2
     extra = tmp_path / "extra"

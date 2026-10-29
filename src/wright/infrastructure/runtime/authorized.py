@@ -242,6 +242,17 @@ class AuthorizedExecution:
                 raise PermissionError("Sandbox resource changed since approval")
         cwd = self.cwd()
         grant = replace(self.grant, cwd=cwd) if self._dynamic_cwd else self.grant
+        if grant.command_argv:
+            import shlex
+
+            from ...domain.policy.permission.settings import direct_command_argv
+            literal = direct_command_argv(command)
+            resolve = getattr(self._backend, "resolve_executable", None)
+            if not literal or not callable(resolve) or resolve(literal[0], cwd=cwd) != grant.command_argv[0] or literal[1:] != grant.command_argv[1:] or self._backend.resolve_path(grant.command_argv[0], cwd=cwd).value != grant.executable_target:
+                raise PermissionError("Command program changed since approval")
+            # Pin the actual launch entry to the canonical program. Its contents
+            # remain under the same host-binary trust boundary as other tools.
+            command = shlex.join(grant.command_argv)
         handle = self._backend.start_shell(command, cwd=cwd, grant=grant)
         if self._process_validator is not None:
             import threading

@@ -238,3 +238,12 @@ describe("UI event reducer", () => {
     expect(kinds).toEqual(["user:one", "status:failed:Model request failed (HTTP 400): bad", "user:two", "assistant:fine"]);
   });
 });
+
+it("projects explicit execution mode changes and ignores unknown modes", () => {
+  const host = applyEvent(state, event(1, "session.policy_updated", { execution_mode: "host" }));
+  expect(host.session.execution_mode).toBe("host");
+  expect(host.permissions_revision).toBe(1);
+  const unknown = applyEvent(host, event(2, "session.policy_updated", { execution_mode: "unknown" }));
+  expect(unknown.session.execution_mode).toBe("host");
+  expect(applyEvent(unknown, event(3, "session.policy_updated", { execution_mode: "sandbox" })).session.execution_mode).toBe("sandbox");
+});

@@ -5,6 +5,8 @@ import { setLocale } from "../i18n";
 import type { Grants, Interaction } from "../types";
 import { InteractionCard } from "./cards";
 import { PermissionGrants } from "./permissions";
+import { describeChoice, quickChoice } from "./approval";
+import { describeGrant } from "./permissions";
 
 const choices: Interaction["choices"] = [
   { id: "allow_once", label: "Once", scope: "/project/a", persistence: "", lifetime: "once" },
@@ -48,15 +50,17 @@ it("keeps outside-project access narrow: the quick rule is the single file", asy
   await waitFor(() => expect(respond).toHaveBeenCalledWith("r", "allow_session_rule"));
 });
 
-it("defaults remembered approval to exact file and project and hides global authority", async () => {
+it("requires an explicit selection for project authority and hides global authority", async () => {
   const respond = vi.fn().mockResolvedValue(true);
   render(<InteractionCard sessionId="s" interaction={{ request_id: "r", kind: "permission", choices }} respond={respond} />);
   expect(screen.queryByRole("radio")).toBeNull();
   fireEvent.click(screen.getByText("More options"));
   const radios = screen.getAllByRole("radio") as HTMLInputElement[];
   expect(radios).toHaveLength(2);
-  expect(radios[0].checked).toBe(true);
+  expect(radios.every((radio) => !radio.checked)).toBe(true);
   expect(screen.queryByText(/in all projects/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Save and allow" })).toHaveProperty("disabled", true);
+  fireEvent.click(radios[0]);
   fireEvent.click(screen.getByText("Save and allow"));
   await waitFor(() => expect(respond).toHaveBeenCalledWith("r", "allow_project_rule"));
 });
@@ -204,4 +208,81 @@ it("ignores a previous session's delayed readiness when switching sessions", asy
   await waitFor(() => expect((screen.getByRole("button", { name: /Allow once/i }) as HTMLButtonElement).disabled).toBe(true));
   fireEvent.keyDown(screen.getByRole("alert"), { key: "Enter", altKey: true });
   expect(respond).not.toHaveBeenCalled();
+});
+
+const executableChoice = {
+  id: "allow_session_command_executable", label: "Session", scope: "/usr/bin/python *", persistence: "Session",
+  lifetime: "session", resource_kind: "command", operations: ["shell"],
+  resource: { kind: "command", command_match: "executable", argv: ["/usr/bin/python"], cwd: "/project", sandbox_key: "offline", dialect: "posix" },
+};
+
+it("makes arbitrary interpreter arguments and subprocesses explicit before quick approval", async () => {
+  vi.spyOn(api, "grants").mockResolvedValue(readyGrants);
+  const respond = vi.fn().mockResolvedValue(true);
+  render(<InteractionCard sessionId="s" root="/project" interaction={{ ...shellInteraction, command: "python -c 'print(1)'", choices: [...shellInteraction.choices!, executableChoice] }} respond={respond} />);
+  expect(screen.getByText(/Includes running interpreter code and scripts/).textContent).toContain("launch subprocesses");
+  expect(screen.getByText(/Working directory: \./).textContent).toContain("Offline");
+  const button = screen.getByRole("button", { name: /Allow any arguments for \/usr\/bin\/python.*for this session/ });
+  await waitFor(() => expect(button).toHaveProperty("disabled", false));
+  fireEvent.click(button);
+  await waitFor(() => expect(respond).toHaveBeenCalledWith("shell", executableChoice.id));
+});
+
+it("defaults to the session rule, preserving exact commands and explicit long-term choices", async () => {
+  vi.spyOn(api, "grants").mockResolvedValue(readyGrants);
+  const respond = vi.fn().mockResolvedValue(true);
+  const project = { ...executableChoice, id: "allow_project_command_executable", lifetime: "project" };
+  render(<InteractionCard sessionId="s" interaction={{ ...shellInteraction, choices: [...shellInteraction.choices!, executableChoice, project] }} respond={respond} />);
+  fireEvent.click(screen.getByText("More options"));
+  expect(screen.getByLabelText(/Any arguments for \/usr\/bin\/python · for this session/)).toHaveProperty("checked", true);
+  expect(screen.getByLabelText(/Any arguments for \/usr\/bin\/python · in this project/)).toHaveProperty("checked", false);
+  const exact = screen.getByLabelText(/“echo hello” for this session/);
+  fireEvent.click(exact);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save and allow" })).toHaveProperty("disabled", false));
+  fireEvent.click(screen.getByRole("button", { name: "Save and allow" }));
+  await waitFor(() => expect(respond).toHaveBeenCalledWith("shell", "allow_session_rule"));
+});
+
+it("recommends a bounded argument prefix when offered without hiding the executable option", () => {
+  const prefix = { ...executableChoice, id: "prefix", resource: { ...executableChoice.resource, argv: ["/usr/bin/git", "status"], command_match: "argv_prefix" } };
+  expect(quickChoice([executableChoice, prefix], false)?.id).toBe("prefix");
+  expect(describeChoice(prefix)).toContain("any following arguments for /usr/bin/git status");
+  expect(describeChoice(executableChoice)).toContain("any arguments for /usr/bin/python");
+});
+
+it("distinguishes HTTP origin from exact path and recommends all paths with the current method", async () => {
+  const respond = vi.fn().mockResolvedValue(true);
+  const origin = { id: "allow_session_rule", label: "Session", scope: "GET https://example.com:443", persistence: "", lifetime: "session", resource_kind: "network", operations: ["network_read"], resource: { kind: "network", scheme: "https", host: "example.com", port: 443, methods: ["GET"], path_match: "origin" } };
+  const path = { ...origin, id: "allow_session_network_path", scope: "GET https://example.com:443/api", resource: { ...origin.resource, path_match: "exact", path: "/api" } };
+  render(<InteractionCard sessionId="s" interaction={{ request_id: "http", kind: "permission", tool_name: "http_request", http_method: "GET", http_target: "https://example.com/api", choices: [{ id: "allow_once", label: "Once", scope: "", persistence: "" }, path, origin] }} respond={respond} />);
+  expect(screen.getByRole("button", { name: /Allow GET requests to all paths at https:\/\/example.com:443/ })).toBeTruthy();
+  fireEvent.click(screen.getByText("More options"));
+  fireEvent.click(screen.getByLabelText(/GET requests to the exact path https:\/\/example.com:443\/api/));
+  fireEvent.click(screen.getByRole("button", { name: "Save and allow" }));
+  await waitFor(() => expect(respond).toHaveBeenCalledWith("http", path.id));
+});
+
+it("renders and revokes command, HTTP path and named tool records using server identity", async () => {
+  vi.spyOn(api, "revokeGrant").mockResolvedValue({ ...readyGrants, grants: [] });
+  const records: Grants = { ...readyGrants, grants: [
+    { id: "python-id", source: "project", lifetime: "project", resource_kind: "command", target: "/usr/bin/python", operations: ["shell"], recursive: false, cwd: "/project", resource: executableChoice.resource },
+    { id: "http-id", source: "session", lifetime: "session", resource_kind: "network", target: "https://example.com/api", http_methods: ["GET"], operations: ["network_read"], recursive: false, resource: { path_match: "exact", methods: ["GET"] } },
+    { id: "search-id", source: "user", lifetime: "user", resource_kind: "tool", target: "web_search", tool: "web_search", operations: ["network_read"], recursive: false },
+  ] };
+  render(<PermissionGrants sessionId="s" grants={records} update={vi.fn()} />);
+  expect(screen.getByText("any arguments for /usr/bin/python")).toBeTruthy();
+  expect(screen.getByText("GET requests to the exact path https://example.com/api (any query parameters)")).toBeTruthy();
+  expect(screen.getByText("Use web_search for the listed operations")).toBeTruthy();
+  expect(screen.getByText("Allowed operations: Network read")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Revoke authorization for /usr/bin/python" }));
+  await waitFor(() => expect(api.revokeGrant).toHaveBeenCalledWith("s", "python-id", "project", "revision-a"));
+});
+
+it("localizes broad program, HTTP path and recursive directory scope in Chinese", () => {
+  setLocale("zh-CN");
+  expect(describeChoice(executableChoice)).toContain("任意参数运行 /usr/bin/python");
+  expect(describeGrant({ id: "http", source: "session", lifetime: "session", resource_kind: "network", target: "https://example.com/api", operations: ["network_read"], recursive: false, resource: { path_match: "exact", methods: ["GET"] } })).toBe("仅对路径 https://example.com/api 的 GET 请求（查询参数不限）");
+  render(<InteractionCard sessionId="s" interaction={{ request_id: "file", kind: "permission", choices }} respond={vi.fn()} />);
+  fireEvent.click(screen.getByText("更多选项"));
+  expect(screen.getByText("包括此目录和所有子目录中的全部文件。")).toBeTruthy();
 });

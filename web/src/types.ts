@@ -1,3 +1,5 @@
+export type ExecutionMode = "sandbox" | "host";
+
 export type SessionLifecycle = "open" | "closing" | "closed";
 export type SessionExecution = "idle" | "running" | "queued" | "waiting_for_input" | "cancelling";
 
@@ -21,6 +23,7 @@ export type SessionSummary = {
   interaction_mode?: "agent" | "plan" | "ask";
   permission_mode?: string | null;
   environment?: "local" | "worktree";
+  execution_mode?: ExecutionMode;
   execution_root?: string;
   branch_name?: string;
   pending_interactions?: number;
@@ -122,12 +125,13 @@ export type Interaction = {
   http_method?: string;
   http_target?: string;
   shell_note?: string;
+  execution_mode?: ExecutionMode;
   choices?: Array<{
     id: string;
     label: string;
     scope: string;
     persistence: string;
-    lifetime?: string; resource_kind?: string; operations?: string[]; resource?: Record<string, unknown>;
+    lifetime?: string; resource_kind?: string; operations?: string[]; resource?: PermissionResource;
   }>;
 };
 
@@ -202,11 +206,18 @@ export type EffectivePolicy = {
   constraints: string[]; precedence: string[];
 };
 export type SandboxStatus = { platform: string; provider: string; available: boolean; state: "ready" | "setup_required" | "initializing" | "failed"; detail?: string };
+/** Server-supplied rule facts, displayed without deriving new authority. */
+export type PermissionResource = Record<string, unknown> & {
+  kind?: string; command_match?: string; argv?: string[]; cwd?: string; sandbox_key?: string;
+  execution_mode?: ExecutionMode;
+  dialect?: string; path?: string; path_match?: string; scheme?: string; host?: string;
+  port?: number; methods?: string[]; tool_name?: string; operations?: string[];
+};
 export type Grants = {
   version: string;
-  grants: Array<{ id: string; source: string; lifetime: string; resource_kind: string; target: string; http_methods?: string[]; operations: string[]; recursive: boolean; cwd?: string; tool?: string; version?: string; project_id?: string }>;
+  grants: Array<{ id: string; source: string; lifetime: string; resource_kind: string; target: string; http_methods?: string[]; operations: string[]; recursive: boolean; cwd?: string; tool?: string; version?: string; project_id?: string; resource?: PermissionResource; command_match?: string; argv?: string[]; sandbox_key?: string; dialect?: string; path?: string; path_match?: string }>;
   sandbox?: SandboxStatus | null;
-  permission_mode?: string; interaction_mode?: string;
+  permission_mode?: string; interaction_mode?: string; execution_mode?: ExecutionMode;
   boundary_codes?: string[];
 
   effective_policy: EffectivePolicy[];

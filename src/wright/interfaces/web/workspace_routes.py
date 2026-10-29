@@ -90,11 +90,13 @@ class WorkspaceSessionBody(BaseModel):
     document_ids: list[str] = Field(default_factory=list)
     interaction_mode: str | None = None
     permission_mode: str | None = None
+    execution_mode: Literal["sandbox", "host"] | None = None
 
 
 class PolicyBody(BaseModel):
     interaction_mode: str | None = None
     permission_mode: str | None = None
+    execution_mode: Literal["sandbox", "host"] | None = None
 
 
 class ConfirmBody(BaseModel):
@@ -228,6 +230,7 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
                 document_ids=body.document_ids,
                 interaction_mode=body.interaction_mode,
                 permission_mode=body.permission_mode,
+                execution_mode=body.execution_mode,
             )
             snapshot = handle.snapshot()
             if getattr(handle, "submit_error", None):
@@ -309,6 +312,7 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
             "project_root": str(project),
             "execution_root": str(root),
             "environment": handle.runtime.session_state.environment,
+            "execution_mode": handle.runtime.session_state.execution_mode,
             "base_commit": handle.runtime.session_state.base_commit,
             "branch_name": handle.runtime.session_state.branch_name,
             **summarize_git(root),
@@ -339,6 +343,7 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
             return _handle(manager, session_id).set_execution_policy(
                 interaction_mode=body.interaction_mode,
                 permission_mode=body.permission_mode,
+                execution_mode=body.execution_mode,
             )
         except RuntimeManagerError as exc:
             raise HTTPException(status_code=exc.status_code or 409, detail=str(exc)) from exc

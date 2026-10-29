@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from urllib.parse import urlsplit
 
 from ...domain.gateway.execution import ExecutionPath, PathResolver
 from ...domain.model.tool import ToolAccess, ToolCall
@@ -26,6 +27,8 @@ from ...domain.policy.permission.scope import (
 from ...domain.policy.permission.settings import (
     PermissionRule,
     PermissionSettings,
+    command_dialect,
+    direct_command_argv,
     redact_http_target,
     relative_to_root,
 )
@@ -51,6 +54,7 @@ class AuthorizationWorkflow:
         interaction_handler: UserInteractionHandler | None = None,
         *,
         settings: PermissionSettings | None = None,
+        execution_mode: str = "sandbox",
     ):
         self.policy = policy or PermissionPolicy(settings)
         if settings is not None and self.policy.settings is None:
@@ -58,7 +62,7 @@ class AuthorizationWorkflow:
         self.approval_handler = approval_handler
         self.interaction_handler = interaction_handler
 
-        self.resolver = PermissionResolver(self.policy)
+        self.resolver = PermissionResolver(self.policy, execution_mode=execution_mode)
 
     def resolve(
         self,
@@ -99,6 +103,8 @@ class AuthorizationWorkflow:
             reason_code=reason_code,
             reason_params=reason_params,
             details=subject.approval_details(arguments, fixed_cwd.value) if subject.approval_details else {},
+            executable=prepared.executable,
+            executable_target=prepared.executable_target,
         )
         request = PermissionRequest(
             tool_call,
@@ -128,6 +134,8 @@ class AuthorizationWorkflow:
                 backend=backend,
                 scope=scope,
                 remember_rule=remember_rule,
+                command_argv=self._command_argv(access_subject, prepared.executable) if prepared.command_rule else (),
+                executable_target=prepared.executable_target if prepared.command_rule else "",
                 reason_code=reason_code,
                 reason_params=reason_params,
             )
@@ -230,6 +238,8 @@ class AuthorizationWorkflow:
                     _rewrite_depth=_rewrite_depth + 1,
                 )
 
+        selected = next(choice for choice in prompt.choices if choice.id == response.choice)
+        selected_rule = PermissionRule.from_mapping(dict(selected.resource)) if selected.resource.get("kind") else None
         resolution = self._allowed(
             final_arguments,
             effective_access,
@@ -242,6 +252,9 @@ class AuthorizationWorkflow:
             scope=scope,
             remember_rule=remember_rule,
             choice=response.choice,
+            selected_rule=selected_rule,
+            command_argv=self._command_argv(access_subject, prepared.executable) if selected_rule is not None and selected_rule.kind == "command" else (),
+            executable_target=prepared.executable_target if selected_rule is not None and selected_rule.kind == "command" else "",
         )
         return resolution
 
@@ -268,6 +281,8 @@ class AuthorizationWorkflow:
         reason_code: str = "",
         reason_params: dict[str, str] | None = None,
         details: dict | None = None,
+        executable: str = "",
+        executable_target: str = "",
     ) -> PermissionPrompt:
         choices = [PermissionChoice("allow_once", "Allow once", "This invocation only", "Not saved")]
         if remember_rule is not None:
@@ -281,11 +296,28 @@ class AuthorizationWorkflow:
                 resource_scope = f"{', '.join(remember_rule.methods)} {remember_rule.scheme}://{remember_rule.host}:{remember_rule.port}"
             elif remember_rule.kind == "shell":
                 resource_scope = f"{remember_rule.pattern} · {remember_rule.cwd}"
-            for lifetime, label in (("session", "This conversation (including resume)"), ("project", "This project"), ("user", "All projects")):
-                if remember_rule.kind == "shell" and lifetime != "session":
-                    continue
-                choices.append(PermissionChoice(f"allow_{lifetime}_rule", label, resource_scope, label,
-                                                lifetime, remember_rule.kind, operations, remember_rule.to_persistent()))
+            candidates = [("rule", remember_rule, resource_scope)]
+            if remember_rule.kind == "network":
+                path = urlsplit(next((str(item.declaration.value) for item in targets if item.declaration.kind == "url"), "")).path or "/"
+                path_rule = replace(remember_rule, path=path, path_match="exact")
+                candidates.insert(0, ("network_path", path_rule, f"{', '.join(path_rule.methods)} {path_rule.display_target(cwd.value)}"))
+            if remember_rule.kind == "shell" and executable:
+                argv = direct_command_argv(subject, dialect=command_dialect(cwd.value))
+                if argv:
+                    command_rule = PermissionRule(tool_name, kind="command", argv=(executable,), command_match="executable", cwd=cwd.value, sandbox_key=remember_rule.sandbox_key, execution_mode=self.resolver.execution_mode, operations=("shell",), executable_target=executable_target)
+                    candidates.append(("command_executable", command_rule, command_rule.describe()))
+                    # A small explicit read-subcommand set gives useful prefixes;
+                    # interpreter flags remain covered by the executable choice.
+                    if len(argv) > 1 and argv[0].split("/")[-1] == "git" and argv[1] in {"status", "diff", "log", "show", "rev-parse", "ls-files"}:
+                        prefix = replace(command_rule, argv=(executable, argv[1]), command_match="argv_prefix")
+                        candidates.append(("command_prefix", prefix, prefix.describe()))
+            for suffix, candidate, candidate_scope in candidates:
+                for lifetime, label in (("session", "This conversation (including resume)"), ("project", "This project"), ("user", "All projects")):
+                    if candidate.kind == "shell" and lifetime != "session":
+                        continue
+                    record = replace(candidate, lifetime=lifetime)
+                    choices.append(PermissionChoice(f"allow_{lifetime}_{suffix}", label, candidate_scope, label,
+                                                    lifetime, record.kind, record.operations or operations, record.to_persistent()))
             file_targets = [item for item in targets if item.path is not None]
             unique = {item.path.value for item in file_targets}
             if len(unique) == 1 and remember_rule.kind in {"file", "directory"}:
@@ -297,7 +329,7 @@ class AuthorizationWorkflow:
                             continue
                         choices.append(PermissionChoice(f"allow_{lifetime}_directory_{access_kind}", label,
                             directory.value, label, lifetime, "directory", ops, {"path": directory.value, "recursive": True}))
-        if "shell" in access.operations:
+        if "shell" in access.operations and self.resolver.execution_mode == "sandbox":
             choices.append(PermissionChoice("allow_once_network", "Allow this command with network", "This command only; filesystem isolation remains", "Not saved"))
         choices.append(PermissionChoice("deny", "Deny", "No execution", "Not saved"))
         choices = tuple(choices)
@@ -308,6 +340,8 @@ class AuthorizationWorkflow:
         preview, http_method, http_target, command, shell_note, preview_truncated = _display_details(
             details or {}, cwd.value
         )
+        if command and self.resolver.execution_mode == "host":
+            shell_note = f"Approves this whole command on the host at {cwd.value}. No OS filesystem or network isolation applies; scripts and subprocesses have the host account access."
         shown_subject = http_target or subject
         return PermissionPrompt(
             request_id=tool_call.id or f"{identity.session_id}:{identity.call_id}",
@@ -326,6 +360,7 @@ class AuthorizationWorkflow:
             http_method=http_method,
             http_target=http_target,
             shell_note=shell_note,
+            execution_mode=self.resolver.execution_mode,
             reason_code=reason_code,
             reason_params=_pairs(reason_params or {}),
             summary_code=summary_code,
@@ -353,13 +388,16 @@ class AuthorizationWorkflow:
         choice: str = "allow_once",
         reason_code: str = "",
         reason_params: dict[str, str] | None = None,
+        selected_rule: PermissionRule | None = None,
+        command_argv: tuple[str, ...] = (),
+        executable_target: str = "",
     ) -> PermissionResolution:
         session_rules: list[PermissionRule] = []
         persistent_rules: list[PermissionRule] = []
         project_rules: list[PermissionRule] = []
         if remember_rule is not None and choice.startswith("allow_") and choice not in {"allow_once", "allow_once_network"}:
             lifetime = choice.split("_")[1]
-            rule = replace(remember_rule, lifetime=lifetime)
+            rule = replace(selected_rule or remember_rule, lifetime=lifetime)
             if "_directory_" in choice:
                 item = next(item for item in targets if item.path is not None)
                 directory = item.path.parent if item.declaration.kind == "file" else item.path
@@ -378,7 +416,12 @@ class AuthorizationWorkflow:
             elif lifetime == "user":
                 persistent_rules.append(record)
         return self.resolver.issue(arguments, access, targets, cwd, identity, reason, source, backend=backend, scope=scope,
-            changes=AuthorizationChange(tuple(session_rules), tuple(persistent_rules), tuple(project_rules)), network_enabled=choice == "allow_once_network", reason_code=reason_code, reason_params=reason_params)
+            changes=AuthorizationChange(tuple(session_rules), tuple(persistent_rules), tuple(project_rules)), network_enabled=choice == "allow_once_network", command_argv=command_argv, executable_target=executable_target, reason_code=reason_code, reason_params=reason_params)
+
+    @staticmethod
+    def _command_argv(command: str, executable: str) -> tuple[str, ...]:
+        argv = direct_command_argv(command)
+        return (executable, *argv[1:]) if argv and executable else ()
 
     @staticmethod
     def _deny(

@@ -27,7 +27,7 @@ class LocalProcessHandle:
         self._cwd_file = cwd_file
         self._cwd_result: ExecutionPath | None = None
         self._cwd_consumed = False
-        self._group = OwnedProcessGroup(process.pid)
+        self._group = OwnedProcessGroup(process.pid, reap=process.poll)
         self._output: queue.Queue[bytes | None] = queue.Queue(maxsize=128)
         self._pending = b""
         self._eof = False
@@ -312,8 +312,38 @@ class LocalExecutionBackend:
             if callable(close):
                 close()
 
+    def resolve_executable(self, program: str, *, cwd: ExecutionPath) -> str | None:
+        """Resolve the literal program using the same clean PATH as Shell launch."""
+        import shutil
+        import sys
+
+        from .sandbox_profile import clean_environment
+        self._local(cwd)
+        if sys.platform == "win32":
+            return None
+        if "/" in program:
+            candidate = Path(program) if Path(program).is_absolute() else Path(cwd.value) / program
+        else:
+            paths = clean_environment().get("PATH", os.defpath).split(os.pathsep)
+            # Relative PATH entries have shell-cwd semantics, not host-agent cwd.
+            search = os.pathsep.join(str(Path(cwd.value) / entry) if not Path(entry).is_absolute() else entry for entry in paths)
+            found = shutil.which(program, path=search)
+            if not found:
+                return None
+            candidate = Path(found)
+        try:
+            resolved = candidate.resolve(strict=True)
+        except OSError:
+            return None
+        return str(candidate.absolute()) if resolved.is_file() and os.access(resolved, os.X_OK) else None
+
     def start_shell(self, command: str, *, cwd: ExecutionPath, grant) -> LocalProcessHandle:
-        from .sandbox import launch
+        if grant.execution_mode == "host":
+            from .host import launch
+        elif grant.execution_mode == "sandbox":
+            from .sandbox import launch
+        else:
+            raise ValueError("execution_mode must be sandbox or host")
         self._local(cwd)
         scratch = Path(tempfile.mkdtemp(prefix="wright-command-"))
         cwd_path = scratch / "cwd"

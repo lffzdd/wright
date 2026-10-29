@@ -14,6 +14,7 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from functools import lru_cache
 
 _PROC_PIDTBSDINFO = 3
@@ -120,7 +121,8 @@ def _group_members(pgid: int) -> list[int]:
 class OwnedProcessGroup:
     """A process group created by one ``start_new_session`` spawn."""
 
-    def __init__(self, leader_pid: int) -> None:
+    def __init__(self, leader_pid: int, *, reap: Callable[[], object] | None = None) -> None:
+        self._reap = reap
         self.leader_pid = leader_pid
         self.pgid = os.getpgid(leader_pid)
         started = process_start(leader_pid)
@@ -171,6 +173,11 @@ class OwnedProcessGroup:
     def _wait_until_clear(self, grace_seconds: float) -> bool:
         deadline = time.monotonic() + grace_seconds
         while True:
+            # Reap an exited leader before inspecting group membership. An
+            # unreaped zombie otherwise looks like a live process until the
+            # caller waits, which used to happen only after this method.
+            if self._reap is not None:
+                self._reap()
             if self.leader_reused() or not self.members():
                 return not self.leader_reused()
             if time.monotonic() >= deadline:

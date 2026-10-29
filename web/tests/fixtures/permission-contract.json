@@ -77,7 +77,7 @@
               "file_write"
             ],
             "id": "",
-            "lifetime": "session",
+            "lifetime": "project",
             "project_id": "",
             "source": "approval",
             "root_kind": "absolute",
@@ -108,7 +108,7 @@
               "file_write"
             ],
             "id": "",
-            "lifetime": "session",
+            "lifetime": "user",
             "project_id": "",
             "source": "approval",
             "root_kind": "absolute",
@@ -186,6 +186,7 @@
       "http_method": "",
       "http_target": "",
       "shell_note": "",
+      "execution_mode": "sandbox",
       "preview_truncated": true,
       "risk_level": "review",
       "reason_code": "permission.outside_scope",
@@ -240,7 +241,110 @@
             "recursive": false,
             "exact": true,
             "cwd": "/project",
-            "sandbox_key": "2b01559367283639d5baadcb71922789165e5ef4d9cabb7944fc99e1455ff0df"
+            "sandbox_key": "4d82472f905839415d7a72245c4b0a89f9606aa3f149b564d28443b51b369e97",
+            "execution_mode": "sandbox"
+          }
+        },
+        {
+          "id": "allow_session_command_executable",
+          "label": "This conversation (including resume)",
+          "scope": "/usr/bin/echo (any arguments; cwd /project; includes scripts and subprocesses within the sandbox)",
+          "persistence": "This conversation (including resume)",
+          "lifetime": "session",
+          "resource_kind": "command",
+          "operations": [
+            "shell"
+          ],
+          "resource": {
+            "kind": "command",
+            "tool_name": "execute_command",
+            "argv": [
+              "/usr/bin/echo"
+            ],
+            "command_match": "executable",
+            "dialect": "posix",
+            "executable_target": "/usr/bin/echo",
+            "operations": [
+              "shell"
+            ],
+            "id": "",
+            "lifetime": "session",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": false,
+            "cwd": "/project",
+            "sandbox_key": "4d82472f905839415d7a72245c4b0a89f9606aa3f149b564d28443b51b369e97",
+            "execution_mode": "sandbox"
+          }
+        },
+        {
+          "id": "allow_project_command_executable",
+          "label": "This project",
+          "scope": "/usr/bin/echo (any arguments; cwd /project; includes scripts and subprocesses within the sandbox)",
+          "persistence": "This project",
+          "lifetime": "project",
+          "resource_kind": "command",
+          "operations": [
+            "shell"
+          ],
+          "resource": {
+            "kind": "command",
+            "tool_name": "execute_command",
+            "argv": [
+              "/usr/bin/echo"
+            ],
+            "command_match": "executable",
+            "dialect": "posix",
+            "executable_target": "/usr/bin/echo",
+            "operations": [
+              "shell"
+            ],
+            "id": "",
+            "lifetime": "project",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": false,
+            "cwd": "/project",
+            "sandbox_key": "4d82472f905839415d7a72245c4b0a89f9606aa3f149b564d28443b51b369e97",
+            "execution_mode": "sandbox"
+          }
+        },
+        {
+          "id": "allow_user_command_executable",
+          "label": "All projects",
+          "scope": "/usr/bin/echo (any arguments; cwd /project; includes scripts and subprocesses within the sandbox)",
+          "persistence": "All projects",
+          "lifetime": "user",
+          "resource_kind": "command",
+          "operations": [
+            "shell"
+          ],
+          "resource": {
+            "kind": "command",
+            "tool_name": "execute_command",
+            "argv": [
+              "/usr/bin/echo"
+            ],
+            "command_match": "executable",
+            "dialect": "posix",
+            "executable_target": "/usr/bin/echo",
+            "operations": [
+              "shell"
+            ],
+            "id": "",
+            "lifetime": "user",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": false,
+            "cwd": "/project",
+            "sandbox_key": "4d82472f905839415d7a72245c4b0a89f9606aa3f149b564d28443b51b369e97",
+            "execution_mode": "sandbox"
           }
         },
         {
@@ -273,6 +377,7 @@
       "http_method": "",
       "http_target": "",
       "shell_note": "Approves this whole command in a local process at /project. The process and its descendants remain inside the approved filesystem OS sandbox. Network is disabled unless separately approved for this command.",
+      "execution_mode": "sandbox",
       "preview_truncated": false,
       "risk_level": "review",
       "reason_code": "permission.needs_approval",
@@ -280,6 +385,576 @@
       "summary_code": "permission.scope.invocation_only",
       "summary_params": {
         "targets": "echo hello"
+      }
+    },
+    "python": {
+      "kind": "permission",
+      "request_id": "approval-python",
+      "tool_name": "execute_command",
+      "subject": "python3 -c 'print(1)'",
+      "reason": "This operation needs approval",
+      "risk_flags": [
+        "executes_shell"
+      ],
+      "targets": [
+        "python3 -c 'print(1)'"
+      ],
+      "choices": [
+        {
+          "id": "allow_once",
+          "label": "Allow once",
+          "scope": "This invocation only",
+          "persistence": "Not saved",
+          "lifetime": "once",
+          "resource_kind": "invocation",
+          "operations": [],
+          "resource": {}
+        },
+        {
+          "id": "allow_session_rule",
+          "label": "This conversation (including resume)",
+          "scope": "python3 -c 'print(1)' · /project",
+          "persistence": "This conversation (including resume)",
+          "lifetime": "session",
+          "resource_kind": "shell",
+          "operations": [
+            "shell"
+          ],
+          "resource": {
+            "kind": "shell",
+            "tool_name": "execute_command",
+            "pattern": "python3 -c 'print(1)'",
+            "id": "",
+            "lifetime": "session",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": true,
+            "cwd": "/project",
+            "sandbox_key": "4d82472f905839415d7a72245c4b0a89f9606aa3f149b564d28443b51b369e97",
+            "execution_mode": "sandbox"
+          }
+        },
+        {
+          "id": "allow_session_command_executable",
+          "label": "This conversation (including resume)",
+          "scope": "/usr/bin/python3 (any arguments; cwd /project; includes scripts and subprocesses within the sandbox)",
+          "persistence": "This conversation (including resume)",
+          "lifetime": "session",
+          "resource_kind": "command",
+          "operations": [
+            "shell"
+          ],
+          "resource": {
+            "kind": "command",
+            "tool_name": "execute_command",
+            "argv": [
+              "/usr/bin/python3"
+            ],
+            "command_match": "executable",
+            "dialect": "posix",
+            "executable_target": "/usr/bin/python3",
+            "operations": [
+              "shell"
+            ],
+            "id": "",
+            "lifetime": "session",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": false,
+            "cwd": "/project",
+            "sandbox_key": "4d82472f905839415d7a72245c4b0a89f9606aa3f149b564d28443b51b369e97",
+            "execution_mode": "sandbox"
+          }
+        },
+        {
+          "id": "allow_project_command_executable",
+          "label": "This project",
+          "scope": "/usr/bin/python3 (any arguments; cwd /project; includes scripts and subprocesses within the sandbox)",
+          "persistence": "This project",
+          "lifetime": "project",
+          "resource_kind": "command",
+          "operations": [
+            "shell"
+          ],
+          "resource": {
+            "kind": "command",
+            "tool_name": "execute_command",
+            "argv": [
+              "/usr/bin/python3"
+            ],
+            "command_match": "executable",
+            "dialect": "posix",
+            "executable_target": "/usr/bin/python3",
+            "operations": [
+              "shell"
+            ],
+            "id": "",
+            "lifetime": "project",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": false,
+            "cwd": "/project",
+            "sandbox_key": "4d82472f905839415d7a72245c4b0a89f9606aa3f149b564d28443b51b369e97",
+            "execution_mode": "sandbox"
+          }
+        },
+        {
+          "id": "allow_user_command_executable",
+          "label": "All projects",
+          "scope": "/usr/bin/python3 (any arguments; cwd /project; includes scripts and subprocesses within the sandbox)",
+          "persistence": "All projects",
+          "lifetime": "user",
+          "resource_kind": "command",
+          "operations": [
+            "shell"
+          ],
+          "resource": {
+            "kind": "command",
+            "tool_name": "execute_command",
+            "argv": [
+              "/usr/bin/python3"
+            ],
+            "command_match": "executable",
+            "dialect": "posix",
+            "executable_target": "/usr/bin/python3",
+            "operations": [
+              "shell"
+            ],
+            "id": "",
+            "lifetime": "user",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": false,
+            "cwd": "/project",
+            "sandbox_key": "4d82472f905839415d7a72245c4b0a89f9606aa3f149b564d28443b51b369e97",
+            "execution_mode": "sandbox"
+          }
+        },
+        {
+          "id": "allow_once_network",
+          "label": "Allow this command with network",
+          "scope": "This command only; filesystem isolation remains",
+          "persistence": "Not saved",
+          "lifetime": "once",
+          "resource_kind": "invocation",
+          "operations": [],
+          "resource": {}
+        },
+        {
+          "id": "deny",
+          "label": "Deny",
+          "scope": "No execution",
+          "persistence": "Not saved",
+          "lifetime": "once",
+          "resource_kind": "invocation",
+          "operations": [],
+          "resource": {}
+        }
+      ],
+      "principal": "session-permission",
+      "operation": "shell",
+      "grant_summary": "This invocation only: python3 -c 'print(1)'",
+      "preview": "",
+      "cwd": "/project",
+      "command": "python3 -c 'print(1)'",
+      "http_method": "",
+      "http_target": "",
+      "shell_note": "Approves this whole command in a local process at /project. The process and its descendants remain inside the approved filesystem OS sandbox. Network is disabled unless separately approved for this command.",
+      "execution_mode": "sandbox",
+      "preview_truncated": false,
+      "risk_level": "review",
+      "reason_code": "permission.needs_approval",
+      "reason_params": {},
+      "summary_code": "permission.scope.invocation_only",
+      "summary_params": {
+        "targets": "python3 -c 'print(1)'"
+      }
+    },
+    "http": {
+      "kind": "permission",
+      "request_id": "approval-http",
+      "tool_name": "http_request",
+      "subject": "https://example.com/api/item",
+      "reason": "This operation needs approval",
+      "risk_flags": [
+        "network_read"
+      ],
+      "targets": [
+        "https://example.com/api/item"
+      ],
+      "choices": [
+        {
+          "id": "allow_once",
+          "label": "Allow once",
+          "scope": "This invocation only",
+          "persistence": "Not saved",
+          "lifetime": "once",
+          "resource_kind": "invocation",
+          "operations": [],
+          "resource": {}
+        },
+        {
+          "id": "allow_session_network_path",
+          "label": "This conversation (including resume)",
+          "scope": "GET https://example.com:443/api/item",
+          "persistence": "This conversation (including resume)",
+          "lifetime": "session",
+          "resource_kind": "network",
+          "operations": [
+            "network_read"
+          ],
+          "resource": {
+            "kind": "network",
+            "tool_name": "http_request",
+            "scheme": "https",
+            "host": "example.com",
+            "port": 443,
+            "methods": [
+              "GET"
+            ],
+            "path": "/api/item",
+            "path_match": "exact",
+            "id": "",
+            "lifetime": "session",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": false,
+            "cwd": "",
+            "sandbox_key": ""
+          }
+        },
+        {
+          "id": "allow_project_network_path",
+          "label": "This project",
+          "scope": "GET https://example.com:443/api/item",
+          "persistence": "This project",
+          "lifetime": "project",
+          "resource_kind": "network",
+          "operations": [
+            "network_read"
+          ],
+          "resource": {
+            "kind": "network",
+            "tool_name": "http_request",
+            "scheme": "https",
+            "host": "example.com",
+            "port": 443,
+            "methods": [
+              "GET"
+            ],
+            "path": "/api/item",
+            "path_match": "exact",
+            "id": "",
+            "lifetime": "project",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": false,
+            "cwd": "",
+            "sandbox_key": ""
+          }
+        },
+        {
+          "id": "allow_user_network_path",
+          "label": "All projects",
+          "scope": "GET https://example.com:443/api/item",
+          "persistence": "All projects",
+          "lifetime": "user",
+          "resource_kind": "network",
+          "operations": [
+            "network_read"
+          ],
+          "resource": {
+            "kind": "network",
+            "tool_name": "http_request",
+            "scheme": "https",
+            "host": "example.com",
+            "port": 443,
+            "methods": [
+              "GET"
+            ],
+            "path": "/api/item",
+            "path_match": "exact",
+            "id": "",
+            "lifetime": "user",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": false,
+            "cwd": "",
+            "sandbox_key": ""
+          }
+        },
+        {
+          "id": "allow_session_rule",
+          "label": "This conversation (including resume)",
+          "scope": "GET https://example.com:443",
+          "persistence": "This conversation (including resume)",
+          "lifetime": "session",
+          "resource_kind": "network",
+          "operations": [
+            "network_read"
+          ],
+          "resource": {
+            "kind": "network",
+            "tool_name": "http_request",
+            "scheme": "https",
+            "host": "example.com",
+            "port": 443,
+            "methods": [
+              "GET"
+            ],
+            "path": "",
+            "path_match": "origin",
+            "id": "",
+            "lifetime": "session",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": false,
+            "cwd": "",
+            "sandbox_key": ""
+          }
+        },
+        {
+          "id": "allow_project_rule",
+          "label": "This project",
+          "scope": "GET https://example.com:443",
+          "persistence": "This project",
+          "lifetime": "project",
+          "resource_kind": "network",
+          "operations": [
+            "network_read"
+          ],
+          "resource": {
+            "kind": "network",
+            "tool_name": "http_request",
+            "scheme": "https",
+            "host": "example.com",
+            "port": 443,
+            "methods": [
+              "GET"
+            ],
+            "path": "",
+            "path_match": "origin",
+            "id": "",
+            "lifetime": "project",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": false,
+            "cwd": "",
+            "sandbox_key": ""
+          }
+        },
+        {
+          "id": "allow_user_rule",
+          "label": "All projects",
+          "scope": "GET https://example.com:443",
+          "persistence": "All projects",
+          "lifetime": "user",
+          "resource_kind": "network",
+          "operations": [
+            "network_read"
+          ],
+          "resource": {
+            "kind": "network",
+            "tool_name": "http_request",
+            "scheme": "https",
+            "host": "example.com",
+            "port": 443,
+            "methods": [
+              "GET"
+            ],
+            "path": "",
+            "path_match": "origin",
+            "id": "",
+            "lifetime": "user",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": false,
+            "cwd": "",
+            "sandbox_key": ""
+          }
+        },
+        {
+          "id": "deny",
+          "label": "Deny",
+          "scope": "No execution",
+          "persistence": "Not saved",
+          "lifetime": "once",
+          "resource_kind": "invocation",
+          "operations": [],
+          "resource": {}
+        }
+      ],
+      "principal": "session-permission",
+      "operation": "network_read",
+      "grant_summary": "This invocation only: https://example.com/api/item",
+      "preview": "",
+      "cwd": "/project",
+      "command": "",
+      "http_method": "GET",
+      "http_target": "https://example.com/api/item",
+      "shell_note": "",
+      "execution_mode": "sandbox",
+      "preview_truncated": false,
+      "risk_level": "review",
+      "reason_code": "permission.needs_approval",
+      "reason_params": {},
+      "summary_code": "permission.scope.invocation_only",
+      "summary_params": {
+        "targets": "https://example.com/api/item"
+      }
+    },
+    "search": {
+      "kind": "permission",
+      "request_id": "approval-search",
+      "tool_name": "web_search",
+      "subject": "https://api.tavily.com/search",
+      "reason": "This operation needs approval",
+      "risk_flags": [
+        "network_read"
+      ],
+      "targets": [
+        "https://api.tavily.com/search"
+      ],
+      "choices": [
+        {
+          "id": "allow_once",
+          "label": "Allow once",
+          "scope": "This invocation only",
+          "persistence": "Not saved",
+          "lifetime": "once",
+          "resource_kind": "invocation",
+          "operations": [],
+          "resource": {}
+        },
+        {
+          "id": "allow_session_rule",
+          "label": "This conversation (including resume)",
+          "scope": "web_search (network_read only)",
+          "persistence": "This conversation (including resume)",
+          "lifetime": "session",
+          "resource_kind": "tool",
+          "operations": [
+            "network_read"
+          ],
+          "resource": {
+            "kind": "tool",
+            "tool_name": "web_search",
+            "operations": [
+              "network_read"
+            ],
+            "id": "",
+            "lifetime": "session",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": false,
+            "cwd": "",
+            "sandbox_key": ""
+          }
+        },
+        {
+          "id": "allow_project_rule",
+          "label": "This project",
+          "scope": "web_search (network_read only)",
+          "persistence": "This project",
+          "lifetime": "project",
+          "resource_kind": "tool",
+          "operations": [
+            "network_read"
+          ],
+          "resource": {
+            "kind": "tool",
+            "tool_name": "web_search",
+            "operations": [
+              "network_read"
+            ],
+            "id": "",
+            "lifetime": "project",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": false,
+            "cwd": "",
+            "sandbox_key": ""
+          }
+        },
+        {
+          "id": "allow_user_rule",
+          "label": "All projects",
+          "scope": "web_search (network_read only)",
+          "persistence": "All projects",
+          "lifetime": "user",
+          "resource_kind": "tool",
+          "operations": [
+            "network_read"
+          ],
+          "resource": {
+            "kind": "tool",
+            "tool_name": "web_search",
+            "operations": [
+              "network_read"
+            ],
+            "id": "",
+            "lifetime": "user",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": false,
+            "cwd": "",
+            "sandbox_key": ""
+          }
+        },
+        {
+          "id": "deny",
+          "label": "Deny",
+          "scope": "No execution",
+          "persistence": "Not saved",
+          "lifetime": "once",
+          "resource_kind": "invocation",
+          "operations": [],
+          "resource": {}
+        }
+      ],
+      "principal": "session-permission",
+      "operation": "network_read",
+      "grant_summary": "This invocation only: https://api.tavily.com/search",
+      "preview": "",
+      "cwd": "/project",
+      "command": "",
+      "http_method": "POST",
+      "http_target": "https://api.tavily.com/search",
+      "shell_note": "",
+      "execution_mode": "sandbox",
+      "preview_truncated": false,
+      "risk_level": "review",
+      "reason_code": "permission.needs_approval",
+      "reason_params": {},
+      "summary_code": "permission.scope.invocation_only",
+      "summary_params": {
+        "targets": "https://api.tavily.com/search"
       }
     }
   },

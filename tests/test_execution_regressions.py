@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shlex
 import sqlite3
+import sys
 import threading
 import time
 from pathlib import Path
@@ -93,7 +94,7 @@ def test_ignored_sigterm_is_escalated_on_the_owned_group(tmp_path):
         "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)"
     )
     launched = execute_command(
-        f"python3 -c {shlex.quote(code)}",
+        f"{shlex.quote(str(Path(sys.executable).resolve()))} -S -c {shlex.quote(code)}",
         run_in_background=True,
         runtime=runtime,
     )

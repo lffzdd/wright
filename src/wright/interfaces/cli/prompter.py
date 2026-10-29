@@ -56,6 +56,7 @@ class ConsolePrompter:
             http_method=str(payload.get("http_method", "")),
             http_target=str(payload.get("http_target", "")),
             shell_note=str(payload.get("shell_note", "")),
+            execution_mode=str(payload.get("execution_mode", "sandbox")),
             reason_code=str(payload.get("reason_code", "")),
             reason_params=payload.get("reason_params") or {},
             summary_code=str(payload.get("summary_code", "")),

@@ -27,6 +27,7 @@ def _runtime(*, status="completed", model="first"):
         model_name=model,
         user_goal="test",
         environment="local",
+        execution_mode="sandbox",
         workspace_dir=".",
         project_root=".",
         base_commit=None,

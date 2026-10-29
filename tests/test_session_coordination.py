@@ -37,6 +37,7 @@ def _state(session_id: str, root: Path) -> SimpleNamespace:
         lifecycle="open",
         model_name="test",
         environment="local",
+        execution_mode="sandbox",
         workspace_dir=root,
         project_root=root,
         base_commit="",

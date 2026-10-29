@@ -61,6 +61,7 @@ def _serialize_session(session: Session) -> dict[str, Any]:
                 "permission_mode": authorization.permission_mode,
             },
             "environment": session.environment,
+            "execution_mode": session.execution_mode,
             "base_commit": session.base_commit,
             "branch_name": session.branch_name,
             "message_records": [
@@ -195,6 +196,9 @@ def _deserialize_session(payload: Any) -> Session:
     authorization = _deserialize_authorization(data.get("authorization"), session_id)
     if "task_usage_start" not in data:
         raise CheckpointError("task_usage_start is required")
+    execution_mode = data.get("execution_mode", "sandbox")
+    if execution_mode not in {"sandbox", "host"}:
+        raise CheckpointError("execution_mode must be sandbox or host")
     environment = data.get("environment", "local")
     if environment not in {"local", "worktree"}:
         raise CheckpointError("environment 必须是 local 或 worktree")
@@ -286,6 +290,7 @@ def _deserialize_session(payload: Any) -> Session:
         project_root=project_root,
         authorization=authorization,
         environment=environment,
+        execution_mode=execution_mode,
         base_commit=base_commit,
         branch_name=branch_name,
         turns=turns,

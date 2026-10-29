@@ -70,6 +70,9 @@ class InvocationGrant:
     policy_version: str = ""
     shell_readonly: tuple[ExecutionPath, ...] = ()
     network_targets: tuple[NetworkTarget, ...] = ()
+    command_argv: tuple[str, ...] = ()
+    executable_target: str = ""
+    execution_mode: str = "sandbox"
 
 
 @dataclass(frozen=True)
@@ -137,6 +140,7 @@ class PermissionPrompt:
     http_method: str = ""
     http_target: str = ""
     shell_note: str = ""
+    execution_mode: str = "sandbox"
     reason_code: str = ""
     reason_params: tuple[tuple[str, str], ...] = ()
     summary_code: str = ""
@@ -162,6 +166,7 @@ class PermissionPrompt:
             "http_method": self.http_method,
             "http_target": self.http_target,
             "shell_note": self.shell_note,
+            "execution_mode": self.execution_mode,
             "preview_truncated": self.preview_truncated,
             "risk_level": self.risk_level,
         }

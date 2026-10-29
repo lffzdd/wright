@@ -46,3 +46,9 @@ class PathResolver(Protocol):
     def resolve_path(
         self, requested: str, *, cwd: ExecutionPath | None = None
     ) -> ExecutionPath: ...
+
+
+class CommandResolver(PathResolver, Protocol):
+    """Optional literal-program identity from the actual execution environment."""
+
+    def resolve_executable(self, program: str, *, cwd: ExecutionPath) -> str | None: ...

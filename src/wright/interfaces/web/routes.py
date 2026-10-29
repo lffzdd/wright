@@ -42,6 +42,7 @@ class SessionRequest(BaseModel):
     document_ids: list[str] = []
     interaction_mode: str | None = None
     permission_mode: str | None = None
+    execution_mode: Literal["sandbox", "host"] | None = None
 
 
 class LabelRequest(BaseModel):
@@ -53,6 +54,7 @@ class ModelRequest(BaseModel):
 
 
 class TurnRequest(BaseModel):
+    execution_mode: Literal["sandbox", "host"] | None = None
     prompt: str = ""
     command_id: str
     attachment_ids: list[str] = []
@@ -139,6 +141,7 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
                 document_ids=body.document_ids,
                 interaction_mode=body.interaction_mode,
                 permission_mode=body.permission_mode,
+                execution_mode=body.execution_mode,
             )
             snapshot = handle.snapshot()
             if getattr(handle, "submit_error", None):
@@ -193,7 +196,10 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
         """Submit one turn. Creation does not also submit this command."""
         _require_auth(request, auth)
         try:
-            return manager.get(session_id).submit(
+            handle = manager.get(session_id)
+            if body.execution_mode is not None:
+                handle.set_execution_policy(execution_mode=body.execution_mode)
+            return handle.submit(
                 body.prompt,
                 body.command_id,
                 body.attachment_ids,

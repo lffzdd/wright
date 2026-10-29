@@ -376,11 +376,13 @@ class SessionHandle:
         *,
         interaction_mode: str | None = None,
         permission_mode: str | None = None,
+        execution_mode: str | None = None,
     ) -> dict[str, Any]:
         try:
             return self.service.set_execution_policy(
                 interaction_mode=interaction_mode,
                 permission_mode=permission_mode,
+                execution_mode=execution_mode,
             )
         except SessionServiceError as exc:
             raise RuntimeManagerError(str(exc), status_code=409) from exc
@@ -440,6 +442,7 @@ class RuntimeManager:
         document_ids: list[str] | None = None,
         interaction_mode: str | None = None,
         permission_mode: str | None = None,
+        execution_mode: str | None = None,
     ) -> SessionHandle:
         return self._open_on(
             self.directory,
@@ -455,6 +458,7 @@ class RuntimeManager:
             document_ids=document_ids,
             interaction_mode=interaction_mode,
             permission_mode=permission_mode,
+            execution_mode=execution_mode,
         )
 
     def _open_on(
@@ -473,6 +477,7 @@ class RuntimeManager:
         document_ids: list[str] | None = None,
         interaction_mode: str | None = None,
         permission_mode: str | None = None,
+        execution_mode: str | None = None,
     ) -> SessionHandle:
         session_id = resume or uuid4().hex[:12]
         publisher = EventPublisher(
@@ -512,11 +517,12 @@ class RuntimeManager:
         handle.submit_error = None
         with self._lock:
             self._handles[handle.session_id] = handle
-        if (interaction_mode or permission_mode) and not resume and not continue_latest:
+        if (interaction_mode or permission_mode or execution_mode) and not resume and not continue_latest:
             try:
                 handle.set_execution_policy(
                     interaction_mode=interaction_mode,
                     permission_mode=permission_mode,
+                    execution_mode=execution_mode,
                 )
             except RuntimeManagerError as exc:
                 handle.submit_error = str(exc)

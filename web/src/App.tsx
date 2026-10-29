@@ -496,6 +496,7 @@ export default function App() {
       } else if (!sessionId) {
         const created = await open({
           environment,
+          execution_mode: current.execution_mode ?? "sandbox",
           client_request_id: clientRequestId,
           interaction_mode: draftPolicy.interaction_mode,
           permission_mode: draftPolicy.permission_mode,
@@ -778,6 +779,7 @@ export default function App() {
               onModel={browsing === "live" ? (model) => changeModel(model).catch((error) => setFatal(String(error))) : undefined}
               interactionMode={state.session.interaction_mode ?? "agent"}
               permissionMode={state.session.permission_mode ?? "default"}
+              executionMode={state.session.execution_mode ?? "sandbox"}
               onPolicy={browsing === "live" ? async (body) => {
                 await api.policy(state.session.session_id, body);
                 setState((current) => {
@@ -827,6 +829,7 @@ export default function App() {
               currentModel={String(project?.default_model ?? "")}
               interactionMode={draftPolicy.interaction_mode}
               permissionMode={draftPolicy.permission_mode}
+              executionMode={draft.execution_mode ?? "sandbox"}
               onPolicy={async (body) => { setDraftPolicy((current) => ({ ...current, ...body })); }}
               submit={(commandId, prompt, attachmentIds, documentIds, references) => beginTurn(draftKey, commandId, prompt, attachmentIds, documentIds ?? [], references ?? [])}
               cancel={async () => undefined}

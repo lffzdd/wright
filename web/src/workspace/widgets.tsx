@@ -8,7 +8,7 @@ import { MarkdownContent } from "../Markdown";
 import { api } from "../api";
 import { present, t, useT } from "../i18n";
 import { commandAfter } from "../protocol";
-import type { Attachment, FileReference, Grants, PlanStep, ReviewChange, SessionSummary, ViewState, WaitReason } from "../types";
+import type { Attachment, ExecutionMode, FileReference, Grants, PlanStep, ReviewChange, SessionSummary, ViewState, WaitReason } from "../types";
 import { InteractionCard, ReasoningRow, AssistantMessage, UserMessage, toolCardFromState, toolCardFromTimeline } from "./cards";
 
 export type Draft = {
@@ -22,6 +22,7 @@ export type Draft = {
   clientRequestId?: string | null;
   boundSessionId?: string | null;
   environment?: "local" | "worktree";
+  execution_mode?: ExecutionMode;
   localFiles?: Array<{ name: string; file: File; image: boolean }>;
   phase: "idle" | "awaiting" | "accepted" | "rejected" | "unknown";
   reason: string;
@@ -29,7 +30,7 @@ export type Draft = {
 
 export const emptyDraft = (): Draft => ({
   prompt: "", attachments: [], documents: [], references: [], command: null, mentions: [], commandId: null,
-  clientRequestId: null, boundSessionId: null, environment: "local", localFiles: [], phase: "idle", reason: "",
+  clientRequestId: null, boundSessionId: null, environment: "local", execution_mode: "sandbox", localFiles: [], phase: "idle", reason: "",
 });
 
 export function taskCode(id: string, compact = false): string {
@@ -92,6 +93,13 @@ export function EnvironmentChoice({
         <span className="hint">{tr("web.isolated_help")}</span>
       </button>
     </div>}
+    <label className="hint">{tr("web.execution_mode")}
+      <select className="select" aria-label={tr("web.execution_mode")} value={draft.execution_mode ?? "sandbox"} onChange={(event) => updateDraft(sessionId, (current) => ({ ...current, execution_mode: event.target.value as ExecutionMode }))}>
+        <option value="sandbox">{tr("web.execution.sandbox")}</option>
+        <option value="host">{tr("web.execution.host")}</option>
+      </select>
+    </label>
+    <p className="hint">{tr(draft.execution_mode === "host" ? "web.execution.host_help" : "web.execution.sandbox_help")}</p>
   </div>;
 }
 
@@ -212,7 +220,7 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }:
 }
 
 export function Composer({
-  sessionId, connection, draft, updateDraft, submit, cancel, cancelAll, running, models = [], currentModel = "", interactionMode = "agent", permissionMode = "default", onModel, onPolicy,
+  sessionId, connection, draft, updateDraft, submit, cancel, cancelAll, running, models = [], currentModel = "", interactionMode = "agent", permissionMode = "default", executionMode = "sandbox", onModel, onPolicy,
   projectId = null, chooseEnvironment = false, git = false, workLabel = "",
 }: {
   sessionId: string;
@@ -227,6 +235,7 @@ export function Composer({
   currentModel?: string;
   interactionMode?: string;
   permissionMode?: string;
+  executionMode?: ExecutionMode;
   onModel?: (model: string) => void;
   onPolicy?: (body: { interaction_mode?: string; permission_mode?: string }) => Promise<void>;
   projectId?: string | null;
@@ -404,14 +413,15 @@ export function Composer({
         <select className="select select-model" aria-label={tr("web.model")} value={currentModel} onChange={(event) => onModel?.(event.target.value)}>
           {visibleModels(models, currentModel).map((model) => <option key={model} value={model}>{model}</option>)}
         </select>
+        {executionMode === "host" && <span className="hint" title={tr("web.execution.host_help")}>{tr("web.execution.host")}</span>}
         {/* Plan and Ask are read-only ceilings, so the permission level only matters in Agent mode. */}
         <select className="select select-permissions" aria-label={tr("web.permission_mode")}
-          title={interactionMode === "agent" ? tr(`web.perm_help.${permissionMode || "default"}`) : tr("web.perm_locked", { mode: tr(`web.mode.${interactionMode}`) })}
+          title={interactionMode === "agent" ? tr(permissionMode === "bypass" && executionMode === "host" ? "web.execution.host_bypass" : `web.perm_help.${permissionMode || "default"}`) : tr("web.perm_locked", { mode: tr(`web.mode.${interactionMode}`) })}
           disabled={interactionMode !== "agent"}
           value={permissionMode || "default"} onChange={(event) => onPolicy?.({ permission_mode: event.target.value }).catch((error) => updateDraft(sessionId, (item) => ({ ...item, reason: String(error) })))}>
           <option value="default" title={tr("web.perm_help.default")}>{tr("web.perm.default")}</option>
           <option value="acceptEdits" title={tr("web.perm_help.acceptEdits")}>{tr("web.perm.acceptEdits")}</option>
-          <option value="bypass" title={tr("web.perm_help.bypass")}>{tr("web.perm.bypass")}</option>
+          <option value="bypass" title={tr(executionMode === "host" ? "web.execution.host_bypass" : "web.perm_help.bypass")}>{tr("web.perm.bypass")}</option>
           {permissionMode === "plan" && <option value="plan" title={tr("web.perm_help.plan")}>{tr("web.perm.plan")}</option>}
         </select>
         {running && <button type="button" className="button stop" onClick={() => { cancel().catch(() => undefined); }}><Square size={11} weight="fill" />{tr("web.stop")}<kbd>{tr("web.shortcut_key", { key: "." })}</kbd></button>}
@@ -697,6 +707,8 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
       <PermissionsPanel sessionId={sessionId} grants={grants} update={setGrants}
         interactionMode={grants?.interaction_mode ?? state.session.interaction_mode ?? "agent"}
         permissionMode={state.session.permission_mode ?? "default"}
+        executionMode={state.session.execution_mode ?? "sandbox"}
+        executionBusy={(state.session.execution !== "idle" && state.session.execution !== undefined) || state.pending_interactions.length > 0}
         detail={<>
       {grants?.effective_policy?.map((policy) => <section className="policy-group" key={policy.operation}>
         <div className="card-kicker"><span>{tr(`web.policy_operation.${policy.operation}`)}</span></div>

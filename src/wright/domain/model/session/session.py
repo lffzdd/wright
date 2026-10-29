@@ -61,6 +61,7 @@ class Session:
     # actual execution directory for compatibility with existing tools.
     project_root: Path | None = None
     environment: ExecutionEnvironment = "local"
+    execution_mode: str = "sandbox"
     base_commit: str | None = None
     branch_name: str | None = None
     # Authoritative per-execution state.  Legacy fields below are projections
@@ -123,6 +124,8 @@ class Session:
     )
 
     def __post_init__(self) -> None:
+        if self.execution_mode not in {"sandbox", "host"}:
+            raise ValueError("execution_mode must be sandbox or host")
         if self.authorization.session_id != self.session_id:
             raise ValueError("Session authorization identity must match its owner")
 
@@ -136,6 +139,7 @@ class Session:
         session_id: str | None = None,
         project_root: Path | None = None,
         environment: ExecutionEnvironment = "local",
+        execution_mode: str = "sandbox",
         base_commit: str | None = None,
         branch_name: str | None = None,
     ) -> Session:
@@ -149,6 +153,7 @@ class Session:
             cwd=execution_root,
             project_root=(project_root or execution_root).resolve(),
             environment=environment,
+            execution_mode=execution_mode,
             base_commit=base_commit,
             branch_name=branch_name,
             turns=[],

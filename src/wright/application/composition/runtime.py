@@ -134,6 +134,7 @@ class RuntimeConfig:
     trust_project_mcp: bool = False
     with_rag: bool = False
     mode: str = "coding"
+    execution_mode: str | None = None
 
 
 def _make_interaction_handler(prompter: UserPrompter):
@@ -243,6 +244,7 @@ def _open_session(
         session_id=session_id,
         project_root=project_root,
         environment=project_context.environment,
+        execution_mode=config.execution_mode or "sandbox",
         base_commit=project_context.base_commit,
         branch_name=project_context.branch_name,
     ), False

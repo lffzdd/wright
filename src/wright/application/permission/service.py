@@ -69,21 +69,27 @@ class PermissionService:
     def _records(rules: tuple[PermissionRule, ...]) -> tuple[dict, ...]:
         return tuple(rule.to_persistent() for rule in rules)
 
-    def set_modes(self, session, *, interaction_mode=None, permission_mode=None) -> None:
+    def set_modes(self, session, *, interaction_mode=None, permission_mode=None, execution_mode=None) -> None:
+        if execution_mode is not None and execution_mode not in {"sandbox", "host"}:
+            raise ValueError("execution_mode must be sandbox or host")
         with self._repository.transaction(), session.authorization.locked_lineage():
             authorization = session.authorization
             before = authorization.snapshot()
+            previous_execution_mode = session.execution_mode
             try:
                 with self._repository.unit_of_work():
                     authorization.set_modes(permission_mode=before.permission_mode if permission_mode is None else permission_mode,
                         interaction_mode=before.interaction_mode if interaction_mode is None else interaction_mode)
+                    if execution_mode is not None:
+                        session.execution_mode = execution_mode
                     self._save_checkpoint(session)
             except Exception:
+                session.execution_mode = previous_execution_mode
                 authorization.set_modes(permission_mode=before.permission_mode, interaction_mode=before.interaction_mode)
                 self._cache.clear()
                 raise
         self._notify(session, {"session_id": session.session_id, "interaction_mode": authorization.interaction_mode,
-            "permission_mode": authorization.permission_mode, "effective": "next permission resolution"})
+            "permission_mode": authorization.permission_mode, "execution_mode": session.execution_mode, "effective": "next permission resolution"})
 
     def restore(self, session, backend) -> PermissionSnapshot:
         """Refresh current stores before any execution; checkpoint grants are seeds only."""
@@ -161,6 +167,7 @@ class PermissionService:
             },
             "session": [rule.to_persistent() for rule in records],
             "mode": mode,
+            "execution_mode": session.execution_mode,
             "ancestor_modes": modes,
             "interaction": interaction,
             "workspace": str(session.workspace_dir),
@@ -176,7 +183,7 @@ class PermissionService:
 
     def _token(self, session):
         states = tuple(item.snapshot() for item in session.authorization.lineage())
-        return (self._repository.revision_token(tuple(state.session_id for state in states)), states, str(session.workspace_dir), str(session.project_root))
+        return (self._repository.revision_token(tuple(state.session_id for state in states)), states, str(session.workspace_dir), str(session.project_root), session.execution_mode)
 
     def validate(self, session, version: str) -> None:
         if self.snapshot(session).version != version:
@@ -238,7 +245,11 @@ class PermissionService:
     def execution_guard(self, session, baseline: PermissionSnapshot, grant=None):
         """Permit additions; removals and hard-policy changes invalidate live work."""
 
+        execution_mode = session.execution_mode
+
         def validate():
+            if session.execution_mode != execution_mode:
+                raise PermissionConflict("Execution mode changed")
             current = self.snapshot(session)
             for name in ("deny", "ask"):
                 if getattr(current.settings, name) != getattr(baseline.settings, name):
@@ -262,7 +273,7 @@ class PermissionService:
                 if grant is None
                 or rule.kind == "directory"
                 or (
-                    rule.kind in {"shell", "tool"}
+                    rule.kind in {"shell", "command", "tool"}
                     and rule.tool_name == "execute_command"
                 )
             }
@@ -299,7 +310,7 @@ class PermissionService:
             binder = getattr(handler, "with_validator", None)
             if callable(binder):
                 handler = binder(lambda: self.validate(session, snapshot.version))
-            active = AuthorizationWorkflow(PermissionPolicy(snapshot.settings), handler, template.interaction_handler)
+            active = AuthorizationWorkflow(PermissionPolicy(snapshot.settings), handler, template.interaction_handler, execution_mode=session.execution_mode)
             scope = snapshot.scope
         else:
             active = template

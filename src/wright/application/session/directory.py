@@ -411,6 +411,7 @@ class SessionDirectory:
                 "interaction_mode": saved.authorization.interaction_mode,
                 "permission_mode": saved.authorization.permission_mode,
                 "environment": saved.environment,
+                "execution_mode": saved.execution_mode,
                 "execution_root": str(execution_root),
                 "project_root": str(saved_project),
                 "base_commit": saved.base_commit,
@@ -640,6 +641,7 @@ class SessionDirectory:
         workspace = context.execution_root
         return RuntimeConfig(
             workspace=workspace,
+            execution_mode=getattr(base, "execution_mode", None),
             resume=resume,
             continue_latest=False,
             no_session_persistence=bool(getattr(base, "no_session_persistence", False)),

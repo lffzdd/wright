@@ -31,6 +31,7 @@ def _fake_runtime(session_id, root):
             user_goal="test",
             model_name="model",
             environment="worktree",
+            execution_mode="sandbox",
             workspace_dir=root,
             project_root=root,
             base_commit="abc",
