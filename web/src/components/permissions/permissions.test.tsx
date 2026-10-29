@@ -1,9 +1,9 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { ApiError, api } from "../api";
-import { setLocale } from "../i18n";
-import type { Grants, Interaction } from "../types";
-import { InteractionCard } from "./cards";
+import { ApiError, api } from "../../api";
+import { setLocale } from "../../i18n";
+import type { Grants, Interaction } from "../../types";
+import { InteractionCard } from "../cards/cards";
 import { PermissionGrants } from "./permissions";
 import { describeChoice, quickChoice } from "./approval";
 import { describeGrant } from "./permissions";

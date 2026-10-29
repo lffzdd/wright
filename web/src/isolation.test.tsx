@@ -1,7 +1,9 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Composer, Inspector, type Draft } from "./App";
+import { Composer } from "./components/composer/Composer";
+import type { Draft } from "./components/composer/draft";
+import { Inspector } from "./components/inspector/Inspector";
 import type { ViewState } from "./types";
 
 afterEach(() => {

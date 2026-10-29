@@ -1,8 +1,8 @@
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
-import { ApiError, api } from "../api";
-import { t, useT } from "../i18n";
-import type { ExecutionMode, Grants, SandboxStatus } from "../types";
+import { ApiError, api } from "../../api";
+import { t, useT } from "../../i18n";
+import type { ExecutionMode, Grants, SandboxStatus } from "../../types";
 import { commandRuleDetails, commandRuleLabel, networkRuleLabel } from "./permission-resource";
 
 export function useShellReadiness(sessionId: string, enabled: boolean) {

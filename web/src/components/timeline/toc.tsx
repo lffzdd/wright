@@ -2,18 +2,20 @@ import { ListBullets, X } from "@phosphor-icons/react";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type Dispatch,
   type RefObject,
   type SetStateAction,
 } from "react";
-import { useT } from "../i18n";
+import { useT } from "../../i18n";
 
 /** Keep these in step with the conversation-stage rules in styles.css. */
 export const OUTLINE_TEXT_PX = 176;
 export const OUTLINE_TICKS_PX = 28;
-export const TRANSCRIPT_MAX_PX = 760;
+export const OUTLINE_DOCK_MIN_ITEMS = 4;
+export const TRANSCRIPT_MAX_PX = 820;
 export const TRANSCRIPT_MIN_PX = 560;
 export const OUTLINE_TEXT_AT = TRANSCRIPT_MIN_PX + OUTLINE_TEXT_PX;
 
@@ -65,6 +67,7 @@ export function useTimelineTOC(
 ) {
   const [items, setItems] = useState<TocItem[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [tickTops, setTickTops] = useState<Record<string, number>>({});
   const [isOpen, setIsOpen] = useState(false);
   const isManualScrollingRef = useRef(false);
   const scrollLockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -89,6 +92,41 @@ export function useTimelineTOC(
     revision.activeTurnId,
     revision.timelineLength,
   ]);
+
+  const measureTickTops = useCallback(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller || items.length < 2) {
+      setTickTops({});
+      return;
+    }
+    const scrollHeight = scroller.scrollHeight;
+    if (scrollHeight <= 0) return;
+    const next: Record<string, number> = {};
+    items.forEach((item, index) => {
+      const el = scroller.querySelector<HTMLElement>(tocIdSelector(item.id));
+      if (el) {
+        const scrollerTop = scroller.getBoundingClientRect().top;
+        const anchor =
+          el.getBoundingClientRect().top -
+          scrollerTop +
+          scroller.scrollTop +
+          Math.min(el.offsetHeight, 56) * 0.35;
+        next[item.id] = Math.min(96, Math.max(4, (anchor / scrollHeight) * 100));
+      } else {
+        next[item.id] = items.length === 1 ? 50 : 4 + (index / (items.length - 1)) * 92;
+      }
+    });
+    setTickTops(next);
+  }, [items, scrollerRef]);
+
+  useLayoutEffect(() => {
+    measureTickTops();
+    const scroller = scrollerRef.current;
+    if (!scroller || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => measureTickTops());
+    observer.observe(scroller);
+    return () => observer.disconnect();
+  }, [measureTickTops, scrollerRef, revision.historyLength, revision.activeContent, revision.timelineLength]);
 
   useEffect(() => {
     if (items.length < 2 && isOpen) setIsOpen(false);
@@ -132,11 +170,13 @@ export function useTimelineTOC(
       rafRef.current = window.requestAnimationFrame(() => {
         rafRef.current = null;
         updateActive();
+        measureTickTops();
       });
     };
 
     scroller.addEventListener("scroll", onScroll, { passive: true });
     updateActive();
+    measureTickTops();
 
     return () => {
       scroller.removeEventListener("scroll", onScroll);
@@ -145,7 +185,7 @@ export function useTimelineTOC(
         rafRef.current = null;
       }
     };
-  }, [items, scrollerRef]);
+  }, [items, measureTickTops, scrollerRef]);
 
   const scrollToHeading = useCallback(
     (id: string) => {
@@ -185,6 +225,7 @@ export function useTimelineTOC(
   return {
     items,
     activeId,
+    tickTops,
     isOpen,
     setIsOpen,
     scrollToHeading,
@@ -315,6 +356,7 @@ function useOutlineActiveScroll(activeId: string | null, listRef: RefObject<HTML
 export function ConversationOutline({
   items,
   activeId,
+  tickTops,
   scrollToHeading,
   labelsOff,
   onLabelsOff,
@@ -322,6 +364,7 @@ export function ConversationOutline({
 }: {
   items: TocItem[];
   activeId: string | null;
+  tickTops: Record<string, number>;
   scrollToHeading: (id: string) => void;
   labelsOff: boolean;
   onLabelsOff: () => void;
@@ -335,17 +378,17 @@ export function ConversationOutline({
   if (items.length < 2) return null;
 
   return (
-    <>
+    <div className="conversation-outline-host">
       <aside className="outline-dock" aria-label={tr("web.toc")}>
         <div className="outline-dock-head">
-          <span>{tr("web.toc")}</span>
-          <span className="timeline-toc-count-pill">{items.length}</span>
+          <span className="outline-dock-title">{tr("web.toc_kicker")}</span>
+          <span className="outline-dock-meta">{items.length}</span>
           <button type="button" className="timeline-toc-close" aria-label={tr("web.toc_close")} onClick={onLabelsOff}>
             <X size={12} weight="bold" />
           </button>
         </div>
         <ul className="outline-dock-list" ref={dockRef}>
-          {items.map((item, index) => {
+          {items.map((item) => {
             const isActive = activeId === item.id;
             return (
               <li key={item.id}>
@@ -353,11 +396,14 @@ export function ConversationOutline({
                   type="button"
                   className={`outline-dock-item ${isActive ? "active" : ""}`}
                   aria-current={isActive ? "true" : undefined}
-                  title={item.text}
+                  aria-label={item.text}
                   onClick={() => scrollToHeading(item.id)}
                 >
-                  <span className="outline-index">{index + 1}</span>
+                  <span className="outline-dock-mark" aria-hidden="true">
+                    <i />
+                  </span>
                   <span className="outline-dock-text">{item.text}</span>
+                  <span className="outline-tick-preview outline-dock-preview" role="tooltip">{item.text}</span>
                 </button>
               </li>
             );
@@ -366,27 +412,32 @@ export function ConversationOutline({
       </aside>
       <div className="outline-ticks" aria-label={tr("web.toc")} ref={tickRef}>
         {labelsOff && (
-          <button type="button" className="outline-ticks-expand" aria-label={tr("web.toc")} title={tr("web.toc")} onClick={onLabelsOn}>
+          <button type="button" className="outline-ticks-expand" aria-label={tr("web.toc_expand")} title={tr("web.toc")} onClick={onLabelsOn}>
             <ListBullets size={13} weight="bold" />
           </button>
         )}
-        {items.map((item) => {
-          const isActive = activeId === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              className={`outline-tick ${isActive ? "active" : ""}`}
-              aria-current={isActive ? "true" : undefined}
-              aria-label={item.text}
-              title={item.text}
-              onClick={() => scrollToHeading(item.id)}
-            >
-              <i />
-            </button>
-          );
-        })}
+        <div className="outline-ticks-track">
+          {items.map((item, index) => {
+            const isActive = activeId === item.id;
+            const fallbackTop = items.length === 1 ? 50 : 4 + (index / (items.length - 1)) * 92;
+            const top = tickTops[item.id] ?? fallbackTop;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                className={`outline-tick ${isActive ? "active" : ""}`}
+                style={{ top: `${top}%` }}
+                aria-current={isActive ? "true" : undefined}
+                aria-label={item.text}
+                onClick={() => scrollToHeading(item.id)}
+              >
+                <i aria-hidden="true" />
+                <span className="outline-tick-preview" role="tooltip">{item.text}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
-    </>
+    </div>
   );
 }

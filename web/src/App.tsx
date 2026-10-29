@@ -4,22 +4,20 @@ import { api, ApiError, bootstrap } from "./api";
 import { setLocale, useT } from "./i18n";
 import { parseEvent } from "./protocol";
 import { applyEvent } from "./reducer";
-import type { SessionSummary, Snapshot, ViewState } from "./types";
-import { MemoryDialog, RulesDialog, SchedulesDialog, SearchDialog, SettingsDialog } from "./workspace/panels";
-import {
-  Composer, Inspector, InteractionDock, SessionRail, Timeline, emptyDraft, taskCode, sessionTitle, EnvironmentChoice,
-  type Draft,
-} from "./workspace/widgets";
-import type { FileReference } from "./types";
+import type { FileReference, SessionSummary, Snapshot, ViewState } from "./types";
+import { Composer, EnvironmentChoice } from "./components/composer/Composer";
+import { emptyDraft, type Draft } from "./components/composer/draft";
+import { Inspector } from "./components/inspector/Inspector";
+import { MemoryDialog, RulesDialog, SchedulesDialog, SearchDialog, SettingsDialog } from "./components/panels/panels";
+import { SessionRail } from "./components/session/SessionRail";
+import { sessionTitle, taskCode } from "./components/session/session";
+import { InteractionDock, Timeline } from "./components/timeline/Timeline";
 
 
 /** The server no longer has this session open; its checkpoint remains. */
 function sessionGone(error: unknown): boolean {
   return error instanceof ApiError && error.status === 404;
 }
-
-export type { Draft };
-export { Composer, Inspector, InteractionCard, visibleModels } from "./workspace/widgets";
 
 const initialView = (snapshot: Snapshot): ViewState => ({
   ...snapshot,
@@ -671,7 +669,7 @@ export default function App() {
         {state && selected ? <button type="button" className="icon-button" aria-label={tr("web.open_inspector")} onClick={() => { setInspectorOpen(true); setNarrowInspector(true); }}><SidebarSimple size={14} /></button> : null}
       </div>
     </header>
-    <div className="workspace-grid">
+    <div className="workspace-grid" data-inspector={state && selected && inspectorOpen ? "open" : "closed"}>
       <SessionRail
         sessions={sessions}
         selected={selected}
@@ -722,7 +720,6 @@ export default function App() {
               <h1>{sessionTitle(state.session, tr)}</h1>
             </div>
             <div className="task-status">
-              <span className={`status-badge ${statusClass}`}><span className={`dot ${statusPulse ? "pulse" : ""}`} />{statusText}</span>
               {typeof breakdown?.total === "number" && <div className="context-meter" title={tr("web.estimate")}>
                 <span className="figures"><span>{compactTokens(breakdown.total)} / {compactTokens(breakdown.limit)}</span><span className="muted">{contextWidth}% context</span></span>
                 <span className="meter slim context-meter-segments">

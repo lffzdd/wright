@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
-import { getLocale, useT } from "../i18n";
+import { api } from "../../api";
+import { getLocale, useT } from "../../i18n";
 
 type Notice = { tone: "idle" | "busy" | "ok" | "error"; text: string };
 

@@ -14,8 +14,8 @@
  */
 import { Check, Copy, Globe, ShieldWarning, X } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { present, t, useT } from "../i18n";
-import type { Interaction } from "../types";
+import { present, t, useT } from "../../i18n";
+import type { Interaction } from "../../types";
 import { useShellReadiness } from "./permissions";
 import { commandRuleDetails, commandRuleLabel, networkRuleLabel } from "./permission-resource";
 

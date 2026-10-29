@@ -1,10 +1,10 @@
 import { CaretDown, Check, User, X } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
-import { MarkdownContent } from "../Markdown";
-import { parseDiff } from "../diff";
-import { present, t, useT } from "../i18n";
-import type { Interaction, TimelineItem, ToolState } from "../types";
-import { PermissionApproval } from "./approval";
+import { MarkdownContent } from "../../Markdown";
+import { parseDiff } from "../../diff";
+import { present, t, useT } from "../../i18n";
+import type { Interaction, TimelineItem, ToolState } from "../../types";
+import { PermissionApproval } from "../permissions/approval";
 
 function textOf(value: unknown): string {
   if (typeof value === "string") return value;

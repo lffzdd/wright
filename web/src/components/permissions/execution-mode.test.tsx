@@ -1,12 +1,13 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { ApiError, api } from "../api";
-import { setLocale } from "../i18n";
-import type { Grants, Interaction } from "../types";
+import { ApiError, api } from "../../api";
+import { setLocale } from "../../i18n";
+import type { Grants, Interaction } from "../../types";
 import { PermissionApproval } from "./approval";
 import { PermissionsPanel } from "./permissions";
-import { emptyDraft, EnvironmentChoice } from "./widgets";
+import { EnvironmentChoice } from "../composer/Composer";
+import { emptyDraft } from "../composer/draft";
 const grants: Grants = { version: "1", grants: [], effective_policy: [], execution_mode: "sandbox", sandbox: { available: false, state: "failed", platform: "win32", provider: "Windows" } };
 beforeEach(() => setLocale("en"));
 afterEach(() => { cleanup(); vi.restoreAllMocks(); setLocale("en"); });

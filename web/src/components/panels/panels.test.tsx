@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Inspector } from "../App";
-import type { ViewState } from "../types";
+import { Inspector } from "../inspector/Inspector";
+import type { ViewState } from "../../types";
 import { RulesDialog, SearchDialog } from "./panels";
 
 afterEach(() => {

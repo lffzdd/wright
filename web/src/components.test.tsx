@@ -2,8 +2,9 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { marked } from "marked";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { t } from "./i18n";
-import { Composer, InteractionCard, visibleModels } from "./App";
-import { sessionTitle } from "./workspace/widgets";
+import { InteractionCard } from "./components/cards/cards";
+import { Composer, visibleModels } from "./components/composer/Composer";
+import { sessionTitle } from "./components/session/session";
 import { DiffViewer } from "./DiffViewer";
 import { MarkdownContent, markdownChunks } from "./Markdown";
 

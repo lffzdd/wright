@@ -1,12 +1,12 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "../api";
-import { parseDiff } from "../diff";
-import { setLocale } from "../i18n";
-import { applyEvent } from "../reducer";
-import type { EffectivePolicy, Grants, UiEvent, ViewState } from "../types";
-import { InteractionCard, toolCardFromState, toolCardFromTimeline } from "./cards";
-import { Inspector } from "./widgets";
+import { api } from "../../api";
+import { parseDiff } from "../../diff";
+import { setLocale } from "../../i18n";
+import { applyEvent } from "../../reducer";
+import type { EffectivePolicy, Grants, UiEvent, ViewState } from "../../types";
+import { InteractionCard, toolCardFromState, toolCardFromTimeline } from "../cards/cards";
+import { Inspector } from "./Inspector";
 
 const view = (): ViewState => ({
   stream_id: "stream", last_seq: 0, seen: [], connection: "connected",

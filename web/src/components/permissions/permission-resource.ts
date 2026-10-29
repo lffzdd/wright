@@ -1,5 +1,5 @@
-import { t } from "../i18n";
-import type { PermissionResource } from "../types";
+import { t } from "../../i18n";
+import type { PermissionResource } from "../../types";
 
 /** Quotes retain visible argument boundaries; this is a description, not executable shell. */
 export function commandArguments(argv: string[]): string {

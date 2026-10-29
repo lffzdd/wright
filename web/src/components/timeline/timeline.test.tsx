@@ -1,9 +1,9 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { applyEvent } from "../reducer";
-import type { UiEvent, ViewState } from "../types";
-import { Timeline } from "./widgets";
-import { toolCardFromTimeline, toolCardFromState } from "./cards";
+import { applyEvent } from "../../reducer";
+import type { UiEvent, ViewState } from "../../types";
+import { Timeline } from "./Timeline";
+import { toolCardFromTimeline, toolCardFromState } from "../cards/cards";
 
 beforeAll(() => { Element.prototype.scrollTo = vi.fn(); });
 afterEach(cleanup);
@@ -220,7 +220,7 @@ describe("real timeline projection", () => {
     expect(items[1].textContent).not.toContain("Key Takeaways");
 
     const scrollToMock = vi.fn();
-    const scroller = container.querySelector(".timeline") as HTMLElement;
+    const scroller = container.querySelector(".conversation-scroll") as HTMLElement;
     scroller.scrollTo = scrollToMock;
     vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue({
       top: 50, left: 0, bottom: 500, right: 400, width: 400, height: 450, x: 0, y: 50, toJSON: () => {},
@@ -251,7 +251,7 @@ describe("real timeline projection", () => {
 
 describe("projectRelative", () => {
   it("keeps project paths and drops everything outside the project", async () => {
-    const { projectRelative } = await import("./widgets");
+    const { projectRelative } = await import("../inspector/Inspector");
     expect(projectRelative("src/a.ts", "/p")).toBe("src/a.ts");
     expect(projectRelative("/p/src/a.ts", "/p")).toBe("src/a.ts");
     expect(projectRelative("/etc/hosts", "/p")).toBeNull();
