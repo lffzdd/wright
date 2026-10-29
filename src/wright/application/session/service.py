@@ -21,6 +21,7 @@ from ...domain.model.session.run import TERMINAL_RUN_STATUSES
 from ...infrastructure.llm.model_adapters import available_models
 from ...infrastructure.storage.attachments import AttachmentError
 from .errors import SessionClosedError, SessionServiceError
+from .events import session_status
 from .runner import RuntimeShutdown, SessionRunner
 
 logger = get_logger(__name__)
@@ -79,7 +80,7 @@ def set_session_model(runtime: WrightRuntime, model: str) -> tuple[str, str]:
     if publisher is not None:
         publisher.publish(
             "session.status_changed",
-            {"session_id": runtime.session_state.session_id, "model": cleaned},
+            session_status(runtime.session_state.session_id, model=cleaned),
         )
         return current, cleaned
 

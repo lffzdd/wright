@@ -19,6 +19,7 @@ from .events import (
     SessionEvents,
     UiEventEnvelope,
     _json_value,
+    validate_session_status,
 )
 from .live_resources import RuntimeResources
 from .tool_projection import public_tool_result, tool_phase
@@ -125,7 +126,7 @@ class DisplayFold:
         text_id = f"{prefix}:assistant:{root['segment']}"
         reasoning_id = f"{prefix}:reasoning:{root['segment']}"
         boundary = event.type in {"tool.planned", "tool.awaiting_approval", "tool.running"} or (
-            event.type == "session.status_changed" and payload.get("status") == "model_turn_started"
+            event.type == "session.status_changed" and payload.get("turn_signal") == "model_turn_started"
         )
         if boundary and any(item["id"] in {text_id, reasoning_id} for item in items):
             root["segment"] += 1
@@ -272,6 +273,8 @@ class EventPublisher:
     ) -> UiEventEnvelope:
         if event_type not in UI_EVENT_TYPES:
             raise ValueError(f"unknown UI event type: {event_type}")
+        if event_type == "session.status_changed":
+            validate_session_status(payload or {}, self.session_id)
         with self._lock:
             if self._closed:
                 raise RuntimeError("event publisher is closed")

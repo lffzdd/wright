@@ -523,7 +523,6 @@ class RuntimeManager:
                 )
             except RuntimeManagerError as exc:
                 handle.submit_error = str(exc)
-        publisher.publish("session.snapshot", handle.snapshot())
         has_turn = bool((prompt and prompt.strip()) or references or attachment_ids or document_ids)
         if has_turn and handle.submit_error is None:
             try:

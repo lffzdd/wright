@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { commandAfter, parseEvent } from "./protocol";
+import statusContract from "./session-status-contract.json";
 
 const event = {
   version: 2,
@@ -14,6 +15,18 @@ const event = {
 };
 
 describe("event protocol", () => {
+  it.each([
+    ...statusContract.valid.map((item) => ({ ...item, valid: true })),
+    ...statusContract.invalid.map((item) => ({ ...item, valid: false })),
+  ])("status payload: $name", ({ payload, valid }) => {
+    const parsed = parseEvent({ ...event, session_id: "session", type: "session.status_changed", payload }, { sessionId: "session", streamId: "stream" });
+    expect(parsed.ok).toBe(valid);
+    if (!valid) expect(parsed).toEqual({ ok: false, reason: "payload" });
+  });
+
+  it("rejects the removed session.snapshot event", () => {
+    expect(parseEvent({ ...event, type: "session.snapshot" }, { sessionId: "abc", streamId: "stream" })).toEqual({ ok: false, reason: "type" });
+  });
   it("accepts a version 2 event for the current stream", () => {
     const parsed = parseEvent(event, { sessionId: "abc", streamId: "stream" });
     expect(parsed.ok).toBe(true);

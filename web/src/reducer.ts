@@ -1,20 +1,22 @@
 import type { AgentView, Attachment, Interaction, ToolState, UiEvent, ViewState } from "./types";
+import { validSessionStatus } from "./protocol";
 
+// Locked against Python notice_display/notice_text by notice-contract.json.
 function noticeMeta(event: UiEvent): { code?: string; params?: Record<string, string> } {
   if (event.type === "turn.failed") {
-    return { code: "notice.turn_failed", params: { detail: String(event.payload.error ?? event.payload.status ?? "unknown error") } };
+    return { code: "notice.turn_failed", params: { detail: String(event.payload.error || event.payload.status || "unknown error") } };
   }
   if (event.type === "turn.cancelled") return { code: "notice.turn_cancelled" };
   if (event.type === "system.checkpoint_error") {
-    return { code: "notice.checkpoint_failed", params: { detail: String(event.payload.error ?? "unknown error") } };
+    return { code: "notice.checkpoint_failed", params: { detail: String(event.payload.error || "unknown error") } };
   }
   if (event.payload.kind === "completion_rejected") return { code: "notice.completion_another" };
   if (event.payload.kind === "context_compact") {
-    return { code: "notice.context_compact", params: { count: String(Number(event.payload.folded_count ?? 0)) } };
+    return { code: "notice.context_compact", params: { count: String(Math.trunc(Number(event.payload.folded_count || 0))) } };
   }
   if (typeof event.payload.code === "string" && event.payload.code) {
     const raw = event.payload.params;
-    const params = raw && typeof raw === "object"
+    const params = raw && typeof raw === "object" && !Array.isArray(raw)
       ? Object.fromEntries(Object.entries(raw as Record<string, unknown>).map(([key, value]) => [key, String(value)]))
       : undefined;
     return { code: event.payload.code, params };
@@ -23,17 +25,17 @@ function noticeMeta(event: UiEvent): { code?: string; params?: Record<string, st
 }
 
 function noticeText(event: UiEvent): string {
-  if (event.type === "turn.failed") return `Turn failed: ${String(event.payload.error ?? event.payload.status ?? "unknown error")}`;
+  if (event.type === "turn.failed") return `Turn failed: ${String(event.payload.error || event.payload.status || "unknown error")}`;
   if (event.type === "turn.cancelled") return "Turn cancelled.";
-  if (event.type === "system.checkpoint_error") return `Checkpoint failed: ${String(event.payload.error ?? "unknown error")}`;
-  if (event.type === "command.rejected") return String(event.payload.reason ?? "Command rejected");
+  if (event.type === "system.checkpoint_error") return `Checkpoint failed: ${String(event.payload.error || "unknown error")}`;
+  if (event.type === "command.rejected") return String(event.payload.reason || "Command rejected");
   if (event.type === "task.updated") {
     const task = event.payload.task as Record<string, unknown> | undefined;
-    return String(task?.description ?? event.payload.description ?? "Background task updated");
+    return String(task?.description || event.payload.description || "Background task updated");
   }
   if (event.payload.kind === "completion_rejected") return "Completion check requested another attempt.";
-  if (event.payload.kind === "context_compact") return `Context compacted (${Number(event.payload.folded_count ?? 0)} items).`;
-  return String(event.payload.text ?? "System notice");
+  if (event.payload.kind === "context_compact") return `Context compacted (${Math.trunc(Number(event.payload.folded_count || 0))} items).`;
+  return String(event.payload.text || "System notice");
 }
 
 function addNotice(state: ViewState, event: UiEvent): ViewState {
@@ -159,6 +161,9 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
   if (event.seq <= state.last_seq) return state;
   if (event.seq !== state.last_seq + 1) return { ...state, resync: true };
   if (state.seen.includes(event.event_id)) return state;
+  if (event.type === "session.status_changed" && !validSessionStatus(event.payload, event.session_id)) {
+    return { ...state, resync: true };
+  }
   const seen = [...state.seen.slice(-1999), event.event_id];
   const child = childIdentity(event);
   let next: ViewState = {
@@ -313,19 +318,24 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
       ...(permission === "default" || permission === "acceptEdits" || permission === "bypass" || permission === "plan" ? { permission_mode: permission } : {}),
     };
   } else if (event.type === "session.status_changed") {
-    if (event.payload.status === "model_turn_started") next = closeSegment(next, event);
+    if (event.payload.turn_signal === "model_turn_started") next = closeSegment(next, event);
     const model = event.payload.model;
     const execution = event.payload.execution;
     const lifecycle = event.payload.lifecycle;
     const queueReason = event.payload.queue_reason;
     const knownExecution = execution === "idle" || execution === "running" || execution === "queued" || execution === "waiting_for_input" || execution === "cancelling";
+    const effectiveLifecycle = lifecycle ?? next.session.lifecycle;
+    const effectiveExecution = knownExecution ? execution : next.session.execution;
     next.session = {
       ...next.session,
       ...(typeof model === "string" && model.trim() ? { model: model.trim() } : {}),
       ...(lifecycle === "open" || lifecycle === "closing" || lifecycle === "closed" ? { lifecycle } : {}),
       ...(knownExecution ? { execution } : {}),
       ...(typeof queueReason === "string" ? { queue_reason: queueReason } : {}),
-      ...(knownExecution ? { status: lifecycle === "closing" || lifecycle === "closed" ? lifecycle : execution } : {}),
+      ...(lifecycle !== undefined || knownExecution ? {
+        status: effectiveLifecycle === "closing" || effectiveLifecycle === "closed"
+          ? effectiveLifecycle : effectiveExecution ?? next.session.status,
+      } : {}),
     };
   }
   if (next.timeline && event.type.startsWith("tool.")) {

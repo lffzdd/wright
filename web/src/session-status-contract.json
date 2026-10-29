@@ -1,0 +1,26 @@
+{
+  "valid": [
+    {"name": "model patch", "payload": {"session_id": "session", "model": "second"}},
+    {"name": "directory queue", "payload": {"session_id": "session", "lifecycle": "open", "execution": "queued", "queue_reason": "directory busy"}},
+    {"name": "waiting for input", "payload": {"session_id": "session", "lifecycle": "open", "execution": "waiting_for_input", "queue_reason": "reply"}},
+    {"name": "resume execution clears reason", "payload": {"session_id": "session", "lifecycle": "open", "execution": "running", "queue_reason": ""}},
+    {"name": "root model step", "payload": {"session_id": "session", "turn_signal": "model_turn_started"}},
+    {"name": "combined patch and signal", "payload": {"session_id": "session", "model": "second", "lifecycle": "open", "execution": "running", "queue_reason": "", "turn_signal": "model_turn_started"}},
+    {"name": "child model step", "payload": {"session_id": "session", "turn_signal": "model_turn_started", "agent_depth": 1, "agent_task_id": "child"}},
+    {"name": "closing lifecycle", "payload": {"session_id": "session", "lifecycle": "closing"}},
+    {"name": "closed lifecycle", "payload": {"session_id": "session", "lifecycle": "closed"}}
+  ],
+  "invalid": [
+    {"name": "legacy status dialect", "payload": {"session_id": "session", "status": "model_turn_started"}},
+    {"name": "missing identity", "payload": {"turn_signal": "model_turn_started"}},
+    {"name": "mismatched identity", "payload": {"session_id": "other", "model": "second"}},
+    {"name": "unknown signal", "payload": {"session_id": "session", "turn_signal": "future"}},
+    {"name": "unknown execution", "payload": {"session_id": "session", "execution": "future"}},
+    {"name": "unknown lifecycle", "payload": {"session_id": "session", "lifecycle": "future"}},
+    {"name": "null model", "payload": {"session_id": "session", "model": null}},
+    {"name": "blank model", "payload": {"session_id": "session", "model": "  "}},
+    {"name": "non-string reason", "payload": {"session_id": "session", "queue_reason": false}},
+    {"name": "unknown field", "payload": {"session_id": "session", "future": "dialect"}},
+    {"name": "negative depth", "payload": {"session_id": "session", "agent_depth": -1}},
+    {"name": "boolean depth", "payload": {"session_id": "session", "agent_depth": true}}
+  ]

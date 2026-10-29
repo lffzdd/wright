@@ -84,7 +84,7 @@ describe("real timeline projection", () => {
       state = emit(state, "tool.running", { call_id });
       state = emit(state, "tool.finished", { call_id, ok: true });
     }
-    state = emit(state, "session.status_changed", { status: "model_turn_started" });
+    state = emit(state, "session.status_changed", { session_id: "session", turn_signal: "model_turn_started" });
     state = emit(state, "reasoning.delta", { piece: "After tools" });
     state = emit(state, "content.delta", { piece: "Final draft" });
     state = emit(state, "content.final", { content: "Final answer" });
@@ -129,7 +129,7 @@ describe("real timeline projection", () => {
   it("separates model retries even without tools", () => {
     let state = emit(fresh(), "turn.started", { prompt: "Check" });
     state = emit(state, "reasoning.delta", { piece: "Attempt one" });
-    state = emit(state, "session.status_changed", { status: "model_turn_started" });
+    state = emit(state, "session.status_changed", { session_id: "session", turn_signal: "model_turn_started" });
     state = emit(state, "reasoning.delta", { piece: "Attempt two" });
     expect(state.timeline?.filter((item) => item.kind === "reasoning").map((item) => item.text)).toEqual(["Attempt one", "Attempt two"]);
   });

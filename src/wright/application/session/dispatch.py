@@ -24,6 +24,7 @@ from ..execution.directory import (
 )
 from ..scheduling.contracts import SchedulingError
 from ..scheduling.runner import launch_job_run
+from .events import session_status
 from .history_projection import (
     current_run_id,
     latest_turn_history_id,
@@ -70,12 +71,10 @@ def _notice(rt: WrightRuntime, text: str, *, code: str = "", **params: object) -
 def _publish_execution(rt: WrightRuntime, execution: str, reason: str = "") -> None:
     rt.publisher.publish(
         "session.status_changed",
-        {
-            "session_id": rt.session_state.session_id,
-            "lifecycle": "open",
-            "execution": execution,
-            "queue_reason": reason,
-        },
+        session_status(
+            rt.session_state.session_id, lifecycle="open", execution=execution,
+            queue_reason=reason,
+        ),
     )
 
 

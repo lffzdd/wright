@@ -341,15 +341,15 @@ def test_plan_projection_publishes_after_root_lifecycle_and_reset(
     monkeypatch.setattr(
         "wright.application.planning.projection.time.time", lambda: 100.0
     )
-    publisher.publish("session.status_changed", {"status": "model_turn_started"})
+    publisher.publish("session.status_changed", {"session_id": publisher.session_id, "turn_signal": "model_turn_started"})
     assert publisher.retained_events()[-1].type == "plan.updated"
     session.plan_manager.reset()
     publisher.publish(
         "session.status_changed",
-        {"status": "model_turn_started", "agent_depth": 1, "agent_task_id": "child"},
+        {"session_id": publisher.session_id, "turn_signal": "model_turn_started", "agent_depth": 1, "agent_task_id": "child"},
     )
     assert publisher.retained_events()[-1].type == "session.status_changed"
-    publisher.publish("session.status_changed", {"status": "model_turn_started"})
+    publisher.publish("session.status_changed", {"session_id": publisher.session_id, "turn_signal": "model_turn_started"})
     assert publisher.retained_events()[-1].payload["plan"]["steps"] == []
     publisher.publish("turn.completed", {})
     assert publisher.retained_events()[-1].payload["plan"]["observed_at"] == 100.0

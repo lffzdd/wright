@@ -105,7 +105,7 @@ class RendererEventSubscriber:
         elif event.type == "task.updated":
             self.renderer.on_agent_event(dict(payload))
         elif event.type == "session.status_changed":
-            if payload.get("status") == "model_turn_started":
+            if payload.get("turn_signal") == "model_turn_started":
                 self.renderer.on_turn_begin()
 
     def _project_child(self, event: UiEventEnvelope) -> None:

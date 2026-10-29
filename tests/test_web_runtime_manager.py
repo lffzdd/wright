@@ -319,6 +319,8 @@ def test_set_model_updates_llm_and_session(monkeypatch, tmp_path):
     assert llm.model == "second"
     assert handle.runtime.session_state.model_name == "second"
     assert summary["model"] == "second"
+    changed = [event for event in handle.publisher.retained_events() if event.type == "session.status_changed"]
+    assert changed[-1].payload == {"session_id": handle.session_id, "model": "second"}
     handle.close()
 
 
@@ -458,7 +460,7 @@ def test_reasoning_snapshot_preserves_order_without_duplicating_committed_steps(
     publisher.publish("tool.finished", {
         "call_id": call.id, "name": call.name, "arguments": call.arguments, **result.to_dict(),
     })
-    publisher.publish("session.status_changed", {"status": "model_turn_started"})
+    publisher.publish("session.status_changed", {"session_id": publisher.session_id, "turn_signal": "model_turn_started"})
     publisher.publish("reasoning.delta", {"piece": "After tool"})
     handle = SessionHandle(runtime)
     captured = handle.snapshot()

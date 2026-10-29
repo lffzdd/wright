@@ -1,7 +1,6 @@
 {
   "version": 2,
   "types": [
-    "session.snapshot",
     "session.status_changed",
     "turn.started",
     "turn.completed",

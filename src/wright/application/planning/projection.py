@@ -117,7 +117,7 @@ def bind_plan_events(
             or (
                 root_event
                 and event.type == "session.status_changed"
-                and event.payload.get("status") == "model_turn_started"
+                and event.payload.get("turn_signal") == "model_turn_started"
             )
         ):
             publisher.publish(

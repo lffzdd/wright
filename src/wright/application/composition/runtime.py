@@ -72,7 +72,7 @@ from ..memory.assembly import (
     memory_tools,
 )
 from ..permission.service import PermissionService
-from ..session.events import SessionEvents
+from ..session.events import SessionEvents, session_status
 from ..session.interaction import RoutedPrompter, UserPrompter
 from ..session.live_resources import RuntimeResources
 from ..session.loops import SessionLoopRegistry
@@ -445,12 +445,10 @@ def assemble_runtime(
                 )
                 publisher.publish(
                     "session.status_changed",
-                    {
-                        "session_id": session_state.session_id,
-                        "lifecycle": "open",
-                        "execution": "waiting_for_input",
-                        "queue_reason": "waiting for permission or a reply",
-                    },
+                    session_status(
+                        session_state.session_id, lifecycle="open", execution="waiting_for_input",
+                        queue_reason="waiting for permission or a reply",
+                    ),
                 )
 
             def resolve_interaction(request_id, _kind, resolution) -> None:
@@ -469,12 +467,10 @@ def assemble_runtime(
                 )
                 publisher.publish(
                     "session.status_changed",
-                    {
-                        "session_id": session_state.session_id,
-                        "lifecycle": "open",
-                        "execution": "running",
-                        "queue_reason": "",
-                    },
+                    session_status(
+                        session_state.session_id, lifecycle="open", execution="running",
+                        queue_reason="",
+                    ),
                 )
 
             bind_persistence(record_interaction, resolve_interaction)

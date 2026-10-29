@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 UI_EVENT_VERSION = 2
 UI_EVENT_TYPES = frozenset({
-    "session.snapshot", "session.status_changed", "turn.started",
+    "session.status_changed", "turn.started",
     "turn.completed", "turn.failed", "turn.cancelled", "reasoning.delta",
     "content.delta", "content.final", "tool.planned", "tool.awaiting_approval",
     "tool.running", "tool.output", "tool.finished", "interaction.requested", "interaction.resolved",
@@ -29,8 +29,48 @@ UI_EVENT_TYPES = frozenset({
 })
 
 
+_STATUS_VALUES = {
+    "lifecycle": {"open", "closing", "closed"},
+    "execution": {"idle", "running", "queued", "waiting_for_input", "cancelling"},
+    "turn_signal": {"model_turn_started"},
+}
+_STATUS_FIELDS = {"session_id", "model", "queue_reason", "agent_depth", "agent_task_id", *_STATUS_VALUES}
+
+
+def validate_session_status(payload: dict[str, Any], session_id: str) -> None:
+    """One partial-update dialect: identity + changed fields + optional turn_signal.
+
+    Omitted fields stay unchanged. ``status`` is never a lifecycle or turn signal.
+    Agent scope is event metadata; a child turn signal never advances the root.
+    """
+    if payload.get("session_id") != session_id or not session_id:
+        raise ValueError("session.status_changed requires matching session_id")
+    if payload.keys() - _STATUS_FIELDS:
+        raise ValueError("unknown session.status_changed fields")
+    for field, value in payload.items():
+        if field == "agent_depth":
+            if type(value) is not int or value < 0:
+                raise ValueError("invalid session.status_changed agent_depth")
+        elif not isinstance(value, str):
+            raise ValueError(f"invalid session.status_changed {field}")
+        elif field in _STATUS_VALUES and value not in _STATUS_VALUES[field]:
+            raise ValueError(f"invalid session.status_changed {field}: {value}")
+    if "model" in payload and not payload["model"].strip():
+        raise ValueError("session.status_changed model cannot be empty")
+
+
+def session_status(session_id: str, **changes: Any) -> dict[str, Any]:
+    """Build the status payload shared by agent, runtime and session service."""
+    payload = {"session_id": session_id, **changes}
+    validate_session_status(payload, session_id)
+    return payload
+
+
 def notice_display(event_type: str, payload: dict[str, Any]) -> tuple[str, dict[str, str]]:
-    """Stable display code for a notice. Empty code means the text stays as written."""
+    """Stable display code; empty means verbatim text.
+
+    Shared Python/TS cases live in web/src/notice-contract.json.
+    """
     if event_type == "turn.failed":
         detail = payload.get("error") or payload.get("status") or "unknown error"
         return "notice.turn_failed", {"detail": str(detail)}
@@ -109,6 +149,8 @@ class UiEventEnvelope:
         payload = value.get("payload")
         if not isinstance(payload, dict):
             raise TypeError("UI event payload must be an object")
+        if event_type == "session.status_changed":
+            validate_session_status(payload, str(value["session_id"]))
         return cls(
             version=UI_EVENT_VERSION,
             stream_id=str(value["stream_id"]),
@@ -248,7 +290,9 @@ class SessionEvents:
         self.emit("content.final", {"content": _json_value(answer)})
 
     def on_turn_begin(self) -> None:
-        self.emit("session.status_changed", {"status": "model_turn_started"})
+        self.emit("session.status_changed", session_status(
+            self.publisher.session_id, turn_signal="model_turn_started",
+        ))
 
     def on_completion_rejected(self, issues: Any = ()) -> None:
         self.emit("system.notice", {
