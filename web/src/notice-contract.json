@@ -38,3 +38,4 @@
     {"name": "unknown notice kind", "type": "system.notice", "payload": {"kind": "other", "text": "hello"}, "expected": {"text": "hello", "code": "", "params": {}}},
     {"name": "missing text", "type": "system.notice", "payload": {}, "expected": {"text": "System notice", "code": "", "params": {}}}
   ]
+}
