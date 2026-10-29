@@ -177,6 +177,76 @@ describe("real timeline projection", () => {
     }));
     expect(screen.getByText("2 entries")).toBeTruthy();
   });
+
+  it("lists each user prompt in the outline and ignores headings inside replies", async () => {
+    let state = emit(fresh(), "turn.started", { prompt: "Please design # NotHeading and **NotHeading**" });
+    state = emit(state, "tool.planned", { call_id: "c", name: "execute_command", arguments: { command: "echo '## NotHeading'" } });
+    state = emit(state, "tool.output", { call_id: "c", output: "## Output Not Heading\n**Also Not Heading**" });
+    state = emit(state, "tool.finished", { call_id: "c", ok: true });
+
+    // One exchange is not a directory yet, even when the reply is full of headings.
+    state = emit(state, "content.final", { content: "## Only One Heading\nSome content." });
+    state = emit(state, "turn.completed", {});
+    const { container, rerender } = render(transcript(state));
+    expect(container.querySelector(".timeline-toc-trigger")).toBeNull();
+
+    state = emit(state, "turn.started", { prompt: "More details" }, "turn-2");
+    state = emit(state, "content.final", {
+      content: "## Overview\nIntro\n\n**Key Takeaways**\n\nDetails\n\n### Implementation\nCode",
+    }, "turn-2");
+    rerender(transcript(state));
+
+    const trigger = container.querySelector<HTMLButtonElement>(".timeline-toc-trigger");
+    expect(trigger).not.toBeNull();
+    expect(container.querySelector(".timeline-toc-trigger-count")?.textContent).toBe("2");
+
+    const tagged = container.querySelectorAll("[data-toc-id]");
+    expect(tagged.length).toBe(2);
+    expect(tagged[0].classList.contains("msg-row")).toBe(true);
+    expect(tagged[0].classList.contains("user-msg")).toBe(true);
+    expect(tagged[0].lastElementChild?.classList.contains("avatar")).toBe(true);
+    expect(tagged[0].getAttribute("data-toc-id")).toBe("turn-1:user");
+    expect(tagged[1].getAttribute("data-toc-id")).toBe("turn-2:user");
+    expect(container.querySelector(".markdown-body [data-toc-id]")).toBeNull();
+
+    fireEvent.click(trigger!);
+    expect(container.querySelector(".timeline-toc-panel")).not.toBeNull();
+    const items = container.querySelectorAll<HTMLButtonElement>(".timeline-toc-item");
+    expect(items.length).toBe(2);
+    expect(items[0].textContent).toContain("Please design # NotHeading and **NotHeading**");
+    expect(items[1].textContent).toContain("More details");
+    expect(items[0].textContent).not.toContain("Only One Heading");
+    expect(items[1].textContent).not.toContain("Overview");
+    expect(items[1].textContent).not.toContain("Key Takeaways");
+
+    const scrollToMock = vi.fn();
+    const scroller = container.querySelector(".timeline") as HTMLElement;
+    scroller.scrollTo = scrollToMock;
+    vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue({
+      top: 50, left: 0, bottom: 500, right: 400, width: 400, height: 450, x: 0, y: 50, toJSON: () => {},
+    });
+    vi.spyOn(tagged[1], "getBoundingClientRect").mockReturnValue({
+      top: 250, left: 0, bottom: 270, right: 300, width: 300, height: 20, x: 0, y: 250, toJSON: () => {},
+    });
+
+    fireEvent.click(items[1]);
+    expect(scrollToMock).toHaveBeenCalledWith({
+      top: 156,
+      behavior: "smooth",
+    });
+    expect(container.querySelector(".timeline-toc-panel")).toBeNull();
+
+    fireEvent.click(container.querySelector<HTMLButtonElement>(".timeline-toc-trigger")!);
+    expect(container.querySelector(".timeline-toc-panel")).not.toBeNull();
+
+    let stateOther = emit(fresh(), "turn.started", { prompt: "Another session" });
+    stateOther = { ...stateOther, session: { ...stateOther.session, session_id: "session-other" } };
+    stateOther = emit(stateOther, "content.final", { content: "## Solo Heading\nJust one heading." });
+    rerender(transcript(stateOther));
+
+    expect(container.querySelector(".timeline-toc-trigger")).toBeNull();
+    expect(container.querySelector(".timeline-toc-panel")).toBeNull();
+  });
 });
 
 describe("projectRelative", () => {

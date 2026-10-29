@@ -10,6 +10,7 @@ import { present, t, useT } from "../i18n";
 import { commandAfter } from "../protocol";
 import type { Attachment, ExecutionMode, FileReference, Grants, PlanStep, ReviewChange, SessionSummary, ViewState, WaitReason } from "../types";
 import { InteractionCard, ReasoningRow, AssistantMessage, UserMessage, toolCardFromState, toolCardFromTimeline } from "./cards";
+import { ConversationOutline, OUTLINE_TEXT_AT, TimelineTOC, useTimelineTOC } from "./toc";
 
 export type Draft = {
   prompt: string;
@@ -144,15 +145,18 @@ function RecentMark({ outcome }: { outcome?: string }) {
   return <Circle className="recent-mark" size={10} weight="bold" />;
 }
 
-export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }: {
+export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, children }: {
   state: ViewState;
   respond: (requestId: string, answer: unknown) => boolean | Promise<boolean>;
   cancelQueued: (commandId: string) => void;
   userLabel?: string;
   timestamp?: string;
+  children?: ReactNode;
 }) {
   const tr = useT();
   const scroller = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [labelsOff, setLabelsOff] = useState(false);
   const stick = useRef(true);
   const [stuck, setStuck] = useState(true);
   const onScroll = () => {
@@ -162,6 +166,28 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }:
     stick.current = near;
     setStuck(near);
   };
+  useEffect(() => {
+    const node = scroller.current;
+    if (!node) return;
+    const release = () => {
+      stick.current = false;
+      setStuck(false);
+    };
+    node.addEventListener("tocjump", release);
+    return () => node.removeEventListener("tocjump", release);
+  }, []);
+  useEffect(() => {
+    const stage = stageRef.current;
+    const column = stage?.parentElement;
+    if (!column || typeof ResizeObserver === "undefined") return;
+    const restore = () => {
+      if (column.clientWidth < OUTLINE_TEXT_AT) setLabelsOff(false);
+    };
+    restore();
+    const observer = new ResizeObserver(restore);
+    observer.observe(column);
+    return () => observer.disconnect();
+  }, []);
   useLayoutEffect(() => {
     if (stick.current) scroller.current?.scrollTo?.({ top: scroller.current.scrollHeight });
   }, [
@@ -172,6 +198,13 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }:
     state.timeline?.length,
   ]);
   const timeline = state.timeline ?? [];
+  const toc = useTimelineTOC(scroller, {
+    sessionId: state.session.session_id,
+    historyLength: state.history.length,
+    activeContent: state.active_turn?.content,
+    activeTurnId: state.active_turn?.turn_id,
+    timelineLength: timeline.length,
+  });
   const known = new Set(timeline.map((item) => item.id));
   const liveTools = (state.active_turn?.tools ?? []).filter((tool) => !known.has(tool.call_id));
   // The snapshot can be taken after the turn started but before the server
@@ -181,31 +214,34 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }:
     && !timeline.some((item) => item.role === "user" && item.turn_id !== undefined && item.turn_id === state.active_turn?.turn_id)
     ? state.active_turn.prompt : "";
   const liveText = state.active_turn?.content && !timeline.some((item) => item.kind === "text" && item.role === "assistant" && item.turn_id === state.active_turn?.turn_id && item.turn_id !== undefined) ? state.active_turn.content : "";
-  return <div className="timeline" ref={scroller} onScroll={onScroll}>
+  return <div className="conversation-stage" ref={stageRef} data-labels={labelsOff ? "off" : undefined}>
+    <div className="conversation-stream">
+    <div className="timeline" ref={scroller} onScroll={onScroll}>
+    <TimelineTOC {...toc} />
     {!timeline.length && !state.history.length && !state.active_turn && <p className="empty-small">{tr("web.empty_timeline")}</p>}
     {timeline.length > 0 ? <>
       {timeline.map((item) => {
-        if (item.kind === "text" && item.role === "user") return <UserMessage key={item.id} text={item.text || ""} userLabel={userLabel} timestamp={timestamp} />;
+        if (item.kind === "text" && item.role === "user") return <UserMessage key={item.id} text={item.text || ""} userLabel={userLabel} timestamp={timestamp} tocId={item.id} />;
         if (item.kind === "reasoning") return <ReasoningRow key={item.id} text={item.text || ""} durationMs={item.duration_ms} />;
         if (item.kind === "text") return <AssistantMessage key={item.id} text={item.text || ""} />;
         if (item.kind === "approval") return null;
         if (item.kind === "status") return <TurnOutcome key={item.id} status={item.status} detail={item.text} />;
         return toolCardFromTimeline(item);
       })}
-      {pendingPrompt && <UserMessage text={pendingPrompt} userLabel={userLabel} timestamp={timestamp} />}
+      {pendingPrompt && <UserMessage text={pendingPrompt} userLabel={userLabel} timestamp={timestamp} tocId={state.active_turn?.turn_id ? `${state.active_turn.turn_id}:user` : "pending-user"} />}
       {liveTools.map((tool) => toolCardFromState(tool))}
       {liveText && <AssistantMessage text={liveText} />}
       {state.active_turn && !liveText && !liveTools.length && !timeline.some((item) => item.turn_id !== undefined && item.turn_id === state.active_turn?.turn_id && item.role === "assistant") && <p className="empty-small working-indicator">{tr("web.working")}</p>}
     </> : <>
       {state.history.map((turn, index) => <div className="turn" key={turn.turn_id || index}>
-        {turn.user && <UserMessage text={turn.user} />}
+        {turn.user && <UserMessage text={turn.user} tocId={turn.turn_id || `history-${index}`} />}
         {turn.tools?.map((tool) => toolCardFromState(tool))}
         {turn.status === "failed" && <p className="form-error">{tr("web.turn_failed")}</p>}
         {turn.status === "cancelled" && <p className="form-error">{tr("web.turn_cancelled")}</p>}
         {turn.assistant ? <AssistantMessage text={turn.assistant} /> : turn.status === "failed" || turn.status === "cancelled" ? null : <p className="empty-small">{tr("web.no_answer")}</p>}
       </div>)}
       {state.active_turn && <div className="turn">
-        {state.active_turn.prompt && <UserMessage text={state.active_turn.prompt} />}
+        {state.active_turn.prompt && <UserMessage text={state.active_turn.prompt} tocId={state.active_turn.turn_id ? `${state.active_turn.turn_id}:user` : "active-user"} />}
         {state.active_turn.tools.map((tool) => toolCardFromState(tool))}
         {state.active_turn.reasoning && <ReasoningRow text={state.active_turn.reasoning} />}
         {state.active_turn.content ? <AssistantMessage text={state.active_turn.content} /> : <p className="empty-small">{tr("web.working")}</p>}
@@ -216,6 +252,17 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp }:
     {state.queued_commands.map((item) => <div className="queue-item" key={item.command_id}><span>{item.prompt}</span><button type="button" className="button" onClick={() => cancelQueued(item.command_id)}>{tr("web.remove_queued")}</button></div>)}
     {state.notices.slice(-5).map((notice) => <div className="system-notice" role="status" key={notice.id}>{present(notice.code, notice.params, notice.text)}</div>)}
     {!stuck && <button type="button" className="button jump" onClick={() => { stick.current = true; setStuck(true); scroller.current?.scrollTo?.({ top: scroller.current.scrollHeight }); }}>{tr("web.jump_bottom")}</button>}
+    </div>
+    {children}
+    </div>
+    <ConversationOutline
+      items={toc.items}
+      activeId={toc.activeId}
+      scrollToHeading={toc.scrollToHeading}
+      labelsOff={labelsOff}
+      onLabelsOff={() => setLabelsOff(true)}
+      onLabelsOn={() => setLabelsOff(false)}
+    />
   </div>;
 }
 

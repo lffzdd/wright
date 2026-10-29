@@ -756,8 +756,8 @@ export default function App() {
               const id = crypto.randomUUID();
               sendCommand({ type: "turn.cancel_queued", command_id: id, target_command_id: targetCommandId }).catch(() => undefined);
             }}
-          />
-          {browsing === "preview" && <p className="hint">{state.session.recoverable === false ? tr("web.archived") : tr("web.history_view")}</p>}
+          >
+          {browsing === "preview" && <p className="hint conversation-footnote">{state.session.recoverable === false ? tr("web.archived") : tr("web.history_view")}</p>}
           {browsing === "live" && state.pending_interactions.length > 0 && (
             <InteractionDock
               sessionId={state.session.session_id}
@@ -811,6 +811,7 @@ export default function App() {
               }}
             />
           </div>
+          </Timeline>
         </> : selected ? <p className="hint" role="status">{tr("web.loading_session")}</p> : <>
           <div className="conversation-head"><div className="task-heading"><h1>{tr("web.no_session")}</h1></div></div>
           <div className="timeline welcome-pane">

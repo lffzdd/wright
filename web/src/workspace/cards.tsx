@@ -108,12 +108,11 @@ export function toolFamily(name: string, kind?: string): "shell" | "edit" | "rea
   return kind === "edit" ? "edit" : kind === "shell" ? "shell" : "tool";
 }
 
-export function UserMessage({ text, userLabel, timestamp }: { text: string; userLabel?: string; timestamp?: string }) {
+export function UserMessage({ text, userLabel, timestamp, tocId }: { text: string; userLabel?: string; timestamp?: string; tocId?: string }) {
   const tr = useT();
   const parts = text.split(/(@(?:[\w.-]+\/)*[\w.-]+)/g);
   const initials = userLabel ? userLabel.split(/\s+/).map((part) => part[0]).join("").slice(0, 2) : "";
-  return <div className="msg-row">
-    <div className="avatar" aria-hidden="true">{initials || <User size={11} weight="bold" />}</div>
+  return <div className="msg-row user-msg" data-toc-id={tocId}>
     <div className="msg-card">
       <div className="msg-card-head">
         <span><strong>{userLabel || tr("web.you")}</strong> <span className="muted">{tr("web.user_instruction")}</span></span>
@@ -121,12 +120,13 @@ export function UserMessage({ text, userLabel, timestamp }: { text: string; user
       </div>
       <p className="msg-body">{parts.map((part, index) => part.startsWith("@") ? <span className="prompt-reference" key={`${part}-${index}`}>{part}</span> : part)}</p>
     </div>
+    <div className="avatar" aria-hidden="true">{initials || <User size={11} weight="bold" />}</div>
   </div>;
 }
 
 export function AssistantMessage({ text }: { text: string }) {
   const tr = useT();
-  return <div className="msg-row">
+  return <div className="msg-row assistant-msg">
     <div className="avatar assistant" aria-hidden="true">W</div>
     <div className="msg-card">
       <div className="msg-card-head">
