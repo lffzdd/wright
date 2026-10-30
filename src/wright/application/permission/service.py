@@ -78,16 +78,26 @@ class PermissionService:
             previous_execution_mode = session.execution_mode
             try:
                 with self._repository.unit_of_work():
-                    authorization.set_modes(permission_mode=before.permission_mode if permission_mode is None else permission_mode,
-                        interaction_mode=before.interaction_mode if interaction_mode is None else interaction_mode)
+                    authorization.set_modes(
+                        permission_mode=before.permission_mode
+                        if permission_mode is None
+                        else permission_mode,
+                        interaction_mode=before.interaction_mode
+                        if interaction_mode is None
+                        else interaction_mode,
+                    )
                     if execution_mode is not None:
                         session.execution_mode = execution_mode
                     self._save_checkpoint(session)
             except Exception:
                 session.execution_mode = previous_execution_mode
-                authorization.set_modes(permission_mode=before.permission_mode, interaction_mode=before.interaction_mode)
+                authorization.set_modes(
+                    permission_mode=before.permission_mode,
+                    interaction_mode=before.interaction_mode,
+                )
                 self._cache.clear()
                 raise
+            self._cache.pop(session.session_id, None)
         self._notify(session, {"session_id": session.session_id, "interaction_mode": authorization.interaction_mode,
             "permission_mode": authorization.permission_mode, "execution_mode": session.execution_mode, "effective": "next permission resolution"})
 

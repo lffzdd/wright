@@ -217,8 +217,8 @@ def project_accessed_files(session: Any) -> list[dict[str, Any]]:
             continue
         paths = _paths(dict(getattr(call, "arguments", {}) or {}))
         name = str(call.name)
-        # An edit that is waiting for approval, denied or failed has not touched the file.
-        if name in _EDIT and tool_phase(getattr(execution, "status", "")) != "succeeded":
+        # Incomplete or failed tools have not successfully touched workspace files.
+        if tool_phase(getattr(execution, "status", "")) != "succeeded":
             continue
         access = "write" if name in _EDIT else "read" if name in {"read_file", "grep", "glob"} else "touch"
         for path in paths:

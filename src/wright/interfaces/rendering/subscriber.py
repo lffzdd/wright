@@ -10,7 +10,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from ...application.session.events import UiEventEnvelope
+from ...application.session.events import UiEventEnvelope, model_turn_started
 from ...domain.model.tool import ToolCall, ToolResult
 from ..i18n import format_issues, present, t
 from .contracts import Renderer
@@ -105,7 +105,7 @@ class RendererEventSubscriber:
         elif event.type == "task.updated":
             self.renderer.on_agent_event(dict(payload))
         elif event.type == "session.status_changed":
-            if payload.get("turn_signal") == "model_turn_started":
+            if model_turn_started(payload):
                 self.renderer.on_turn_begin()
 
     def _project_child(self, event: UiEventEnvelope) -> None:

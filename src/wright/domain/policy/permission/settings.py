@@ -419,9 +419,18 @@ class PermissionRule:
             raise ValueError("Session rules require a known, resolved resource")
         if self.execution_mode not in {"sandbox", "host"}:
             raise ValueError("execution_mode must be sandbox or host")
+        if self.kind == "tool":
+            if self.operations and not set(self.operations) <= {
+                "file_read",
+                "file_write",
+                "shell",
+                "network_read",
+                "network_write",
+            }:
+                raise ValueError("Tool rules require valid operations")
         if self.kind == "command":
             if (self.tool_name != "execute_command" or self.command_match not in {"executable", "argv_prefix"}
-                or self.dialect != "posix" or not self.argv or any(not isinstance(arg, str) for arg in self.argv)
+                or self.dialect != "posix" or not self.argv or not self.argv[0] or any(not isinstance(arg, str) for arg in self.argv)
                 or not PurePosixPath(self.argv[0]).is_absolute() or not PurePosixPath(self.executable_target).is_absolute() or not self.cwd or not self.sandbox_key
                 or (self.command_match == "executable" and len(self.argv) != 1)
                 or (self.command_match == "argv_prefix" and len(self.argv) < 2)
@@ -580,7 +589,9 @@ class PermissionRule:
             if common["exact"] and (not pattern or not common["cwd"]):
                 raise ValueError("remembered shell commands require an exact command and cwd")
             return cls(tool_name, pattern or None, kind="shell", pattern=pattern, **common)
-        return cls(tool_name, None, kind="tool", operations=tuple(operations), **common)
+        rule = cls(tool_name, None, kind="tool", operations=tuple(operations), **common)
+        rule.validate_grant()
+        return rule
 
     @classmethod
     def file_grant(
@@ -855,8 +866,18 @@ def _load_rule(item: object, effect: str) -> PermissionRule:
         raise TypeError("permission rule must be a string or an object")
     if rule.unresolved:
         raise ValueError("Ambiguous permission syntax is unsupported; use a bounded resource record")
-    if effect == "allow" and rule.tool_name == "execute_command" and rule.kind != "command" and (rule.kind != "shell" or not rule.exact or rule.lifetime != "session" or not rule.sandbox_key):
-        raise ValueError("Shell grants require an exact session command, cwd and sandbox capability")
+    if effect == "allow" and rule.tool_name == "execute_command":
+        if rule.kind == "command":
+            pass
+        elif rule.kind == "shell":
+            if not rule.exact or rule.lifetime != "session" or not rule.sandbox_key:
+                raise ValueError(
+                    "Shell grants require an exact session command, cwd and sandbox capability"
+                )
+        else:
+            raise ValueError(
+                "execute_command allow rules must be command grants or exact session shell grants"
+            )
     return rule
 
 

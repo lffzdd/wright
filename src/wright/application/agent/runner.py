@@ -270,6 +270,7 @@ class Agent:
             optional_reminders=optional_reminders,
             system_prompt=system_prompt,
             context_limit=self.context_limit,
+            conversation_key=self.session_state.session_id,
         )
         if view.omitted_optional_reminders:
             logger.info("episode_recall omitted reason=context_budget")

@@ -543,6 +543,19 @@ def test_workspace_http_isolates_projects_and_preferences(tmp_path: Path, monkey
         assert saved.json()["theme"] == "light"
         assert saved.json()["inspector_open"] is False
         assert saved.json()["interface_language"] == "zh-CN"
+        sized = client.put(
+            "/api/v1/preferences",
+            json={"inspector_width": 420},
+            headers={"origin": "http://testserver"},
+        )
+        assert sized.status_code == 200
+        assert sized.json()["inspector_width"] == 420
+        rejected = client.put(
+            "/api/v1/preferences",
+            json={"inspector_width": 120},
+            headers={"origin": "http://testserver"},
+        )
+        assert rejected.status_code == 400
         commands = client.get("/api/v1/commands")
         assert commands.status_code == 200
         assert any(item["name"] == "/help" for item in commands.json())
@@ -656,8 +669,14 @@ def test_rename_of_a_clean_file_reverts_without_touching_other_work(tmp_path: Pa
 
 @pytest.mark.parametrize(("status", "listed"), [
     ("awaiting_approval", False), ("failed", False), ("succeeded", True),
+    ("running", False),
 ])
-def test_accessed_files_only_lists_edits_that_were_applied(status, listed):
+def test_accessed_files_only_lists_tools_that_succeeded(status, listed):
     call = SimpleNamespace(id="c1", name="edit_file", arguments={"file": "src/a.py"})
     session = SimpleNamespace(tool_executions={"c1": SimpleNamespace(call=call, status=status)})
     assert bool(project_accessed_files(session)) is listed
+    read = SimpleNamespace(id="c2", name="read_file", arguments={"file": "src/a.py"})
+    read_session = SimpleNamespace(
+        tool_executions={"c2": SimpleNamespace(call=read, status=status)}
+    )
+    assert bool(project_accessed_files(read_session)) is listed

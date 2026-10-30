@@ -44,7 +44,7 @@ def test_outcomes_are_placed_after_their_own_turn(tmp_path):
     ("succeeded", "succeeded"),
     ("failed", "failed"),
     ("timeout", "failed"),
-    ("unknown", "failed"),
+    ("unknown", "unknown"),
     ("", "failed"),
     (None, "failed"),
 ])

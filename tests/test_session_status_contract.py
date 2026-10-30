@@ -11,6 +11,7 @@ from wright.application.session.events import (
     EventScope,
     SessionEvents,
     UiEventEnvelope,
+    model_turn_started,
     session_status,
 )
 from wright.application.session.publisher import EventPublisher
@@ -41,6 +42,12 @@ def test_status_contract_at_publish_and_decode(case):
         assert publisher.latest_seq == 1
         with pytest.raises(ValueError, match=r"session\.status_changed"):
             UiEventEnvelope.from_dict(envelope)
+
+
+def test_model_turn_started_uses_turn_signal_not_legacy_status():
+    assert model_turn_started({"turn_signal": "model_turn_started"})
+    assert not model_turn_started({"status": "model_turn_started"})
+    assert not model_turn_started({})
 
 
 def test_agent_and_execution_producers_share_status_dialect_and_terminal_signal():

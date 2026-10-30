@@ -11,7 +11,16 @@ function boot(compact: boolean, permission = false) {
   const calls: Array<{ path: string; init?: RequestInit }> = [];
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input); calls.push({ path, init });
-    const body = path.includes("/preferences") ? { interface_language: "en", theme: "dark", inspector_open: init?.body ? JSON.parse(String(init.body)).inspector_open : true }
+    const body = path.includes("/preferences")
+      ? (() => {
+        const patch = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+        return {
+          interface_language: "en",
+          theme: "dark",
+          inspector_open: typeof patch.inspector_open === "boolean" ? patch.inspector_open : true,
+          inspector_width: typeof patch.inspector_width === "number" ? patch.inspector_width : null,
+        };
+      })()
       : path.includes("/workspaces") ? { selected_project_id: "p", projects: [{ project_id: "p", root: "/tmp/demo", name: "demo" }] }
         : path === "/api/v1/project" ? { project_id: "p", name: "demo" }
           : path.includes("/preview") ? { session, history: [], timeline: [], usage: {} }
@@ -79,4 +88,20 @@ it("shows one compact drawer at a time without changing the desktop visibility p
   expect(document.querySelector(".inspector-backdrop")).toBeNull();
   expect(document.querySelector(".sidebar-backdrop")).toBeTruthy();
   expect(calls.filter((call) => call.init?.method === "PUT").every((call) => JSON.parse(String(call.init?.body)).inspector_open === true)).toBe(true);
+});
+
+it("resizes the desktop inspector and persists width", async () => {
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1440 });
+  const calls = boot(false);
+  await screen.findByRole("heading", { name: "Review task" });
+  const grid = document.querySelector<HTMLElement>(".workspace-grid")!;
+  expect(grid.style.getPropertyValue("--inspector-width")).toBe("380px");
+  const handle = screen.getByRole("separator", { name: "Resize inspector" });
+  fireEvent.pointerDown(handle, { button: 0, clientX: 900, pointerId: 1 });
+  fireEvent.pointerMove(handle, { clientX: 860, pointerId: 1 });
+  expect(grid.style.getPropertyValue("--inspector-width")).toBe("420px");
+  fireEvent.pointerUp(handle, { clientX: 860, pointerId: 1 });
+  await waitFor(() => expect(calls.some((call) => call.init?.method === "PUT" && JSON.parse(String(call.init?.body)).inspector_width === 420)).toBe(true));
+  fireEvent.doubleClick(handle);
+  await waitFor(() => expect(grid.style.getPropertyValue("--inspector-width")).toBe("380px"));
 });

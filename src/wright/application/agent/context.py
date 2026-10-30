@@ -108,6 +108,7 @@ class ContextCompactor:
     ) -> None:
         self.on_compact = on_compact
         self._compact_announced = False
+        self._conversation_key: str | None = None
         self.context_watermark = context_watermark
         self.keep_recent_tool_results = keep_recent_tool_results
 
@@ -117,12 +118,16 @@ class ContextCompactor:
         *,
         estimated_tokens: int,
         context_limit: int | None,
+        conversation_key: str | None = None,
     ) -> tuple[tuple[ContextEntry, ...], tuple[str, ...]]:
         """Return folded copies when the watermark is exceeded.
 
         Tool result messages remain in place with the same call id. This keeps
         native function-call/result ordering valid for both provider adapters.
         """
+        if conversation_key != self._conversation_key:
+            self._conversation_key = conversation_key
+            self._compact_announced = False
         copied = [
             ContextEntry(entry.record_id, deepcopy(entry.message), entry.source)
             for entry in entries
@@ -226,6 +231,7 @@ class ContextBuilder:
         system_prompt: str | None = None,
         context_limit: int | None = None,
         output_reserve_tokens: int | None = None,
+        conversation_key: str | None = None,
     ) -> ContextView:
         view = self._assemble(
             records,
@@ -236,6 +242,7 @@ class ContextBuilder:
             context_limit=context_limit,
             output_reserve_tokens=output_reserve_tokens,
             omitted_optional_reminders=False,
+            conversation_key=conversation_key,
         )
         if view.over_budget and optional_reminders:
             # Episode recall is optional. User text and execution evidence stay.
@@ -248,6 +255,7 @@ class ContextBuilder:
                 context_limit=context_limit,
                 output_reserve_tokens=output_reserve_tokens,
                 omitted_optional_reminders=True,
+                conversation_key=conversation_key,
             )
         return view
 
@@ -262,6 +270,7 @@ class ContextBuilder:
         context_limit: int | None,
         output_reserve_tokens: int | None,
         omitted_optional_reminders: bool,
+        conversation_key: str | None,
     ) -> ContextView:
         history = [
             ContextEntry(record.id, deepcopy(record.message), record.source)
@@ -305,7 +314,10 @@ class ContextBuilder:
         )
         estimated = history_tokens + transient_tokens + tool_tokens + reserve
         projected, folded_ids = self.compactor.project(
-            entries, estimated_tokens=estimated, context_limit=context_limit
+            entries,
+            estimated_tokens=estimated,
+            context_limit=context_limit,
+            conversation_key=conversation_key,
         )
         projected_history = sum(
             estimate_message_tokens(entry.message)

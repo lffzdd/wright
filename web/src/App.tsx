@@ -1,5 +1,5 @@
 import { Brain, Clock, DotsThreeVertical, Gear, GitBranch, MagnifyingGlass, Moon, Scroll, SidebarSimple, Sun, Warning, X } from "@phosphor-icons/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { api, ApiError, bootstrap } from "./api";
 import { setLocale, useT } from "./i18n";
 import { parseEvent } from "./protocol";
@@ -8,7 +8,9 @@ import type { FileReference, SessionSummary, Snapshot, ViewState } from "./types
 import { Composer, EnvironmentChoice } from "./components/composer/Composer";
 import { emptyDraft, type Draft } from "./components/composer/draft";
 import { Inspector } from "./components/inspector/Inspector";
+import { InspectorResizeHandle } from "./components/inspector/InspectorResizeHandle";
 import { MemoryDialog, RulesDialog, SchedulesDialog, SearchDialog, SettingsDialog } from "./components/panels/panels";
+import { clampInspectorWidth, defaultInspectorWidth, parseInspectorWidth } from "./inspectorWidth";
 import { SessionRail } from "./components/session/SessionRail";
 import { sessionTitle, taskCode } from "./components/session/session";
 import { InteractionDock, Timeline } from "./components/timeline/Timeline";
@@ -52,6 +54,7 @@ export default function App() {
   const [fatal, setFatal] = useState("");
   const [railOpen, setRailOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [inspectorWidth, setInspectorWidth] = useState(() => defaultInspectorWidth());
   const [narrowInspector, setNarrowInspector] = useState(false);
   const [compactViewport, setCompactViewport] = useState(() => window.matchMedia?.("(max-width: 1024px)").matches ?? false);
   const inspectorVisibility = useRef({ open: inspectorOpen, narrow: narrowInspector, compact: compactViewport });
@@ -308,6 +311,8 @@ export default function App() {
         setLocale(prefs.interface_language);
         applyTheme(prefs.theme);
         setInspectorOpen(prefs.inspector_open);
+        const stored = parseInspectorWidth(prefs.inspector_width);
+        setInspectorWidth(stored ?? defaultInspectorWidth());
       }
       setProject(projectData);
       launchId.current = String(projectData.project_id ?? "");
@@ -666,12 +671,21 @@ export default function App() {
       setFatal("This checkpoint can be read as history. Its execution directory is gone, so it cannot run again.");
     }
   };
-  const savePreference = async (patch: { theme?: "dark" | "light"; inspector_open?: boolean; interface_language?: string }) => {
+  const savePreference = async (patch: { theme?: "dark" | "light"; inspector_open?: boolean; interface_language?: string; inspector_width?: number }) => {
     const saved = await api.setPreference(patch);
     if (patch.theme) applyTheme(saved.theme);
     if (patch.inspector_open !== undefined) setInspectorOpen(saved.inspector_open);
     if (patch.interface_language) setLocale(saved.interface_language);
+    if (patch.inspector_width !== undefined) {
+      const stored = parseInspectorWidth(saved.inspector_width);
+      setInspectorWidth(stored ?? defaultInspectorWidth());
+    }
   };
+  const commitInspectorWidth = useCallback((width: number) => {
+    const next = clampInspectorWidth(width);
+    setInspectorWidth(next);
+    api.setPreference({ inspector_width: next }).catch(() => undefined);
+  }, []);
   useEffect(() => {
     if (!state?.resync || !selected) return;
     const generation = epoch.current;
@@ -747,7 +761,11 @@ export default function App() {
         {state && selected ? <button type="button" className="icon-button" aria-label={tr((compactViewport ? inspectorOpen && narrowInspector : inspectorOpen) ? "web.close_inspector" : "web.open_inspector")} aria-expanded={compactViewport ? inspectorOpen && narrowInspector : inspectorOpen} aria-controls="workspace-inspector" onClick={toggleInspector}><SidebarSimple size={14} /></button> : null}
       </div>
     </header>
-    <div className="workspace-grid" data-inspector={state && selected && inspectorOpen ? "open" : "closed"}>
+    <div
+      className="workspace-grid"
+      data-inspector={state && selected && inspectorOpen ? "open" : "closed"}
+      style={{ "--inspector-width": `${inspectorWidth}px` } as CSSProperties}
+    >
       <SessionRail
         sessions={sessions}
         selected={selected}
@@ -931,6 +949,9 @@ export default function App() {
           </div>
         </>}
       </main>
+      {state && selected && inspectorOpen && !compactViewport ? (
+        <InspectorResizeHandle width={inspectorWidth} onWidthChange={setInspectorWidth} onCommit={commitInspectorWidth} />
+      ) : null}
       {state && selected ? <Inspector key={selected} state={state} sessionId={selected} open={compactViewport ? inspectorOpen && narrowInspector : inspectorOpen} narrow={compactViewport && narrowInspector} focusPath={fileFocus?.sessionId === selected ? fileFocus.path : null} focusRequest={fileFocus?.request} close={closeInspector} onResume={resumeSelected} /> : null}
     </div>
     {railOpen && <button className="sidebar-backdrop" aria-label={tr("web.close_sessions")} onClick={() => setRailOpen(false)} />}

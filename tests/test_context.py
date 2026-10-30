@@ -40,6 +40,37 @@ def _tool_result(call_id: str, data: str) -> dict:
     }
 
 
+def test_compact_notice_resets_when_conversation_key_changes(tmp_path: Path):
+    session_a = Session.create("context-a", tmp_path)
+    session_b = Session.create("context-b", tmp_path)
+    for session in (session_a, session_b):
+        for name in ("call_a", "call_b", "call_c"):
+            session.append_message({"role": "assistant", "content": "calling"})
+            session.append_message(_tool_result(name, "x" * 8_000))
+    notices = []
+    compactor = ContextCompactor(
+        context_watermark=0.1,
+        keep_recent_tool_results=1,
+        on_compact=lambda *args: notices.append(args),
+    )
+    builder = ContextBuilder(compactor)
+    builder.build(
+        session_a.message_records,
+        tools=[],
+        context_limit=1_000,
+        output_reserve_tokens=0,
+        conversation_key=session_a.session_id,
+    )
+    builder.build(
+        session_b.message_records,
+        tools=[],
+        context_limit=1_000,
+        output_reserve_tokens=0,
+        conversation_key=session_b.session_id,
+    )
+    assert len(notices) == 2
+
+
 def test_compact_notice_fires_once_per_watermark_crossing(tmp_path: Path):
     session = Session.create("context", tmp_path)
     for name in ("call_a", "call_b", "call_c"):

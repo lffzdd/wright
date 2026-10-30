@@ -9,11 +9,31 @@ _RESULT_FIELDS = frozenset({
 })
 
 
+_UI_PHASES = frozenset(
+    {"planned", "awaiting_approval", "running", "succeeded", "failed"}
+)
+_DOMAIN_STATUS_PHASE = {
+    "pending": "planned",
+    "running": "running",
+    "succeeded": "succeeded",
+    "failed": "failed",
+    "timeout": "failed",
+}
+
+
 def tool_phase(status: Any) -> str:
-    """Translate domain statuses and clamp unknown values to a failed UI phase."""
+    """Map durable execution statuses to UI phases without masking new domain values."""
+    if status is None:
+        return "failed"
     raw = str(status)
-    phase = {"pending": "planned", "timeout": "failed"}.get(raw, raw)
-    return phase if phase in {"planned", "awaiting_approval", "running", "succeeded", "failed"} else "failed"
+    if not raw:
+        return "failed"
+    if raw in _UI_PHASES:
+        return raw
+    mapped = _DOMAIN_STATUS_PHASE.get(raw)
+    if mapped is not None:
+        return mapped
+    return raw
 
 
 def public_tool_result(result: dict[str, Any] | None) -> dict[str, Any] | None:

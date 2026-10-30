@@ -319,14 +319,22 @@ class LocalExecutionBackend:
 
         from .sandbox_profile import clean_environment
         self._local(cwd)
-        if sys.platform == "win32":
-            return None
-        if "/" in program:
-            candidate = Path(program) if Path(program).is_absolute() else Path(cwd.value) / program
+        path_sep = "\\" if sys.platform == "win32" else "/"
+        if path_sep in program or (sys.platform != "win32" and "/" in program):
+            candidate = (
+                Path(program)
+                if Path(program).is_absolute()
+                else Path(cwd.value) / program
+            )
         else:
             paths = clean_environment().get("PATH", os.defpath).split(os.pathsep)
             # Relative PATH entries have shell-cwd semantics, not host-agent cwd.
-            search = os.pathsep.join(str(Path(cwd.value) / entry) if not Path(entry).is_absolute() else entry for entry in paths)
+            search = os.pathsep.join(
+                str(Path(cwd.value) / entry)
+                if not Path(entry).is_absolute()
+                else entry
+                for entry in paths
+            )
             found = shutil.which(program, path=search)
             if not found:
                 return None
@@ -335,7 +343,11 @@ class LocalExecutionBackend:
             resolved = candidate.resolve(strict=True)
         except OSError:
             return None
-        return str(candidate.absolute()) if resolved.is_file() and os.access(resolved, os.X_OK) else None
+        if not resolved.is_file():
+            return None
+        if sys.platform == "win32":
+            return str(resolved)
+        return str(candidate.absolute()) if os.access(resolved, os.X_OK) else None
 
     def start_shell(self, command: str, *, cwd: ExecutionPath, grant) -> LocalProcessHandle:
         if grant.execution_mode == "host":

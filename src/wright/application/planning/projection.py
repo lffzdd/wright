@@ -6,10 +6,12 @@ import time
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Protocol
 
+from ..session.events import model_turn_started
+from ..session.publisher import EventPublisher
+
 if TYPE_CHECKING:
     from ...domain.model.session import Session
     from ..session.events import UiEventEnvelope
-    from ..session.publisher import EventPublisher
 
 
 class PendingInteractions(Protocol):
@@ -117,7 +119,7 @@ def bind_plan_events(
             or (
                 root_event
                 and event.type == "session.status_changed"
-                and event.payload.get("turn_signal") == "model_turn_started"
+                and model_turn_started(event.payload)
             )
         ):
             publisher.publish(

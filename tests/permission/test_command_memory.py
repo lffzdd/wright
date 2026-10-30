@@ -124,6 +124,35 @@ def test_command_codec_rejects_unknown_and_unbounded_records():
             PermissionRule.from_mapping({**command_rule().to_persistent(), **change})
 
 
+def test_execute_command_allow_list_accepts_command_and_bounded_shell_only():
+    command = command_rule(lifetime="user")
+    loaded = PermissionSettings.from_dict(
+        {"version": 2, "permissions": {"allow": [command.to_persistent()]}}
+    )
+    assert loaded.allow == [command]
+    shell = PermissionRule(
+        "execute_command",
+        kind="shell",
+        pattern="echo ok",
+        exact=True,
+        lifetime="session",
+        sandbox_key="sandbox",
+        cwd="/project",
+    )
+    PermissionSettings.from_dict(
+        {"version": 2, "permissions": {"allow": [shell.to_persistent()]}}
+    )
+    loose_shell = replace(shell, exact=False)
+    with pytest.raises(ValueError, match="Shell grants require"):
+        PermissionSettings.from_dict(
+            {"version": 2, "permissions": {"allow": [loose_shell.to_persistent()]}}
+        )
+    with pytest.raises(ValueError, match="command grants or exact session shell"):
+        PermissionSettings.from_dict(
+            {"version": 2, "permissions": {"allow": ["execute_command"]}}
+        )
+
+
 class Paths(FixturePaths):
     def resolve_executable(self, program, *, cwd):
         return "/usr/bin/" + program if "/" not in program else program

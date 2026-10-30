@@ -66,6 +66,7 @@ class PreferenceRequest(BaseModel):
     interface_language: str | None = None
     theme: Literal["dark", "light"] | None = None
     inspector_open: bool | None = None
+    inspector_width: int | None = None
 
 
 def _require_auth(request: Request, auth: BootstrapAuth) -> None:
@@ -104,7 +105,12 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
     @router.put("/preferences")
     def update_preferences(body: PreferenceRequest, request: Request) -> dict[str, Any]:
         _require_auth(request, auth)
-        if body.interface_language is None and body.theme is None and body.inspector_open is None:
+        if (
+            body.interface_language is None
+            and body.theme is None
+            and body.inspector_open is None
+            and body.inspector_width is None
+        ):
             raise HTTPException(status_code=400, detail="at least one preference is required")
         if body.interface_language is not None:
             set_locale(body.interface_language, persist=True)
@@ -112,6 +118,10 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
             save_preference("theme", body.theme)
         if body.inspector_open is not None:
             save_preference("inspector_open", body.inspector_open)
+        if body.inspector_width is not None:
+            if body.inspector_width < 280 or body.inspector_width > 560:
+                raise HTTPException(status_code=400, detail="inspector_width out of range")
+            save_preference("inspector_width", body.inspector_width)
         return _preference_view()
 
     @router.get("/project")
@@ -344,6 +354,9 @@ def _preference_view() -> dict[str, Any]:
     inspector = stored.get("inspector_open")
     if not isinstance(inspector, bool):
         inspector = True
+    inspector_width = stored.get("inspector_width")
+    if not isinstance(inspector_width, int) or inspector_width < 280 or inspector_width > 560:
+        inspector_width = None
     return {
         "interface_language": get_locale(),
         "supported": [
@@ -352,4 +365,5 @@ def _preference_view() -> dict[str, Any]:
         "note": t("web.language_note"),
         "theme": theme,
         "inspector_open": inspector,
+        "inspector_width": inspector_width,
     }

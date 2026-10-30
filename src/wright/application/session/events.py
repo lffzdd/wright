@@ -66,6 +66,11 @@ def session_status(session_id: str, **changes: Any) -> dict[str, Any]:
     return payload
 
 
+def model_turn_started(payload: dict[str, Any]) -> bool:
+    """True when a root session.status_changed event starts a model turn."""
+    return payload.get("turn_signal") == "model_turn_started"
+
+
 def notice_display(event_type: str, payload: dict[str, Any]) -> tuple[str, dict[str, str]]:
     """Stable display code; empty means verbatim text.
 

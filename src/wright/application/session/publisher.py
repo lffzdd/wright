@@ -19,6 +19,7 @@ from .events import (
     SessionEvents,
     UiEventEnvelope,
     _json_value,
+    model_turn_started,
     validate_session_status,
 )
 from .live_resources import RuntimeResources
@@ -126,7 +127,7 @@ class DisplayFold:
         text_id = f"{prefix}:assistant:{root['segment']}"
         reasoning_id = f"{prefix}:reasoning:{root['segment']}"
         boundary = event.type in {"tool.planned", "tool.awaiting_approval", "tool.running"} or (
-            event.type == "session.status_changed" and payload.get("turn_signal") == "model_turn_started"
+            event.type == "session.status_changed" and model_turn_started(payload)
         )
         if boundary and any(item["id"] in {text_id, reasoning_id} for item in items):
             root["segment"] += 1
