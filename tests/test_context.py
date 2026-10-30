@@ -122,6 +122,60 @@ def test_compact_notice_is_once_under_concurrent_projection(tmp_path: Path):
     assert len(notices) == 1
 
 
+def test_compact_callback_cannot_overlap_a_reset_of_the_announce_flag(tmp_path: Path):
+    """A concurrent under-watermark project must wait until on_compact returns.
+
+    If `_compact_announced` were cleared between the check-and-set and the
+    callback, a second crossing could fire on_compact while the first callback
+    is still running.
+    """
+    session = Session.create("context", tmp_path)
+    for name in ("call_a", "call_b", "call_c"):
+        session.append_message({"role": "assistant", "content": "calling"})
+        session.append_message(_tool_result(name, "x" * 8_000))
+    started = threading.Event()
+    release = threading.Event()
+    active = 0
+    max_active = 0
+    state_lock = threading.Lock()
+
+    def record_compact(*_args: object) -> None:
+        nonlocal active, max_active
+        with state_lock:
+            active += 1
+            max_active = max(max_active, active)
+        started.set()
+        assert release.wait(timeout=2)
+        with state_lock:
+            active -= 1
+
+    builder = ContextBuilder(ContextCompactor(
+        context_watermark=0.1, keep_recent_tool_results=1, on_compact=record_compact,
+    ))
+
+    def over_watermark() -> None:
+        builder.build(
+            session.message_records, tools=[], context_limit=1_000,
+            output_reserve_tokens=0, conversation_key=session.session_id,
+        )
+
+    first = threading.Thread(target=over_watermark)
+    first.start()
+    assert started.wait(timeout=2)
+    under = threading.Thread(target=lambda: builder.build(
+        session.message_records, tools=[], context_limit=1_000_000,
+        output_reserve_tokens=0, conversation_key=session.session_id,
+    ))
+    second = threading.Thread(target=over_watermark)
+    under.start()
+    second.start()
+    release.set()
+    for thread in (first, under, second):
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+    assert max_active == 1
+
+
 def test_context_projection_folds_without_rewriting_complete_history(tmp_path: Path):
     session = Session.create("context", tmp_path)
     session.append_message({"role": "assistant", "content": "calling"})

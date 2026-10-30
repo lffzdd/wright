@@ -200,16 +200,21 @@ class ContextCompactor:
                 folded.append(entry.record_id)
 
         folded_count = len(folded)
-        # Folding repeats on every request above the watermark; say so once per crossing.
-        compact_callback: Callable[..., None] | None = None
+        # Folding repeats on every request above the watermark; say so once per
+        # crossing. Keep the flag and the callback in one critical section so a
+        # concurrent conversation switch or under-watermark reset cannot clear
+        # `_compact_announced` after this crossing has claimed it.
         with self._compact_lock:
-            if self.on_compact is not None and folded_count and not self._compact_announced:
+            if (
+                self.on_compact is not None
+                and folded_count
+                and conversation_key == self._conversation_key
+                and not self._compact_announced
+            ):
                 self._compact_announced = True
-                compact_callback = self.on_compact
-        if compact_callback is not None:
-            compact_callback(
-                folded_count, estimated_tokens, context_limit, self.context_watermark
-            )
+                self.on_compact(
+                    folded_count, estimated_tokens, context_limit, self.context_watermark
+                )
         return tuple(copied), tuple(folded)
 
     @staticmethod
