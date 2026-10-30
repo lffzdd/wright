@@ -112,11 +112,13 @@ describe("backend data in workspace panels", () => {
     const state = view();
     const { rerender } = render(inspector(state));
     fireEvent.click(screen.getByRole("tab", { name: /Permissions/ }));
+    await waitFor(() => expect(request).toHaveBeenCalled());
+    fireEvent.click(await screen.findByText("How each decision is made"));
     expect(await screen.findByText("File Write")).toBeTruthy();
-    // The rule appears in the folded "Always blocked" summary and in the full matrix.
+    // Project-scoped conditional rules stay in the audit list; global denies are deduped to Always blocked.
     const conditional = screen.getAllByText(/Conditional rule/);
     expect(conditional.length).toBeGreaterThan(0);
-    expect(conditional.every((node) => node.textContent?.includes("This project long term"))).toBe(true);
+    expect(conditional.some((node) => node.textContent?.includes("This project long term"))).toBe(true);
     expect(screen.getByText(/Read-only directory: \/external-ro/)).toBeTruthy();
     expect(screen.getByText("Only through edit_file")).toBeTruthy();
     expect(screen.getByText("Protected permission files remain blocked.")).toBeTruthy();

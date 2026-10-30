@@ -3,9 +3,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { DiffViewer } from "../../DiffViewer";
 import { api } from "../../api";
 import { parseDiff } from "../../diff";
-import { present, useT } from "../../i18n";
+import { useT } from "../../i18n";
 import type { Grants, PlanStep, ReviewChange, ViewState, WaitReason } from "../../types";
-import { PermissionsPanel, ResourceOperations } from "../permissions/permissions";
+import { PermissionsPanel } from "../permissions/permissions";
 
 type InspectorTab = "task" | "files" | "changes" | "permissions" | "context";
 
@@ -255,7 +255,6 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
   const currentStep = steps.findIndex((step) => ["in_progress", "running", "active"].includes(step.status));
   const tabCount = (item: InspectorTab) => item === "files" ? accessedFiles.length : item === "changes" ? changes?.length || 0 : 0;
   const fileMeta = (path: string) => recentFileMeta[projectRelative(path, state.session.execution_root) ?? path] ?? {};
-  const boundaries = grants?.boundary_codes ?? [];
   const formatTokens = (value: number | null | undefined) => value == null ? tr("web.unknown") : new Intl.NumberFormat().format(value);
   const contextCategoryLabel = (id: string) => {
     const key = `web.context_category.${id}`;
@@ -397,24 +396,7 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
         permissionMode={state.session.permission_mode ?? "default"}
         executionMode={state.session.execution_mode ?? "sandbox"}
         executionBusy={(state.session.execution !== "idle" && state.session.execution !== undefined) || state.pending_interactions.length > 0}
-        detail={<>
-      {grants?.effective_policy?.map((policy) => <section className="policy-group" key={policy.operation}>
-        <div className="card-kicker"><span>{tr(`web.policy_operation.${policy.operation}`)}</span></div>
-        <article className="policy-card effective-policy">
-          <div><strong>{tr("web.policy_in_scope")}</strong><span>{tr(`web.policy_decision.${policy.defaults.in_scope.decision}`)}</span></div>
-          <small>{present(policy.defaults.in_scope.reason_code, policy.defaults.in_scope.reason_params, "")}</small>
-          {policy.operation !== "shell" && <><div><strong>{tr("web.policy_outside_scope")}</strong><span>{tr(`web.policy_decision.${policy.defaults.outside_scope.decision}`)}</span></div><small>{present(policy.defaults.outside_scope.reason_code, policy.defaults.outside_scope.reason_params, "")}</small></>}
-          {policy.directories.map((path) => <small className="mono policy-path" key={path}>{path}</small>)}
-          {policy.read_only.map((path) => <small className="policy-constraint" key={path}>{tr("web.read_only_boundary", { path })}</small>)}
-          {policy.rules.map((rule, index) => <div className="policy-rule" key={index}><span>{tr(`web.policy_decision.${rule.effect}`)} · {tr(`web.lifetime.${rule.scope}`)}{rule.conditional ? ` · ${tr("web.policy_conditional")}` : ""}</span><small className="mono policy-path">{rule.target}</small><small><ResourceOperations kind={rule.resource_kind} operations={rule.operations} tool={rule.tool} /></small></div>)}
-          {policy.constraints.map((constraint) => <small className="policy-constraint" key={constraint}>{tr(`web.policy_constraint.${constraint}`)}</small>)}
-        </article>
-      </section>)}
-      {boundaries.length > 0 && <section className="policy-group">
-        <div className="card-kicker"><span>{tr("web.enforced_boundaries")}</span></div>
-        {boundaries.map((item) => <article className="policy-card policy-boundary" key={item}><span className="policy-check"><Check size={12} weight="bold" /></span><span>{tr(item)}</span></article>)}
-      </section>}
-        </>} />
+      />
       </>}
     </div>}
     {tab === "context" && <div className="inspector-body" role="tabpanel" id="inspector-panel-context" aria-labelledby="inspector-tab-context">

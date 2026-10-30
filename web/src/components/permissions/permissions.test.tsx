@@ -89,7 +89,7 @@ it("revokes by source, ID and expected version and refreshes conflicts", async (
   const update = vi.fn();
   vi.spyOn(api, "revokeGrant").mockRejectedValue(new ApiError("Permissions changed", 409, { ...grants, version: "revision-b", grants: [] }));
   vi.spyOn(api, "grants").mockResolvedValue({ ...grants, version: "revision-b", grants: [] });
-  render(<PermissionGrants sessionId="s" grants={grants} update={update} />);
+  render(<PermissionGrants sessionId="s" grants={grants} update={update} includeManualAdd />);
   fireEvent.click(screen.getByText("Revoke"));
   await waitFor(() => expect(api.revokeGrant).toHaveBeenCalledWith("s", "stable", "project", "revision-a"));
   expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Permissions changed. The latest state is shown; review it and retry.");
@@ -100,7 +100,7 @@ it("adds explicit resource access with project duration by default", async () =>
   const update = vi.fn();
   vi.spyOn(api, "addGrant").mockResolvedValue(grants);
   vi.spyOn(api, "grants").mockResolvedValue(grants);
-  render(<PermissionGrants sessionId="s" grants={grants} update={update} />);
+  render(<PermissionGrants sessionId="s" grants={grants} update={update} includeManualAdd />);
   fireEvent.change(screen.getByLabelText("Resource path"), { target: { value: "/external/file" } });
   fireEvent.click(screen.getByRole("button", { name: "Add authorization" }));
   await waitFor(() => expect(api.addGrant).toHaveBeenCalledWith("s", { kind: "file", path: "/external/file", operations: ["file_read"] }, "project", "revision-a"));
