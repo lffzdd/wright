@@ -104,7 +104,7 @@ def test_host_keeps_approval_and_cannot_reuse_sandbox_command_memory(tmp_path):
     assert allowed.grant.execution_mode == "host"
 
 
-@pytest.mark.parametrize("busy", ["turn", "approval", "queue", "command", "child", "child_session"])
+@pytest.mark.parametrize("busy", ["turn", "approval", "queue", "command", "child", "child_session", "child_lineage"])
 def test_switch_requires_entire_tree_idle(tmp_path, busy):
     session = Session.create("goal", tmp_path)
     service = SessionService.__new__(SessionService)
@@ -116,6 +116,9 @@ def test_switch_requires_entire_tree_idle(tmp_path, busy):
         idle.set()
     if busy == "child_session":
         session.agent_task_id = "child"
+    if busy == "child_lineage":
+        parent = Session.create("parent", tmp_path, execution_mode="host")
+        session.authorization.bind_parent(parent.authorization)
     session.control_plane = SimpleNamespace(has_live_tasks=lambda: busy == "child")
     service.runtime = SimpleNamespace(session_state=session, agent_idle=idle,
         permissions=SimpleNamespace(set_modes=lambda *a, **k: pytest.fail("must reject before saving")),
@@ -199,6 +202,33 @@ def test_cli_and_child_inherit_explicit_host_mode(tmp_path, monkeypatch):
     assembly.capabilities.delegation.share_control_plane(child)
     assert child.execution_mode == "host"
     assert child.control_plane is parent.control_plane
+    assert assembly.capabilities.delegation.current_execution_mode() == "host"
+
+
+def test_shell_wrapper_keeps_command_syntax_out_of_the_trailer(tmp_path):
+    import subprocess
+
+    from wright.infrastructure.runtime.shell_script import bash_launch_script
+
+    command = "echo 'unterminated $(whoami)"
+    script = bash_launch_script(command, tmp_path, tmp_path / "cwd")
+    assert "whoami" not in script
+    assert "unterminated" not in script
+    assert "wright_exit=$?" in script
+    assert (tmp_path / "command.sh").read_text() == command + "\n"
+    if sys.platform == "win32":
+        return
+    workspace = tmp_path / "work"
+    workspace.mkdir()
+    cwd_file = tmp_path / "cwd-out"
+    launched = bash_launch_script("cd ..; printf marker", workspace, cwd_file)
+    result = subprocess.run(
+        ["/bin/bash", "--noprofile", "--norc", "-c", launched],
+        cwd=workspace, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0
+    assert result.stdout == "marker"
+    assert cwd_file.read_text().strip() == str(tmp_path.resolve())
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")

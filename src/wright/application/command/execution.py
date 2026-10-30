@@ -361,7 +361,12 @@ class CommandExecution:
         }
 
     def has_live(self) -> bool:
-        """Whether a command started by this session is still running."""
+        """Whether a command started by this session still has a process tree.
+
+        ``done`` is set only after the owned group has exited, so a finished
+        reader means that command's process tree is idle.
+        """
+
         with self._lock:
             return any(not live.done.is_set() for live in self._live.values())
 

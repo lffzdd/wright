@@ -190,17 +190,24 @@ def make_spawn_agent_tool(
         )
 
         workspace_dir = Path(access_scope.origin)
+        current_mode = getattr(delegation, "current_execution_mode", None)
+        execution_mode = current_mode() if callable(current_mode) else "sandbox"
+        if execution_mode not in {"sandbox", "host"}:
+            execution_mode = "sandbox"
         child_session = Session.create(
             initial_goal=task,
             workspace_dir=workspace_dir,
             max_steps=record.step_budget,
+            execution_mode=execution_mode,
             # Live authorization inheritance is bound below. One-call grants
             # never become child authorization state.
         )
+        # Mode and the shared control plane are in place before parent grants
+        # are bound or any child permission snapshot is taken.
+        delegation.share_control_plane(child_session)
         child_session.project_root = access_scope.project_root or workspace_dir
         if delegation.inherit_permissions is not None:
             delegation.inherit_permissions(child_session)
-        delegation.share_control_plane(child_session)
         child_session.agent_task_id = record.id
         child_session.agent_root_turn_id = root_turn_id
         try:

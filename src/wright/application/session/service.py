@@ -609,7 +609,7 @@ class SessionService:
                 )
             state = self.runtime.session_state
             if execution_mode is not None and execution_mode != state.execution_mode:
-                if state.agent_task_id is not None or not self.is_evictable():
+                if self._inherits_execution_mode(state) or not self.is_evictable():
                     raise SessionServiceError("execution mode requires an idle conversation with no queued work, live commands or child tasks")
             permissions = self.runtime.permissions
             try:
@@ -691,6 +691,23 @@ class SessionService:
     def touch(self) -> None:
         """Record that someone used or looked at this session."""
         self.last_activity = time.monotonic()
+
+    @staticmethod
+    def _inherits_execution_mode(state: Any) -> bool:
+        """Child sessions keep the root execution mode and cannot switch alone.
+
+        ``agent_task_id`` is the usual marker. A parent authorization binding
+        is the same relationship when the task id has not been assigned yet.
+        """
+
+        if getattr(state, "agent_task_id", None) is not None:
+            return True
+        authorization = getattr(state, "authorization", None)
+        owner = getattr(authorization, "owner", None)
+        if not callable(owner):
+            return False
+        root = owner()
+        return getattr(root, "session_id", None) not in {None, state.session_id}
 
     def is_evictable(self) -> bool:
         """Idle with nothing queued, pending, or running in the background.

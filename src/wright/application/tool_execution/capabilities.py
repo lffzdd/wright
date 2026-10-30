@@ -210,6 +210,7 @@ def _delegation(session, services, journal_factory, permission_service) -> Deleg
             execution_journal_factory=journal, permissions=permission_service),
         share_control_plane=share_control_plane,
         limits=lambda: control.config.to_dict(),
+        current_execution_mode=lambda: session.execution_mode,
         tree=lambda root_turn_id: control.tree_summary(root_turn_id),
         submit_background=submit_background if background is not None else None,
         execution_journal_factory=journal_factory,

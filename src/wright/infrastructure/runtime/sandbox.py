@@ -19,6 +19,7 @@ from .sandbox_profile import (
     profile_paths,
     runtime_roots,
 )
+from .shell_script import bash_launch_script
 from .types import ExecutionPath
 
 
@@ -105,8 +106,7 @@ def linux_argv(command: str, grant: InvocationGrant, scratch: Path, cwd_file: Pa
             argv += ["--tmpfs", str(path), "--remount-ro", str(path)] if path.is_dir() else ["--ro-bind", "/dev/null", str(path)]
             hidden.append(path)
     argv += ["--bind", str(scratch), str(scratch), "--chdir", grant.cwd.value]
-    import shlex
-    script = f"{command}\nwright_exit=$?\npwd -P > {shlex.quote(str(cwd_file))}\nexit $wright_exit"
+    script = bash_launch_script(command, scratch, cwd_file)
     return [*argv, "--", "/bin/bash", "--noprofile", "--norc", "-c", script]
 
 
@@ -139,8 +139,7 @@ def macos_argv(command: str, grant: InvocationGrant, scratch: Path, cwd_file: Pa
         profile.append(f'(deny file-read* file-write* (subpath {quote(path.value)}))')
     if grant.network_enabled:
         profile.append('(allow network*)')
-    import shlex
-    script = f"{command}\nwright_exit=$?\npwd -P > {shlex.quote(str(cwd_file))}\nexit $wright_exit"
+    script = bash_launch_script(command, scratch, cwd_file)
     return [program, "-p", "\n".join(profile), "/bin/bash", "--noprofile", "--norc", "-c", script]
 
 

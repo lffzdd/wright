@@ -64,3 +64,27 @@ def test_tool_phases_match_across_timeline_active_turn_and_history(tmp_path, sta
     active_phase = phase if status else "planned"
     assert _tool_state({"call_id": call.id, "status": status})["phase"] == active_phase
     assert _tool_state({"call_id": call.id, "phase": status})["phase"] == active_phase
+
+
+def test_live_turn_without_an_index_keeps_persisted_history(tmp_path):
+    session = Session.create("goal", tmp_path)
+    _turn(session, "first", answer="kept")
+    persisted = [item.get("text") for item in project_timeline(session)]
+    for live in (
+        None,
+        {"timeline": [{"id": "live", "kind": "text", "text": "streaming"}]},
+        {"message_index": True, "timeline": [{"id": "live", "kind": "text", "text": "streaming"}]},
+    ):
+        assert [item.get("text") for item in project_timeline(session, live_turn=live)] == persisted
+
+
+def test_live_turn_replaces_only_the_indexed_suffix(tmp_path):
+    session = Session.create("goal", tmp_path)
+    _turn(session, "first", answer="kept")
+    start = len(session.message_records)
+    _turn(session, "second", answer="replaced")
+    timeline = project_timeline(session, live_turn={
+        "message_index": start,
+        "timeline": [{"id": "live", "kind": "text", "role": "user", "text": "second", "order": start}],
+    })
+    assert [item.get("text") for item in timeline] == ["first", "kept", "second"]

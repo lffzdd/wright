@@ -6,13 +6,13 @@ run as the current account without filesystem or network isolation.
 from __future__ import annotations
 
 import os
-import shlex
 import subprocess
 import sys
 from pathlib import Path
 
 from ...domain.policy.permission.types import InvocationGrant
 from .sandbox_profile import clean_environment
+from .shell_script import bash_launch_script, powershell_launch_script
 
 
 def launch(command: str, grant: InvocationGrant, scratch: Path, cwd_file: Path):
@@ -26,7 +26,7 @@ def launch(command: str, grant: InvocationGrant, scratch: Path, cwd_file: Path):
             env[key] = os.environ[key]
     if sys.platform == "win32":
         return _windows_launch(command, grant, scratch, cwd_file, env)
-    script = f"{command}\nwright_exit=$?\npwd -P > {shlex.quote(str(cwd_file))}\nexit $wright_exit"
+    script = bash_launch_script(command, scratch, cwd_file)
     return subprocess.Popen(["/bin/bash", "--noprofile", "--norc", "-c", script],
         cwd=grant.cwd.value, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         stdin=subprocess.DEVNULL, bufsize=0, start_new_session=True)
@@ -46,8 +46,7 @@ def _windows_launch(command, grant, scratch, cwd_file, env):
     shell = shutil.which("pwsh") or shutil.which("powershell")
     if shell is None:
         raise RuntimeError("PowerShell is required for host Shell execution on Windows")
-    escaped = str(cwd_file).replace("'", "''")
-    script = f"{command}\n$wrightCode=if ($?) {{0}} else {{1}}; if ($null -ne $LASTEXITCODE) {{$wrightCode=$LASTEXITCODE}}\n[IO.File]::WriteAllText('{escaped}', (Get-Location).Path, [Text.UTF8Encoding]::new($false))\nexit $wrightCode"
+    script = powershell_launch_script(command, scratch, cwd_file)
     argv = [shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script]
     job = native.new_job()
     process = native.PROCESS()

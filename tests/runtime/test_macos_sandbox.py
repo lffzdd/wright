@@ -36,6 +36,7 @@ def test_macos_probe_runs_real_profile_with_temporary_authority(monkeypatch):
     def run(arguments, **kwargs):
         observed["arguments"] = arguments
         observed["environment"] = kwargs["env"]
+        observed["command"] = (Path(kwargs["cwd"]) / "command.sh").read_text()
         assert kwargs["cwd"] == observed["scratch"]
         observed["cwd_file"].write_text(str(kwargs["cwd"]) + "\n")
         return subprocess.CompletedProcess(arguments, 0, b"", b"")
@@ -45,7 +46,9 @@ def test_macos_probe_runs_real_profile_with_temporary_authority(monkeypatch):
     assert sandbox._probe("/usr/bin/sandbox-exec") == (True, "")
     arguments = observed["arguments"]
     assert arguments[3:7] == ["/bin/bash", "--noprofile", "--norc", "-c"]
-    assert arguments[7].startswith("/usr/bin/true\n")
+    assert arguments[7].startswith("source ")
+    assert "/usr/bin/true" not in arguments[7]
+    assert observed["command"].startswith("/usr/bin/true\n")
     assert '(deny default)' in arguments[2]
     assert '(allow file-read-data (literal "/"))' in arguments[2]
     assert '(subpath "/")' not in arguments[2]

@@ -78,10 +78,14 @@ def project_timeline(
     # contain a completed model step, so replace the suffix rather than append
     # another copy of its reasoning and tools. The boundary is captured before
     # the user command starts, not inferred from possibly repeated prompt text.
-    if live_turn is not None and isinstance(live_turn.get("message_index"), int):
-        start = live_turn["message_index"]
-        items = [item for item in items if item.get("order", 0) < start]
-        items.extend(live_turn["timeline"])
+    if live_turn is not None:
+        start = live_turn.get("message_index")
+        timeline = live_turn.get("timeline")
+        # Only a real index is a split point. bool is an int subclass, and a
+        # fold without this boundary must not drop earlier history.
+        if type(start) is int and isinstance(timeline, list):
+            items = [item for item in items if item.get("order", 0) < start]
+            items.extend(timeline)
     for offset, interaction in enumerate(pending or []):
         items.append({
             "id": str(interaction.get("request_id") or f"approval:{offset}"),

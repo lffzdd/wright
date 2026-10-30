@@ -74,6 +74,7 @@ class DelegationOperations:
     share_control_plane: Callable[[Any], None]
     limits: Callable[[], dict]
     tree: Callable[..., list]
+    current_execution_mode: Callable[[], str] | None = None
     submit_background: Callable[..., None] | None = None
     execution_journal_factory: Callable[[str, str], Any] | None = None
     inherit_permissions: Callable[[Any], None] | None = None

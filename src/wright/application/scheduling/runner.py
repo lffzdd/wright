@@ -319,10 +319,12 @@ def launch_job_run(
         enable_scheduling=False,
         permission_service=permission_service,
     )
+    inherited_mode = root_session.execution_mode if root_session is not None else "sandbox"
     child_session = Session.create(
         initial_goal=prompt,
         workspace_dir=(root_session.workspace_dir if root_session is not None else workspace_dir),
         max_steps=record.step_budget,
+        execution_mode=inherited_mode,
     )
     child_session.project_root = root_session.project_root if root_session is not None else workspace_dir
     child_session.authorization.bind_parent(root_session.authorization if root_session is not None else None)
