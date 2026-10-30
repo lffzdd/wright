@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from copy import deepcopy
 from pathlib import Path
 
@@ -87,6 +88,38 @@ def test_compact_notice_fires_once_per_watermark_crossing(tmp_path: Path):
     builder.build(session.message_records, tools=[], context_limit=1_000_000, output_reserve_tokens=0)
     builder.build(session.message_records, tools=[], context_limit=1_000, output_reserve_tokens=0)
     assert len(notices) == 2
+
+
+def test_compact_notice_is_once_under_concurrent_projection(tmp_path: Path):
+    session = Session.create("context", tmp_path)
+    for name in ("call_a", "call_b", "call_c"):
+        session.append_message({"role": "assistant", "content": "calling"})
+        session.append_message(_tool_result(name, "x" * 8_000))
+    notices: list[tuple] = []
+    notice_lock = threading.Lock()
+
+    def record_compact(*args: object) -> None:
+        with notice_lock:
+            notices.append(args)
+
+    compactor = ContextCompactor(
+        context_watermark=0.1,
+        keep_recent_tool_results=1,
+        on_compact=record_compact,
+    )
+    builder = ContextBuilder(compactor)
+    barrier = threading.Barrier(8)
+
+    def worker() -> None:
+        barrier.wait()
+        builder.build(session.message_records, tools=[], context_limit=1_000, output_reserve_tokens=0)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert len(notices) == 1
 
 
 def test_context_projection_folds_without_rewriting_complete_history(tmp_path: Path):

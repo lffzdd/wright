@@ -88,3 +88,17 @@ def test_live_turn_replaces_only_the_indexed_suffix(tmp_path):
         "timeline": [{"id": "live", "kind": "text", "role": "user", "text": "second", "order": start}],
     })
     assert [item.get("text") for item in timeline] == ["first", "kept", "second"]
+
+
+def test_live_turn_index_zero_uses_session_boundary(tmp_path):
+    session = Session.create("goal", tmp_path)
+    _turn(session, "first", answer="kept")
+    session.mark_completed()
+    session.begin_user_turn("second")
+    session.append_user_message("second")
+    assert session.active_turn_start_message_index == 2
+    timeline = project_timeline(session, live_turn={
+        "message_index": 0,
+        "timeline": [{"id": "live", "kind": "text", "role": "user", "text": "second", "order": 2}],
+    })
+    assert [item.get("text") for item in timeline] == ["first", "kept", "second"]

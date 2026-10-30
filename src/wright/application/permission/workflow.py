@@ -240,7 +240,19 @@ class AuthorizationWorkflow:
                     _rewrite_depth=_rewrite_depth + 1,
                 )
 
-        selected = next(choice for choice in prompt.choices if choice.id == response.choice)
+        choices_by_id = {choice.id: choice for choice in prompt.choices}
+        selected = choices_by_id.get(response.choice)
+        if selected is None:
+            return PermissionResolution(
+                arguments,
+                "deny",
+                f"Approval returned a choice this request did not offer: {response.choice}",
+                effective_access.risk_flags,
+                "invalid_choice",
+                prompt=prompt,
+                reason_code="permission.invalid_choice",
+                reason_params=_pairs({"choice": response.choice}),
+            )
         command_set = response.choice.endswith("_command_set")
         selected_rule = PermissionRule.from_mapping(dict(selected.resource)) if selected.resource.get("kind") and not command_set else None
         resolution = self._allowed(

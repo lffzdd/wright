@@ -71,6 +71,27 @@ def test_tool_events_merge_by_stable_call_id():
     ]
 
 
+def test_tool_finished_without_ok_defaults_to_succeeded():
+    publisher = EventPublisher(project_id="project", session_id="session")
+    renderer = SessionEvents(publisher)
+    publisher.publish("turn.started", {"prompt": "go"}, turn_id="turn-1")
+    call = ToolCall("read", {"file": "a"}, "call-a")
+    renderer.on_tool_call(call)
+    renderer.on_tool_phase(call, "running")
+    publisher.publish("tool.finished", {
+        "call_id": call.id,
+        "name": call.name,
+        "arguments": call.arguments,
+        "data": "ok",
+    })
+    tool = next(
+        item
+        for item in publisher.display.view()["active_turn"]["tools"]
+        if item["call_id"] == call.id
+    )
+    assert tool["phase"] == "succeeded"
+
+
 def test_interaction_broker_accepts_only_first_answer_and_closes_fail_closed():
     publisher = EventPublisher(project_id="project", session_id="session")
     broker = InteractionBroker(publisher)

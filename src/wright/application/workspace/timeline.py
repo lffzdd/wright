@@ -84,6 +84,9 @@ def project_timeline(
         # Only a real index is a split point. bool is an int subclass, and a
         # fold without this boundary must not drop earlier history.
         if type(start) is int and isinstance(timeline, list):
+            session_start = getattr(session, "active_turn_start_message_index", None)
+            if type(session_start) is int and session_start > start:
+                start = session_start
             items = [item for item in items if item.get("order", 0) < start]
             items.extend(timeline)
     for offset, interaction in enumerate(pending or []):

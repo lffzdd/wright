@@ -608,12 +608,23 @@ class SessionService:
                     "a turn is still executing; change the mode when the session is idle"
                 )
             state = self.runtime.session_state
-            if execution_mode is not None and execution_mode != state.execution_mode:
-                if self._inherits_execution_mode(state) or not self.is_evictable():
-                    raise SessionServiceError("execution mode requires an idle conversation with no queued work, live commands or child tasks")
+            if execution_mode is not None:
+                if self._inherits_execution_mode(state):
+                    raise SessionServiceError(
+                        "child sessions inherit the root execution mode and cannot change it"
+                    )
+                if execution_mode != state.execution_mode and not self.is_evictable():
+                    raise SessionServiceError(
+                        "execution mode requires an idle conversation with no queued work, live commands or child tasks"
+                    )
             permissions = self.runtime.permissions
             try:
-                permissions.set_modes(state, interaction_mode=interaction_mode, permission_mode=permission_mode, execution_mode=execution_mode)
+                permissions.set_modes(
+                    state,
+                    interaction_mode=interaction_mode,
+                    permission_mode=permission_mode,
+                    execution_mode=execution_mode,
+                )
             except (ValueError, OSError, RuntimeError) as exc:
                 raise SessionServiceError(str(exc)) from exc
             result = {

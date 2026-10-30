@@ -101,8 +101,10 @@ class DisplayFold:
             else:
                 tool.update(payload)
                 tool["phase"] = tool_phase(
-                    "succeeded" if event.type == "tool.finished" and payload.get("ok")
-                    else "failed" if event.type == "tool.finished"
+                    "succeeded"
+                    if event.type == "tool.finished" and payload.get("ok", True)
+                    else "failed"
+                    if event.type == "tool.finished"
                     else event.type.removeprefix("tool.")
                 )
         elif event.type == "usage.request":

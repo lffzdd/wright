@@ -300,13 +300,26 @@ class PermissionResolver:
         missing_command_rules: tuple[PermissionRule, ...] = ()
         applied_rules = session_rules
         if "shell" in access.operations and argv is None:
-            segments = _resolved_segments(access_subject, backend, fixed_cwd)
-            missing = [item for item in segments if not any(
-                rule.tool_name == subject.name and rule.covers(item[0], item[1], item[2], self.execution_mode)
-                for rule in all_rules)]
-            if segments and not missing:
-                # Deny and ask rules still run first; this only answers the allow step.
-                applied_rules = (*session_rules, PermissionRule(subject.name, kind="shell", pattern=access_subject, exact=True, cwd=fixed_cwd.value, sandbox_key=sandbox_key, execution_mode=self.execution_mode))
+            analyzed = command_segments(
+                access_subject, dialect=command_dialect(fixed_cwd.value)
+            )
+            segments: tuple[tuple[str, str, tuple[str, ...]], ...] = ()
+            missing: list[tuple[str, str, tuple[str, ...]]] = []
+            if analyzed:
+                segments = _resolved_segments(access_subject, backend, fixed_cwd)
+                if not segments:
+                    return self._deny(
+                        arguments,
+                        "The shell command includes a program that could not be resolved",
+                        source="resolver",
+                        reason_code="permission.unresolved_command",
+                    )
+                missing = [item for item in segments if not any(
+                    rule.tool_name == subject.name and rule.covers(item[0], item[1], item[2], self.execution_mode)
+                    for rule in all_rules)]
+                if segments and not missing:
+                    # Deny and ask rules still run first; this only answers the allow step.
+                    applied_rules = (*session_rules, PermissionRule(subject.name, kind="shell", pattern=access_subject, exact=True, cwd=fixed_cwd.value, sandbox_key=sandbox_key, execution_mode=self.execution_mode))
             missing_command_rules = tuple({item[0]: PermissionRule(
                 subject.name, kind="command", argv=(item[0],), command_match="executable", cwd=fixed_cwd.value, sandbox_key=sandbox_key,
                 execution_mode=self.execution_mode, operations=("shell",), executable_target=item[1]) for item in missing}.values())

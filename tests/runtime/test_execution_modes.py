@@ -131,6 +131,31 @@ def test_switch_requires_entire_tree_idle(tmp_path, busy):
         service.set_execution_policy(execution_mode="host")
 
 
+def test_child_session_cannot_set_execution_mode(tmp_path):
+    session = Session.create("goal", tmp_path)
+    session.agent_task_id = "child-task"
+    service = SessionService.__new__(SessionService)
+    service._lock = threading.RLock()
+    service._queued = {}
+    service._active_command = None
+    idle = threading.Event()
+    idle.set()
+    service.runtime = SimpleNamespace(
+        session_state=session,
+        agent_idle=idle,
+        permissions=SimpleNamespace(set_modes=lambda *a, **k: pytest.fail("must reject before saving")),
+        runtime_resources=SimpleNamespace(commands=SimpleNamespace(has_live=lambda: False)),
+        directory_coordinator=None,
+        cancellation_event=threading.Event(),
+    )
+    service.runner = SimpleNamespace(state="idle")
+    service._require_accepting_input = lambda: None
+    service._interaction_snapshot = lambda: []
+    service.is_evictable = lambda: True
+    with pytest.raises(SessionServiceError, match="inherit the root execution mode"):
+        service.set_execution_policy(execution_mode="sandbox")
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX host integration")
 def test_host_access_network_cwd_and_process_tree(tmp_path, monkeypatch):
     from wright.infrastructure.runtime import sandbox

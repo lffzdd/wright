@@ -158,6 +158,13 @@ class Paths(FixturePaths):
         return "/usr/bin/" + program if "/" not in program else program
 
 
+class PartialPaths(Paths):
+    def resolve_executable(self, program, *, cwd):
+        if program == "missingprog":
+            return None
+        return super().resolve_executable(program, cwd=cwd)
+
+
 def resolve(tool, arguments, choice=None, *, backend=None, rules=(), settings=None):
     handler = (lambda request: PermissionResponse(choice)) if choice else None
     return AuthorizationWorkflow(PermissionPolicy(settings), handler).resolve(
@@ -193,6 +200,16 @@ def test_command_choices_and_exact_legacy_fallback():
         assert not any(item.resource_kind == "command" for item in prompt.choices)
     git = resolve(execute_command_tool, {"command": "git status --short"})
     assert any(item.id == "allow_project_command_prefix" for item in git.prompt.choices)
+
+
+def test_compound_command_with_unresolved_program_is_denied():
+    result = resolve(
+        execute_command_tool,
+        {"command": "python3 -V && missingprog foo"},
+        backend=PartialPaths(),
+    )
+    assert result.decision == "deny"
+    assert result.reason_code == "permission.unresolved_command"
 
 
 def test_remembered_command_issues_canonical_launch_and_deny_still_wins():

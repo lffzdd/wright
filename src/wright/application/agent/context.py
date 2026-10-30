@@ -8,6 +8,7 @@ cannot rewrite history, checkpoint data, UI transcript, or verification input.
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
@@ -108,6 +109,7 @@ class ContextCompactor:
     ) -> None:
         self.on_compact = on_compact
         self._compact_announced = False
+        self._compact_lock = threading.Lock()
         self._conversation_key: str | None = None
         self.context_watermark = context_watermark
         self.keep_recent_tool_results = keep_recent_tool_results
@@ -125,19 +127,20 @@ class ContextCompactor:
         Tool result messages remain in place with the same call id. This keeps
         native function-call/result ordering valid for both provider adapters.
         """
-        if conversation_key != self._conversation_key:
-            self._conversation_key = conversation_key
-            self._compact_announced = False
-        copied = [
-            ContextEntry(entry.record_id, deepcopy(entry.message), entry.source)
-            for entry in entries
-        ]
-        if (
-            context_limit is None
-            or estimated_tokens <= context_limit * self.context_watermark
-        ):
-            self._compact_announced = False
-            return tuple(copied), ()
+        with self._compact_lock:
+            if conversation_key != self._conversation_key:
+                self._conversation_key = conversation_key
+                self._compact_announced = False
+            copied = [
+                ContextEntry(entry.record_id, deepcopy(entry.message), entry.source)
+                for entry in entries
+            ]
+            if (
+                context_limit is None
+                or estimated_tokens <= context_limit * self.context_watermark
+            ):
+                self._compact_announced = False
+                return tuple(copied), ()
 
         candidates = [
             index
@@ -198,9 +201,13 @@ class ContextCompactor:
 
         folded_count = len(folded)
         # Folding repeats on every request above the watermark; say so once per crossing.
-        if self.on_compact is not None and folded_count and not self._compact_announced:
-            self._compact_announced = True
-            self.on_compact(
+        compact_callback: Callable[..., None] | None = None
+        with self._compact_lock:
+            if self.on_compact is not None and folded_count and not self._compact_announced:
+                self._compact_announced = True
+                compact_callback = self.on_compact
+        if compact_callback is not None:
+            compact_callback(
                 folded_count, estimated_tokens, context_limit, self.context_watermark
             )
         return tuple(copied), tuple(folded)
