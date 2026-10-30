@@ -371,3 +371,40 @@ def test_default_static_directory_is_the_vite_build(tmp_path):
     page = client.get("/")
     assert page.status_code == 200
     assert "Wright" in page.text or "assets/" in page.text
+
+
+def test_session_owner_queries_reach_the_manager_without_using_ui_selection(tmp_path):
+    calls = []
+
+    class OwnerManager(FakeManager):
+        def list_sessions(self, *, all_projects=False):
+            calls.append(("list", all_projects))
+            return [{"session_id": "saved", "project_id": "owner", "project_root": "/owner"}]
+
+        def preview(self, session_id, *, registered_id=None):
+            calls.append(("preview", session_id, registered_id))
+            return {"session": {"session_id": session_id, "project_id": registered_id}}
+
+        def relabel(self, session_id, label, *, registered_id=None):
+            calls.append(("label", session_id, label, registered_id))
+            return {"session_id": session_id, "user_goal": label}
+
+        def archive(self, session_id, *, registered_id=None):
+            calls.append(("archive", session_id, registered_id))
+            return SimpleNamespace(removed=False, retained=True, reason="local workspace", path=Path("/owner"), branch_name="")
+
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("Wright")
+    client = TestClient(create_app(OwnerManager(), BootstrapAuth("secret"), static_dir=static))
+    origin = {"origin": "http://testserver"}
+    assert client.post("/api/v1/auth/exchange", json={"token": "secret"}, headers=origin).status_code == 200
+    assert client.get("/api/v1/sessions").status_code == 200
+    assert client.get("/api/v1/sessions?all_projects=true").json()[0]["project_id"] == "owner"
+    assert client.get("/api/v1/sessions/saved/preview?project_id=owner").status_code == 200
+    assert client.post("/api/v1/sessions/saved/label?project_id=owner", json={"label": "Renamed"}, headers=origin).status_code == 200
+    assert client.post("/api/v1/sessions/saved/archive?project_id=owner", headers=origin).status_code == 200
+    assert calls == [
+        ("list", False), ("list", True), ("preview", "saved", "owner"),
+        ("label", "saved", "Renamed", "owner"), ("archive", "saved", "owner"),
+    ]

@@ -38,14 +38,21 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
   const scroller = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const [labelsOff, setLabelsOff] = useState(true);
+  const [narrow, setNarrow] = useState(false);
   const stick = useRef(true);
   const [stuck, setStuck] = useState(true);
+  const lastTop = useRef(0);
   const onScroll = () => {
     const node = scroller.current;
     if (!node) return;
     const near = node.scrollHeight - node.scrollTop - node.clientHeight < 48;
-    stick.current = near;
-    setStuck(near);
+    // Content can grow between a programmatic scroll and its event; only an
+    // upward move means the reader left the bottom.
+    const movedUp = node.scrollTop < lastTop.current - 1;
+    lastTop.current = node.scrollTop;
+    if (near) stick.current = true;
+    else if (movedUp) stick.current = false;
+    setStuck(stick.current);
   };
   useEffect(() => {
     const node = scroller.current;
@@ -62,11 +69,25 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
     const column = stage?.parentElement;
     if (!column || typeof ResizeObserver === "undefined") return;
     const restore = () => {
-      if (column.clientWidth < OUTLINE_TEXT_AT) setLabelsOff(false);
+      const tooNarrow = column.clientWidth < OUTLINE_TEXT_AT;
+      setNarrow(tooNarrow);
+      if (tooNarrow) setLabelsOff(false);
     };
     restore();
     const observer = new ResizeObserver(restore);
     observer.observe(column);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    // Markdown, code blocks and images can grow after the commit that scrolled
+    // to the bottom; keep a stuck view pinned while the content settles.
+    const node = scroller.current;
+    const content = node?.firstElementChild;
+    if (!node || !content || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (stick.current) node.scrollTo?.({ top: node.scrollHeight });
+    });
+    observer.observe(content);
     return () => observer.disconnect();
   }, []);
   useLayoutEffect(() => {
@@ -108,7 +129,7 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
   return <div className="conversation-stage" ref={stageRef} data-labels={labelsOff ? "off" : undefined} data-compact={outlineCompact ? "true" : undefined}>
     <div
       className="conversation-stream"
-      data-outline={outlineCompact || labelsOff ? "ticks" : "dock"}
+      data-outline={outlineCompact || labelsOff || narrow ? "ticks" : "dock"}
     >
     <div className="conversation-body">
     <div className="conversation-scroll" ref={scroller} onScroll={onScroll}>

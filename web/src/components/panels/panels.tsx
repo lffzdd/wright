@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../../api";
 import { getLocale, useT } from "../../i18n";
 
@@ -9,35 +9,67 @@ function noteOf(error: unknown): Notice {
 }
 
 export function SearchDialog({
-  sessionId, projectId, close, openFile,
+  sessionId, projectId, close, openFile, openSession, previewFiles = false,
 }: {
   sessionId: string | null;
   projectId: string | null;
   close: () => void;
   openFile: (path: string) => void;
+  openSession?: (sessionId: string) => void | Promise<void>;
+  previewFiles?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState("file");
   const [results, setResults] = useState<Array<Record<string, unknown>>>([]);
   const [notice, setNotice] = useState<Notice>({ tone: "idle", text: "" });
+  const [preview, setPreview] = useState<{ path: string; content: string } | null>(null);
+  const generation = useRef(0);
+  useEffect(() => () => { generation.current += 1; }, []);
+  useEffect(() => {
+    ++generation.current;
+    setResults([]); setPreview(null); setNotice({ tone: "idle", text: "" });
+  }, [sessionId, projectId, query, kind]);
   const run = async () => {
     if (!query.trim()) { setNotice({ tone: "error", text: "Enter a search query." }); return; }
     setNotice({ tone: "busy", text: "Searching…" });
+    const request = ++generation.current;
+    setPreview(null);
     try {
       const found = sessionId
         ? await api.search(sessionId, query.trim(), kind)
         : projectId
           ? await api.workspaceSearch(projectId, query.trim(), kind)
           : null;
+      if (request !== generation.current) return;
       if (!found) { setNotice({ tone: "error", text: "Register a workspace before searching." }); return; }
       setResults(found.results);
       setNotice({ tone: "ok", text: found.results.length ? `${found.results.length} results` : "No matches." });
-    } catch (error) { setNotice(noteOf(error)); }
+    } catch (error) { if (request === generation.current) setNotice(noteOf(error)); }
   };
-  return <div className="dialog-backdrop"><section className="dialog" role="dialog" aria-modal="true" aria-labelledby="search-title">
+  const activate = async (item: Record<string, unknown>) => {
+    if (item.kind === "task" && item.session_id && openSession) {
+      try { await openSession(String(item.session_id)); }
+      catch (error) { setNotice(noteOf(error)); }
+      return;
+    }
+    if (!item.path) return;
+    const path = String(item.path);
+    if (!previewFiles) { openFile(path); return; }
+    if (!projectId) return;
+    const request = ++generation.current;
+    setPreview(null);
+    setNotice({ tone: "busy", text: "Loading file…" });
+    try {
+      const file = await api.workspaceFile(projectId, path);
+      if (request !== generation.current) return;
+      setPreview({ path, content: file.binary ? "Binary file" : file.content });
+      setNotice({ tone: "ok", text: "" });
+    } catch (error) { if (request === generation.current) setNotice(noteOf(error)); }
+  };
+  return <div className="dialog-backdrop"><section className="dialog" role="dialog" aria-modal="true" aria-labelledby="search-title" onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); } }}>
     <h2 id="search-title">Search</h2>
     <div className="row-actions">
-      <input aria-label="Search query" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") run(); if (event.key === "Escape") close(); }} />
+      <input autoFocus aria-label="Search query" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) run(); }} />
       <select aria-label="Search kind" value={kind} onChange={(event) => setKind(event.target.value)}>
         <option value="file">Files</option>
         <option value="task">Tasks</option>
@@ -50,8 +82,9 @@ export function SearchDialog({
     <div className="change-list">{results.map((item, index) => {
       const path = String(item.path ?? item.name ?? item.title ?? item.id ?? index);
       const line = item.line ? `:${item.line}` : "";
-      return <button type="button" key={`${path}-${index}`} onClick={() => { if (item.path) openFile(String(item.path)); }}>{item.kind ? `${item.kind} ` : ""}{path}{line}</button>;
+      return <button type="button" key={`${path}-${index}`} onClick={() => activate(item)}>{item.kind ? `${item.kind} ` : ""}{path}{line}</button>;
     })}</div>
+    {preview && <section aria-label="File preview"><h3>{preview.path}</h3><pre className="term-body">{preview.content || "Empty file"}</pre></section>}
   </section></div>;
 }
 
@@ -76,7 +109,7 @@ export function MemoryDialog({ sessionId, close }: { sessionId: string | null; c
   const episodes = (data?.episodes as Array<Record<string, unknown>> | undefined) ?? [];
   return <div className="dialog-backdrop"><section className="dialog" role="dialog" aria-modal="true" aria-labelledby="memory-title">
     <h2 id="memory-title">Memory</h2>
-    {!sessionId && <p className="empty-small">Open a task to view and edit memory for that project.</p>}
+    {!sessionId && <p className="empty-small">Open a running task to view and edit memory for that project. A history task reconnects when you send it a message.</p>}
     {notice.text && <p role={notice.tone === "error" ? "alert" : "status"} className={notice.tone === "error" ? "form-error" : "hint"}>{notice.text}</p>}
     {core && <div>
       <p>Persona is read-only.</p>
@@ -146,7 +179,7 @@ export function RulesDialog({ sessionId, close }: { sessionId: string | null; cl
   useEffect(() => { load().catch(() => undefined); }, [sessionId]);
   return <div className="dialog-backdrop"><section className="dialog" role="dialog" aria-modal="true" aria-labelledby="rules-title">
     <h2 id="rules-title">Rules</h2>
-    {!sessionId && <p className="empty-small">Open a task to manage project and user rules.</p>}
+    {!sessionId && <p className="empty-small">Open a running task to manage project and user rules. A history task reconnects when you send it a message.</p>}
     {notice.text && <p role={notice.tone === "error" ? "alert" : "status"} className={notice.tone === "error" ? "form-error" : "hint"}>{notice.text}</p>}
     {rules.map((rule) => <div className="queue-item" key={`${rule.scope}-${rule.id ?? rule.error}`}>
       <span>{String(rule.id ?? rule.error)} · {String(rule.scope ?? "")}{rule.shadowed ? " · shadowed" : ""}</span>

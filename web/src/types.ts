@@ -13,6 +13,8 @@ export type FileReference = {
 
 export type SessionSummary = {
   session_id: string;
+  project_id?: string;
+  project_root?: string;
   status: string;
   lifecycle?: SessionLifecycle;
   execution?: SessionExecution;

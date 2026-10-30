@@ -58,7 +58,7 @@ export function visibleModels(models: string[], currentModel: string, extras: st
 
 export function Composer({
   sessionId, connection, draft, updateDraft, submit, cancel, cancelAll, running, models = [], currentModel = "", interactionMode = "agent", permissionMode = "default", executionMode = "sandbox", onModel, onPolicy,
-  projectId = null, chooseEnvironment = false, git = false, workLabel = "",
+  projectId = null, chooseEnvironment = false, deferUploads = chooseEnvironment, git = false, workLabel = "",
 }: {
   sessionId: string;
   connection: ViewState["connection"];
@@ -77,6 +77,7 @@ export function Composer({
   onPolicy?: (body: { interaction_mode?: string; permission_mode?: string }) => Promise<void>;
   projectId?: string | null;
   chooseEnvironment?: boolean;
+  deferUploads?: boolean;
   git?: boolean;
   workLabel?: string;
 }) {
@@ -86,6 +87,8 @@ export function Composer({
   const [menu, setMenu] = useState<null | { kind: "file" | "command"; query: string; index: number }>(null);
   const [results, setResults] = useState<Array<{ id: string; label: string; insert: string; reference?: FileReference }>>([]);
   const [menuError, setMenuError] = useState("");
+  const [menuLoading, setMenuLoading] = useState(false);
+  const composing = useRef(false);
   const imageInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
@@ -93,7 +96,7 @@ export function Composer({
     const owner = sessionId;
     const selected = Array.from(files);
     if (!selected.length) return;
-    if (chooseEnvironment) {
+    if (deferUploads) {
       updateDraft(owner, (current) => ({
         ...current,
         localFiles: [...(current.localFiles ?? []), ...selected.map((file) => ({ name: file.name, file, image: images }))],
@@ -124,7 +127,7 @@ export function Composer({
   const sending = useRef(false);
   const send = async (event?: FormEvent) => {
     event?.preventDefault();
-    if (sending.current || draft.phase === "awaiting") return;
+    if (sending.current || uploading || draft.phase === "awaiting") return;
     const current = draft;
     if (!current.prompt.trim() && !current.command && !current.attachments.length && !(current.documents ?? []).length && !(current.references ?? []).length && !(current.localFiles ?? []).length) return;
     sending.current = true;
@@ -153,11 +156,19 @@ export function Composer({
     const match = /(^|\s)([@/])([^\s]*)$/.exec(before);
     if (!match) { setMenu(null); return; }
     const kind = match[2] === "@" ? "file" : "command";
+    if (menu?.kind !== kind || menu.query !== match[3]) {
+      setResults([]);
+      setMenuError("");
+      setMenuLoading(true);
+    }
     setMenu({ kind, query: match[3], index: 0 });
   };
   useEffect(() => {
     if (!menu) return;
     let cancelled = false;
+    setResults([]);
+    setMenuError("");
+    setMenuLoading(true);
     const load = menu.kind === "command"
       ? api.commands().then((commands) => commands.filter((command) => command.name.toLowerCase().includes(menu.query.toLowerCase())).map((command) => ({ id: command.name, label: `${command.name} ${command.description}`, insert: command.name })))
       : (projectId ? api.references(projectId, menu.query) : api.search(sessionId, menu.query, "file")).then((found) => {
@@ -175,7 +186,7 @@ export function Composer({
             },
           }));
         });
-    load.then((items) => { if (!cancelled) { setResults(items); setMenuError(""); } }).catch((error) => { if (!cancelled) setMenuError(String(error)); });
+    load.then((items) => { if (!cancelled) { setResults(items); setMenuLoading(false); } }).catch((error) => { if (!cancelled) { setMenuError(String(error)); setMenuLoading(false); } });
     return () => { cancelled = true; };
   }, [menu?.kind, menu?.query, sessionId, projectId]);
   const applyMenu = (item: { insert: string; reference?: FileReference }) => {
@@ -219,7 +230,10 @@ export function Composer({
       const value = event.target.value;
       updateDraft(sessionId, (item) => ({ ...item, prompt: value }));
       refreshMenu(value, event.target.selectionStart);
-    }} onKeyDown={(event) => {
+    }} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} onKeyDown={(event) => {
+      // Enter confirms an IME candidate before it can submit a message or choose a mention.
+      if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229) return;
+      if (menu && event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setMenu(null); return; }
       if (menu && results.length) {
         if (event.key === "ArrowDown" || event.key === "ArrowUp") {
           event.preventDefault();
@@ -227,13 +241,13 @@ export function Composer({
           return;
         }
         if (event.key === "Enter" || event.key === "Tab") { event.preventDefault(); applyMenu(results[menu.index]); return; }
-        if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setMenu(null); return; }
       }
+      if (menu && (menuLoading || menuError) && event.key === "Enter") { event.preventDefault(); return; }
       if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
     }} />
-    {menu && <div className="mention-menu" role="listbox">
+    {menu && <div className="mention-menu" role="listbox" aria-busy={menuLoading}>
       {menuError && <p className="form-error" role="alert">{menuError}</p>}
-      {!results.length && !menuError && <p className="empty-small">{tr("web.no_matches")}</p>}
+      {!menuLoading && !results.length && !menuError && <p className="empty-small">{tr("web.no_matches")}</p>}
       {results.map((item, index) => <button type="button" role="option" aria-selected={index === menu.index} key={item.id} onMouseDown={(event) => { event.preventDefault(); applyMenu(item); }}>{item.label}</button>)}
     </div>}
     <div className="composer-actions">
@@ -242,7 +256,7 @@ export function Composer({
         <button type="button" className="icon-button" title={tr("web.attach")} aria-label={tr("web.attach")} onClick={() => imageInput.current?.click()}><Image size={14} /></button>
         <button type="button" className="icon-button" title={tr("web.reference_file")} onClick={() => { updateDraft(sessionId, (item) => ({ ...item, prompt: `${item.prompt}@` })); setMenu({ kind: "file", query: "", index: 0 }); box.current?.focus(); }}>@</button>
         <button type="button" className="icon-button" title={tr("web.commands_title")} onClick={() => { updateDraft(sessionId, (item) => ({ ...item, prompt: `${item.prompt}/` })); setMenu({ kind: "command", query: "", index: 0 }); box.current?.focus(); }}>/</button>
-        <span className="hint">{draft.reason || (uploading ? tr("web.uploading") : "") || (draft.phase === "awaiting" ? tr("web.awaiting_accept") : "") || (offline ? tr("web.offline_hint") : "")}</span>
+        <span className="hint" role={draft.phase === "rejected" || draft.phase === "unknown" ? "alert" : "status"}>{draft.reason || (uploading ? tr("web.uploading") : "") || (draft.phase === "awaiting" ? tr("web.awaiting_accept") : "") || (offline ? tr("web.offline_hint") : "")}</span>
       </div>
       <div className="row-actions composer-primary-actions">
         {policyControls && (

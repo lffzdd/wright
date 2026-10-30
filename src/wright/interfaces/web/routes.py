@@ -120,9 +120,9 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
         return manager.project()
 
     @router.get("/sessions")
-    def sessions(request: Request) -> list[dict[str, Any]]:
+    def sessions(request: Request, all_projects: bool = False) -> list[dict[str, Any]]:
         _require_auth(request, auth)
-        return manager.list_sessions()
+        return manager.list_sessions(all_projects=True) if all_projects else manager.list_sessions()
 
     @router.post("/sessions")
     def create_session(body: SessionRequest, request: Request) -> dict[str, Any]:
@@ -151,11 +151,11 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @router.get("/sessions/{session_id}/preview")
-    def preview_session(session_id: str, request: Request) -> dict[str, Any]:
+    def preview_session(session_id: str, request: Request, project_id: str | None = None) -> dict[str, Any]:
         """History only. This does not start execution."""
         _require_auth(request, auth)
         try:
-            return manager.preview(session_id)
+            return manager.preview(session_id, registered_id=project_id) if project_id else manager.preview(session_id)
         except RuntimeManagerError as exc:
             raise HTTPException(status_code=exc.status_code or 404, detail=str(exc)) from exc
 
@@ -290,18 +290,18 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @router.post("/sessions/{session_id}/label")
-    def relabel_session(session_id: str, body: LabelRequest, request: Request) -> dict[str, Any]:
+    def relabel_session(session_id: str, body: LabelRequest, request: Request, project_id: str | None = None) -> dict[str, Any]:
         _require_auth(request, auth)
         try:
-            return manager.relabel(session_id, body.label)
+            return manager.relabel(session_id, body.label, registered_id=project_id) if project_id else manager.relabel(session_id, body.label)
         except RuntimeManagerError as exc:
             raise HTTPException(status_code=exc.status_code or 409, detail=str(exc)) from exc
 
     @router.post("/sessions/{session_id}/archive")
-    def archive_session(session_id: str, request: Request) -> dict[str, Any]:
+    def archive_session(session_id: str, request: Request, project_id: str | None = None) -> dict[str, Any]:
         _require_auth(request, auth)
         try:
-            result = manager.archive(session_id)
+            result = manager.archive(session_id, registered_id=project_id) if project_id else manager.archive(session_id)
             return {
                 "removed": result.removed,
                 "retained": result.retained,

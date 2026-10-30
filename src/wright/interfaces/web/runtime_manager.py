@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import threading
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -359,7 +360,12 @@ class SessionHandle:
         return []
 
     def summary(self) -> dict[str, Any]:
-        return {**self.service.summary(), "recoverable": True}
+        summary = self.service.summary()
+        return {
+            **summary,
+            "project_id": project_id(Path(summary["project_root"])),
+            "recoverable": True,
+        }
 
     def set_model(self, model: str) -> dict[str, Any]:
         try:
@@ -416,6 +422,7 @@ class RuntimeManager:
         self.capacity = self.directory.capacity
         self.base_args = base_args
         self._handles: dict[str, SessionHandle] = {}
+        self._resume_locks: dict[tuple[Path, str], threading.Lock] = {}
         self._lock = threading.RLock()
 
     def project(self) -> dict[str, Any]:
@@ -458,7 +465,37 @@ class RuntimeManager:
             execution_mode=execution_mode,
         )
 
-    def _open_on(
+    def _open_on(self, directory: SessionDirectory, **fields: Any) -> SessionHandle:
+        """Attach repeated browser resumes to the same conversation.
+
+        Tabs can send from an old history preview after another tab has resumed
+        it. Serialize that attachment before the directory's capacity/eviction
+        path; an already open session needs neither a new runtime nor a slot.
+        """
+        resume = str(fields.get("resume") or "").strip()
+        with self._lock:
+            lock = self._resume_locks.setdefault(
+                (directory.project_root, resume), threading.Lock(),
+            ) if resume else nullcontext()
+        with lock:
+            with self._lock:
+                existing = self._handles.get(resume) if resume else None
+            if existing is not None and not existing.closed:
+                if getattr(existing, "owner", None) is not directory:
+                    raise RuntimeManagerError("session belongs to a different project", status_code=409)
+                existing.submit_error = None
+                if fields.get("prompt") or fields.get("references") or fields.get("attachment_ids") or fields.get("document_ids"):
+                    try:
+                        existing.submit(
+                            fields.get("prompt") or "", fields.get("command_id") or uuid4().hex,
+                            fields.get("attachment_ids"), fields.get("document_ids"), fields.get("references"),
+                        )
+                    except RuntimeManagerError as exc:
+                        existing.submit_error = str(exc)
+                return existing
+            return self._open_once(directory, **fields)
+
+    def _open_once(
         self,
         directory: SessionDirectory,
         *,
@@ -551,8 +588,20 @@ class RuntimeManager:
             status = 404 if exc.kind == "not_found" else None
             raise RuntimeManagerError(str(exc), status_code=status) from exc
 
-    def list_sessions(self) -> list[dict[str, Any]]:
-        return self.directory.list_sessions()
+    def _owned_sessions(self, directory: SessionDirectory) -> list[dict[str, Any]]:
+        return [{
+            **item, "project_id": project_id(directory.project_root),
+            "project_root": str(directory.project_root),
+        } for item in directory.list_sessions()]
+
+    def list_sessions(self, *, all_projects: bool = False) -> list[dict[str, Any]]:
+        directories = [self.directory]
+        if all_projects:
+            for item in self.workspaces()["projects"]:
+                if item.get("exists") is False or item["project_id"] == project_id(self.project_root):
+                    continue
+                directories.append(self._directory_for(item["project_id"]))
+        return [item for directory in directories for item in self._owned_sessions(directory)]
 
     def close(self, session_id: str) -> dict[str, Any]:
         with self._lock:
@@ -566,10 +615,10 @@ class RuntimeManager:
                 self._handles.pop(session_id, None)
         return summary
 
-    def archive(self, session_id: str) -> ArchiveResult:
+    def archive(self, session_id: str, *, registered_id: str | None = None) -> ArchiveResult:
         with self._lock:
             handle = self._handles.get(session_id)
-        directory = getattr(handle, "owner", None) or self._ui_directory()
+        directory = self._directory_for(registered_id) if registered_id else getattr(handle, "owner", None) or self._ui_directory()
         try:
             return directory.archive(session_id)
         except SessionDirectoryError as exc:
@@ -645,7 +694,10 @@ class RuntimeManager:
                 self._directories = directories
             found = directories.get(registered_id)
             if found is None:
-                found = SessionDirectory(root, capacity=self.capacity, base_args=self.base_args)
+                try:
+                    found = SessionDirectory(root, capacity=self.capacity, base_args=self.base_args)
+                except SessionDirectoryError as exc:
+                    raise RuntimeManagerError(str(exc), status_code=409) from exc
                 directories[registered_id] = found
             return found
 
@@ -656,22 +708,31 @@ class RuntimeManager:
         return self.directory
 
     def workspace_sessions(self, registered_id: str) -> list[dict[str, Any]]:
-        return self._directory_for(registered_id).list_sessions()
+        return self._owned_sessions(self._directory_for(registered_id))
 
-    def preview(self, session_id: str) -> dict[str, Any]:
+    def preview(self, session_id: str, *, registered_id: str | None = None) -> dict[str, Any]:
+        if registered_id:
+            try:
+                result = self._directory_for(registered_id).preview(session_id)
+                result["session"]["project_id"] = registered_id
+                return result
+            except SessionDirectoryError as exc:
+                raise RuntimeManagerError(str(exc), status_code=404 if exc.kind == "not_found" else 409) from exc
         try:
-            return self._ui_directory().preview(session_id)
+            result = self._ui_directory().preview(session_id)
         except SessionDirectoryError as exc:
             try:
-                return self.directory.preview(session_id)
+                result = self.directory.preview(session_id)
             except SessionDirectoryError:
                 status = 404 if exc.kind == "not_found" else None
                 raise RuntimeManagerError(str(exc), status_code=status) from exc
+        result["session"]["project_id"] = project_id(Path(result["session"]["project_root"]))
+        return result
 
-    def relabel(self, session_id: str, label: str) -> dict[str, Any]:
+    def relabel(self, session_id: str, label: str, *, registered_id: str | None = None) -> dict[str, Any]:
         with self._lock:
             handle = self._handles.get(session_id)
-        directory = getattr(handle, "owner", None) or self._ui_directory()
+        directory = self._directory_for(registered_id) if registered_id else getattr(handle, "owner", None) or self._ui_directory()
         try:
             return directory.relabel(session_id, label)
         except SessionDirectoryError as exc:

@@ -491,3 +491,175 @@ def test_reasoning_snapshot_preserves_order_without_duplicating_committed_steps(
         "repeat", "Earlier answer", "repeat", "Before tool", "call-1", "After tool continued", "Done",
     ]
     handle.close()
+
+
+@pytest.fixture
+def offline_manager(monkeypatch, tmp_path):
+    """Use the real directory/checkpoint/service chain without a provider call."""
+    from tests.responses import response
+    from wright.application.composition import runtime as assembly
+
+    calls = []
+
+    class Model:
+        model = "offline"
+        transport_name = "chat"
+        context_limit = 128_000
+
+        def __call__(self, *_args, **_kwargs):
+            calls.append("model")
+            yield response(content="offline response")
+
+    monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("OPENAI_MODEL", "offline")
+    monkeypatch.setattr(assembly, "load_env", lambda: None)
+    monkeypatch.setattr(assembly, "LLMClient", lambda **_: Model())
+    monkeypatch.setattr(assembly, "load_mcp_configs", lambda _: [])
+    monkeypatch.setattr(assembly, "optional_knowledge_tools", list)
+    monkeypatch.setattr(assembly, "load_lifecycle_manager", lambda *a, **k: SimpleNamespace(emit=lambda *a, **k: None))
+    root = tmp_path / "project"
+    root.mkdir()
+    manager = RuntimeManager(root, capacity=1, base_args=argparse.Namespace())
+    yield manager, calls
+    manager.shutdown()
+
+
+def _wait_completed(handle, command_id):
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        record = handle.command_status(command_id)
+        if record["status"] == "completed":
+            return
+        time.sleep(0.005)
+    pytest.fail(f"command did not complete: {command_id}")
+
+
+def test_history_resumes_same_conversation_and_only_executes_after_send(offline_manager):
+    manager, calls = offline_manager
+    original = manager.create(environment="local")
+    session_id = original.session_id
+    original.submit("remember this context", "first-command")
+    _wait_completed(original, "first-command")
+    original_state = original.runtime.session_state
+    manager.close(session_id)
+    preview = manager.preview(session_id)
+    assert preview["session"]["active"] is False
+    assert calls == ["model"]
+
+    restored = manager.create(resume=session_id, client_request_id="resume-from-history")
+    assert restored.session_id == session_id
+    assert restored.runtime.session_state.environment == original_state.environment
+    assert restored.runtime.session_state.workspace_dir == original_state.workspace_dir
+    assert restored.runtime.session_state.authorization.permission_mode == original_state.authorization.permission_mode
+    assert "remember this context" in str(restored.snapshot()["timeline"])
+    assert "offline response" in str(restored.snapshot()["timeline"])
+    assert calls == ["model"]  # Opening is never an implicit model turn.
+
+    restored.submit("continue this conversation", "second-command")
+    restored.submit("continue this conversation", "second-command")
+    _wait_completed(restored, "second-command")
+    assert calls == ["model", "model"]
+    assert {row["session_id"] for row in manager.list_sessions()} == {session_id}
+
+
+def test_repeated_and_concurrent_web_resume_reuses_one_live_session_at_capacity(offline_manager):
+    from concurrent.futures import ThreadPoolExecutor
+
+    manager, calls = offline_manager
+    original = manager.create(environment="local")
+    session_id = original.session_id
+    assert manager.create(resume=session_id, client_request_id="other-tab") is original
+    assert not original.closed
+    manager.close(session_id)
+
+    barrier = threading.Barrier(2)
+
+    def resume(request_id):
+        barrier.wait(timeout=2)
+        return manager.create(resume=session_id, client_request_id=request_id)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(resume, name) for name in ("tab-a", "tab-b")]
+        first, second = [future.result(timeout=5) for future in futures]
+    assert first is second
+    assert first.session_id == session_id
+    assert len(manager.directory._sessions) == 1
+    assert not first.closed
+    assert calls == []
+
+
+def test_all_project_history_has_stable_owners_and_explicit_actions_ignore_ui_selection(offline_manager, tmp_path):
+    from wright.core.paths import project_id
+
+    manager, calls = offline_manager
+    launch = manager.create(environment="local")
+    manager.close(launch.session_id)
+    other_root = tmp_path / "other"
+    other_root.mkdir()
+    other_id = manager.register_workspace(str(other_root))["project_id"]
+    other = manager.create_in_workspace(other_id, environment="local", model=None, prompt=None, resume=None)
+    manager.close(other.session_id)
+    manager.workspaces()  # Ensure launch project is registered for this test's explicit owner calls.
+    launch_id = project_id(manager.project_root)
+    manager.register_workspace(str(manager.project_root))
+    manager.select_workspace(launch_id)
+
+    rows = manager.list_sessions(all_projects=True)
+    assert {(row["session_id"], row["project_id"], row["project_root"]) for row in rows} == {
+        (launch.session_id, launch_id, str(manager.project_root)),
+        (other.session_id, other_id, str(other_root)),
+    }
+    assert [row["session_id"] for row in manager.list_sessions()] == [launch.session_id]
+    preview = manager.preview(other.session_id, registered_id=other_id)
+    assert preview["session"]["project_id"] == other_id
+    assert preview["session"]["project_root"] == str(other_root)
+    manager.relabel(other.session_id, "Other project task", registered_id=other_id)
+    assert manager.preview(other.session_id, registered_id=other_id)["session"]["user_goal"] == "Other project task"
+    with pytest.raises(RuntimeManagerError) as error:
+        manager.preview(other.session_id, registered_id=launch_id)
+    assert error.value.status_code == 404
+    restored = manager.create_in_workspace(other_id, environment=None, model=None, prompt=None, resume=other.session_id)
+    assert restored.snapshot()["session"]["project_id"] == other_id
+    assert restored.runtime.session_state.project_root == other_root
+    assert calls == []
+
+
+def test_worktree_history_restores_its_original_directory_and_missing_tree_stays_read_only(offline_manager):
+    import shutil
+    import subprocess
+
+    manager, calls = offline_manager
+    for args in (("init",), ("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "Initial")):
+        subprocess.run(["git", "-C", str(manager.project_root), *args], check=True, capture_output=True)
+    original = manager.create(environment="worktree")
+    session_id = original.session_id
+    worktree = original.runtime.session_state.workspace_dir
+    assert worktree != manager.project_root
+    original_branch = original.runtime.session_state.branch_name
+    manager.close(session_id)
+    restored = manager.create(resume=session_id)
+    assert restored.session_id == session_id
+    assert restored.runtime.session_state.workspace_dir == worktree
+    assert restored.runtime.session_state.branch_name == original_branch
+    assert restored.runtime.session_state.environment == "worktree"
+    manager.close(session_id)
+    shutil.rmtree(worktree)
+    preview = manager.preview(session_id)
+    assert preview["session"]["recoverable"] is False
+    with pytest.raises(RuntimeManagerError, match="execution directory is no longer available") as error:
+        manager.create(resume=session_id)
+    assert error.value.status_code == 409
+    assert not worktree.exists()
+    assert calls == []
+
+
+def test_missing_registered_project_reports_a_recoverable_owner_error(offline_manager, tmp_path):
+    manager, calls = offline_manager
+    missing = tmp_path / "removed-project"
+    missing.mkdir()
+    owner = manager.register_workspace(str(missing))["project_id"]
+    missing.rmdir()
+    with pytest.raises(RuntimeManagerError, match="workspace does not exist") as error:
+        manager.preview("saved", registered_id=owner)
+    assert error.value.status_code == 409
+    assert calls == []

@@ -43,7 +43,7 @@ describe("web startup", () => {
           accessed_files: snapshots > 1 ? [{ path: "web/src/App.tsx", access: "read" }] : [],
         });
       }
-      if (path === "/api/v1/sessions") return jsonResponse([session]);
+      if (path.startsWith("/api/v1/sessions?")) return jsonResponse([session]);
       return jsonResponse({ changes: [], rules: [] });
     }));
     render(<App />);
@@ -172,7 +172,7 @@ describe("web startup", () => {
     render(<App />);
     await screen.findByText("Actual workspace");
     expect(calls).toContain("/api/v1/project");
-    expect(calls).toContain("/api/v1/sessions");
+    expect(calls).toContain("/api/v1/sessions?all_projects=true");
     expect(screen.queryByText("api-gateway")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(await screen.findByRole("dialog")).toBeTruthy();

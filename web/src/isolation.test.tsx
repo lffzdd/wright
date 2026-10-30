@@ -59,6 +59,8 @@ describe("session isolation", () => {
     expect(await screen.findByText("Reference design source")).toBeTruthy();
     expect(calls).toContain("/api/v1/sessions/session-a/tree?path=web");
     expect(calls.some((path) => path.includes("/file?path=web") && !path.includes("example.html"))).toBe(false);
+    expect(screen.queryByRole("button", { name: ".. / web" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Back to files" }));
     fireEvent.click(screen.getByRole("button", { name: ".. / web" }));
     expect(await screen.findByRole("button", { name: /DIR\s*web/ })).toBeTruthy();
     expect(screen.queryByText("Reference design source")).toBeNull();

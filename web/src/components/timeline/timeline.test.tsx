@@ -24,6 +24,27 @@ function emit(state: ViewState, type: string, payload: Record<string, unknown>, 
 const transcript = (state: ViewState) => <Timeline state={state} respond={async () => true} cancelQueued={() => undefined} />;
 
 describe("real timeline projection", () => {
+  it("stays pinned when content grows before a programmatic scroll event lands", () => {
+    const state = emit(fresh(), "turn.started", { prompt: "Long answer" });
+    const { container } = render(transcript(state));
+    const scroller = container.querySelector(".conversation-scroll") as HTMLElement;
+    const metrics = { top: 0, height: 1000 };
+    Object.defineProperty(scroller, "clientHeight", { configurable: true, get: () => 400 });
+    Object.defineProperty(scroller, "scrollHeight", { configurable: true, get: () => metrics.height });
+    Object.defineProperty(scroller, "scrollTop", { configurable: true, get: () => metrics.top, set: (value: number) => { metrics.top = value; } });
+
+    // Scrolled to the old bottom (600), but the content grew by 50px first.
+    metrics.top = 600;
+    metrics.height = 1050;
+    fireEvent.scroll(scroller);
+    expect(screen.queryByText("Jump to latest")).toBeNull();
+
+    // A real upward scroll still releases the pin.
+    metrics.top = 300;
+    fireEvent.scroll(scroller);
+    expect(screen.getByText("Jump to latest")).toBeTruthy();
+  });
+
   it("keeps the user prompt, shell arguments and incremental output as tools run", () => {
     let state = emit(fresh(), "turn.started", { prompt: "Run the tests" });
     state = emit(state, "tool.planned", { call_id: "c", name: "execute_command", arguments: { command: "pytest -q" } });

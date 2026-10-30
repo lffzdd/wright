@@ -53,14 +53,19 @@ export default function App() {
   const [railOpen, setRailOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [narrowInspector, setNarrowInspector] = useState(false);
+  const [compactViewport, setCompactViewport] = useState(() => window.matchMedia?.("(max-width: 1024px)").matches ?? false);
+  const inspectorVisibility = useRef({ open: inspectorOpen, narrow: narrowInspector, compact: compactViewport });
+  inspectorVisibility.current = { open: inspectorOpen, narrow: narrowInspector, compact: compactViewport };
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [serverLatency, setServerLatency] = useState<number | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceRow[]>([]);
   const [capabilityCounts, setCapabilityCounts] = useState<CapabilityCounts>({ memory: null, rules: null, schedules: null });
   const [panel, setPanel] = useState<Panel>(null);
+  const panelRef = useRef(panel);
+  panelRef.current = panel;
   const [sessionActionsOpen, setSessionActionsOpen] = useState(false);
   const sessionActionsRef = useRef<HTMLDivElement>(null);
-  const [focusPath, setFocusPath] = useState<string | null>(null);
+  const [fileFocus, setFileFocus] = useState<{ sessionId: string; path: string; request: number } | null>(null);
   const [booted, setBooted] = useState(false);
   const socket = useRef<WebSocket | null>(null);
   const commandWaiters = useRef(new Map<string, (outcome: "accepted" | "rejected" | "unknown") => void>());
@@ -75,6 +80,13 @@ export default function App() {
   const activeSent = useRef(new Set<string>());
   const workspaceId = useRef<string | null>(null);
   const launchId = useRef<string | null>(null);
+  const launchRoot = useRef<string | undefined>(undefined);
+  const sessionListGeneration = useRef(0);
+  const workspaceSelection = useRef<Promise<unknown>>(Promise.resolve());
+  const persistWorkspaceSelection = useCallback((projectId: string) => {
+    workspaceSelection.current = workspaceSelection.current.catch(() => undefined).then(() => api.selectWorkspace(projectId));
+    workspaceSelection.current.catch((error) => { if (workspaceId.current === projectId) setFatal(String(error)); });
+  }, []);
   const updateDraft = useCallback((sessionId: string, patch: (current: Draft) => Draft) => {
     setDrafts((current) => {
       const previous = current[sessionId] ?? emptyDraft();
@@ -104,11 +116,13 @@ export default function App() {
   }, [selected, browsing, state?.last_seq, state?.resync]);
 
   const refreshSessions = useCallback(async () => {
-    const id = workspaceId.current;
-    const items = id && launchId.current && id !== launchId.current
-      ? await api.workspaceSessions(id)
-      : await api.sessions();
-    setSessions(items);
+    const request = ++sessionListGeneration.current;
+    const items = (await api.sessions(true)).map((item) => ({
+      ...item,
+      project_id: item.project_id ?? launchId.current ?? undefined,
+      project_root: item.project_root ?? launchRoot.current,
+    }));
+    if (request === sessionListGeneration.current) setSessions(items);
     return items;
   }, []);
 
@@ -147,8 +161,8 @@ export default function App() {
     setCapabilityCounts({ memory: null, rules: null, schedules: null });
     const loadCounts = async () => {
       const [memoryResult, rulesResult, schedulesResult] = await Promise.allSettled([
-        api.memory(selected),
-        api.rules(selected),
+        browsing === "live" ? api.memory(selected) : Promise.reject(new Error("Session is not live")),
+        browsing === "live" ? api.rules(selected) : Promise.reject(new Error("Session is not live")),
         selectedProjectId ? api.projectSchedules(selectedProjectId) : Promise.reject(new Error("No selected project")),
       ]);
       if (!current) return;
@@ -168,7 +182,7 @@ export default function App() {
     };
     void loadCounts();
     return () => { current = false; };
-  }, [selected, selectedProjectId, panel]);
+  }, [selected, selectedProjectId, panel, browsing]);
 
   const applyTheme = (next: "dark" | "light") => {
     setTheme(next);
@@ -177,7 +191,37 @@ export default function App() {
   };
 
   useEffect(() => {
+    const media = window.matchMedia?.("(max-width: 1024px)");
+    if (!media) return;
+    const changed = () => { setCompactViewport(media.matches); setNarrowInspector(false); };
+    media.addEventListener("change", changed);
+    return () => media.removeEventListener("change", changed);
+  }, []);
+
+  useEffect(() => { setFileFocus(null); }, [selected]);
+
+  const closeInspector = useCallback(() => {
+    setNarrowInspector(false);
+    if (!inspectorVisibility.current.compact) {
+      setInspectorOpen(false);
+      api.setPreference({ inspector_open: false }).catch(() => undefined);
+    }
+  }, []);
+  const openInspector = useCallback(() => {
+    setInspectorOpen(true);
+    setNarrowInspector(true);
+    setRailOpen(false);
+    api.setPreference({ inspector_open: true }).catch(() => undefined);
+  }, []);
+  const toggleInspector = useCallback(() => {
+    const current = inspectorVisibility.current;
+    if (current.compact ? current.open && current.narrow : current.open) closeInspector();
+    else openInspector();
+  }, [closeInspector, openInspector]);
+
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setPanel("search");
@@ -200,16 +244,23 @@ export default function App() {
         });
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
         event.preventDefault();
+        setNarrowInspector(false);
         setRailOpen((prev) => !prev);
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
         event.preventDefault();
-        setInspectorOpen((prev) => {
-          const next = !prev;
-          setNarrowInspector(next);
-          return next;
-        });
+        toggleInspector();
       } else if (event.key === "Escape") {
         setSessionActionsOpen(false);
+        if (panelRef.current !== null) {
+          event.preventDefault();
+          setPanel(null);
+          return;
+        }
+        if (inspectorVisibility.current.compact && inspectorVisibility.current.narrow) {
+          event.preventDefault();
+          closeInspector();
+          return;
+        }
         const interaction = stateRef.current?.pending_interactions.find((item) => item.kind === "permission");
         if (interaction && browsingRef.current === "live" && interaction.choices?.some((choice) => choice.id === "deny")) {
           event.preventDefault();
@@ -260,6 +311,7 @@ export default function App() {
       }
       setProject(projectData);
       launchId.current = String(projectData.project_id ?? "");
+      launchRoot.current = typeof projectData.project_root === "string" ? projectData.project_root : undefined;
       if (registry) {
         setWorkspaces(registry.projects.map((item) => ({ ...item, selected: item.project_id === registry.selected_project_id })));
         workspaceId.current = registry.selected_project_id;
@@ -268,8 +320,9 @@ export default function App() {
       if (cancelled) return;
       const storageKey = String(workspaceId.current || projectData.project_id || "");
       const remembered = storageKey ? localStorage.getItem(`wright.viewed.${storageKey}`) : null;
-      const byId = items.find((item) => item.session_id === remembered);
-      const latest = [...items].sort((left, right) => String(right.saved_at || "").localeCompare(String(left.saved_at || "")))[0];
+      const ownItems = items.filter((item) => !item.project_id || item.project_id === storageKey);
+      const byId = ownItems.find((item) => item.session_id === remembered);
+      const latest = [...ownItems].sort((left, right) => String(right.saved_at || "").localeCompare(String(left.saved_at || "")))[0];
       const match = byId ?? latest;
       if (match) {
         const key = String(workspaceId.current || projectData.project_id || "");
@@ -410,7 +463,8 @@ export default function App() {
     const generation = ++epoch.current;
     const sessionId = selected;
     socket.current?.close();
-    api.preview(sessionId).then((preview) => {
+    const owner = sessions.find((item) => item.session_id === sessionId)?.project_id || workspaceId.current || undefined;
+    api.preview(sessionId, owner).then((preview) => {
       if (epoch.current !== generation) return;
       const body = preview as unknown as { session: Snapshot["session"]; history?: Snapshot["history"]; timeline?: Snapshot["timeline"]; plan?: Snapshot["plan"]; subagents?: Snapshot["subagents"]; accessed_files?: Snapshot["accessed_files"] };
       setState({
@@ -474,21 +528,23 @@ export default function App() {
   };
   const beginTurn = async (owner: string, commandId: string, prompt: string, attachmentIds: string[], documentIds: string[] = [], references: FileReference[] = []) => {
     const surface = projectKey();
+    const resumeOwner = selected && browsing === "preview"
+      ? sessions.find((item) => item.session_id === selected)?.project_id || state?.session.project_id || surface
+      : surface;
     const generation = epoch.current;
     const current = draftsRef.current[owner] ?? emptyDraft();
     const clientRequestId = current.clientRequestId || crypto.randomUUID();
-    updateDraft(owner, (item) => ({ ...item, clientRequestId, commandId, phase: "awaiting", reason: "" }));
+    updateDraft(owner, (item) => ({ ...item, clientRequestId, commandId, phase: "awaiting", reason: browsing === "preview" ? tr("web.resuming_session") : tr("web.awaiting_accept") }));
     try {
       let sessionId = current.boundSessionId;
       const environment = current.environment ?? "local";
-      const registered = workspaceId.current;
+      const registered = resumeOwner;
       const foreign = Boolean(registered && launchId.current && registered !== launchId.current);
-      const open = (body: Record<string, unknown>) => foreign
+      const open = (body: Record<string, unknown>) => registered && (foreign || browsing === "preview")
         ? api.createInWorkspace(registered as string, body)
         : api.create(body);
-      if (!sessionId && browsing === "preview" && selected) {
+      if (browsing === "preview" && selected) {
         const created = await open({ resume: selected, client_request_id: clientRequestId });
-        if (projectKey() !== surface) return "rejected" as const;
         sessionId = created.session.session_id;
         updateDraft(owner, (item) => item.clientRequestId === clientRequestId ? { ...item, boundSessionId: sessionId } : item);
       } else if (!sessionId) {
@@ -499,11 +555,11 @@ export default function App() {
           interaction_mode: draftPolicy.interaction_mode,
           permission_mode: draftPolicy.permission_mode,
         });
-        if (projectKey() !== surface) return "rejected" as const;
         sessionId = created.session.session_id;
         updateDraft(owner, (item) => item.clientRequestId === clientRequestId ? { ...item, boundSessionId: sessionId } : item);
       }
       if (!sessionId) return "rejected" as const;
+      updateDraft(owner, (item) => ({ ...item, reason: tr("web.sending_message") }));
       const imageIds = [...attachmentIds];
       const docIds = [...documentIds];
       for (const file of current.localFiles ?? []) {
@@ -515,14 +571,14 @@ export default function App() {
           docIds.push(record.id);
         }
       }
-      if (projectKey() !== surface) return "rejected" as const;
       const accepted = await api.submitTurn(sessionId, {
         prompt, command_id: commandId, attachment_ids: imageIds, document_ids: docIds, references,
       });
-      if (projectKey() !== surface) return "rejected" as const;
-      remember(sessionId);
-      setBrowsing("live");
-      setSelected(sessionId);
+      if (projectKey() === surface && epoch.current === generation) {
+        remember(sessionId);
+        setBrowsing("live");
+        setSelected(sessionId);
+      }
       refreshSessions().catch(() => undefined);
       if (accepted && (accepted as { duplicate?: boolean }).duplicate !== true) {
         updateDraft(owner, () => emptyDraft());
@@ -533,10 +589,8 @@ export default function App() {
       // (for example: every session slot is busy). Only network failures and
       // 5xx answers leave the outcome unknown.
       const definite = error instanceof ApiError && error.status >= 400 && error.status < 500;
-      if (projectKey() === surface && epoch.current === generation) {
-        const reason = error instanceof Error ? error.message : String(error);
-        updateDraft(owner, (item) => ({ ...item, phase: definite ? "rejected" : "unknown", reason }));
-      }
+      const reason = error instanceof Error ? error.message : String(error);
+      updateDraft(owner, (item) => item.clientRequestId === clientRequestId ? { ...item, phase: definite ? "rejected" : "unknown", reason } : item);
       return definite ? "rejected" as const : "unknown" as const;
     }
   };
@@ -558,7 +612,8 @@ export default function App() {
     if (!id) return;
     const label = sessions.find((item) => item.session_id === id)?.user_goal || state?.session.user_goal || id;
     if (!window.confirm(tr("web.archive_confirm", { label }))) return;
-    await api.archive(id);
+    const owner = sessions.find((item) => item.session_id === id)?.project_id || state?.session.project_id || workspaceId.current || undefined;
+    await api.archive(id, owner);
     if (selected === id) {
       remember(null);
       setSelected(null);
@@ -571,18 +626,26 @@ export default function App() {
     const current = sessionTitle(session, tr);
     const next = window.prompt(tr("web.rename_prompt"), current);
     if (!next || !next.trim() || next.trim() === current) return;
-    await api.relabel(session.session_id, next.trim());
+    const owner = sessions.find((item) => item.session_id === session.session_id)?.project_id || workspaceId.current || undefined;
+    await api.relabel(session.session_id, next.trim(), owner);
     setSessions((items) => items.map((item) => item.session_id === session.session_id ? { ...item, user_goal: next.trim() } : item));
     setState((currentState) => currentState && currentState.session.session_id === session.session_id
       ? { ...currentState, session: { ...currentState.session, user_goal: next.trim() } }
       : currentState);
   };
   const selectSession = async (session: SessionSummary) => {
+    const owner = session.project_id || workspaces.find((item) => item.root === session.project_root)?.project_id;
+    if (owner && owner !== workspaceId.current) {
+      workspaceId.current = owner;
+      setWorkspaces((items) => items.map((item) => ({ ...item, selected: item.project_id === owner })));
+      persistWorkspaceSelection(owner);
+    }
     remember(session.session_id);
     if (session.active) setBrowsing("live");
     else setBrowsing("preview");
     if (session.session_id !== selected) setState(null);
     setSelected(session.session_id);
+    setSessionActionsOpen(false);
     setRailOpen(false);
     if (session.recoverable === false) {
       setFatal("This checkpoint can be read as history. Its execution directory is gone, so it cannot run again.");
@@ -614,10 +677,11 @@ export default function App() {
   const directoryQueued = execution === "queued";
   const composerOwner = selected && browsing !== "draft" ? selected : draftKey;
   const draft = drafts[composerOwner] ?? emptyDraft();
-  const activeCount = sessions.filter((item) => item.active).length;
-  const branch = String(state?.session.branch_name ?? project?.branch ?? "");
-  const dirty = Number(project?.uncommitted_count ?? 0);
-  const projectName = String(project?.name ?? tr("web.local"));
+  const selectedWorkspace = workspaces.find((item) => item.project_id === workspaceId.current);
+  const activeCount = sessions.filter((item) => item.active && (!item.project_id || item.project_id === workspaceId.current)).length;
+  const branch = String(state?.session.branch_name ?? (workspaceId.current === launchId.current ? project?.branch : "") ?? "");
+  const dirty = workspaceId.current === launchId.current ? Number(project?.uncommitted_count ?? 0) : 0;
+  const projectName = String(selectedWorkspace?.name ?? project?.name ?? tr("web.local"));
   const launchProject = String(project?.project_id ?? "");
   const planSteps = state?.plan.steps ?? [];
   const currentStep = planSteps.findIndex((step) => ["in_progress", "running", "active"].includes(step.status));
@@ -649,13 +713,13 @@ export default function App() {
   return <div className="app-viewport">
     <header className="topbar">
       <div className="brand">
-        <button className="icon-button rail-toggle" onClick={() => setRailOpen(true)} aria-label={tr("web.open_sessions")}><SidebarSimple size={14} /></button>
+        <button className="icon-button rail-toggle" onClick={() => { setNarrowInspector(false); setRailOpen(true); }} aria-label={tr("web.open_sessions")}><SidebarSimple size={14} /></button>
         <span className="traffic-lights" aria-hidden="true"><i /><i /><i /></span>
         <span className="chrome-divider" aria-hidden="true" />
         <span className="brand-mark">W</span>
         <strong>Wright</strong>
         <span className="sep">/</span>
-        <span className="crumb" title={String(project?.project_root ?? "")}>{projectName}</span>
+        <span className="crumb" title={String(selectedWorkspace?.root ?? project?.project_root ?? "")}>{projectName}</span>
       </div>
       <div className="top-center">
         {branch && <div className="branch-pill"><GitBranch size={12} /><span>{branch}</span>{dirty > 0 ? <span className="dirty">{tr("web.uncommitted", { count: dirty })}</span> : null}</div>}
@@ -666,7 +730,7 @@ export default function App() {
         <span className={`top-agent-state ${statusClass}`}><span className={`dot ${statusPulse ? "pulse" : ""}`} />{statusText}</span>
         <span className="active-count">{tr("web.active", { count: capacity === null ? `${activeCount}` : `${activeCount}/${capacity}` })}</span>
         <button type="button" className="icon-button" title={tr("web.theme")} onClick={() => savePreference({ theme: theme === "dark" ? "light" : "dark" }).catch((error) => setFatal(String(error)))}>{theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}</button>
-        {state && selected ? <button type="button" className="icon-button" aria-label={tr("web.open_inspector")} onClick={() => { setInspectorOpen(true); setNarrowInspector(true); }}><SidebarSimple size={14} /></button> : null}
+        {state && selected ? <button type="button" className="icon-button" aria-label={tr((compactViewport ? inspectorOpen && narrowInspector : inspectorOpen) ? "web.close_inspector" : "web.open_inspector")} aria-expanded={compactViewport ? inspectorOpen && narrowInspector : inspectorOpen} aria-controls="workspace-inspector" onClick={toggleInspector}><SidebarSimple size={14} /></button> : null}
       </div>
     </header>
     <div className="workspace-grid" data-inspector={state && selected && inspectorOpen ? "open" : "closed"}>
@@ -683,20 +747,25 @@ export default function App() {
         onSelectWorkspace={(projectId) => {
           workspaceId.current = projectId;
           setWorkspaces((current) => current.map((row) => ({ ...row, selected: row.project_id === projectId })));
-          api.selectWorkspace(projectId).then(() => refreshSessions()).catch((error) => setFatal(String(error)));
+          setSelected(null); setState(null); setBrowsing("draft"); setFileFocus(null); setRailOpen(false);
+          persistWorkspaceSelection(projectId);
         }}
         onRegisterWorkspace={() => {
           const path = window.prompt(tr("web.register_prompt"));
           if (!path) return;
-          api.registerWorkspace(path).then(() => api.workspaces()).then((registry) => setWorkspaces(registry.projects)).catch((error) => setFatal(String(error)));
+          api.registerWorkspace(path).then(() => api.workspaces()).then((registry) => {
+            setWorkspaces(registry.projects.map((item) => ({ ...item, selected: item.project_id === workspaceId.current })));
+            return refreshSessions();
+          }).catch((error) => setFatal(String(error)));
         }}
         onUnregisterWorkspace={() => {
           const current = workspaces.find((item) => item.selected) ?? workspaces[0];
           if (!current) return;
           if (!window.confirm(tr("web.unregister_confirm", { name: current.name }))) return;
           api.unregisterWorkspace(current.project_id).then(() => api.workspaces()).then((registry) => {
-            setWorkspaces(registry.projects);
+            setWorkspaces(registry.projects.map((item) => ({ ...item, selected: item.project_id === registry.selected_project_id })));
             workspaceId.current = registry.selected_project_id;
+            setSelected(null); setState(null); setBrowsing("draft"); setFileFocus(null);
             return refreshSessions();
           }).catch((error) => setFatal(String(error)));
         }}
@@ -754,7 +823,7 @@ export default function App() {
               sendCommand({ type: "turn.cancel_queued", command_id: id, target_command_id: targetCommandId }).catch(() => undefined);
             }}
           >
-          {browsing === "preview" && <p className="hint conversation-footnote">{state.session.recoverable === false ? tr("web.archived") : tr("web.history_view")}</p>}
+          {browsing === "preview" && <p className="hint conversation-footnote">{state.session.recoverable === false ? tr("web.history_unavailable") : tr("web.history_view")}</p>}
           {browsing === "live" && state.pending_interactions.length > 0 && (
             <InteractionDock
               sessionId={state.session.session_id}
@@ -765,8 +834,10 @@ export default function App() {
           )}
           <div className="composer-wrap">
             <Composer
+              key={state.session.session_id}
               sessionId={state.session.session_id}
               projectId={projectKey() || null}
+              deferUploads={browsing === "preview"}
               connection={browsing === "preview" ? "connected" : (state.session.lifecycle === "closing" || state.session.lifecycle === "closed" || state.session.status === "closing" || state.session.status === "closed" ? "closed" : state.connection)}
               draft={draft}
               updateDraft={updateDraft}
@@ -811,14 +882,22 @@ export default function App() {
           </Timeline>
         </> : selected ? <p className="hint" role="status">{tr("web.loading_session")}</p> : <>
           <div className="conversation-head"><div className="task-heading"><h1>{tr("web.no_session")}</h1></div></div>
+          <div className="conversation-body welcome-body">
+          <div className="conversation-scroll">
+          <div className="conversation-main">
           <div className="timeline welcome-pane">
             <p className="hint">{tr("web.no_session_help")}</p>
-            <EnvironmentChoice sessionId={draftKey} draft={draft} updateDraft={updateDraft} git={Boolean(project?.git)} workLabel={typeof project?.project_root === "string" ? project.project_root : ""} />
+            <EnvironmentChoice sessionId={draftKey} draft={draft} updateDraft={updateDraft} git={Boolean(project?.git)} workLabel={selectedWorkspace?.root ?? (typeof project?.project_root === "string" ? project.project_root : "")} />
           </div>
+          </div>
+          </div>
+          <div className="conversation-main conversation-main-foot">
           <div className="composer-wrap">
             <Composer
+              key={draftKey}
               sessionId={draftKey}
               projectId={projectKey() || null}
+              deferUploads
               connection="connected"
               draft={draft}
               updateDraft={updateDraft}
@@ -833,15 +912,26 @@ export default function App() {
               cancel={async () => undefined}
             />
           </div>
+          </div>
+          </div>
         </>}
       </main>
-      {state && selected ? <Inspector key={selected} state={state} sessionId={selected} open={inspectorOpen} narrow={narrowInspector} focusPath={focusPath} close={() => { setInspectorOpen(false); setNarrowInspector(false); api.setPreference({ inspector_open: false }).catch(() => undefined); }} /> : null}
+      {state && selected ? <Inspector key={selected} state={state} sessionId={selected} open={compactViewport ? inspectorOpen && narrowInspector : inspectorOpen} narrow={compactViewport && narrowInspector} focusPath={fileFocus?.sessionId === selected ? fileFocus.path : null} focusRequest={fileFocus?.request} close={closeInspector} /> : null}
     </div>
     {railOpen && <button className="sidebar-backdrop" aria-label={tr("web.close_sessions")} onClick={() => setRailOpen(false)} />}
+    {state && selected && inspectorOpen && narrowInspector && compactViewport && <button className="inspector-backdrop" aria-label={tr("web.close_inspector")} onClick={closeInspector} tabIndex={-1} />}
     {fatal && project && <div className="toast" role="alert"><Warning size={16} /><span>{fatal}</span><button className="icon-button" onClick={() => setFatal("")} aria-label={tr("web.dismiss")}><X size={14} /></button></div>}
-    {panel === "search" && <SearchDialog sessionId={browsing === "live" ? selected : null} projectId={workspaceId.current || launchProject || null} close={() => setPanel(null)} openFile={(path) => { setFocusPath(path); setPanel(null); setInspectorOpen(true); setNarrowInspector(true); }} />}
-    {panel === "memory" && <MemoryDialog sessionId={selected} close={() => setPanel(null)} />}
-    {panel === "rules" && <RulesDialog sessionId={selected} close={() => setPanel(null)} />}
+    {panel === "search" && <SearchDialog sessionId={browsing === "live" ? selected : null} projectId={workspaceId.current || launchProject || null} previewFiles={!selected} close={() => setPanel(null)} openFile={(path) => {
+      if (!selected) return;
+      setFileFocus((previous) => ({ sessionId: selected, path, request: (previous?.request ?? 0) + 1 }));
+      setPanel(null); openInspector();
+    }} openSession={async (sessionId) => {
+      const session = sessions.find((item) => item.session_id === sessionId) ?? (await refreshSessions()).find((item) => item.session_id === sessionId);
+      if (!session) { setFatal("This task is no longer available."); return; }
+      await selectSession(session); setPanel(null);
+    }} />}
+    {panel === "memory" && <MemoryDialog sessionId={browsing === "live" ? selected : null} close={() => setPanel(null)} />}
+    {panel === "rules" && <RulesDialog sessionId={browsing === "live" ? selected : null} close={() => setPanel(null)} />}
     {panel === "schedules" && <SchedulesDialog sessionId={selected} projectId={workspaceId.current || launchProject || null} close={() => setPanel(null)} />}
     {panel === "settings" && <SettingsDialog theme={theme} inspectorOpen={inspectorOpen} close={() => setPanel(null)} save={savePreference} />}
   </div>;

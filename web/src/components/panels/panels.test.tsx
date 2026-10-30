@@ -31,6 +31,49 @@ const view = (sessionId: string): ViewState => ({
 });
 
 describe("workspace panels", () => {
+  it("drops old search responses after changing workspace and contains Escape inside search", async () => {
+    let release: (value: unknown) => void = () => undefined;
+    const pending = new Promise((resolve) => { release = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => pending })));
+    const close = vi.fn();
+    const escaped = vi.fn();
+    window.addEventListener("keydown", escaped);
+    const props = { sessionId: null, close, openFile: () => undefined };
+    const { rerender } = render(<SearchDialog {...props} projectId="a" />);
+    fireEvent.change(screen.getByLabelText("Search query"), { target: { value: "readme" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    rerender(<SearchDialog {...props} projectId="b" />);
+    release({ results: [{ kind: "file", path: "old-workspace.md" }] });
+    await Promise.resolve(); await Promise.resolve();
+    expect(screen.queryByText("file old-workspace.md")).toBeNull();
+    fireEvent.keyDown(screen.getByLabelText("Search query"), { key: "Escape" });
+    expect(close).toHaveBeenCalledOnce();
+    expect(escaped).not.toHaveBeenCalled();
+    window.removeEventListener("keydown", escaped);
+  });
+
+  it("opens a matching task from search results", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ results: [{ kind: "task", session_id: "saved", title: "Fix inspector" }] }) })));
+    const openSession = vi.fn();
+    render(<SearchDialog sessionId={null} projectId="p" close={() => undefined} openFile={() => undefined} openSession={openSession} />);
+    fireEvent.change(screen.getByLabelText("Search query"), { target: { value: "inspector" } });
+    fireEvent.change(screen.getByLabelText("Search kind"), { target: { value: "task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.click(await screen.findByRole("button", { name: "task Fix inspector" }));
+    expect(openSession).toHaveBeenCalledWith("saved");
+  });
+
+  it("previews a workspace file before any session exists", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => ({ ok: true, json: async () => String(input).includes("/file?") ? { path: "README.md", content: "Workspace file content", binary: false } : { results: [{ kind: "file", path: "README.md" }] } })));
+    const openFile = vi.fn();
+    render(<SearchDialog sessionId={null} projectId="p" close={() => undefined} openFile={openFile} previewFiles />);
+    fireEvent.change(screen.getByLabelText("Search query"), { target: { value: "readme" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.click(await screen.findByRole("button", { name: "file README.md" }));
+    expect(await screen.findByText("Workspace file content")).toBeTruthy();
+    expect(openFile).not.toHaveBeenCalled();
+  });
+
   it("rejects an empty search before calling the server", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

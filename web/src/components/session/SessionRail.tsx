@@ -1,4 +1,4 @@
-import { Check, Circle, DotsThreeVertical, Folder, Plus, Warning, X } from "@phosphor-icons/react";
+import { CaretDown, CaretRight, Check, Circle, DotsThreeVertical, Folder, Plus, Warning, X } from "@phosphor-icons/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useT } from "../../i18n";
 import type { SessionSummary } from "../../types";
@@ -49,12 +49,16 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
   onArchive?: (session: SessionSummary) => void;
 }) {
   const tr = useT();
-  const [showAllHistory, setShowAllHistory] = useState(false);
+  const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({});
+  const [collapsedProjects, setCollapsedProjects] = useState<Record<string, boolean>>({});
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
   const active = sessions.filter((item) => item.active);
   const history = sessions.filter((item) => !item.active);
-  const visibleHistory = showAllHistory ? history : history.slice(0, 4);
+  useEffect(() => {
+    const owner = sessions.find((session) => session.session_id === selected)?.project_id;
+    if (owner) setCollapsedProjects((current) => current[owner] ? { ...current, [owner]: false } : current);
+  }, [selected, sessions]);
   useEffect(() => {
     if (!workspaceMenuOpen) return;
     const closeOnOutsidePress = (event: PointerEvent) => {
@@ -70,9 +74,9 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
     if (session.active && execution === "idle") return tr("web.status.paused");
     return tr(`web.status.${execution}`);
   };
-  const renderActive = () => <>
-    <div className="section-label"><span>{tr("web.active_tasks")}</span>{active.length > 0 && <span className="live-dot" />}</div>
-    {active.map((session) => {
+  const renderActive = (activeItems = active, labeled = true) => <>
+    {labeled && <div className="section-label"><span>{tr("web.active_tasks")}</span>{activeItems.length > 0 && <span className="live-dot" />}</div>}
+    {activeItems.map((session) => {
       const title = sessionTitle(session, tr);
       const current = selected === session.session_id;
       const execution = (session.execution || session.status) === "idle" && ["completed", "failed", "cancelled", "interrupted"].includes(session.agent_status ?? "")
@@ -91,17 +95,22 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
         {!current && <SessionMenu session={session} onRename={onRename} onArchive={onArchive} />}
       </div>;
     })}
-    {!active.length && <p className="empty-small">{tr("web.no_active")}</p>}
+    {!activeItems.length && <p className="empty-small">{tr("web.no_active")}</p>}
   </>;
-  const renderHistory = () => <>
-    <div className="section-label"><span>{tr("web.recent_tasks")}</span>{history.some((session) => isToday(session.saved_at)) && <span>{tr("web.today")}</span>}</div>
+  const renderHistory = (historyItems = history, owner = "all") => {
+    if (!historyItems.length) return null;
+    const showAllHistory = expandedHistory[owner] ?? false;
+    const visibleHistory = showAllHistory ? historyItems : historyItems.slice(0, 4);
+    return <>
+    <div className="section-label"><span>{tr("web.recent_tasks")}</span>{historyItems.some((session) => isToday(session.saved_at)) && <span>{tr("web.today")}</span>}</div>
     {visibleHistory.map((session) => <div className="session-entry" key={session.session_id}>
-      <button className="recent-row" onClick={() => onSelect(session)}><RecentMark outcome={session.agent_status || session.status} />{sessionTitle(session, tr)}</button>
+      <button className={`recent-row ${selected === session.session_id ? "selected" : ""}`} aria-current={selected === session.session_id ? "page" : undefined} onClick={() => onSelect(session)}><RecentMark outcome={session.agent_status || session.status} />{sessionTitle(session, tr)}</button>
       {selected !== session.session_id && <SessionMenu session={session} onRename={onRename} onArchive={onArchive} />}
     </div>)}
-    {!showAllHistory && history.length > visibleHistory.length && <button type="button" className="recent-more" onClick={() => setShowAllHistory(true)}>{tr("web.show_all_tasks", { count: history.length - visibleHistory.length })}</button>}
-    {showAllHistory && history.length > 4 && <button type="button" className="recent-more" onClick={() => setShowAllHistory(false)}>{tr("web.show_recent_tasks")}</button>}
+    {!showAllHistory && historyItems.length > visibleHistory.length && <button type="button" className="recent-more" onClick={() => setExpandedHistory((current) => ({ ...current, [owner]: true }))}>{tr("web.show_all_tasks", { count: historyItems.length - visibleHistory.length })}</button>}
+    {showAllHistory && historyItems.length > 4 && <button type="button" className="recent-more" onClick={() => setExpandedHistory((current) => ({ ...current, [owner]: false }))}>{tr("web.show_recent_tasks")}</button>}
   </>;
+  };
   return <aside className={`sidebar ${open ? "responsive-open" : ""}`}>
     <div className="sidebar-scroll">
       <button className="primary-action" onClick={onCreate} aria-label={tr("web.new_session")}><span className="primary-action-label"><Plus size={14} weight="bold" /><span>{tr("web.new_task")}</span></span><kbd>{tr("web.alt_shortcut_key", { key: "N" })}</kbd></button>
@@ -117,11 +126,33 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
             </div>}
           </div>
         </div>
-        {workspaces.map((workspace) => <div className="workspace-block" key={workspace.project_id}>
-          <button type="button" className={`nav-row ${workspace.selected ? "selected" : ""}`} onClick={() => onSelectWorkspace?.(workspace.project_id)}>
-            <Folder size={14} />{workspace.name}{workspace.selected && <span className="workspace-selected-dot" aria-hidden="true" />}
-          </button>
-        </div>)}
+        {workspaces.map((workspace) => {
+          const owned = sessions.filter((session) => (session.project_id ?? workspaces.find((item) => item.selected)?.project_id) === workspace.project_id);
+          const activeItems = owned.filter((session) => session.active);
+          const canExpand = activeItems.length > 0 || owned.length === 0;
+          const collapsed = Boolean(collapsedProjects[workspace.project_id]);
+          return <section className="workspace-block" key={workspace.project_id} aria-label={workspace.name}>
+            <div className={`workspace-project-row ${workspace.selected ? "selected" : ""}`}>
+              {canExpand ? <button
+                type="button"
+                className="workspace-caret"
+                aria-label={tr("web.toggle_project_sessions", { name: workspace.name })}
+                aria-expanded={!collapsed}
+                aria-controls={`project-sessions-${workspace.project_id}`}
+                onClick={() => setCollapsedProjects((current) => ({ ...current, [workspace.project_id]: !current[workspace.project_id] }))}
+              >
+                {collapsed ? <CaretRight size={12} weight="bold" /> : <CaretDown size={12} weight="bold" />}
+              </button> : <span className="workspace-caret-placeholder" aria-hidden="true" />}
+              <button type="button" className="nav-row workspace-project-name" aria-current={workspace.selected ? "true" : undefined} onClick={() => onSelectWorkspace?.(workspace.project_id)}>
+                <Folder size={14} />{workspace.name}{workspace.selected && <span className="workspace-selected-dot" aria-hidden="true" />}
+              </button>
+            </div>
+            {canExpand && <div className="workspace-sessions" id={`project-sessions-${workspace.project_id}`} hidden={collapsed}>
+              {activeItems.length > 0 && <div>{renderActive(activeItems, false)}</div>}
+              {!owned.length && <p className="empty-small">{tr("web.no_project_sessions")}</p>}
+            </div>}
+          </section>;
+        })}
       </div>}
       {children}
     </div>
