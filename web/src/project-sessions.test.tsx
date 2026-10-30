@@ -108,5 +108,6 @@ it("keeps a new conversation draft with its project and lets project history col
   expect(screen.getByText("/two")).toBeTruthy();
   fireEvent.click(within(one).getByRole("button", { name: "One" }));
   expect((screen.getByLabelText("Message Wright") as HTMLTextAreaElement).value).toBe("New One draft");
-  expect(within(two).queryByRole("button", { name: "Toggle conversations for Two" })).toBeNull();
+  const toggle = within(two).getByRole("button", { name: "Toggle conversations for Two" });
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
 });

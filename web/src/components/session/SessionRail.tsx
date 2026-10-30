@@ -54,11 +54,12 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
   const active = sessions.filter((item) => item.active);
-  const history = sessions.filter((item) => !item.active);
   const selectedProject = workspaces.find((item) => item.selected)?.project_id;
   const ownerOf = (session: SessionSummary) => session.project_id ?? selectedProject;
   // A session under a workspace row is not repeated in the top-level list.
-  const unlisted = active.filter((session) => !workspaces.some((item) => item.project_id === ownerOf(session)));
+  const unowned = sessions.filter((session) => !workspaces.some((item) => item.project_id === ownerOf(session)));
+  const unlisted = unowned.filter((session) => session.active);
+  const history = unowned.filter((session) => !session.active);
   useEffect(() => {
     const owner = sessions.find((session) => session.session_id === selected)?.project_id;
     if (owner) setCollapsedProjects((current) => current[owner] ? { ...current, [owner]: false } : current);
@@ -101,12 +102,12 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
     })}
     {!activeItems.length && <p className="empty-small">{tr("web.no_active")}</p>}
   </>;
-  const renderHistory = (historyItems = history, owner = "all") => {
+  const renderHistory = (historyItems = history, owner = "all", labeled = true) => {
     if (!historyItems.length) return null;
     const showAllHistory = expandedHistory[owner] ?? false;
     const visibleHistory = showAllHistory ? historyItems : historyItems.slice(0, 4);
     return <>
-    <div className="section-label"><span>{tr("web.recent_tasks")}</span>{historyItems.some((session) => isToday(session.saved_at)) && <span>{tr("web.today")}</span>}</div>
+    {labeled && <div className="section-label"><span>{tr("web.recent_tasks")}</span>{historyItems.some((session) => isToday(session.saved_at)) && <span>{tr("web.today")}</span>}</div>}
     {visibleHistory.map((session) => <div className="session-entry" key={session.session_id}>
       <button className={`recent-row ${selected === session.session_id ? "selected" : ""}`} aria-current={selected === session.session_id ? "page" : undefined} onClick={() => onSelect(session)}><RecentMark outcome={session.agent_status || session.status} />{sessionTitle(session, tr)}</button>
       {selected !== session.session_id && <SessionMenu session={session} onRename={onRename} onArchive={onArchive} />}
@@ -133,11 +134,11 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
         {workspaces.map((workspace) => {
           const owned = sessions.filter((session) => ownerOf(session) === workspace.project_id);
           const activeItems = owned.filter((session) => session.active);
-          const canExpand = activeItems.length > 0 || owned.length === 0;
+          const recentItems = owned.filter((session) => !session.active);
           const collapsed = Boolean(collapsedProjects[workspace.project_id]);
           return <section className="workspace-block" key={workspace.project_id} aria-label={workspace.name}>
             <div className={`workspace-project-row ${workspace.selected ? "selected" : ""}`}>
-              {canExpand ? <button
+              <button
                 type="button"
                 className="workspace-caret"
                 aria-label={tr("web.toggle_project_sessions", { name: workspace.name })}
@@ -146,13 +147,14 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
                 onClick={() => setCollapsedProjects((current) => ({ ...current, [workspace.project_id]: !current[workspace.project_id] }))}
               >
                 {collapsed ? <CaretRight size={12} weight="bold" /> : <CaretDown size={12} weight="bold" />}
-              </button> : <span className="workspace-caret-placeholder" aria-hidden="true" />}
+              </button>
               <button type="button" className="nav-row workspace-project-name" aria-current={workspace.selected ? "true" : undefined} onClick={() => onSelectWorkspace?.(workspace.project_id)}>
                 <Folder size={14} />{workspace.name}{workspace.selected && <span className="workspace-selected-dot" aria-hidden="true" />}
               </button>
             </div>
-            {canExpand && <div className="workspace-sessions" id={`project-sessions-${workspace.project_id}`} hidden={collapsed}>
+            {<div className="workspace-sessions" id={`project-sessions-${workspace.project_id}`} hidden={collapsed}>
               {activeItems.length > 0 && <div>{renderActive(activeItems, false)}</div>}
+              {recentItems.length > 0 && <div>{renderHistory(recentItems, workspace.project_id, false)}</div>}
               {!owned.length && <p className="empty-small">{tr("web.no_project_sessions")}</p>}
             </div>}
           </section>;

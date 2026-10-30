@@ -128,6 +128,8 @@ export type Interaction = {
   http_target?: string;
   shell_note?: string;
   execution_mode?: ExecutionMode;
+  sandbox_readable?: string[];
+  sandbox_writable?: string[];
   choices?: Array<{
     id: string;
     label: string;
@@ -210,7 +212,7 @@ export type EffectivePolicy = {
 export type SandboxStatus = { platform: string; provider: string; available: boolean; state: "ready" | "setup_required" | "initializing" | "failed"; detail?: string };
 /** Server-supplied rule facts, displayed without deriving new authority. */
 export type PermissionResource = Record<string, unknown> & {
-  kind?: string; command_match?: string; argv?: string[]; cwd?: string; sandbox_key?: string;
+  kind?: string; command_match?: string; argv?: string[]; programs?: string[]; cwd?: string; sandbox_key?: string;
   execution_mode?: ExecutionMode;
   dialect?: string; path?: string; path_match?: string; scheme?: string; host?: string;
   port?: number; methods?: string[]; tool_name?: string; operations?: string[];

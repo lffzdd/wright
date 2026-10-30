@@ -20,6 +20,7 @@ from .settings import (
     PermissionRule,
     PermissionSettings,
     command_dialect,
+    command_segments,
     direct_command_argv,
     parse_http_origin,
     relative_to_root,
@@ -200,6 +201,8 @@ class PreparedPermission:
     executable: str = ""
     executable_target: str = ""
     command_rule: bool = False
+    # Programs of a compound command that still need a rule, one per program.
+    missing_command_rules: tuple[PermissionRule, ...] = ()
 
 class PermissionResolver:
     """Pure resource preparation and invocation authority construction."""
@@ -292,8 +295,21 @@ class PermissionResolver:
         executable = resolve_executable(argv[0], cwd=fixed_cwd) if argv and callable(resolve_executable) else None
         executable_target = backend.resolve_path(executable, cwd=fixed_cwd).value if executable else ""
         context = replace(_match_context(arguments, resolved, scope), cwd=fixed_cwd.value, sandbox_key=sandbox_key,
-                          operations=tuple(sorted(access.operations)), executable=executable or "", executable_target=executable_target)
+                          operations=tuple(sorted(access.operations)), executable=executable or "", executable_target=executable_target, execution_mode=self.execution_mode)
         all_rules = (*session_rules, *(self.policy.settings.allow if self.policy.settings else ()))
+        missing_command_rules: tuple[PermissionRule, ...] = ()
+        applied_rules = session_rules
+        if "shell" in access.operations and argv is None:
+            segments = _resolved_segments(access_subject, backend, fixed_cwd)
+            missing = [item for item in segments if not any(
+                rule.tool_name == subject.name and rule.covers(item[0], item[1], item[2], self.execution_mode)
+                for rule in all_rules)]
+            if segments and not missing:
+                # Deny and ask rules still run first; this only answers the allow step.
+                applied_rules = (*session_rules, PermissionRule(subject.name, kind="shell", pattern=access_subject, exact=True, cwd=fixed_cwd.value, sandbox_key=sandbox_key, execution_mode=self.execution_mode))
+            missing_command_rules = tuple({item[0]: PermissionRule(
+                subject.name, kind="command", argv=(item[0],), command_match="executable", cwd=fixed_cwd.value, sandbox_key=sandbox_key,
+                execution_mode=self.execution_mode, operations=("shell",), executable_target=item[1]) for item in missing}.values())
         for rule in all_rules:
             root = rule.resource_root(str(scope.origin))
             if rule.kind == "directory" and "file_write" not in rule.operations and any(
@@ -307,7 +323,7 @@ class PermissionResolver:
             subject=access_subject,
             in_scope=in_scope,
             context=context,
-            session_rules=session_rules,
+            session_rules=applied_rules,
             interaction_mode=interaction_mode,
             permission_mode=permission_mode,
         )
@@ -326,7 +342,7 @@ class PermissionResolver:
                 reason_params = {}
             source = "user_interaction"
 
-        return PreparedPermission(arguments, effective_access, resolved, fixed_cwd, identity, scope, remember_rule, decision, reason, source, reason_code, _pairs(reason_params), executable or "", executable_target, any(rule.kind == "command" and rule.matches(subject.name, access_subject, context=context) for rule in all_rules))
+        return PreparedPermission(arguments, effective_access, resolved, fixed_cwd, identity, scope, remember_rule, decision, reason, source, reason_code, _pairs(reason_params), executable or "", executable_target, any(rule.kind == "command" and rule.matches(subject.name, access_subject, context=context) for rule in all_rules), missing_command_rules)
 
     def _resolve_targets(
         self,
@@ -547,6 +563,21 @@ def _permission_shape(access: ToolAccess) -> tuple:
         tuple((target.kind, target.operation, target.value, target.recursive, target.http_method) for target in access.targets),
         access.subject,
     )
+
+
+def _resolved_segments(command: str, backend, cwd: ExecutionPath) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+    """(executable, target, arguments) per program; empty when any is unknown."""
+    segments = command_segments(command, dialect=command_dialect(cwd.value))
+    resolve_executable = getattr(backend, "resolve_executable", None)
+    if not segments or not callable(resolve_executable):
+        return ()
+    resolved = []
+    for argv in segments:
+        executable = resolve_executable(argv[0], cwd=cwd)
+        if not executable:
+            return ()
+        resolved.append((executable, backend.resolve_path(executable, cwd=cwd).value, argv[1:]))
+    return tuple(resolved)
 
 
 def _blocked_paths(

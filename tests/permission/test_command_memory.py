@@ -14,6 +14,7 @@ from wright.domain.policy.permission.settings import (
     MatchContext,
     PermissionRule,
     PermissionSettings,
+    command_segments,
     direct_command_argv,
 )
 from wright.domain.policy.permission.types import InvocationIdentity, PermissionResponse
@@ -84,13 +85,16 @@ def test_command_rule_identity_cwd_capability_and_dialect():
         sandbox_key="sandbox",
         executable="/usr/bin/python3",
         executable_target="/usr/bin/python3",
+        execution_mode="sandbox",
     )
     rule = command_rule()
     assert rule.matches("execute_command", "python3 -c 'print(1)'", context=context)
+    # Approving a program survives cd and added directories; the sandbox still bounds it.
+    for unchanged in (replace(context, cwd="/elsewhere"), replace(context, sandbox_key="changed")):
+        assert rule.matches("execute_command", "python3 -V", context=unchanged)
     for changed in (
         replace(context, executable="/other/python3"),
-        replace(context, cwd="/elsewhere"),
-        replace(context, sandbox_key="changed"),
+        replace(context, execution_mode="host"),
         replace(context, cwd="C:\\project"),
     ):
         assert not rule.matches("execute_command", "python3 -V", context=changed)
@@ -152,7 +156,7 @@ def test_command_choices_and_exact_legacy_fallback():
     assert not any("prefix" in item for item in choices)
     for backend, command in (
         (FixturePaths(), "unresolved_program -V"),
-        (Paths(), "python -V && echo x"),
+        (Paths(), "python -V && $(evil)"),
     ):
         prompt = resolve(
             execute_command_tool, {"command": command}, backend=backend
@@ -268,3 +272,38 @@ def test_local_program_resolution_observes_clean_path_and_cwd(tmp_path, monkeypa
     assert backend.resolve_executable("myprogram", cwd=backend.cwd()) == str(
         second / "myprogram"
     )
+
+
+@pytest.mark.parametrize(("command", "expected"), [
+    ("python3 a.py && echo done", (("python3", "a.py"),)),
+    ("cd sub; python3 a.py 2>/dev/null | head -3", (("python3", "a.py"), ("head", "-3"))),
+    ("python3 -c 'a; b | c' || uv --version", (("python3", "-c", "a; b | c"), ("uv", "--version"))),
+    ("ls *.py", (("ls", "*.py"),)),
+    ("echo a; pwd", ()),
+])
+def test_compound_commands_name_their_programs(command, expected):
+    assert command_segments(command) == expected
+
+
+@pytest.mark.parametrize("command", [
+    "python3 a.py && $(evil)", "python3 `evil`", "echo \"$(evil)\"", "python3 a.py > out", "(python3 a.py)",
+    "python3 a.py &", "sudo python3 a.py", "python3 a.py | xargs rm", "X=1 python3 a.py", "$PY a.py",
+    "cd sub && ./run", "python3 a.py # note", "python3 <<EOF\nx\nEOF",
+])
+def test_compound_commands_that_stay_whole_command_approvals(command):
+    assert command_segments(command) is None
+
+
+def test_session_program_rules_cover_compound_commands_but_not_new_programs():
+    rule = PermissionRule("execute_command", kind="command", argv=("/usr/bin/python3",), command_match="executable",
+                          cwd="/elsewhere", sandbox_key="other", operations=("shell",), executable_target="/usr/bin/python3")
+    allowed = resolve(execute_command_tool, {"command": "python3 -V && echo ok"}, rules=(rule,))
+    assert allowed.decision == "allow" and allowed.grant.command_argv == ()
+    missing = resolve(execute_command_tool, {"command": "python3 -V && uv --version"}, rules=(rule,))
+    assert missing.decision != "allow"
+    assert [item.resource["argv"] for item in missing.prompt.choices if item.id == "allow_session_command_executable"] == [["/usr/bin/uv"]]
+    both = resolve(execute_command_tool, {"command": "python3 -V && uv --version"})
+    chosen = next(item for item in both.prompt.choices if item.id == "allow_session_command_set")
+    assert chosen.resource["programs"] == ["/usr/bin/python3", "/usr/bin/uv"]
+    remembered = resolve(execute_command_tool, {"command": "python3 -V && uv --version"}, chosen.id)
+    assert [item.argv[0] for item in remembered.changes.session_rules] == ["/usr/bin/python3", "/usr/bin/uv"]

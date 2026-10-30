@@ -249,3 +249,16 @@ def test_host_cancellation_escalates_ignored_sigterm(tmp_path):
         assert not handle.group_alive()
     finally:
         handle.terminate(grace_seconds=.1)
+
+
+def test_sandbox_prompt_lists_the_directories_approval_cannot_widen(tmp_path):
+    backend = LocalExecutionBackend(tmp_path, lambda: tmp_path)
+    prompts = []
+    def deny(request):
+        prompts.append(request.prompt)
+        return PermissionResponse("deny")
+    resolve(workflow("sandbox", deny), backend, "ls -A /elsewhere")
+    payload = prompts[0].to_dict()
+    assert payload["sandbox_readable"] == [str(tmp_path)]
+    assert payload["sandbox_writable"] == [str(tmp_path)]
+    assert "Approval does not widen" in prompts[0].shell_note

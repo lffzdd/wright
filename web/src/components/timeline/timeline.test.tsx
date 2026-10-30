@@ -1,5 +1,6 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { api } from "../../api";
 import { applyEvent } from "../../reducer";
 import type { UiEvent, ViewState } from "../../types";
 import { Timeline } from "./Timeline";
@@ -171,6 +172,16 @@ describe("real timeline projection", () => {
     expect(container.textContent).toBe(snapshotText);
     rerender(toolCardFromState({ call_id: "c", name: "execute_command", phase: "failed", arguments: { command: "false" }, ...result }));
     expect(container.textContent).toBe(snapshotText);
+  });
+
+  it("explains a sandbox denial and grants the directory read-only on request", async () => {
+    vi.spyOn(api, "grants").mockResolvedValue({ version: "v1" } as never);
+    const addGrant = vi.spyOn(api, "addGrant").mockResolvedValue({} as never);
+    const data = { returncode: 1, output: "ls: /outside: Operation not permitted\n", sandbox_denial: { path: "/outside", grant_directory: "/outside", readable: ["/work"], writable: ["/work"] } };
+    render(toolCardFromState({ call_id: "c", name: "execute_command", phase: "failed", arguments: { command: "ls /outside" }, data }, "s"));
+    expect(screen.getByRole("status").textContent).toContain("/work");
+    fireEvent.click(screen.getByRole("button", { name: /read-only|只读/ }));
+    await waitFor(() => expect(addGrant).toHaveBeenCalledWith("s", { kind: "directory", path: "/outside", operations: ["file_read"] }, "session", "v1"));
   });
 
   it("does not invent diff line numbers or file counts from output lines", () => {

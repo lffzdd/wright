@@ -34,7 +34,7 @@ function noticeText(event: UiEvent): string {
     return String(task?.description || event.payload.description || "Background task updated");
   }
   if (event.payload.kind === "completion_rejected") return "Completion check requested another attempt.";
-  if (event.payload.kind === "context_compact") return `Context compacted (${Math.trunc(Number(event.payload.folded_count || 0))} items).`;
+  if (event.payload.kind === "context_compact") return "Older tool results were folded to save context.";
   return String(event.payload.text || "System notice");
 }
 

@@ -107,6 +107,7 @@ class ContextCompactor:
         on_compact: Callable[..., None] | None = None,
     ) -> None:
         self.on_compact = on_compact
+        self._compact_announced = False
         self.context_watermark = context_watermark
         self.keep_recent_tool_results = keep_recent_tool_results
 
@@ -130,6 +131,7 @@ class ContextCompactor:
             context_limit is None
             or estimated_tokens <= context_limit * self.context_watermark
         ):
+            self._compact_announced = False
             return tuple(copied), ()
 
         candidates = [
@@ -190,7 +192,9 @@ class ContextCompactor:
                 folded.append(entry.record_id)
 
         folded_count = len(folded)
-        if self.on_compact is not None:
+        # Folding repeats on every request above the watermark; say so once per crossing.
+        if self.on_compact is not None and folded_count and not self._compact_announced:
+            self._compact_announced = True
             self.on_compact(
                 folded_count, estimated_tokens, context_limit, self.context_watermark
             )

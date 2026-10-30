@@ -189,6 +189,8 @@
       "execution_mode": "sandbox",
       "preview_truncated": true,
       "risk_level": "review",
+      "sandbox_readable": [],
+      "sandbox_writable": [],
       "reason_code": "permission.outside_scope",
       "reason_params": {},
       "summary_code": "permission.scope.invocation_only",
@@ -248,7 +250,7 @@
         {
           "id": "allow_session_command_executable",
           "label": "This conversation (including resume)",
-          "scope": "/usr/bin/echo (any arguments; cwd /project; includes scripts and subprocesses within the sandbox)",
+          "scope": "/usr/bin/echo (any arguments; includes scripts and subprocesses within the sandbox)",
           "persistence": "This conversation (including resume)",
           "lifetime": "session",
           "resource_kind": "command",
@@ -282,7 +284,7 @@
         {
           "id": "allow_project_command_executable",
           "label": "This project",
-          "scope": "/usr/bin/echo (any arguments; cwd /project; includes scripts and subprocesses within the sandbox)",
+          "scope": "/usr/bin/echo (any arguments; includes scripts and subprocesses within the sandbox)",
           "persistence": "This project",
           "lifetime": "project",
           "resource_kind": "command",
@@ -316,7 +318,7 @@
         {
           "id": "allow_user_command_executable",
           "label": "All projects",
-          "scope": "/usr/bin/echo (any arguments; cwd /project; includes scripts and subprocesses within the sandbox)",
+          "scope": "/usr/bin/echo (any arguments; includes scripts and subprocesses within the sandbox)",
           "persistence": "All projects",
           "lifetime": "user",
           "resource_kind": "command",
@@ -376,10 +378,16 @@
       "command": "echo hello",
       "http_method": "",
       "http_target": "",
-      "shell_note": "Approves this whole command in a local process at /project. The process and its descendants remain inside the approved filesystem OS sandbox. Network is disabled unless separately approved for this command.",
+      "shell_note": "Approves this whole command in a local process at /project. The process and its descendants remain inside the approved filesystem OS sandbox. Network is disabled unless separately approved for this command. Readable directories: /project. Approval does not widen them.",
       "execution_mode": "sandbox",
       "preview_truncated": false,
       "risk_level": "review",
+      "sandbox_readable": [
+        "/project"
+      ],
+      "sandbox_writable": [
+        "/project"
+      ],
       "reason_code": "permission.needs_approval",
       "reason_params": {},
       "summary_code": "permission.scope.invocation_only",
@@ -439,7 +447,7 @@
         {
           "id": "allow_session_command_executable",
           "label": "This conversation (including resume)",
-          "scope": "/usr/bin/python3 (any arguments; cwd /project; includes scripts and subprocesses within the sandbox)",
+          "scope": "/usr/bin/python3 (any arguments; includes scripts and subprocesses within the sandbox)",
           "persistence": "This conversation (including resume)",
           "lifetime": "session",
           "resource_kind": "command",
@@ -473,7 +481,7 @@
         {
           "id": "allow_project_command_executable",
           "label": "This project",
-          "scope": "/usr/bin/python3 (any arguments; cwd /project; includes scripts and subprocesses within the sandbox)",
+          "scope": "/usr/bin/python3 (any arguments; includes scripts and subprocesses within the sandbox)",
           "persistence": "This project",
           "lifetime": "project",
           "resource_kind": "command",
@@ -507,7 +515,7 @@
         {
           "id": "allow_user_command_executable",
           "label": "All projects",
-          "scope": "/usr/bin/python3 (any arguments; cwd /project; includes scripts and subprocesses within the sandbox)",
+          "scope": "/usr/bin/python3 (any arguments; includes scripts and subprocesses within the sandbox)",
           "persistence": "All projects",
           "lifetime": "user",
           "resource_kind": "command",
@@ -567,10 +575,16 @@
       "command": "python3 -c 'print(1)'",
       "http_method": "",
       "http_target": "",
-      "shell_note": "Approves this whole command in a local process at /project. The process and its descendants remain inside the approved filesystem OS sandbox. Network is disabled unless separately approved for this command.",
+      "shell_note": "Approves this whole command in a local process at /project. The process and its descendants remain inside the approved filesystem OS sandbox. Network is disabled unless separately approved for this command. Readable directories: /project. Approval does not widen them.",
       "execution_mode": "sandbox",
       "preview_truncated": false,
       "risk_level": "review",
+      "sandbox_readable": [
+        "/project"
+      ],
+      "sandbox_writable": [
+        "/project"
+      ],
       "reason_code": "permission.needs_approval",
       "reason_params": {},
       "summary_code": "permission.scope.invocation_only",
@@ -816,6 +830,8 @@
       "execution_mode": "sandbox",
       "preview_truncated": false,
       "risk_level": "review",
+      "sandbox_readable": [],
+      "sandbox_writable": [],
       "reason_code": "permission.needs_approval",
       "reason_params": {},
       "summary_code": "permission.scope.invocation_only",
@@ -950,6 +966,8 @@
       "execution_mode": "sandbox",
       "preview_truncated": false,
       "risk_level": "review",
+      "sandbox_readable": [],
+      "sandbox_writable": [],
       "reason_code": "permission.needs_approval",
       "reason_params": {},
       "summary_code": "permission.scope.invocation_only",

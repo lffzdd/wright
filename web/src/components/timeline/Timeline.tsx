@@ -146,23 +146,23 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
         if (item.kind === "text") return <AssistantMessage key={item.id} text={item.text || ""} />;
         if (item.kind === "approval") return null;
         if (item.kind === "status") return <TurnOutcome key={item.id} status={item.status} detail={item.text} />;
-        return toolCardFromTimeline(item);
+        return toolCardFromTimeline(item, state.session?.session_id);
       })}
       {pendingPrompt && <UserMessage text={pendingPrompt} userLabel={userLabel} timestamp={timestamp} tocId={state.active_turn?.turn_id ? `${state.active_turn.turn_id}:user` : "pending-user"} />}
-      {liveTools.map((tool) => toolCardFromState(tool))}
+      {liveTools.map((tool) => toolCardFromState(tool, state.session?.session_id))}
       {liveText && <AssistantMessage text={liveText} />}
       {state.active_turn && !liveText && !liveTools.length && !timeline.some((item) => item.turn_id !== undefined && item.turn_id === state.active_turn?.turn_id && item.role === "assistant") && <p className="empty-small working-indicator">{tr("web.working")}</p>}
     </> : <>
       {state.history.map((turn, index) => <div className="turn" key={turn.turn_id || index}>
         {turn.user && <UserMessage text={turn.user} tocId={turn.turn_id || `history-${index}`} />}
-        {turn.tools?.map((tool) => toolCardFromState(tool))}
+        {turn.tools?.map((tool) => toolCardFromState(tool, state.session?.session_id))}
         {turn.status === "failed" && <p className="form-error">{tr("web.turn_failed")}</p>}
         {turn.status === "cancelled" && <p className="form-error">{tr("web.turn_cancelled")}</p>}
         {turn.assistant ? <AssistantMessage text={turn.assistant} /> : turn.status === "failed" || turn.status === "cancelled" ? null : <p className="empty-small">{tr("web.no_answer")}</p>}
       </div>)}
       {state.active_turn && <div className="turn">
         {state.active_turn.prompt && <UserMessage text={state.active_turn.prompt} tocId={state.active_turn.turn_id ? `${state.active_turn.turn_id}:user` : "active-user"} />}
-        {state.active_turn.tools.map((tool) => toolCardFromState(tool))}
+        {state.active_turn.tools.map((tool) => toolCardFromState(tool, state.session?.session_id))}
         {state.active_turn.reasoning && <ReasoningRow text={state.active_turn.reasoning} />}
         {state.active_turn.content ? <AssistantMessage text={state.active_turn.content} /> : <p className="empty-small">{tr("web.working")}</p>}
       </div>}
@@ -170,7 +170,7 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
     {state.session.execution === "queued" && <p className="hint queue-reason" role="status">{tr("web.queued_reason", { reason: state.session.queue_reason || tr("web.queued_default") })}</p>}
     {(state.agents ?? []).map((agent) => <section className="agent-progress" key={agent.task_id}><strong>Subagent {agent.task_id} · {agent.status}</strong>{agent.content && <MarkdownContent content={agent.content} />}</section>)}
     {state.queued_commands.map((item) => <div className="queue-item" key={item.command_id}><span>{item.prompt}</span><button type="button" className="button" onClick={() => cancelQueued(item.command_id)}>{tr("web.remove_queued")}</button></div>)}
-    {state.notices.slice(-5).map((notice) => <div className="system-notice" role="status" key={notice.id}>{present(notice.code, notice.params, notice.text)}</div>)}
+    {state.notices.filter((notice, index, all) => notice.code !== "notice.context_compact" || !all.slice(index + 1).some((item) => item.code === notice.code)).slice(-5).map((notice) => <div className="system-notice" role="status" key={notice.id}>{present(notice.code, notice.params, notice.text)}</div>)}
     {!stuck && <button type="button" className="button jump" onClick={() => { stick.current = true; setStuck(true); scroller.current?.scrollTo?.({ top: scroller.current.scrollHeight }); }}>{tr("web.jump_bottom")}</button>}
     </div>
     </div>

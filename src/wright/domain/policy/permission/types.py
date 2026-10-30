@@ -147,6 +147,8 @@ class PermissionPrompt:
     summary_params: tuple[tuple[str, str], ...] = ()
     preview_truncated: bool = False
     risk_level: Literal["review", "elevated"] = "review"
+    sandbox_readable: tuple[str, ...] = ()
+    sandbox_writable: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         payload = {
@@ -169,6 +171,8 @@ class PermissionPrompt:
             "execution_mode": self.execution_mode,
             "preview_truncated": self.preview_truncated,
             "risk_level": self.risk_level,
+            "sandbox_readable": list(self.sandbox_readable),
+            "sandbox_writable": list(self.sandbox_writable),
         }
         if self.reason_code:
             payload["reason_code"] = self.reason_code

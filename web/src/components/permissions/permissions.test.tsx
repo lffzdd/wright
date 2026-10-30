@@ -221,7 +221,7 @@ it("makes arbitrary interpreter arguments and subprocesses explicit before quick
   const respond = vi.fn().mockResolvedValue(true);
   render(<InteractionCard sessionId="s" root="/project" interaction={{ ...shellInteraction, command: "python -c 'print(1)'", choices: [...shellInteraction.choices!, executableChoice] }} respond={respond} />);
   expect(screen.getByText(/Includes running interpreter code and scripts/).textContent).toContain("launch subprocesses");
-  expect(screen.getByText(/Working directory: \./).textContent).toContain("Offline");
+  expect(screen.getByText(/Offline and limited by the OS sandbox/)).toBeTruthy();
   const button = screen.getByRole("button", { name: /Allow any arguments for \/usr\/bin\/python.*for this session/ });
   await waitFor(() => expect(button).toHaveProperty("disabled", false));
   fireEvent.click(button);

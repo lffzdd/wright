@@ -19,7 +19,7 @@ export function projectRelative(path: string, root?: string): string | null {
   return null;
 }
 
-export function Inspector({ state, sessionId, open, narrow = false, focusPath = null, focusRequest = 0, close }: { state: ViewState; sessionId: string; open: boolean; narrow?: boolean; focusPath?: string | null; focusRequest?: number; close: () => void }) {
+export function Inspector({ state, sessionId, open, narrow = false, focusPath = null, focusRequest = 0, close, onResume }: { state: ViewState; sessionId: string; open: boolean; narrow?: boolean; focusPath?: string | null; focusRequest?: number; close: () => void; onResume?: () => Promise<unknown> }) {
   const tr = useT();
   const panelRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -68,6 +68,18 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
   const [fileError, setFileError] = useState("");
   const [permissionsError, setPermissionsError] = useState("");
   const historyOnly = !state.session.active;
+  const [resumeError, setResumeError] = useState("");
+  const [resumeAttempt, setResumeAttempt] = useState(0);
+  const needsRuntime = historyOnly && (tab === "changes" || tab === "permissions") && state.session.recoverable !== false;
+  useEffect(() => {
+    if (!needsRuntime || !onResume) return;
+    setResumeError("");
+    onResume().catch((error) => setResumeError(error instanceof Error ? error.message : String(error)));
+  }, [needsRuntime, resumeAttempt]);
+  const resumeStatus = onResume && state.session.recoverable !== false ? <>
+    {resumeError ? <><p className="form-error" role="alert">{resumeError}</p><button type="button" className="text-button" onClick={() => setResumeAttempt((value) => value + 1)}>{tr("web.retry")}</button></>
+      : <p className="hint" role="status">{tr("web.resuming_session")}</p>}
+  </> : null;
   const [historyWorkspace, setHistoryWorkspace] = useState<{ sessionId: string; root: string; projectId: string } | null>(null);
   const historyProjectId = historyWorkspace?.sessionId === sessionId && historyWorkspace.root === state.session.execution_root ? historyWorkspace.projectId : null;
   const canReadFiles = !historyOnly || !!historyProjectId;
@@ -346,7 +358,7 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
       </section>}
     </div>}
     {tab === "changes" && <div className="inspector-body" role="tabpanel" id="inspector-panel-changes" aria-labelledby="inspector-tab-changes">
-      {historyOnly ? <p className="hint">{tr("web.inspector_history_changes")}</p> : <>
+      {historyOnly ? resumeStatus ?? <p className="hint">{tr("web.inspector_history_changes")}</p> : <>
       {changesLoading && <p className="hint" role="status">{tr("web.inspector_loading")}</p>}
       {warning && <div className="local-warning"><Warning size={14} />{tr("web.local_warning")}</div>}
       {changesError && <p className="form-error" role="alert">{changesError}</p>}
@@ -378,7 +390,7 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
       </>}
     </div>}
     {tab === "permissions" && <div className="inspector-body" role="tabpanel" id="inspector-panel-permissions" aria-labelledby="inspector-tab-permissions">
-      {historyOnly ? <p className="hint">{tr("web.inspector_history_permissions")}</p> : <>
+      {historyOnly ? resumeStatus ?? <p className="hint">{tr("web.inspector_history_permissions")}</p> : <>
       {permissionsError && <p className="form-error" role="alert">{permissionsError}</p>}
       <PermissionsPanel sessionId={sessionId} grants={grants} update={setGrants}
         interactionMode={grants?.interaction_mode ?? state.session.interaction_mode ?? "agent"}

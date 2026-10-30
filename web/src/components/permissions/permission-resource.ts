@@ -8,6 +8,7 @@ export function commandArguments(argv: string[]): string {
 
 export function commandRuleLabel(resource: PermissionResource, fallback: string): string {
   const argv = resource.argv ?? [];
+  if (resource.programs?.length) return t("web.grant_line.executable", { program: resource.programs.join(", ") });
   if (resource.command_match === "executable") return t("web.grant_line.executable", { program: argv[0] || fallback });
   return t("web.grant_line.argv_prefix", { prefix: argv.length ? commandArguments(argv) : fallback });
 }

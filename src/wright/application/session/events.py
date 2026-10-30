@@ -111,8 +111,7 @@ def notice_text(event_type: str, payload: dict[str, Any]) -> str:
     if payload.get("kind") == "completion_rejected":
         return "Completion check requested another attempt."
     if payload.get("kind") == "context_compact":
-        folded = payload.get("folded_count") or 0
-        return f"Context compacted ({int(folded)} items)."
+        return "Older tool results were folded to save context."
     return str(payload.get("text") or "System notice")
 
 

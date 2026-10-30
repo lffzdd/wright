@@ -31,6 +31,7 @@ from ..execution.identity import (
     ExecutionWaitCancelled,
 )
 from ..execution.paging import bounded_page_limit, decode_cursor, encode_cursor
+from .sandbox_denial import describe_sandbox_denial, sandbox_denial_message
 
 logger = get_logger(__name__)
 
@@ -208,6 +209,10 @@ class CommandExecution:
             data["outcome"] = "unconfirmed"
         if process.returncode == 0:
             return CommandOutcome(True, data=data)
+        denial = describe_sandbox_denial(page.text, getattr(execution, "grant", None))
+        if denial is not None:
+            data["sandbox_denial"] = denial
+            data["message"] = sandbox_denial_message(denial)
         return CommandOutcome(
             False,
             f"Command exited with code {process.returncode}",

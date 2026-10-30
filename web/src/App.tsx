@@ -594,8 +594,23 @@ export default function App() {
       return definite ? "rejected" as const : "unknown" as const;
     }
   };
+  // Viewing a saved session only reads it. Settings and the working tree need its
+  // runtime, so asking for them resumes it without sending anything.
+  const resumeSelected = async (): Promise<string> => {
+    if (!selected) throw new Error("No session is selected");
+    if (browsing === "live") return selected;
+    const owner = sessions.find((item) => item.session_id === selected)?.project_id || state?.session.project_id || projectKey();
+    const body = { resume: selected, client_request_id: crypto.randomUUID() };
+    const created = await (owner ? api.createInWorkspace(owner as string, body) : api.create(body));
+    const sessionId = created.session.session_id;
+    remember(sessionId);
+    setBrowsing("live");
+    setSelected(sessionId);
+    refreshSessions().catch(() => undefined);
+    return sessionId;
+  };
   const changeModel = async (newModel: string) => {
-    const sessionId = selected;
+    const sessionId = await resumeSelected().catch((error) => { setFatal(String(error)); return null; });
     const generation = epoch.current;
     if (!sessionId) return;
     try {
@@ -843,14 +858,15 @@ export default function App() {
               running={Boolean(running || directoryQueued)}
               models={Array.isArray(project?.models) ? project.models as string[] : []}
               currentModel={state.session.model ?? ""}
-              onModel={browsing === "live" ? (model) => changeModel(model).catch((error) => setFatal(String(error))) : undefined}
+              onModel={(model) => changeModel(model).catch((error) => setFatal(String(error)))}
               interactionMode={state.session.interaction_mode ?? "agent"}
               permissionMode={state.session.permission_mode ?? "default"}
               executionMode={state.session.execution_mode ?? "sandbox"}
-              onPolicy={browsing === "live" ? async (body) => {
-                await api.policy(state.session.session_id, body);
+              onPolicy={async (body) => {
+                const sessionId = await resumeSelected();
+                await api.policy(sessionId, body);
                 setState((current) => {
-                  if (!current || current.session.session_id !== state.session.session_id) return current;
+                  if (!current || current.session.session_id !== sessionId) return current;
                   const interaction = body.interaction_mode;
                   const permission = body.permission_mode;
                   return {
@@ -862,7 +878,7 @@ export default function App() {
                     },
                   };
                 });
-              } : undefined}
+              }}
               submit={(commandId, prompt, attachmentIds, documentIds, references) => browsing === "live"
                 ? sendCommand({ type: "turn.submit", command_id: commandId, prompt, attachment_ids: attachmentIds, document_ids: documentIds ?? [], references: references ?? [] })
                 : beginTurn(composerOwner, commandId, prompt, attachmentIds, documentIds ?? [], references ?? [])}
@@ -915,7 +931,7 @@ export default function App() {
           </div>
         </>}
       </main>
-      {state && selected ? <Inspector key={selected} state={state} sessionId={selected} open={compactViewport ? inspectorOpen && narrowInspector : inspectorOpen} narrow={compactViewport && narrowInspector} focusPath={fileFocus?.sessionId === selected ? fileFocus.path : null} focusRequest={fileFocus?.request} close={closeInspector} /> : null}
+      {state && selected ? <Inspector key={selected} state={state} sessionId={selected} open={compactViewport ? inspectorOpen && narrowInspector : inspectorOpen} narrow={compactViewport && narrowInspector} focusPath={fileFocus?.sessionId === selected ? fileFocus.path : null} focusRequest={fileFocus?.request} close={closeInspector} onResume={resumeSelected} /> : null}
     </div>
     {railOpen && <button className="sidebar-backdrop" aria-label={tr("web.close_sessions")} onClick={() => setRailOpen(false)} />}
     {state && selected && inspectorOpen && narrowInspector && compactViewport && <button className="inspector-backdrop" aria-label={tr("web.close_inspector")} onClick={closeInspector} tabIndex={-1} />}

@@ -40,6 +40,24 @@ def _tool_result(call_id: str, data: str) -> dict:
     }
 
 
+def test_compact_notice_fires_once_per_watermark_crossing(tmp_path: Path):
+    session = Session.create("context", tmp_path)
+    for name in ("call_a", "call_b", "call_c"):
+        session.append_message({"role": "assistant", "content": "calling"})
+        session.append_message(_tool_result(name, "x" * 8_000))
+    notices = []
+    builder = ContextBuilder(ContextCompactor(
+        context_watermark=0.1, keep_recent_tool_results=1,
+        on_compact=lambda *args: notices.append(args),
+    ))
+    for _ in range(3):
+        builder.build(session.message_records, tools=[], context_limit=1_000, output_reserve_tokens=0)
+    assert len(notices) == 1
+    builder.build(session.message_records, tools=[], context_limit=1_000_000, output_reserve_tokens=0)
+    builder.build(session.message_records, tools=[], context_limit=1_000, output_reserve_tokens=0)
+    assert len(notices) == 2
+
+
 def test_context_projection_folds_without_rewriting_complete_history(tmp_path: Path):
     session = Session.create("context", tmp_path)
     session.append_message({"role": "assistant", "content": "calling"})

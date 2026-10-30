@@ -206,7 +206,7 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
   const label = (id: string | undefined, text: string) => submitting && submitting === id ? tr("web.submitting") : text;
   // These details describe the remembered rule, so they sit with its button, not under the target.
   const quickDetails = quick?.resource_kind === "command"
-    ? `${commandRuleDetails(quick.resource ?? {})} ${tr(host ? "web.approval.host_command_boundary" : "web.approval.command_boundary", { path: displayPath(quick.resource?.cwd || interaction.cwd || "", root) })}`
+    ? `${commandRuleDetails(quick.resource ?? {})} ${tr(host ? "web.approval.host_command_boundary" : "web.approval.command_boundary")}`
     : quick?.resource_kind === "directory" ? tr("web.approval.directory_recursive") : "";
   const quickNote = quickDetails && tr("web.approval.quick_note", { details: quickDetails });
   const longRule = Boolean(quick) && describeChoice(quick as Choice, root).length > 56;
@@ -243,6 +243,9 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
         </div>
         {action === "shell" && interaction.cwd && displayPath(interaction.cwd, root) !== "." && <p className="approval-meta">{tr("web.approval.in_folder", { path: displayPath(interaction.cwd, root) })}</p>}
         {action === "shell" && host && <p className="approval-warn">{tr("web.execution.host_help")}</p>}
+        {action === "shell" && !host && Boolean(interaction.sandbox_readable?.length) && <div className="sandbox-scope">
+          <span title={tr("web.sandbox.scope_note")}>{tr("web.sandbox.scope_short", { paths: interaction.sandbox_readable!.map((path) => displayPath(path, root)).join(", ") })}</span>
+        </div>}
 
         {interaction.preview && <details className="permission-preview approval-preview" open={action === "file_write"}>
           <summary>{tr("web.content_preview")}</summary>
@@ -299,7 +302,7 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
               {choice.resource_kind === "directory" && <><br /><small>{tr("web.approval.directory_recursive")}</small></>}
               {(choice.resource_kind === "command" || choice.resource_kind === "shell") && <><br /><small>
                 {choice.resource_kind === "command" && `${commandRuleDetails(choice.resource ?? {})} `}
-                {tr(host ? "web.approval.host_command_boundary" : "web.approval.command_boundary", { path: displayPath(choice.resource?.cwd || interaction.cwd || "", root) })}
+                {tr(host ? "web.approval.host_command_boundary" : "web.approval.command_boundary")}
               </small></>}
               {choice.resource_kind === "tool" && <><br /><small>{tr("web.approval.tool_operations", { operations: (choice.operations ?? []).map((operation) => tr(`web.operation.${operation}`)).join(", ") })}</small></>}
             </span>

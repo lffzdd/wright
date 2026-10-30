@@ -1670,6 +1670,10 @@ html.dark .outline-tick.active i {
 .approval-more-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .approval-more-actions .button.primary { margin-left: auto; }
 .approval-warn { color: var(--warning); font-size: 11px; }
+.sandbox-scope { color: var(--text-muted); font-size: 11px; overflow-wrap: anywhere; }
+.sandbox-denial p { margin: 0 0 4px; }
+.sandbox-denial { display: grid; gap: 4px; justify-items: start; padding: 8px; border-top: 1px solid var(--border-subtle); color: var(--text-primary); font-size: 11.5px; overflow-wrap: anywhere; }
+.sandbox-denial .mono { color: var(--text-muted); font-size: 10.5px; }
 .interaction-dock { max-height: none; overflow: visible; }
 
 /* Permissions tab */
@@ -1689,7 +1693,9 @@ html.dark .outline-tick.active i {
 .glance-row.deny .glance-decision { color: var(--text-muted); }
 .grant-group { display: flex; flex-direction: column; gap: 4px; }
 .grant-group-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; margin-top: 4px; }
-.grant-row { padding: 6px 10px; }
+.grant-row { padding: 8px 10px; display: grid; gap: 2px; }
+.grant-row small { color: var(--text-muted); font-size: 11px; line-height: 1.35; }
+.grant-group { gap: 6px; }
 .grant-row-main { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
 .grant-line { font-size: 12px; overflow-wrap: anywhere; }
 .grant-add > summary, .perm-fold > summary { cursor: pointer; font-size: 12px; color: var(--text-secondary); padding: 4px 0; }

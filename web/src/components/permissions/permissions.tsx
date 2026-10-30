@@ -106,16 +106,13 @@ export function PermissionGrants({ sessionId, grants, update }: { sessionId: str
       if (!items.length) return null;
       return <div className="grant-group" key={lifetime}>
         <div className="grant-group-label">{tr(`web.approval.lifetime.${lifetime}`)}</div>
-        {items.map((grant) => <article className={`policy-card grant-row ${grant.lifetime === "user" ? "warn" : ""}`} key={`${grant.source}:${grant.id}`}>
+        {items.map((grant) => <article className={`policy-card grant-row ${grant.lifetime === "user" ? "warn" : ""}`} key={`${grant.source}:${grant.id}`} title={grant.resource_kind === "command" || grant.resource_kind === "shell" ? [grant.cwd && grant.resource_kind === "shell" ? tr("web.approval.in_folder", { path: grant.cwd }) : "", tr((grant.resource?.execution_mode ?? "sandbox") === "host" ? "web.execution.host_boundary" : "web.approval.sandbox_boundary")].filter(Boolean).join(" · ") : undefined}>
           <div className="grant-row-main"><span className="grant-line">{describeGrant(grant)}</span>
             <button type="button" disabled={busy} className="text-button" aria-label={tr("web.revoke_target", { target: grant.target })} onClick={() => mutate(() => api.revokeGrant(sessionId, grant.id, grant.source, grants.version), "web.grant_revoked")}>{tr("web.revoke")}</button></div>
-          {grant.cwd && <small className="mono">{tr("web.approval.in_folder", { path: grant.cwd })}</small>}
           {grant.resource_kind === "directory" && grant.recursive && <small>{tr("web.approval.directory_recursive")}</small>}
-          {(grant.resource_kind === "command" || grant.resource_kind === "shell") && <small>
-            {grant.resource_kind === "command" && `${commandRuleDetails(grant.resource ?? grant)} `}{tr((grant.resource?.execution_mode ?? "sandbox") === "host" ? "web.execution.host_boundary" : "web.approval.sandbox_boundary")}
-          </small>}
+          {grant.resource_kind === "command" && <small>{commandRuleDetails(grant.resource ?? grant)}</small>}
           {grant.resource_kind === "tool" && <small>{tr("web.approval.tool_operations", { operations: grant.operations.map((operation) => tr(`web.operation.${operation}`)).join(", ") })}</small>}
-          {grant.tool && grant.tool !== "*" && <small>{tr("web.tool_restriction", { tool: grant.tool })}</small>}
+          {grant.tool && grant.tool !== "*" && grant.resource_kind !== "command" && grant.resource_kind !== "shell" && <small>{tr("web.tool_restriction", { tool: grant.tool })}</small>}
           {grant.lifetime === "user" && <small>{tr("web.cross_project")}</small>}
         </article>)}
       </div>;
@@ -201,8 +198,7 @@ export function PermissionsPanel({ sessionId, grants, update, interactionMode, p
           <option value="host">{tr("web.execution.host")}</option>
         </select>
       </label>
-      <p className="hint">{tr(execution === "host" ? "web.execution.host_help" : "web.execution.sandbox_help")}</p>
-      <p className="hint">{tr("web.execution.switch_help")}</p>
+      <p className="hint" title={tr("web.execution.switch_help")}>{tr(execution === "host" ? "web.execution.host_help" : "web.execution.sandbox_help")}</p>
     </section>
     <section className="perm-section">
       <div className="section-label"><span>{tr("web.glance.title")}</span></div>
@@ -210,7 +206,7 @@ export function PermissionsPanel({ sessionId, grants, update, interactionMode, p
         {MODES.map((item) => <button key={item} type="button" role="radio" aria-checked={mode === item}
           className={`perm-mode ${mode === item ? "active" : ""}`} disabled={readOnly || Boolean(saving)} onClick={() => void setMode(item)}>
           <strong>{tr(`web.perm.${item}`)}</strong>
-          <small>{tr(item === "bypass" && execution === "host" ? "web.execution.host_bypass" : `web.perm_help.${item}`)}</small>
+          {mode === item && <small>{tr(item === "bypass" && execution === "host" ? "web.execution.host_bypass" : `web.perm_help.${item}`)}</small>}
         </button>)}
       </div>
       {readOnly && <p className="hint">{tr("web.perm_locked", { mode: tr(`web.mode.${interactionMode}`) })}</p>}

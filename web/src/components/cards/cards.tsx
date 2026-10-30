@@ -1,6 +1,7 @@
 import { CaretDown, Check, User, X } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import { MarkdownContent } from "../../Markdown";
+import { api } from "../../api";
 import { parseDiff } from "../../diff";
 import { present, t, useT } from "../../i18n";
 import type { Interaction, TimelineItem, ToolState } from "../../types";
@@ -180,9 +181,35 @@ function directoryEntryCount(result?: Record<string, unknown> | null, data?: unk
   return 0;
 }
 
+type SandboxDenial = { path: string; grant_directory: string; readable: string[]; writable: string[] };
+
+function SandboxDenialHint({ denial, sessionId }: { denial: SandboxDenial; sessionId?: string }) {
+  const tr = useT();
+  const [state, setState] = useState<"idle" | "busy" | "granted" | "failed">("idle");
+  const directory = denial.grant_directory;
+  const grant = () => {
+    if (!sessionId) return;
+    setState("busy");
+    api.grants(sessionId)
+      .then((grants) => api.addGrant(sessionId, { kind: "directory", path: directory, operations: ["file_read"] }, "session", grants.version))
+      .then(() => setState("granted"), () => setState("failed"));
+  };
+  return <div className="sandbox-denial" role="status">
+    <p>{tr(denial.path ? "web.sandbox.denied_path" : "web.sandbox.denied", { path: denial.path })}</p>
+    <p className="mono">{tr("web.sandbox.scope_read", { paths: denial.readable.join(", ") })}</p>
+    {directory && sessionId && state !== "granted" && <button type="button" className="button" disabled={state === "busy"} onClick={grant}>
+      {tr(state === "busy" ? "web.submitting" : "web.sandbox.grant_read", { path: directory })}
+    </button>}
+    {state === "granted" && <p>{tr("web.sandbox.granted", { path: directory })}</p>}
+    {state === "failed" && <p className="form-error" role="alert">{tr("web.sandbox.grant_failed")}</p>}
+    <p className="hint">{tr("web.sandbox.denied_host")}</p>
+  </div>;
+}
+
 export function ToolCard({
-  name, phase, args, result, data, duration, output, kind,
+  name, phase, args, result, data, duration, output, kind, sessionId,
 }: {
+  sessionId?: string;
   name: string;
   phase?: string;
   args?: Record<string, unknown>;
@@ -235,6 +262,7 @@ export function ToolCard({
         </span>
       </button>
       {open && body && (family === "edit" ? <DiffBody text={body} /> : testFailed ? <TestFailureOutput text={body} /> : <pre className={`term-body ${code !== null && code !== 0 ? "failed" : ""}`}>{body}</pre>)}
+      {open && Boolean(metricSource?.sandbox_denial) && <SandboxDenialHint denial={metricSource!.sandbox_denial as SandboxDenial} sessionId={sessionId} />}
       {open && hasDiff && !body && <p className="empty-small">{tr("web.no_diff")}</p>}
       {open && hasDiff && metricSource?.diff_truncated === true && <p className="hint" role="status">{tr("web.diff_truncated")}</p>}
     </section>
@@ -251,7 +279,7 @@ function toolOutput(tool: ToolState): string {
   return [tool.err, body].filter(Boolean).join("\n");
 }
 
-export function toolCardFromTimeline(item: TimelineItem) {
+export function toolCardFromTimeline(item: TimelineItem, sessionId?: string) {
   const result = item.result;
   const envelope = result && ("ok" in result || "data" in result || "err" in result);
   const tool: ToolState = {
@@ -261,11 +289,11 @@ export function toolCardFromTimeline(item: TimelineItem) {
     err: envelope ? textOf(result.err) : undefined,
   };
   const data = tool.data && typeof tool.data === "object" ? tool.data as Record<string, unknown> : null;
-  return <ToolCard key={item.id} name={tool.name} phase={item.phase} args={tool.arguments} result={data} duration={item.duration_ms} output={toolOutput(tool)} kind={item.kind} />;
+  return <ToolCard key={item.id} name={tool.name} phase={item.phase} args={tool.arguments} result={data} duration={item.duration_ms} output={toolOutput(tool)} kind={item.kind} sessionId={sessionId} />;
 }
 
-export function toolCardFromState(tool: ToolState) {
-  return <ToolCard key={tool.call_id} name={tool.name} phase={tool.phase} args={tool.arguments} data={tool.data} output={toolOutput(tool)} />;
+export function toolCardFromState(tool: ToolState, sessionId?: string) {
+  return <ToolCard key={tool.call_id} name={tool.name} phase={tool.phase} args={tool.arguments} data={tool.data} output={toolOutput(tool)} sessionId={sessionId} />;
 }
 
 export function InteractionCard({ sessionId, interaction, respond, root }: {

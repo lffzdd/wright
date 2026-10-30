@@ -35,6 +35,7 @@ class MatchContext:
     operations: tuple[str, ...] = ()
     executable: str = ""
     executable_target: str = ""
+    execution_mode: str = ""
 
 
 @dataclass(frozen=True)
@@ -180,10 +181,92 @@ def direct_command_argv(command: str, *, dialect: str = "posix") -> tuple[str, .
         return None
     # These words alter command resolution or execution context, rather than
     # directly naming the program the user is being offered authority for.
-    wrappers = {"env", "command", "exec", "sudo", "su", "doas", "nohup", "nice", "time", "timeout", "xargs", "eval", "source", ".", "cd", "export", "unset", "alias", "unalias", "set", "builtin", "function", "if", "then", "for", "while", "until", "case", "!"}
-    if PurePosixPath(argv[0]).name in wrappers or argv[0].startswith("-"):
+    if PurePosixPath(argv[0]).name in _SHELL_WRAPPERS or argv[0].startswith("-"):
         return None
     return argv
+
+
+_SHELL_WRAPPERS = frozenset({"env", "command", "exec", "sudo", "su", "doas", "nohup", "nice", "time", "timeout", "xargs", "eval", "source", ".", "cd", "export", "unset", "alias", "unalias", "set", "builtin", "function", "if", "then", "for", "while", "until", "case", "!"})
+# Harmless glue in a compound command: covered once the real programs are.
+_NEUTRAL_COMMANDS = frozenset({"cd", "echo", "pwd", "true", "false", ":", "test", "["})
+_DISCARD_REDIRECT = re.compile(r"(?:\d|&)?>>?\s*/dev/null(?=$|[\s;&|])|\d>&\d(?=$|[\s;&|])")
+
+
+def command_segments(command: str, *, dialect: str = "posix") -> tuple[tuple[str, ...], ...] | None:
+    """Split a shell line into the programs it runs, or None when that is unclear.
+
+    Only sequencing and pipes are understood. Substitution, subshells, other
+    redirects, background jobs and wrappers stay whole-command approvals.
+    Neutral commands are dropped from the result.
+    """
+    if dialect != "posix" or "\x00" in command:
+        return None
+    pieces: list[str] = []
+    current: list[str] = []
+    quote = ""
+    index = 0
+    while index < len(command):
+        char = command[index]
+        following = command[index + 1] if index + 1 < len(command) else ""
+        if quote == "'":
+            quote = "" if char == "'" else quote
+        elif char == "\\":
+            if following in ("\n", "\r", ""):
+                return None
+            current.append(char + following)
+            index += 2
+            continue
+        elif char == "`" or (char == "$" and following == "("):
+            return None
+        elif quote == '"':
+            quote = "" if char == '"' else quote
+        elif char in "\"'":
+            quote = char
+        else:
+            discard = _DISCARD_REDIRECT.match(command, index)
+            if discard:
+                index = discard.end()
+                current.append(" ")
+                continue
+            if char in ";|&\n\r":
+                if char == "&" and following != "&":
+                    return None
+                index += 2 if char in "&|" and following == char else 1
+                pieces.append("".join(current))
+                current = []
+                continue
+            if char in "<>()#":
+                return None
+        current.append(char)
+        index += 1
+    if quote:
+        return None
+    pieces.append("".join(current))
+    segments: list[tuple[str, ...]] = []
+    changes_directory = False
+    for piece in pieces:
+        if not piece.strip():
+            if piece is pieces[-1]:
+                continue
+            return None
+        try:
+            argv = tuple(shlex.split(piece, posix=True))
+        except ValueError:
+            return None
+        program = argv[0]
+        if re.search(r"[$*?\[\]{}~=]", program) and program != "[":
+            return None
+        if PurePosixPath(program).name == "cd":
+            changes_directory = True
+        if program in _NEUTRAL_COMMANDS:
+            continue
+        if PurePosixPath(program).name in _SHELL_WRAPPERS or program.startswith("-"):
+            return None
+        # A relative path means something else after cd than when it was resolved.
+        if changes_directory and "/" in program and not program.startswith("/"):
+            return None
+        segments.append(argv)
+    return tuple(segments)
 
 
 def command_dialect(cwd: str) -> str:
@@ -588,7 +671,7 @@ class PermissionRule:
         if self.kind == "command":
             scope = "any arguments" if self.command_match == "executable" else "argv prefix"
             boundary = "on the host without OS isolation" if self.execution_mode == "host" else "within the sandbox"
-            return f"{shlex.join(self.argv)} ({scope}; cwd {self.cwd}; includes scripts and subprocesses {boundary})"
+            return f"{shlex.join(self.argv)} ({scope}; includes scripts and subprocesses {boundary})"
         if self.kind == "network" and not self.unresolved:
             methods = ", ".join(self.methods) or "no methods"
             return (
@@ -609,6 +692,12 @@ class PermissionRule:
             return f"{self.tool_name} (explicit full-tool rule)"
         return self.legacy_text or self.tool_name
 
+    def covers(self, executable: str, executable_target: str, arguments: tuple[str, ...], execution_mode: str) -> bool:
+        """Program identity only: Shell cwd stays in scope and the sandbox still bounds it."""
+        return (self.kind == "command" and execution_mode == self.execution_mode
+                and executable_target == self.executable_target
+                and (executable, *arguments)[:len(self.argv)] == self.argv)
+
     def matches(
         self,
         tool_name: str,
@@ -626,10 +715,10 @@ class PermissionRule:
         if self.kind == "tool":
             return not self.operations or (context is not None and set(context.operations) <= set(self.operations))
         if self.kind == "command":
-            if context is None or command_dialect(context.cwd) != self.dialect or context.cwd != self.cwd or context.sandbox_key != self.sandbox_key or context.executable_target != self.executable_target:
+            if context is None or command_dialect(context.cwd) != self.dialect:
                 return False
             argv = direct_command_argv(subject, dialect=self.dialect)
-            return argv is not None and (context.executable, *argv[1:])[:len(self.argv)] == self.argv
+            return argv is not None and self.covers(context.executable, context.executable_target, argv[1:], context.execution_mode)
         if self.kind == "shell":
             if self.exact:
                 return subject == self.pattern and context is not None and context.cwd == self.cwd and (not self.sandbox_key or context.sandbox_key == self.sandbox_key)
