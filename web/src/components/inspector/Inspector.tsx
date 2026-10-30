@@ -216,6 +216,8 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
       setPatchError(error instanceof Error ? error.message : String(error));
     });
   };
+  const acceptable = review.filter((item) => item.state === "task").map((item) => item.path);
+  const revertible = review.filter((item) => item.state === "task" || item.state === "accepted").map((item) => item.path);
   const paired = (path: string) => {
     const item = review.find((entry) => entry.path === path);
     return item?.rename_with ? [path, item.rename_with] : [path];
@@ -352,11 +354,9 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
       <div className="changes-head">
         <div className="section-label"><span>{tr("web.working_tree")}</span></div>
         <button type="button" className="text-button" disabled={changesLoading} onClick={() => { ++patchGeneration.current; setSelected(null); setPatch(""); setPatchLoading(false); setPatchError(""); setWide(false); refresh(); }}>{tr("web.refresh_changes")}</button>
-        <button type="button" className="button accept" onClick={() => act("accept", review.filter((item) => item.state === "task").map((item) => item.path))}>{tr("web.accept_ready")}</button>
-        <button type="button" className="button revert" onClick={() => {
-          const paths = review.filter((item) => item.state === "task" || item.state === "accepted").map((item) => item.path);
-          if (!paths.length) { setReviewNote(tr("web.nothing_to_revert")); return; }
-          if (window.confirm(tr("web.revert_confirm", { paths: paths.join(", ") }))) act("revert", paths);
+        <button type="button" className="button accept" disabled={!acceptable.length} onClick={() => act("accept", acceptable)}>{tr("web.accept_ready")}</button>
+        <button type="button" className="button revert" disabled={!revertible.length} onClick={() => {
+          if (window.confirm(tr("web.revert_confirm", { paths: revertible.join(", ") }))) act("revert", revertible);
         }}>{tr("web.revert_ready")}</button>
       </div>
       <div className="change-list">{(changes ?? []).map((change) => <button key={change.path} className={selected === change.path ? "change-card selected" : "change-card"} onClick={() => openPatch(change.path)}><b>{change.status}</b><span>{change.path}</span></button>)}</div>

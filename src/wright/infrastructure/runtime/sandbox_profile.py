@@ -27,11 +27,29 @@ def runtime_roots() -> tuple[Path, ...]:
     for name in ("git", "node", "python3"):
         executable = shutil.which(name)
         if executable:
-            candidates.append(Path(executable).resolve().parent)
+            resolved = Path(executable).resolve()
+            candidates.append(resolved.parent)
+            candidates.extend(_homebrew_roots(resolved))
+    candidates.extend(_xcode_roots())
     # Preserve /bin and /lib aliases: ELF interpreters use these literal paths.
     # Never infer read authority from arbitrary PATH directories.
     return tuple(dict.fromkeys(path.absolute() for path in candidates if path.is_dir()
                                and path.resolve() not in {Path.home().resolve(), Path(path.anchor)}))
+
+
+def _homebrew_roots(executable: Path) -> tuple[Path, ...]:
+    """Library trees a Homebrew tool loads from; never its var/ or etc/ state."""
+    parts = executable.parts
+    if "Cellar" not in parts:
+        return ()
+    prefix = Path(*parts[:parts.index("Cellar")])
+    return tuple(prefix / name for name in ("Cellar", "opt", "lib", "bin", "sbin", "Frameworks", "share"))
+
+
+def _xcode_roots() -> tuple[Path, ...]:
+    """The active developer directory, which the /usr/bin tool shims load from."""
+    link = Path("/var/db/xcode_select_link")
+    return (link.resolve(),) if link.is_symlink() else ()
 
 
 def profile_paths(grant: InvocationGrant) -> tuple[list[Path], list[Path]]:

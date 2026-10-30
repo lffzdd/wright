@@ -174,7 +174,8 @@ def _spawn(argv, cwd, env, *, pass_fds=()):
 
 def _sandbox_environment(scratch: Path) -> dict[str, str]:
     env = clean_environment()
-    env.update(HOME=str(scratch), TMPDIR=str(scratch), TMP=str(scratch), TEMP=str(scratch))
+    # Homebrew git reads <prefix>/etc/gitconfig, which stays outside the sandbox on purpose.
+    env.update(HOME=str(scratch), TMPDIR=str(scratch), TMP=str(scratch), TEMP=str(scratch), GIT_CONFIG_NOSYSTEM="1")
     return env
 
 

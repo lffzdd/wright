@@ -52,6 +52,23 @@ describe("Inspector request and content state", () => {
     expect(await screen.findByText("a.txt · task")).toBeTruthy();
   });
 
+  it("only enables bulk review actions when something is ready", async () => {
+    const accept = () => screen.getByRole("button", { name: "Accept ready" }) as HTMLButtonElement;
+    const revert = () => screen.getByRole("button", { name: "Revert ready" }) as HTMLButtonElement;
+    const { unmount } = render(inspector(view()));
+    fireEvent.click(screen.getByRole("tab", { name: /Changes/ }));
+    await waitFor(() => expect(api.review).toHaveBeenCalled());
+    expect(accept().disabled).toBe(true);
+    expect(revert().disabled).toBe(true);
+    unmount();
+    vi.mocked(api.review).mockResolvedValue({ changes: [{ path: "a.txt", state: "accepted" }] });
+    render(inspector(view()));
+    fireEvent.click(screen.getByRole("tab", { name: /Changes/ }));
+    await screen.findByText("a.txt · accepted");
+    expect(accept().disabled).toBe(true);
+    expect(revert().disabled).toBe(false);
+  });
+
   it("does not show a directory as empty while loading or after a failed request", async () => {
     const pending = deferred<Awaited<ReturnType<typeof api.tree>>>();
     vi.mocked(api.tree).mockReturnValue(pending.promise);

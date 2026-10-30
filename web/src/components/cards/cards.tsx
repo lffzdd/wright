@@ -194,12 +194,15 @@ export function ToolCard({
 }) {
   const tr = useT();
   const family = toolFamily(name, kind);
-  const [open, setOpen] = useState(phase === "failed" || phase === "running" || family === "edit");
+  const [toggled, setToggled] = useState<boolean | null>(null);
   const command = arg(args, ["command", "cmd"]);
   const path = arg(args, ["path", "file", "file_path", "target"]);
   const code = family === "shell" ? exitCode(result, data) : null;
   const raw = output || (result ? (typeof result.output === "string" ? result.output : JSON.stringify(result, null, 2)) : "");
   const metricSource = data && typeof data === "object" ? data as Record<string, unknown> : result;
+  const denied = phase === "failed" && (metricSource?.permission as { decision?: unknown } | undefined)?.decision === "deny";
+  // Derived until the person toggles it, so a live card and a reloaded one agree.
+  const open = toggled ?? (!denied && (phase === "failed" || phase === "running" || family === "edit"));
   const hasDiff = family === "edit" && typeof metricSource?.diff === "string";
   const body = hasDiff ? metricSource.diff as string : compactToolBody(name, raw, result);
   const badge = family === "shell" ? "SHELL" : family === "edit" ? "FILE EDIT" : family === "read" ? "TOOL" : "TOOL";
@@ -213,16 +216,17 @@ export function ToolCard({
   const durationLabel = typeof duration === "number" ? formatDuration(duration) : "";
   return <div className="tl-indent">
     <section className="tool-card">
-      <button type="button" className="tool-card-head" onClick={() => setOpen((value) => !value)}>
+      <button type="button" className="tool-card-head" onClick={() => setToggled(!open)}>
         <span className="tool-title">
           <span className={`tool-badge ${family}`}>{badge}</span>
           {family === "shell" ? <span className="mono command">{command ? `$ ${command}` : name}</span> : <>
             {family !== "edit" && <span className="tool-name">{name}</span>}
             {path && <span className={`mono path ${family === "edit" ? "path-strong" : ""}`}>{path}</span>}
-            {family === "edit" && <><span className="edit-add">+{added}</span><span className="edit-del">−{deleted}</span></>}
+            {family === "edit" && phase !== "failed" && (phase === "succeeded" || added + deleted > 0) && <><span className="edit-add">+{added}</span><span className="edit-del">−{deleted}</span></>}
           </>}
         </span>
         <span className="tool-meta">
+          {phase === "failed" && code === null && <span className={denied ? "denied-pill" : "fail-pill"}>{tr(denied ? "web.tool_denied" : "web.status.failed")}</span>}
           {family === "read" && phase === "succeeded" && <span className="read-success"><Check size={12} weight="bold" />{directoryCount > 0 ? tr("web.n_files", { count: directoryCount }) : phase}{directoryCount > 0 && durationLabel ? ` (${durationLabel})` : ""}</span>}
           {family === "edit" && phase === "succeeded" && <span className="muted edit-summary">{t("web.applied")}</span>}
           {code !== null && <span className={code === 0 ? "ok-pill" : "fail-pill"}>Exit {code}{testFailed ? ` (${tr("web.bug_confirmed")})` : ""}</span>}
@@ -241,6 +245,8 @@ function toolOutput(tool: ToolState): string {
   const data = tool.data;
   const record = data && typeof data === "object" ? data as Record<string, unknown> : null;
   const structuredOutput = record ? [record.stdout, record.stderr].filter((value) => typeof value === "string" && value).join("\n") || textOf(record.output) : "";
+  // Without command output the error already says what happened; its envelope is diagnostics.
+  if (tool.err && !structuredOutput) return tool.err;
   const body = structuredOutput || tool.output || (typeof data === "string" ? data : data == null ? "" : JSON.stringify(data, null, 2));
   return [tool.err, body].filter(Boolean).join("\n");
 }

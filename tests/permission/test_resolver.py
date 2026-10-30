@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.tool import ToolCall, ToolResult
@@ -11,6 +13,7 @@ from wright.domain.policy import (
 )
 from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.command import execute_command_tool
+from wright.infrastructure.tools.command.permissions import _command_risk_flags
 from wright.infrastructure.tools.file import (
     edit_file_tool,
     list_directory_tool,
@@ -193,6 +196,22 @@ def test_command_risk_flags_are_reported_for_audit(tmp_path):
     assert "modifies_git_state" in flags
     assert "network_fetch" in flags
     assert "writes_via_redirection" in flags
+
+
+@pytest.mark.parametrize(("command", "writes"), [
+    ("ls missing 2>/dev/null", False),
+    ("ls missing > /dev/null 2>&1", False),
+    ("ls missing &>/dev/null", False),
+    ("python3 --version 2>&1 | head -3", False),
+    ("echo hi >&2", False),
+    ("echo hi > out.txt", True),
+    ("echo hi >> out.txt 2>&1", True),
+    ("echo hi 2>errors.log", True),
+    ("echo hi > /dev/nullish", True),
+    ("echo hi >& out.txt", True),
+])
+def test_redirection_flag_ignores_discarded_output(command, writes):
+    assert ("writes_via_redirection" in _command_risk_flags(command)) is writes
 
 
 def test_permission_policy_has_no_tool_name_lists():

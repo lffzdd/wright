@@ -132,7 +132,9 @@ def _command_names(tokens: list[str]) -> set[str]:
 
 
 def _has_output_redirection(command: str) -> bool:
-    return bool(re.search(r"(^|[^<>])(?:>>?|[12]>>?|&>)\s*\S+", command))
+    # Discarding output or joining streams writes nothing a person would need to review.
+    remaining = re.sub(r"(?:&|\d)?>>?\s*/dev/null(?=$|[\s;&|)])|\d?>&\d(?=$|[\s;&|)])", " ", command)
+    return bool(re.search(r"(^|[^<>])(?:>>?|[12]>>?|&>)\s*\S+", remaining))
 
 
 def _has_git_state_change(tokens: list[str]) -> bool:

@@ -88,6 +88,8 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
       if (stick.current) node.scrollTo?.({ top: node.scrollHeight });
     });
     observer.observe(content);
+    // The approval dock takes height from the scroller, not from its content.
+    observer.observe(node);
     return () => observer.disconnect();
   }, []);
   useLayoutEffect(() => {

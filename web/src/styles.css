@@ -12,7 +12,7 @@
   --border-strong: #2f3646;
   --text-primary: #f3f5f8;
   --text-secondary: #9aa5b6;
-  --text-muted: #64748b;
+  --text-muted: #8391a6;
   --accent: #5e6ad2;
   --accent-hover: #717ff5;
   --accent-subtle: rgba(94, 106, 210, 0.12);
@@ -53,8 +53,11 @@ html.light {
   --border-strong: #cbd5e1;
   --text-primary: #0f172a;
   --text-secondary: #475569;
-  --text-muted: #94a3b8;
+  --text-muted: #5b6779;
   --accent: #4f46e5;
+  --danger: #b91c1c;
+  --warning: #b45309;
+  --ok: #047857;
   --accent-hover: #6366f1;
   --accent-subtle: rgba(79, 70, 229, 0.08);
   --term-bg: #1e293b;
@@ -147,7 +150,6 @@ code, pre, .mono { font-family: var(--font-mono); }
 .top-center, .top-status { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .top-center { justify-content: flex-start; }
 .top-status { justify-content: flex-end; flex: 0 0 307px; }
-.top-status-label { color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .state-selector, .top-status select {
   height: 24px; max-width: 230px; border: 1px solid var(--border-subtle); border-radius: 5px;
   background: var(--bg-card); color: var(--text-primary); font-size: 11px; padding: 0 6px;
@@ -598,6 +600,7 @@ html.light .msg-row.assistant-msg .msg-card {
 .read-success { display: inline-flex; align-items: center; gap: 3px; font: 10px var(--font-mono); }
 .edit-summary { font-size: 10px; }
 .ok-pill, .fail-pill { padding: 1px 6px; border-radius: 3px; font: 10px var(--font-mono); }
+.denied-pill { padding: 1px 6px; border-radius: 3px; font: 10px var(--font-mono); color: var(--text-secondary); background: var(--bg-card-hover); border: 1px solid var(--border-strong); }
 .ok-pill { color: #34d399; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.25); }
 .fail-pill { color: #fb7185; background: rgba(244, 63, 94, 0.1); border: 1px solid rgba(244, 63, 94, 0.25); }
 .term-body { margin: 0; padding: 8px; background: var(--term-bg); color: var(--term-fg); font: 10.5px/1.4 var(--font-mono); white-space: pre-wrap; max-height: 180px; overflow: auto; }
@@ -913,7 +916,21 @@ html.light .markdown-body code:not(pre code) {
 .context-meter-segments .context-segment.tools { background: #fbbf24; }
 .dialog-backdrop { position: fixed; inset: 0; background: rgba(6, 8, 12, 0.62); display: grid; place-items: center; z-index: 40; padding: 24px; }
 .dialog { width: min(640px, 100%); max-height: min(80vh, 760px); overflow: auto; background: var(--bg-panel); border: 1px solid var(--border-strong); border-radius: 8px; padding: 16px; }
-.dialog h2 { margin: 0 0 8px; font-size: 16px; }
+.dialog { display: flex; flex-direction: column; gap: 12px; }
+.dialog h2 { margin: 0; font-size: 16px; }
+.dialog h3 { margin: 0; font-size: 13px; }
+.dialog p { margin: 0; }
+.dialog-section { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid var(--border-subtle); }
+.dialog h2 + .dialog-section { padding-top: 0; border-top: 0; }
+.dialog-field { display: flex; flex-direction: column; gap: 4px; }
+.dialog-field > span { color: var(--text-secondary); font-size: 12px; font-weight: 500; }
+.dialog-check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.dialog .dialog-check input { width: auto; margin: 0; }
+.dialog-actions { justify-content: flex-end; }
+.dialog-foot { padding-top: 12px; border-top: 1px solid var(--border-subtle); }
+.search-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; align-items: center; }
+.dialog .search-row select { width: auto; }
+.search-snippet { display: block; margin-top: 2px; color: var(--text-muted); font: 11px var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dialog textarea, .dialog input, .dialog select, .field {
   width: 100%; border: 1px solid var(--border-subtle); background: var(--bg-main); color: var(--text-primary);
   border-radius: 4px; padding: 7px 8px;
@@ -1479,7 +1496,7 @@ html.dark .outline-tick.active i {
 @media (max-width: 1024px) {
   .topbar { grid-template-columns: minmax(170px, 1fr) auto minmax(130px, 1fr); }
   .rail-toggle { display: inline-grid; }
-  .traffic-lights, .chrome-divider, .top-status-label, .active-count { display: none; }
+  .traffic-lights, .chrome-divider, .active-count { display: none; }
   .brand-mark { display: none; }
   .sidebar, .inspector { position: fixed; top: 38px; bottom: 0; z-index: 25; }
   .sidebar { left: 0; transform: translateX(-105%); }
@@ -1613,7 +1630,7 @@ html.dark .outline-tick.active i {
 .working-indicator { margin: 0; }
 
 /* Approval card: one question, the exact target, three decisions. */
-.approval-card { display: flex; flex-direction: column; max-height: min(52vh, 460px); background: var(--bg-card); border: 1px solid rgba(245, 158, 11, 0.55); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); font-size: 13px; line-height: 18px; outline: none; }
+.approval-card { display: flex; flex-direction: column; max-height: min(46vh, 400px); background: var(--bg-card); border: 1px solid rgba(245, 158, 11, 0.55); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); font-size: 13px; line-height: 18px; outline: none; }
 .approval-card:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
 .approval-card.elevated { border-color: color-mix(in srgb, var(--danger) 70%, transparent); }
 .approval-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px 6px; }
@@ -1638,7 +1655,10 @@ html.dark .outline-tick.active i {
 .approval-toggle small { display: block; color: var(--text-muted); font-size: 11px; }
 .approval-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--border-subtle); background: var(--bg-card-secondary, var(--bg-card)); border-radius: 0 0 8px 8px; flex: 0 0 auto; }
 .approval-actions .perm-choice { font-size: 12.5px; padding: 5px 12px; }
-.approval-actions .perm-choice.session { max-width: 46ch; overflow: hidden; text-overflow: ellipsis; }
+.approval-actions .perm-choice.session { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+.approval-actions .perm-choice.session.long { order: 1; flex: 1 1 100%; }
+.approval-actions .perm-more { margin-left: auto; }
+.approval-quick-note { order: 2; flex: 1 1 100%; color: var(--text-muted); font-size: 11px; line-height: 15px; }
 .approval-actions .perm-choice:disabled { opacity: .55; cursor: not-allowed; }
 .approval-more { display: flex; flex-direction: column; gap: 8px; padding: 8px 12px 12px; border-top: 1px solid var(--border-subtle); overflow: auto; }
 .approval-more fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -1677,3 +1697,18 @@ html.dark .outline-tick.active i {
 .blocked-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .blocked-list li { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
 .blocked-list small { color: var(--text-muted); }
+
+/* Status text on light surfaces: the dark theme's bright accents fall below 4.5:1 here. */
+html.light .tool-badge.read, html.light .tool-badge.tool, html.light .accessed-kind.read,
+html.light .scope-value, html.light .resource-row b, html.light .change-card b,
+html.light .top-agent-state.queued, html.light .status-badge.queued { color: #1d4ed8; }
+html.light .tool-badge.shell { color: #475569; }
+html.light .tool-badge.edit, html.light .ok-pill, html.light .button.accept, html.light .edit-add,
+html.light .read-success, html.light .glance-row.allow .glance-decision, html.light .test-count-passed,
+html.light .top-agent-state.running, html.light .top-agent-state.completed,
+html.light .status-badge.running, html.light .status-badge.completed { color: #047857; }
+html.light .tool-badge.reasoning, html.light .text-button, html.light .policy-scope.persistent { color: #7e22ce; }
+html.light .fail-pill, html.light .perm-choice.deny, html.light .button.revert, html.light .button.stop,
+html.light .test-count-failed, html.light .top-agent-state.failed, html.light .status-badge.failed { color: #be123c; }
+html.light .task-id, html.light .dirty, html.light .top-agent-state.waiting, html.light .status-badge.waiting { color: #92400e; }
+html.dark .stat-total { color: #8f9bff; }

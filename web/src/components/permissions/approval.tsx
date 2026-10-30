@@ -204,6 +204,15 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
   const onceId = network && onceNetwork ? onceNetwork.id : once?.id;
   const busy = Boolean(submitting);
   const label = (id: string | undefined, text: string) => submitting && submitting === id ? tr("web.submitting") : text;
+  // These details describe the remembered rule, so they sit with its button, not under the target.
+  const quickDetails = quick?.resource_kind === "command"
+    ? `${commandRuleDetails(quick.resource ?? {})} ${tr(host ? "web.approval.host_command_boundary" : "web.approval.command_boundary", { path: displayPath(quick.resource?.cwd || interaction.cwd || "", root) })}`
+    : quick?.resource_kind === "directory" ? tr("web.approval.directory_recursive") : "";
+  const quickNote = quickDetails && tr("web.approval.quick_note", { details: quickDetails });
+  const longRule = Boolean(quick) && describeChoice(quick as Choice, root).length > 56;
+  const sessionButton = quick && !network && <button type="button" className={`perm-choice session ${longRule ? "long" : ""}`} disabled={busy || shellBlocked} onClick={() => choose(quick.id)} title={describeChoice(quick, root)}>
+    {label(quick.id, tr("web.approval.allow_quick", { rule: describeChoice(quick, root) }))}
+  </button>;
 
   return <div className="tl-indent">
     <section
@@ -234,10 +243,6 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
         </div>
         {action === "shell" && interaction.cwd && displayPath(interaction.cwd, root) !== "." && <p className="approval-meta">{tr("web.approval.in_folder", { path: displayPath(interaction.cwd, root) })}</p>}
         {action === "shell" && host && <p className="approval-warn">{tr("web.execution.host_help")}</p>}
-        {quick?.resource_kind === "command" && <p className="hint">
-          {commandRuleDetails(quick.resource ?? {})} {tr(host ? "web.approval.host_command_boundary" : "web.approval.command_boundary", { path: displayPath(quick.resource?.cwd || interaction.cwd || "", root) })}
-        </p>}
-        {quick?.resource_kind === "directory" && <p className="hint">{tr("web.approval.directory_recursive")}</p>}
 
         {interaction.preview && <details className="permission-preview approval-preview" open={action === "file_write"}>
           <summary>{tr("web.content_preview")}</summary>
@@ -273,15 +278,15 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
         {once && <button type="button" className="perm-choice primary" disabled={busy || shellBlocked} onClick={() => onceId && choose(onceId)}>
           <Check size={13} weight="bold" />{label(onceId, tr(network ? "web.allow_once_network" : "web.allow_once"))}<kbd>{isMac() ? "⌥↵" : "Alt+Enter"}</kbd>
         </button>}
-        {quick && !network && <button type="button" className="perm-choice session" disabled={busy || shellBlocked} onClick={() => choose(quick.id)} title={describeChoice(quick, root)}>
-          {label(quick.id, tr("web.approval.allow_quick", { rule: describeChoice(quick, root) }))}
-        </button>}
+        {!longRule && sessionButton}
         {deny && <button type="button" className="perm-choice deny" disabled={busy} onClick={() => choose(deny.id)}>
           <X size={12} weight="bold" />{label(deny.id, tr("permission.choice.deny"))}<kbd>Esc</kbd>
         </button>}
         {remembered.length > 0 && <button type="button" className="text-button perm-more" aria-expanded={more} onClick={() => setMore((value) => !value)}>
           {tr(more ? "web.approval.fewer_options" : "web.approval.more_options")}
         </button>}
+        {longRule && sessionButton}
+        {quickNote && !network && <small className="approval-quick-note">{quickNote}</small>}
       </footer>
 
       {more && <div className="approval-more">

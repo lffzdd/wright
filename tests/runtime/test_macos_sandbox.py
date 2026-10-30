@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -12,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from wright.domain.policy.permission.types import InvocationGrant, InvocationIdentity
-from wright.infrastructure.runtime import sandbox
+from wright.infrastructure.runtime import sandbox, sandbox_profile
 from wright.infrastructure.runtime.types import ExecutionPath
 
 
@@ -98,6 +99,42 @@ def test_macos_profile_resolves_runtime_and_scratch_without_retargeting_grants(t
     assert f'(allow file-read* file-write* (subpath {json.dumps(str(workspace_alias))}))' in profile
     assert f'(deny file-write* (subpath {json.dumps(str(roots["readonly"][0]))}))' in profile
     assert f'(deny file-read* file-write* (subpath {json.dumps(str(workspace_alias / "secret"))}))' in profile
+
+
+def test_runtime_roots_cover_homebrew_libraries_but_not_its_state(tmp_path, monkeypatch):
+    prefix = tmp_path / "homebrew"
+    tool = prefix / "Cellar" / "tool" / "1.0" / "bin"
+    tool.mkdir(parents=True)
+    (tool / "git").write_text("")
+    for name in ("opt", "lib", "bin", "var", "etc"):
+        (prefix / name).mkdir()
+    (prefix / "bin" / "git").symlink_to(tool / "git")
+    monkeypatch.setattr(sandbox_profile.shutil, "which", lambda name: str(prefix / "bin" / "git") if name == "git" else None)
+    roots = sandbox_profile.runtime_roots()
+    for name in ("Cellar", "opt", "lib", "bin"):
+        assert (prefix / name).resolve() in roots
+    assert (prefix / "var").resolve() not in roots
+    assert (prefix / "etc").resolve() not in roots
+    assert prefix.resolve() not in roots
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Seatbelt only")
+@pytest.mark.parametrize("name", ["python3", "git"])
+def test_installed_tools_start_inside_the_real_profile(tmp_path, name):
+    executable = shutil.which(name)
+    if executable is None:
+        pytest.skip(f"{name} is not installed")
+    workspace, scratch = tmp_path / "workspace", tmp_path / "scratch"
+    workspace.mkdir()
+    scratch.mkdir()
+    path = ExecutionPath("local", str(workspace))
+    grant = InvocationGrant(InvocationIdentity("tool"), "local", path, frozenset({"shell"}),
+                            shell_readable=(path,), shell_writable=(path,))
+    argv = sandbox.macos_argv(f"{shlex.quote(executable)} --version", grant, scratch, scratch / "cwd")
+    # The launch script sources command.sh from its working directory.
+    (scratch / "command.sh").write_text(f"{shlex.quote(executable)} --version\n")
+    done = subprocess.run(argv, cwd=scratch, env=sandbox._sandbox_environment(scratch), capture_output=True, text=True, timeout=30)
+    assert done.returncode == 0, done.stderr
 
 
 @pytest.mark.parametrize("returncode", [-6, 0])

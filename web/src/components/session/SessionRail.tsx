@@ -55,6 +55,10 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
   const active = sessions.filter((item) => item.active);
   const history = sessions.filter((item) => !item.active);
+  const selectedProject = workspaces.find((item) => item.selected)?.project_id;
+  const ownerOf = (session: SessionSummary) => session.project_id ?? selectedProject;
+  // A session under a workspace row is not repeated in the top-level list.
+  const unlisted = active.filter((session) => !workspaces.some((item) => item.project_id === ownerOf(session)));
   useEffect(() => {
     const owner = sessions.find((session) => session.session_id === selected)?.project_id;
     if (owner) setCollapsedProjects((current) => current[owner] ? { ...current, [owner]: false } : current);
@@ -75,7 +79,7 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
     return tr(`web.status.${execution}`);
   };
   const renderActive = (activeItems = active, labeled = true) => <>
-    {labeled && <div className="section-label"><span>{tr("web.active_tasks")}</span>{activeItems.length > 0 && <span className="live-dot" />}</div>}
+    {labeled && <div className="section-label"><span>{tr("web.active_tasks")}</span>{activeItems.some((session) => session.pending_interactions || ["running", "queued", "waiting_for_input", "cancelling"].includes(session.execution || session.status || "")) && <span className="live-dot" />}</div>}
     {activeItems.map((session) => {
       const title = sessionTitle(session, tr);
       const current = selected === session.session_id;
@@ -114,7 +118,7 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
   return <aside className={`sidebar ${open ? "responsive-open" : ""}`}>
     <div className="sidebar-scroll">
       <button className="primary-action" onClick={onCreate} aria-label={tr("web.new_session")}><span className="primary-action-label"><Plus size={14} weight="bold" /><span>{tr("web.new_task")}</span></span><kbd>{tr("web.alt_shortcut_key", { key: "N" })}</kbd></button>
-      <div>{renderActive()}</div>
+      {(!workspaces.length || unlisted.length > 0) && <div>{renderActive(unlisted)}</div>}
       <div>{renderHistory()}</div>
       {workspaces.length > 0 && <div>
         <div className="section-label workspace-heading"><span>{tr("web.workspaces")}</span>
@@ -127,7 +131,7 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
           </div>
         </div>
         {workspaces.map((workspace) => {
-          const owned = sessions.filter((session) => (session.project_id ?? workspaces.find((item) => item.selected)?.project_id) === workspace.project_id);
+          const owned = sessions.filter((session) => ownerOf(session) === workspace.project_id);
           const activeItems = owned.filter((session) => session.active);
           const canExpand = activeItems.length > 0 || owned.length === 0;
           const collapsed = Boolean(collapsedProjects[workspace.project_id]);

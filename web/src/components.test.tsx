@@ -2,7 +2,8 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { marked } from "marked";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { t } from "./i18n";
-import { InteractionCard } from "./components/cards/cards";
+import { InteractionCard, ToolCard } from "./components/cards/cards";
+import { SessionRail } from "./components/session/SessionRail";
 import { Composer, visibleModels } from "./components/composer/Composer";
 import { sessionTitle } from "./components/session/session";
 import { DiffViewer } from "./DiffViewer";
@@ -147,6 +148,67 @@ describe("InteractionCard", () => {
     expect(screen.getByText("Recursive deletion in workspace")).toBeDefined();
     expect(screen.getByText("Directory purge outside git tracking")).toBeDefined();
     expect(screen.queryByText("recursive_delete")).toBeNull();
+  });
+});
+
+describe("ToolCard", () => {
+  it("marks a failed edit as failed and hides its empty line counts", () => {
+    render(<ToolCard name="edit_file" phase="failed" args={{ file: "src/calc.py" }} output="InputValidationError" />);
+    expect(screen.getByText("failed")).toBeTruthy();
+    expect(screen.queryByText("+0")).toBeNull();
+  });
+
+  it("does not add a failed label beside a shell exit code", () => {
+    render(<ToolCard name="execute_command" phase="failed" args={{ command: "false" }} data={{ exit_code: 1 }} />);
+    expect(screen.getByText("Exit 1")).toBeTruthy();
+    expect(screen.queryByText("failed")).toBeNull();
+  });
+});
+
+describe("ToolCard states", () => {
+  it("labels a denied call without expanding it", () => {
+    render(<ToolCard name="execute_command" phase="failed" args={{ command: "rm a" }} data={{ permission: { decision: "deny" } }} output="Permission denied" />);
+    expect(screen.getByText("Denied")).toBeTruthy();
+    expect(screen.queryByText("failed")).toBeNull();
+    expect(screen.queryByText("Permission denied")).toBeNull();
+  });
+
+  it("collapses a finished call like a reload would, unless the person toggled it", () => {
+    const card = (phase: string) => <ToolCard name="read_file" phase={phase} output="file body" />;
+    const { rerender } = render(card("running"));
+    expect(screen.getByText("file body")).toBeTruthy();
+    rerender(card("succeeded"));
+    expect(screen.queryByText("file body")).toBeNull();
+    fireEvent.click(screen.getByRole("button"));
+    rerender(card("succeeded"));
+    expect(screen.getByText("file body")).toBeTruthy();
+  });
+
+  it("hides line counts until an edit has been applied", () => {
+    render(<ToolCard name="edit_file" phase="awaiting_approval" args={{ file: "a.py" }} />);
+    expect(screen.queryByText("+0")).toBeNull();
+  });
+});
+
+describe("SessionRail", () => {
+  const rail = (workspaces: { project_id: string; name: string; selected?: boolean }[]) => <SessionRail
+    sessions={[
+      { session_id: "a", user_goal: "Listed task", project_id: "one", active: true, status: "idle", agent_status: "completed" },
+      { session_id: "b", user_goal: "Other project task", project_id: "gone", active: true, status: "idle", agent_status: "completed" },
+    ]}
+    selected={null} onSelect={vi.fn()} onCreate={vi.fn()} open workspaces={workspaces}
+  />;
+
+  it("lists an open session once and keeps sessions without a workspace row", () => {
+    render(rail([{ project_id: "one", name: "One", selected: true }]));
+    expect(screen.getAllByRole("button", { name: /Listed task/ })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /Other project task/ })).toHaveLength(1);
+  });
+
+  it("shows no live dot when no open session is working", () => {
+    const { container } = render(rail([]));
+    expect(screen.getByText("Open Tasks")).toBeTruthy();
+    expect(container.querySelector(".live-dot")).toBeNull();
   });
 });
 

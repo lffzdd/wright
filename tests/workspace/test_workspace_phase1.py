@@ -51,7 +51,11 @@ from wright.application.workspace.search import (
     search_symbols,
     search_tasks,
 )
-from wright.application.workspace.timeline import project_subagents, project_timeline
+from wright.application.workspace.timeline import (
+    project_accessed_files,
+    project_subagents,
+    project_timeline,
+)
 from wright.core.paths import project_id, task_db_path
 from wright.domain.model.agent.control import AgentControlPlane
 from wright.domain.model.session import Session, SessionAuthorization
@@ -648,3 +652,12 @@ def test_rename_of_a_clean_file_reverts_without_touching_other_work(tmp_path: Pa
     assert (root / "old.txt").read_text(encoding="utf-8") == "same\n"
     assert not (root / "new.txt").exists()
     assert (root / "kept.txt").read_text(encoding="utf-8") == "edited outside the task\n"
+
+
+@pytest.mark.parametrize(("status", "listed"), [
+    ("awaiting_approval", False), ("failed", False), ("succeeded", True),
+])
+def test_accessed_files_only_lists_edits_that_were_applied(status, listed):
+    call = SimpleNamespace(id="c1", name="edit_file", arguments={"file": "src/a.py"})
+    session = SimpleNamespace(tool_executions={"c1": SimpleNamespace(call=call, status=status)})
+    assert bool(project_accessed_files(session)) is listed

@@ -216,7 +216,7 @@ test("isolates sessions and completes a structured permission flow", async ({ pa
   await page.getByLabel("Message Wright").fill("Second isolated task");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByRole("heading", { name: "Second isolated task" })).toBeVisible();
-  await expect(page.getByText("2/4 active")).toBeVisible();
+  await expect(page.getByText("2/4 open")).toBeVisible();
   await expect(page.getByRole("button", { name: /First isolated task/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /Second isolated task/ })).toBeVisible();
 

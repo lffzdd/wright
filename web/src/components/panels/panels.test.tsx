@@ -83,6 +83,17 @@ describe("workspace panels", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("searches as the person types and offers content search", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ results: [{ kind: "content", path: "a.py", line: 2, text: "return a" }] }) }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<SearchDialog sessionId={null} projectId="p" close={() => undefined} openFile={() => undefined} />);
+    fireEvent.change(screen.getByLabelText("Search kind"), { target: { value: "content" } });
+    fireEvent.change(screen.getByLabelText("Search query"), { target: { value: "return" } });
+    expect(await screen.findByText("1 result")).toBeTruthy();
+    expect(screen.getByText("return a")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("requires a rule id and body before saving", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, statusText: "OK", json: async () => ({ rules: [] }) })));
     render(<RulesDialog sessionId="s" close={() => undefined} />);

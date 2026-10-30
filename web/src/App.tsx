@@ -726,7 +726,6 @@ export default function App() {
         <button type="button" className="search-trigger" onClick={() => setPanel("search")}><MagnifyingGlass size={14} /><span>{tr("web.search")}</span><kbd className="kbd">{tr("web.shortcut_key", { key: "K" })}</kbd></button>
       </div>
       <div className="top-status">
-        <span className="top-status-label">Active</span>
         <span className={`top-agent-state ${statusClass}`}><span className={`dot ${statusPulse ? "pulse" : ""}`} />{statusText}</span>
         <span className="active-count">{tr("web.active", { count: capacity === null ? `${activeCount}` : `${activeCount}/${capacity}` })}</span>
         <button type="button" className="icon-button" title={tr("web.theme")} onClick={() => savePreference({ theme: theme === "dark" ? "light" : "dark" }).catch((error) => setFatal(String(error)))}>{theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}</button>
