@@ -229,15 +229,15 @@ def test_macos_approved_dispatch_starts_real_shell(tmp_path, monkeypatch, choice
     import os
 
     from wright.application.command.execution import CommandExecution
+    from wright.application.composition.capabilities import (
+        assemble_tool_capabilities,
+    )
     from wright.application.execution.identity import bind_identity
     from wright.application.permission.workflow import AuthorizationWorkflow
     from wright.application.session_runtime.interaction import RoutedPrompter
     from wright.application.session_runtime.live_resources import RuntimeResources
     from wright.application.session_runtime.publisher import EventPublisher
     from wright.application.tool_execution.approval import InteractiveApprovalHandler
-    from wright.application.tool_execution.capabilities import (
-        assemble_tool_capabilities,
-    )
     from wright.application.tool_execution.dispatch import ToolDispatchService
     from wright.domain.model.session import Session
     from wright.domain.model.tool import ToolCall

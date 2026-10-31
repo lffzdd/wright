@@ -26,15 +26,16 @@ _TMP = tempfile.TemporaryDirectory(prefix="wright-test-", ignore_cleanup_errors=
 _WORKSPACE = Path(_TMP.name)
 os.environ.setdefault("WRIGHT_HOME", str(_WORKSPACE / "wright-state"))
 
-from wright.application.agent import Agent, create_agent
+from wright.application.agent import Agent
+from wright.application.composition.agent_factory import create_agent
 from wright.application.session_runtime.publisher import open_session_events
 from wright.domain.model.llm import UsageRecord
 from wright.domain.model.llm.events import ContentDelta, ContentDone, UsageEvent
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolAccess, ToolCall, ToolResult
-from wright.infrastructure.llm.llm import LLMClient
 from wright.domain.model.tool_definition import Tool
 from wright.domain.model.tool_runtime import ToolRuntime
+from wright.infrastructure.llm.llm import LLMClient
 from wright.interfaces.rendering.silent import SilentRenderer
 from wright.interfaces.rendering.subscriber import RendererEventSubscriber
 

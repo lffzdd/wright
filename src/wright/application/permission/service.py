@@ -45,9 +45,10 @@ def record_id(record: dict) -> str:
 
 
 class PermissionService:
-    def __init__(self, repository: PermissionRepository, *, execution_factory=None, network_factory=None):
+    def __init__(self, repository: PermissionRepository, *, execution_factory=None, network_factory=None, backend_factory=None):
         self._repository = repository
         self.execution_factory = execution_factory
+        self.backend_factory = backend_factory
         self._cache = {}
         self._checkpoints: dict[str, CheckpointParticipant] = {}
         self.policy_updated = None
@@ -55,7 +56,10 @@ class PermissionService:
 
     def for_background_execution(self):
         """A checkpoint-free lifecycle sharing the same authoritative repository."""
-        return PermissionService(self._repository, execution_factory=self.execution_factory, network_factory=self.network_factory)
+        return PermissionService(self._repository, execution_factory=self.execution_factory, network_factory=self.network_factory, backend_factory=self.backend_factory)
+
+    def sessionless_scope(self, workspace: Path) -> AccessScope:
+        return AccessScope(workspace, protected=tuple(Path(path) for path in self._repository.protected_paths()))
 
     def bind_checkpoint(self, session_id: str, participant: CheckpointParticipant) -> None:
         self._checkpoints[session_id] = participant

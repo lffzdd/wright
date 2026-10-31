@@ -6,10 +6,10 @@ These tests capture scripted model requests. They do not call a live model.
 from pathlib import Path
 
 from tests.responses import event, response
-from wright.application.agent import create_agent
-from wright.application.skills import SkillRegistry
+from wright.application.composition.agent_factory import create_agent
 from wright.domain.model.session import Session
 from wright.infrastructure.persistence.session.repository import FileSessionRepository
+from wright.infrastructure.storage.skill_registry import SkillRegistry
 from wright.infrastructure.storage.skills import write_skill
 from wright.infrastructure.tools.skill_tools import resident_skill_tools
 

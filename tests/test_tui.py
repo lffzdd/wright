@@ -130,7 +130,7 @@ def test_tui_keeps_application_host_alive_across_session_resume(tmp_path, monkey
         lambda _runtime: None,
     )
     monkeypatch.setattr(
-        "wright.application.session.directory.FileSessionRepository.load",
+        "wright.infrastructure.persistence.session.repository.FileSessionRepository.load",
         lambda _self, session_id: Saved(),
     )
     directory = SessionDirectory(tmp_path, assemble=assemble)

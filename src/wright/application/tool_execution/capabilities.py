@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ...domain.gateway.runtime_protocols import ExecutionBackend
 from ...domain.gateway.tool_capabilities import (
     AgentOperations,
     CommandOperations,
@@ -19,12 +20,6 @@ from ...domain.gateway.tool_capabilities import (
     SchedulingOperations,
     ToolCapabilities,
 )
-from ...infrastructure.runtime import (
-    AuthorizedExecution,
-    ExecutionBackend,
-    LocalExecutionBackend,
-)
-from ...infrastructure.runtime.network import AuthorizedNetwork
 from ..execution.agent_operations import AgentExecution
 from ..execution.identity import bind_identity
 from ..permission.service import PermissionService
@@ -45,7 +40,7 @@ class CapabilityAssembly:
     backend: ExecutionBackend
     workspace_dir: Path
     cwd_provider: Callable[[], Path]
-    permissions: PermissionService | None = None
+    permissions: PermissionService
 
 
 def assemble_tool_capabilities(
@@ -58,7 +53,7 @@ def assemble_tool_capabilities(
     execution_backend: ExecutionBackend | None = None,
     execution_journal_factory: Callable[[str, str], Any] | None = None,
     expose_scheduling: bool = False,
-    permissions: PermissionService | None = None,
+    permissions: PermissionService,
 ) -> CapabilityAssembly:
     """Build explicit capabilities at the application boundary."""
 
@@ -66,12 +61,9 @@ def assemble_tool_capabilities(
     cwd = cwd_provider or (
         session.get_cwd if session is not None else lambda: workspace
     )
-    backend = execution_backend or LocalExecutionBackend(workspace, cwd)
-    if permissions is None:
-        from ...infrastructure.config.permission_store import FilePermissionRepository
-        permissions = PermissionService(FilePermissionRepository(getattr(session, "project_root", None) or workspace), execution_factory=AuthorizedExecution, network_factory=AuthorizedNetwork)
-    if permissions.network_factory is None:
-        permissions.network_factory = AuthorizedNetwork
+    if execution_backend is None and permissions.backend_factory is None:
+        raise ValueError("An execution backend or backend factory must be injected")
+    backend = execution_backend or permissions.backend_factory(workspace, cwd)
     if session is None:
         return CapabilityAssembly(
             ToolCapabilities(RunScope("")),

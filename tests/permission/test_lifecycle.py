@@ -3,13 +3,13 @@
 
 import pytest
 
+from wright.application.composition.capabilities import assemble_tool_capabilities
 from wright.application.permission.resources import resource_change
 from wright.application.permission.service import (
     PermissionConflict,
     PermissionService,
 )
 from wright.application.permission.workflow import AuthorizationWorkflow
-from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.application.workspace.grants import list_grants
 from wright.domain.model.session import Session

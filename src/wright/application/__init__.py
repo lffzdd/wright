@@ -6,14 +6,13 @@ from .composition.job_runner import launch_job_run
 from .dto import RunAgentRequest, StreamEventDTO
 from .memory import MemoryManager
 from .scheduling.scheduler import JobScheduler
-from .skills import SkillRegistry, catalog_reminder
+from .skills import catalog_reminder
 from .tool_execution.dispatch import ToolDispatchService
 
 __all__ = [
     "JobScheduler",
     "MemoryManager",
     "RunAgentRequest",
-    "SkillRegistry",
     "StreamEventDTO",
     "ToolDispatchService",
     "catalog_reminder",

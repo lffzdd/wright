@@ -5,7 +5,8 @@ import threading
 from copy import deepcopy
 from pathlib import Path
 
-from wright.application.agent import ContextBuilder, ContextCompactor, create_agent
+from wright.application.agent import ContextBuilder, ContextCompactor
+from wright.application.composition.agent_factory import create_agent
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.utils import estimate_message_tokens

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from wright.application.tool_execution.capabilities import assemble_tool_capabilities
+from wright.application.composition.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.domain.model.tool_definition import Tool

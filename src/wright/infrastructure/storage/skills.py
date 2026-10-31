@@ -400,3 +400,13 @@ __all__ = [
     "skill_file_path",
     "write_skill",
 ]
+
+
+class FileSkillStore:
+    """The file functions above behind the ``ISkillStore`` port."""
+
+    normalize_id = staticmethod(normalize_skill_id)
+    file_path = staticmethod(skill_file_path)
+    load = staticmethod(load_skill_file)
+    scan = staticmethod(scan_skills)
+    write = staticmethod(write_skill)

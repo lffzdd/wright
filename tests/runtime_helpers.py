@@ -5,9 +5,9 @@ from __future__ import annotations
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from wright.application.command.execution import CommandExecution
+from wright.application.composition.capabilities import assemble_tool_capabilities
 from wright.application.execution.identity import bind_identity
 from wright.application.session_runtime.live_resources import RuntimeResources
-from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.domain.model.tool_runtime import ToolRuntime
 from wright.domain.policy.permission.scope import AccessScope, is_under
 from wright.domain.policy.permission.types import (

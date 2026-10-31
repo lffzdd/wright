@@ -5,8 +5,8 @@ import httpx
 import pytest
 from openai import OpenAI
 
-from wright.application.agent import create_agent
 from wright.application.agent.parse import TurnAbort, parse_turn
+from wright.application.composition.agent_factory import create_agent
 from wright.application.memory.llm_util import side_query
 from wright.domain.model.llm import ModelRequest
 from wright.domain.model.llm.events import ContentDone, UsageEvent

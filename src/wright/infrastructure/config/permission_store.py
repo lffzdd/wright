@@ -185,7 +185,10 @@ class FilePermissionRepository:
             settings.allow.extend(settings.project_rules)
             settings.deny.extend(replace(rule, lifetime="project") for rule in project.deny)
             settings.ask.extend(replace(rule, lifetime="project") for rule in project.ask)
-        return settings, tuple(str(path) for path in protected_permission_paths(self.project))
+        return settings, self.protected_paths()
+
+    def protected_paths(self) -> tuple[str, ...]:
+        return tuple(str(path) for path in protected_permission_paths(self.project))
 
     def revision_token(self, identities: tuple[str, ...]):
         paths = (default_settings_path(), _user_path(), _packaged_path(), self.project_path, *(self._session_path(identity) for identity in identities))

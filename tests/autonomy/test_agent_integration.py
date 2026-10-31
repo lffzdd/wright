@@ -6,14 +6,13 @@ from tests.responses import event, response
 from wright.application.agent import (
     AgentBackgroundRuntime,
     build_agent_tools,
-    create_agent,
 )
+from wright.application.composition.agent_factory import create_agent
 from wright.application.composition.job_runner import _RunJournal, launch_job_run
 from wright.application.execution.services import RuntimeServices
 from wright.application.memory.memory_service import MemoryService
 from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.application.scheduling.scheduler import JobScheduler
-from wright.application.skills import SkillRegistry
 from wright.application.tool_execution.schedule import schedule_tools
 from wright.domain.model.agent import AgentProfile
 from wright.domain.model.scheduling import TriggerSpec
@@ -26,6 +25,7 @@ from wright.domain.policy import (
 )
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 from wright.infrastructure.persistence.memory import EpisodeStore, SemanticMemoryStore
+from wright.infrastructure.storage.skill_registry import SkillRegistry
 from wright.infrastructure.storage.skills import write_skill
 from wright.infrastructure.tools.human_input import ask_user_tool
 from wright.infrastructure.tools.knowledge import build_knowledge_tools

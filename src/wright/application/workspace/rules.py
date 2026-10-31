@@ -16,14 +16,8 @@ from ...core.paths import (
     skill_directories,
     user_skills_dir,
 )
+from ...domain.gateway.skills import ISkillStore
 from ...domain.model.skills import SkillNotFoundError, SkillStoreError
-from ...infrastructure.storage.skills import (
-    load_skill_file,
-    normalize_skill_id,
-    scan_skills,
-    skill_file_path,
-    write_skill,
-)
 
 Scope = Literal["project", "user"]
 
@@ -32,12 +26,12 @@ class RuleError(ValueError):
     pass
 
 
-def list_rules(project_root: Path) -> dict[str, Any]:
+def list_rules(project_root: Path, store: ISkillStore) -> dict[str, Any]:
     directories = skill_directories(project_root)
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
     for scope, directory in (("project", directories[0]), ("user", directories[1])):
-        definitions, errors = scan_skills(directory)
+        definitions, errors = store.scan(directory)
         for definition in definitions:
             identifier = definition.meta.id
             rows.append({
@@ -55,13 +49,14 @@ def list_rules(project_root: Path) -> dict[str, Any]:
     }
 
 
-def get_rule(project_root: Path, skill_id: str) -> dict[str, Any]:
-    definition, scope = _load(project_root, skill_id)
+def get_rule(project_root: Path, store: ISkillStore, skill_id: str) -> dict[str, Any]:
+    definition, scope = _load(project_root, store, skill_id)
     return {**_public(definition), "scope": scope, "body": definition.body}
 
 
 def save_rule(
     project_root: Path,
+    store: ISkillStore,
     skill_id: str,
     *,
     scope: Scope,
@@ -72,14 +67,14 @@ def save_rule(
 ) -> dict[str, Any]:
     directory = _directory(project_root, scope)
     try:
-        normalized = normalize_skill_id(skill_id)
-        path = skill_file_path(directory, normalized)
+        normalized = store.normalize_id(skill_id)
+        path = store.file_path(directory, normalized)
     except SkillStoreError as exc:
         raise RuleError(str(exc)) from exc
     if path.is_file() and not confirm:
         raise RuleError("confirmation is required to replace an existing rule")
     try:
-        written = write_skill(
+        written = store.write(
             directory,
             normalized,
             name=normalized,
@@ -87,19 +82,19 @@ def save_rule(
             body=body,
             allowed_tools=allowed_tools,
         )
-        definition = load_skill_file(written, normalized)
+        definition = store.load(written, normalized)
     except SkillStoreError as exc:
         raise RuleError(str(exc)) from exc
     return {**_public(definition), "scope": scope, "body": definition.body}
 
 
-def delete_rule(project_root: Path, skill_id: str, *, scope: Scope, confirm: bool) -> dict[str, Any]:
+def delete_rule(project_root: Path, store: ISkillStore, skill_id: str, *, scope: Scope, confirm: bool) -> dict[str, Any]:
     if not confirm:
         raise RuleError("confirmation is required")
     directory = _directory(project_root, scope)
     try:
-        normalized = normalize_skill_id(skill_id)
-        path = skill_file_path(directory, normalized)
+        normalized = store.normalize_id(skill_id)
+        path = store.file_path(directory, normalized)
     except SkillStoreError as exc:
         raise RuleError(str(exc)) from exc
     if path.is_symlink() or path.parent.is_symlink():
@@ -121,20 +116,20 @@ def _directory(project_root: Path, scope: str) -> Path:
     raise RuleError("scope must be project or user")
 
 
-def _load(project_root: Path, skill_id: str):
+def _load(project_root: Path, store: ISkillStore, skill_id: str):
     last: Exception | None = None
     for scope, directory in (
         ("project", project_skills_dir(project_root)),
         ("user", user_skills_dir()),
     ):
         try:
-            path = skill_file_path(directory, skill_id)
+            path = store.file_path(directory, skill_id)
         except SkillStoreError as exc:
             raise RuleError(str(exc)) from exc
         if not path.is_file():
             continue
         try:
-            return load_skill_file(path, normalize_skill_id(skill_id)), scope
+            return store.load(path, store.normalize_id(skill_id)), scope
         except (SkillStoreError, SkillNotFoundError) as exc:
             last = exc
     if last is not None:

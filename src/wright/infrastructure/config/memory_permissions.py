@@ -32,6 +32,9 @@ class MemoryPermissionRepository:
                 self._settings, self._sessions, self._revision, self._session_revisions = before
                 raise
 
+    def protected_paths(self):
+        return tuple(str(path) for path in protected_permission_paths(self.project))
+
     def revision_token(self, identities):
         return (self._revision, tuple((identity, self._session_revisions.get(identity, 0)) for identity in identities),
             tuple(str(path) for path in protected_permission_paths(self.project)))

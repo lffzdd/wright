@@ -2,7 +2,7 @@
 
 import threading
 
-from wright.application.agent import create_agent
+from wright.application.composition.agent_factory import create_agent
 from wright.domain.model.llm.events import ContentDelta, ContentDone
 from wright.domain.model.session import Session
 

@@ -1,8 +1,7 @@
 import logging
 from pathlib import Path
 
-from wright.application.skills import SkillRegistry
-from wright.application.skills.registry import logger
+from wright.infrastructure.storage.skill_registry import SkillRegistry, logger
 from wright.infrastructure.storage.skills import write_skill
 
 

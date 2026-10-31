@@ -12,6 +12,7 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
+from ...application.composition.stores import open_autonomy_store, skill_store
 from ...application.permission.service import PermissionConflict
 from ...application.session.dispatch import SLASH_COMMANDS
 from ...application.session_runtime.errors import SessionServiceError
@@ -275,7 +276,7 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
     @router.get("/workspaces/{registered_id}/schedules")
     def project_schedules(registered_id: str, request: Request) -> list[dict[str, Any]]:
         require(request)
-        return list_project_schedules(_project_root(manager, registered_id))
+        return list_project_schedules(open_autonomy_store, _project_root(manager, registered_id))
 
     @router.post("/workspaces/{registered_id}/schedules/{schedule_id}/{action}")
     def project_schedule_action(
@@ -290,6 +291,7 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
             raise HTTPException(status_code=400, detail="unsupported schedule action")
         try:
             return project_action(
+                open_autonomy_store,
                 _project_root(manager, registered_id),
                 schedule_id,
                 action,
@@ -503,13 +505,13 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
     @router.get("/sessions/{session_id}/rules")
     def rules(session_id: str, request: Request) -> dict[str, Any]:
         require(request)
-        return list_rules(_project_of(manager, session_id))
+        return list_rules(_project_of(manager, session_id), skill_store())
 
     @router.get("/sessions/{session_id}/rules/{skill_id}")
     def rule(session_id: str, skill_id: str, request: Request) -> dict[str, Any]:
         require(request)
         try:
-            return get_rule(_project_of(manager, session_id), skill_id)
+            return get_rule(_project_of(manager, session_id), skill_store(), skill_id)
         except RuleError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -521,6 +523,7 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
         try:
             return save_rule(
                 _project_of(manager, session_id),
+                skill_store(),
                 skill_id,
                 scope=body.scope,  # type: ignore[arg-type]
                 description=body.description,
@@ -541,6 +544,7 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
         try:
             return delete_rule(
                 _project_of(manager, session_id),
+                skill_store(),
                 skill_id,
                 scope=body.scope,  # type: ignore[arg-type]
                 confirm=body.confirm,
@@ -553,7 +557,7 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
         require(request)
         handle = _handle(manager, session_id)
         project = Path(handle.runtime.session_state.project_root or handle.runtime.session_state.workspace_dir)
-        rows = list_project_schedules(project)
+        rows = list_project_schedules(open_autonomy_store, project)
         return [row for row in rows if row.get("session_id") == handle.runtime.session_state.session_id]
 
     @router.post("/sessions/{session_id}/schedules")
@@ -616,7 +620,7 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
         handle = _handle(manager, session_id)
         project = Path(handle.runtime.session_state.project_root or handle.runtime.session_state.workspace_dir)
         try:
-            return list_runs(project, handle.runtime.session_state.session_id, schedule_id)
+            return list_runs(open_autonomy_store, project, handle.runtime.session_state.session_id, schedule_id)
         except ScheduleApiError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 

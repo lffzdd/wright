@@ -10,9 +10,9 @@ from pathlib import Path
 import pytest
 
 from tests.runtime_helpers import tool_runtime_for_session
+from wright.application.composition.capabilities import assemble_tool_capabilities
 from wright.application.lifecycle import HookDecision
 from wright.application.permission.workflow import AuthorizationWorkflow
-from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.agent import AgentProfile, CapabilitySnapshot
 from wright.domain.model.session import Session

@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from ...core.logger import get_logger
 from ...domain.gateway.llm_gateway import ILLMProvider
+from ...domain.gateway.skills import ISkillCatalog
 from ...domain.model.attachment import (
     MAX_ATTACHMENTS_PER_TURN,
     MAX_TOTAL_ATTACHMENT_BYTES,
@@ -20,7 +21,6 @@ from ..execution.services import RuntimeServices
 from ..memory import MemoryManager
 from ..session_runtime.events import SessionEvents
 from ..session_runtime.live_resources import RuntimeResources
-from ..skills import SkillRegistry
 from ..tool_execution.capabilities import (
     CapabilityAssembly,
     assemble_tool_capabilities,
@@ -67,7 +67,7 @@ class Agent:
         checkpoint_store: "SessionRepository | None" = None,
         usage_observer: Callable[[UsageRecord], None] | None = None,
         lifecycle=None,
-        skills: SkillRegistry | None = None,
+        skills: ISkillCatalog | None = None,
         services: RuntimeServices | None = None,
         runtime_resources: RuntimeResources | None = None,
         execution_journal=None,

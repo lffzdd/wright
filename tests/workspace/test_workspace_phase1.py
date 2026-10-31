@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from wright.application.composition.stores import open_autonomy_store, skill_store
 from wright.application.memory.memory_service import MemoryService
 from wright.application.permission.resources import resource_change
 from wright.application.permission.service import PermissionService
@@ -305,13 +306,13 @@ def test_memory_and_rules_are_project_scoped(tmp_path: Path, monkeypatch):
         delete_semantic(service, created["id"], bound_project_id=project_id(one), confirm=False)
     assert delete_semantic(service, created["id"], bound_project_id=project_id(one), confirm=True)["deleted"]
 
-    saved = save_rule(one, "review-notes", scope="project", description="Review notes", body="Be precise.")
+    saved = save_rule(one, skill_store(), "review-notes", scope="project", description="Review notes", body="Be precise.")
     assert saved["id"] == "review-notes"
-    assert any(item.get("id") == "review-notes" for item in list_rules(one)["rules"])
-    assert all(item.get("id") != "review-notes" for item in list_rules(two)["rules"])
+    assert any(item.get("id") == "review-notes" for item in list_rules(one, skill_store())["rules"])
+    assert all(item.get("id") != "review-notes" for item in list_rules(two, skill_store())["rules"])
     with pytest.raises(Exception, match="confirmation"):
-        delete_rule(one, "review-notes", scope="project", confirm=False)
-    assert delete_rule(one, "review-notes", scope="project", confirm=True)["deleted"] is True
+        delete_rule(one, skill_store(), "review-notes", scope="project", confirm=False)
+    assert delete_rule(one, skill_store(), "review-notes", scope="project", confirm=True)["deleted"] is True
 
 
 def test_schedule_survives_reopen_and_delete_keeps_history(tmp_path: Path, monkeypatch):
@@ -339,7 +340,7 @@ def test_schedule_survives_reopen_and_delete_keeps_history(tmp_path: Path, monke
         trigger={"type": "interval", "every_seconds": 3600},
     )
     store.close()
-    listed = list_project_schedules(project)
+    listed = list_project_schedules(open_autonomy_store, project)
     assert listed[0]["id"] == created["id"]
     assert listed[0]["status"] == "active"
 
@@ -378,9 +379,9 @@ def test_schedule_survives_reopen_and_delete_keeps_history(tmp_path: Path, monke
         trigger={"type": "interval", "every_seconds": 3600},
     )
     parked.close()
-    paused_closed = project_action(project, later["id"], "pause")
+    paused_closed = project_action(open_autonomy_store, project, later["id"], "pause")
     assert paused_closed["status"] == "paused"
-    rows = {item["id"]: item for item in list_project_schedules(project)}
+    rows = {item["id"]: item for item in list_project_schedules(open_autonomy_store, project)}
     assert rows[later["id"]]["status"] == "paused"
 
 

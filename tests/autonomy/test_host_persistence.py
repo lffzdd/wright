@@ -5,10 +5,10 @@ import pytest
 
 from tests.permission_helpers import memory_permissions
 from tests.responses import event, response
-from wright.application.agent import create_agent
+from wright.application.composition.agent_factory import create_agent
+from wright.application.composition.capabilities import assemble_tool_capabilities
 from wright.application.composition.host import ApplicationHost
 from wright.application.permission.workflow import AuthorizationWorkflow
-from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.scheduling import TriggerSpec
 from wright.domain.model.session import Session

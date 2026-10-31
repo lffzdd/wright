@@ -13,11 +13,11 @@ import pytest
 
 from tests.permission_helpers import memory_permissions
 from wright.application.command.execution import CommandExecution
+from wright.application.composition.capabilities import assemble_tool_capabilities
 from wright.application.execution.identity import bind_identity
 from wright.application.lifecycle.manager import LifecycleManager
 from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.application.session_runtime.live_resources import RuntimeResources
-from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.application.workspace.git_status import summarize_git
 from wright.domain.gateway.runtime_types import ExecutionPath
@@ -412,3 +412,13 @@ def test_runtime_authorities_satisfy_the_tool_ports(tmp_path):
     grant = _grant(tmp_path, "true")
     assert isinstance(AuthorizedExecution(LocalExecutionBackend(tmp_path, lambda: tmp_path), grant), AuthorizedExecutionPort)
     assert isinstance(AuthorizedNetwork(grant), AuthorizedNetworkPort)
+
+
+def test_capability_assembly_requires_an_injected_backend(tmp_path):
+    from wright.application.permission.service import PermissionService
+    from wright.application.tool_execution.capabilities import (
+        assemble_tool_capabilities as assemble,
+    )
+
+    with pytest.raises(ValueError, match="backend"):
+        assemble(None, None, None, workspace_dir=tmp_path, permissions=PermissionService(object()))

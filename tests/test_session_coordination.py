@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from wright.application.command.execution import CommandExecution
+from wright.application.composition.capabilities import local_permission_service
 from wright.application.composition.host import ApplicationHost
 from wright.application.execution.directory import (
     DirectoryExecutionCoordinator,
@@ -19,14 +20,12 @@ from wright.application.execution.directory import (
     reset_directory_work,
 )
 from wright.application.execution.identity import ExecutionIdentity
-from wright.application.permission.service import PermissionService
 from wright.application.session.directory import SessionDirectory, SessionDirectoryError
 from wright.application.session.history_projection import project_history
 from wright.application.session.mailbox import InteractionMailbox
 from wright.application.session.service import SessionService
 from wright.application.session_runtime.publisher import EventPublisher
 from wright.domain.model.session import SessionAuthorization
-from wright.infrastructure.config.permission_store import FilePermissionRepository
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 
 
@@ -390,7 +389,7 @@ def test_automation_waits_behind_an_interactive_lease(tmp_path, monkeypatch):
         store=store,
         llm=SimpleNamespace(model="test"),
         base_tools=[],
-        permission_service=PermissionService(FilePermissionRepository(workspace)),
+        permission_service=local_permission_service(workspace),
         directory_coordinator=coordinator,
     )
     holder = coordinator.acquire(

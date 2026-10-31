@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 
-from wright.application.agent import create_agent
+from wright.application.composition.agent_factory import create_agent
 from wright.application.composition.runtime import (
     RuntimeConfig,
     assemble_runtime,

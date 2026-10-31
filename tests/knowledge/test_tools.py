@@ -1,11 +1,11 @@
 from jsonschema import validators
 
+from wright.application.composition.capabilities import assemble_tool_capabilities
 from wright.application.execution.roles import tools_for_role
-from wright.application.skills import SkillRegistry
-from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.knowledge import MAX_HIT_CONTENT_CHARS, KnowledgeHit
 from wright.domain.model.tool import ToolCall
+from wright.infrastructure.storage.skill_registry import SkillRegistry
 from wright.infrastructure.storage.skills import write_skill
 from wright.infrastructure.tools.knowledge import (
     build_knowledge_tools,

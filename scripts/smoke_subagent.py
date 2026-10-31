@@ -21,9 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests.responses import event, response
 from wright.application.agent import (
     build_agent_tools,
-    create_agent,
     make_spawn_agent_tool,
 )
+from wright.application.composition.agent_factory import create_agent
 from wright.domain.model.llm.events import ContentDone
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolAccess, ToolResult

@@ -7,8 +7,8 @@ from tests.paths import PACKAGE_ROOT
 from tests.responses import response
 from tests.runtime_helpers import tool_runtime_for_session
 from tests.test_attachments import _png_bytes
-from wright.application.agent import create_agent
-from wright.application.tool_execution.capabilities import assemble_tool_capabilities
+from wright.application.composition.agent_factory import create_agent
+from wright.application.composition.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.agent import AgentProfile, CapabilityCatalog, CapabilityError
 from wright.domain.model.session import Session

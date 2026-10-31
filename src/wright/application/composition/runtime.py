@@ -47,6 +47,7 @@ from ...infrastructure.storage.attachments import (
     AttachmentStore,
     DraftAttachments,
 )
+from ...infrastructure.storage.skill_registry import SkillRegistry
 from ...infrastructure.tools import tools as base_tools
 from ...infrastructure.tools.human_input import ask_user_tool
 from ...infrastructure.tools.knowledge import optional_knowledge_tools
@@ -74,9 +75,9 @@ from ..session_runtime.interaction import RoutedPrompter, UserPrompter
 from ..session_runtime.live_resources import RuntimeResources
 from ..session_runtime.loops import SessionLoopRegistry
 from ..session_runtime.publisher import EventPublisher
-from ..skills import SkillRegistry
 from ..tool_execution.approval import InteractiveApprovalHandler
 from ..tool_execution.capabilities import assemble_tool_capabilities
+from .capabilities import local_permission_service
 from .host import ApplicationHost
 from .lifecycle_loader import load_lifecycle_manager
 from .memory_assembly import (
@@ -294,12 +295,9 @@ def _trusted_mcp_config_paths(
 
 
 def _restore_permissions(project_root: Path, session_state: Session) -> PermissionService:
-    from ...infrastructure.config.permission_store import FilePermissionRepository
-    from ...infrastructure.runtime import AuthorizedExecution, LocalExecutionBackend
-
-    permissions = PermissionService(FilePermissionRepository(project_root), execution_factory=AuthorizedExecution)
+    permissions = local_permission_service(project_root)
     try:
-        permissions.restore(session_state, LocalExecutionBackend(session_state.workspace_dir, session_state.get_cwd))
+        permissions.restore(session_state, permissions.backend_factory(session_state.workspace_dir, session_state.get_cwd))
         if session_state.authorization.permission_mode is None:
             permissions.set_modes(session_state, permission_mode=permissions.snapshot(session_state).mode)
     except (OSError, ValueError, TypeError) as exc:
@@ -662,17 +660,6 @@ def assemble_runtime(
         *(replace(tool, defer_to_model=True) for tool in mcp_tools),
         *knowledge_tools,
     ]
-    tools = build_agent_tools(
-        llm_client,
-        assembled_base,
-        depth=0,
-        max_depth=1,
-        permission_workflow=permission_workflow,
-        enable_scheduling=True,
-        publisher=publisher,
-        permission_service=permissions,
-    )
-
     # ask_user、manage_loop、记忆与 load_skill 只给主 Agent:都在 build_agent_tools 之后
     # 【单独追加】，不进 base_tools。子 Agent 不能绕过父 Agent 直接打断人；
     # 它若信息不足，应把缺口作为结果交回父 Agent。子 Agent 也保持无长期记忆、
@@ -687,7 +674,16 @@ def assemble_runtime(
     # 注册与 schema 暴露分开：加载器常驻注册，有技能时才出现在当轮 schema 和目录里。
     skill_tools = resident_skill_tools(skill_registry)
     tools = [
-        *tools,
+        *build_agent_tools(
+            llm_client,
+            assembled_base,
+            depth=0,
+            max_depth=1,
+            permission_workflow=permission_workflow,
+            enable_scheduling=True,
+            publisher=publisher,
+            permission_service=permissions,
+        ),
         ask_user_tool,
         manage_loop_tool,
         *memory_tools(memory_manager),

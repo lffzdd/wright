@@ -6,32 +6,35 @@ against the same database so a restart still shows the persisted status.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from ...core.paths import task_db_path
 from ...domain.gateway.scheduling import SchedulingError
 from ...domain.model.agent.control import AgentControlPlane
 from ...domain.model.scheduling import TriggerSpec
-from ...infrastructure.persistence.autonomy_store import AutonomyStore
 from ..execution.identity import bind_identity
 from ..scheduling.service import SchedulingService
+
+# Opens the project's task store for one session id; the caller owns closing it.
+OpenStore = Callable[[Path, str], Any]
+_PROJECT_READER = "__project_list__"
 
 
 class ScheduleApiError(ValueError):
     pass
 
 
-def list_project_schedules(project_root: Path, *, limit: int = 100) -> list[dict[str, Any]]:
-    store = _reader(project_root)
+def list_project_schedules(open_store: OpenStore, project_root: Path, *, limit: int = 100) -> list[dict[str, Any]]:
+    store = open_store(project_root, _PROJECT_READER)
     try:
         return [record.to_dict() for record in store.list_project_jobs(limit=limit)]
     finally:
         store.close()
 
 
-def list_runs(project_root: Path, session_id: str, schedule_id: str) -> list[dict[str, Any]]:
-    service, store = _service(project_root, session_id, scheduler=None)
+def list_runs(open_store: OpenStore, project_root: Path, session_id: str, schedule_id: str) -> list[dict[str, Any]]:
+    service, store = _service(open_store, project_root, session_id, scheduler=None)
     try:
         page = service.list_runs(schedule_id)
         return [record.to_dict() for record in page.records]
@@ -68,6 +71,7 @@ def resume_schedule(runtime: Any, schedule_id: str) -> dict[str, Any]:
 
 
 def project_action(
+    open_store: OpenStore,
     project_root: Path,
     schedule_id: str,
     action: str,
@@ -79,8 +83,8 @@ def project_action(
     resume, edit, or delete it. The next scheduler start reads that status.
     """
 
-    owner = _owner_session(project_root, schedule_id)
-    service, store = _service(project_root, owner, scheduler=None)
+    owner = _owner_session(open_store, project_root, schedule_id)
+    service, store = _service(open_store, project_root, owner, scheduler=None)
     try:
         if action == "pause":
             return service.pause_job(schedule_id).job.to_dict()
@@ -141,8 +145,8 @@ def _from_runtime(runtime: Any) -> SchedulingService:
     return SchedulingService(store, store, bind_identity(runtime.session_state, store), scheduler)
 
 
-def _owner_session(project_root: Path, schedule_id: str) -> str:
-    store = _reader(project_root)
+def _owner_session(open_store: OpenStore, project_root: Path, schedule_id: str) -> str:
+    store = open_store(project_root, _PROJECT_READER)
     try:
         match = next(
             (record for record in store.list_project_jobs() if record.id == schedule_id),
@@ -155,20 +159,8 @@ def _owner_session(project_root: Path, schedule_id: str) -> str:
     return str(match.session_id)
 
 
-def _reader(project_root: Path) -> AutonomyStore:
-    return AutonomyStore(
-        task_db_path(project_root),
-        session_id="__project_list__",
-        workspace_dir=project_root,
-    )
-
-
-def _service(project_root: Path, session_id: str, scheduler: Any) -> tuple[SchedulingService, AutonomyStore]:
-    store = AutonomyStore(
-        task_db_path(project_root),
-        session_id=session_id,
-        workspace_dir=project_root,
-    )
+def _service(open_store: OpenStore, project_root: Path, session_id: str, scheduler: Any) -> tuple[SchedulingService, Any]:
+    store = open_store(project_root, session_id)
 
     class _Closed:
         control_plane = AgentControlPlane()

@@ -16,7 +16,10 @@ from pathlib import Path
 from wright.application.permission.workflow import AuthorizationWorkflow
 
 from ...core.logger import get_logger
-from ...domain.gateway.runtime_protocols import AuthorizedExecutionPort, ExecutionBackend
+from ...domain.gateway.runtime_protocols import (
+    AuthorizedExecutionPort,
+    ExecutionBackend,
+)
 from ...domain.gateway.runtime_types import ExecutionPath
 from ...domain.gateway.tool_executor import IToolExecutor
 from ...domain.model.agent import CapabilitySnapshot
@@ -237,8 +240,7 @@ class ToolDispatchService:
     def _access_scope(self) -> AccessScope:
         if self._managed_permissions():
             return self.permissions.snapshot(self.session).scope
-        from ...infrastructure.config.permission_store import protected_permission_paths
-        return AccessScope(self.workspace_dir, protected=protected_permission_paths(self.workspace_dir))
+        return self.permissions.sessionless_scope(self.workspace_dir)
 
     def _managed_permissions(self) -> bool:
         return self.permissions is not None and self.session is not None

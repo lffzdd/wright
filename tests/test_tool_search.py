@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from tests.responses import event, response
-from wright.application.agent import create_agent
+from wright.application.composition.agent_factory import create_agent
 from wright.application.tool_execution.tool_search import make_tool_search_tool
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolAccess, ToolResult

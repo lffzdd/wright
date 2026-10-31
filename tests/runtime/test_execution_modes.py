@@ -212,7 +212,7 @@ def test_host_access_network_cwd_and_process_tree(tmp_path, monkeypatch):
 
 
 def test_cli_and_child_inherit_explicit_host_mode(tmp_path, monkeypatch):
-    from wright.application.tool_execution.capabilities import (
+    from wright.application.composition.capabilities import (
         assemble_tool_capabilities,
     )
     from wright.interfaces.cli.args import parse_cli_args, runtime_config_from_args

@@ -3,13 +3,13 @@ import sys
 import threading
 import time
 
+from wright.application.composition.capabilities import assemble_tool_capabilities
 from wright.application.composition.lifecycle_loader import load_lifecycle_manager
 from wright.application.lifecycle import (
     HookDecision,
     HookRegistration,
     LifecycleManager,
 )
-from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.domain.model.tool_definition import Tool

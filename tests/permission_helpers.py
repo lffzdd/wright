@@ -18,11 +18,11 @@ def authorize_directory(session, directory):
 
 
 def memory_permissions(settings, project):
+    from wright.application.composition.capabilities import bind_local_runtime
     from wright.infrastructure.config.memory_permissions import (
         MemoryPermissionRepository,
     )
-    from wright.infrastructure.runtime import AuthorizedExecution
-    return PermissionService(MemoryPermissionRepository(settings, project), execution_factory=AuthorizedExecution)
+    return bind_local_runtime(PermissionService(MemoryPermissionRepository(settings, project)))
 
 
 class TestCheckpoint:

@@ -8,7 +8,7 @@ import pytest
 
 from tests.test_attachments import _png_bytes
 from tests.test_llm import _client, _reply, _responses_client
-from wright.application.agent import create_agent
+from wright.application.composition.agent_factory import create_agent
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolResult
 from wright.domain.model.tool_definition import Tool

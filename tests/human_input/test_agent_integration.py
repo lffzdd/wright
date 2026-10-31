@@ -1,7 +1,7 @@
 
 
 from tests.responses import event, response
-from wright.application.agent import create_agent
+from wright.application.composition.agent_factory import create_agent
 from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.domain.model.session import Session
 from wright.domain.policy import PermissionResponse

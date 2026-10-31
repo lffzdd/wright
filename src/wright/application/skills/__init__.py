@@ -4,10 +4,8 @@ from __future__ import annotations
 
 from ...domain.model.skills import SKILL_LOADER_NAME
 from .prompt import catalog_reminder
-from .registry import SkillRegistry
 
 __all__ = [
     "SKILL_LOADER_NAME",
-    "SkillRegistry",
     "catalog_reminder",
 ]

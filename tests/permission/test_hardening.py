@@ -9,10 +9,10 @@ from dataclasses import FrozenInstanceError, replace
 import httpx
 import pytest
 
+from wright.application.composition.capabilities import assemble_tool_capabilities
 from wright.application.permission.checkpoint import SessionCheckpoint
 from wright.application.permission.service import PermissionConflict, PermissionService
 from wright.application.permission.workflow import AuthorizationWorkflow
-from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.core.paths import session_dir, user_permission_settings_path
 from wright.domain.model.session import Session

@@ -1,11 +1,11 @@
 import queue
 import threading
 
+from wright.application.composition.capabilities import assemble_tool_capabilities
 from wright.application.execution.services import RuntimeServices
 from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.application.scheduling.scheduler import JobScheduler
 from wright.application.session_runtime.loops import SessionLoopRegistry
-from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.application.tool_execution.schedule import schedule_tools
 from wright.domain.model.session import Session

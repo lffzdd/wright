@@ -190,7 +190,7 @@ def test_three_lifetimes_keep_independent_ownership(tmp_path):
 
 
 def test_capability_reassembly_keeps_the_injected_permission_service(tmp_path):
-    from wright.application.tool_execution.capabilities import (
+    from wright.application.composition.capabilities import (
         assemble_tool_capabilities,
     )
 

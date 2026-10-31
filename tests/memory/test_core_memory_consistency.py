@@ -16,7 +16,7 @@ import pytest
 from tests.memory.test_agent_integration import EmptySelectorLLM
 from tests.memory.test_core_memory import DummyEpisodeStore, DummySemanticStore
 from tests.responses import response
-from wright.application.agent import create_agent
+from wright.application.composition.agent_factory import create_agent
 from wright.application.composition.memory_assembly import (
     assemble_memory_manager,
     memory_tools,

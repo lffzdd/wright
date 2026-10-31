@@ -115,16 +115,6 @@ allow_indirect_imports = true
 # Known violations: shrink this list, never grow it.
 ignore_imports = [
     "wright.application.composition.** -> wright.infrastructure.**",
-    "wright.application.session.directory -> wright.infrastructure.persistence.autonomy_store",
-    "wright.application.session.directory -> wright.infrastructure.persistence.session.repository",
-    "wright.application.session.directory -> wright.infrastructure.workspace.worktrees",
-    "wright.application.skills.registry -> wright.infrastructure.storage.skills",
-    "wright.application.tool_execution.capabilities -> wright.infrastructure.config.permission_store",
-    "wright.application.tool_execution.capabilities -> wright.infrastructure.runtime",
-    "wright.application.tool_execution.capabilities -> wright.infrastructure.runtime.network",
-    "wright.application.tool_execution.dispatch -> wright.infrastructure.config.permission_store",
-    "wright.application.workspace.rules -> wright.infrastructure.storage.skills",
-    "wright.application.workspace.schedule_api -> wright.infrastructure.persistence.autonomy_store",
 ]
 
 [[tool.importlinter.contracts]]

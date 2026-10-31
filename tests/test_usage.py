@@ -4,7 +4,7 @@ import pytest
 from rich.console import Console
 
 from tests.responses import response
-from wright.application.agent import create_agent
+from wright.application.composition.agent_factory import create_agent
 from wright.application.memory.llm_util import metered_events
 from wright.application.session_runtime.publisher import open_session_events
 from wright.domain.model.llm import UsageRecord

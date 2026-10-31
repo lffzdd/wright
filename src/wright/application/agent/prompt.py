@@ -9,9 +9,9 @@ from ..planning.prompt import plan_prompt_block
 from ..skills import SKILL_LOADER_NAME, catalog_reminder
 
 if TYPE_CHECKING:
+    from ...domain.gateway.skills import ISkillCatalog
     from ...domain.model.session import Session
     from ...domain.model.tool_definition import Tool
-    from ..skills import SkillRegistry
 
 
 class AgentPromptManager:
@@ -20,7 +20,7 @@ class AgentPromptManager:
     def __init__(
         self,
         session_state: Session,
-        skills: SkillRegistry | None = None,
+        skills: ISkillCatalog | None = None,
         schema_tools: Sequence[Tool] = (),
     ) -> None:
         self.session_state = session_state

@@ -6,7 +6,7 @@ import time
 import pytest
 
 from tests.responses import event, response
-from wright.application.agent import create_agent
+from wright.application.composition.agent_factory import create_agent
 from wright.application.session_runtime.loops import (
     LoopError,
     SessionLoopRegistry,

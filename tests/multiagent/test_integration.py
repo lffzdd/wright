@@ -4,11 +4,11 @@ from tests.responses import event, response
 from tests.runtime_helpers import tool_runtime_for_session
 from wright.application.agent import (
     build_agent_tools,
-    create_agent,
     make_spawn_agent_tool,
 )
+from wright.application.composition.agent_factory import create_agent
+from wright.application.composition.capabilities import assemble_tool_capabilities
 from wright.application.permission.workflow import AuthorizationWorkflow
-from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.agent.control import AgentControlConfig, AgentControlPlane
 from wright.domain.model.llm.events import UsageEvent

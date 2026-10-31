@@ -19,22 +19,23 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from ...core.paths import project_id, session_dir, task_db_path
+from ...core.paths import project_id, session_dir
+from ...domain.gateway.scheduling import JobNotFoundError
 from ...domain.model.llm.model_adapters import available_models, process_model_name
 from ...domain.model.session.errors import CheckpointError
 from ...domain.model.workspace.project import ProjectContext
-from ...infrastructure.persistence.autonomy_store import (
-    AutonomyNotFoundError,
-    AutonomyStore,
-)
-from ...infrastructure.persistence.session.repository import FileSessionRepository
-from ...infrastructure.workspace.worktrees import ArchiveResult, WorktreeManager
+from ...domain.model.workspace.worktree import ArchiveResult
 from ..composition.host import ApplicationHost
 from ..composition.runtime import (
     RuntimeConfig,
     WrightRuntime,
     assemble_runtime,
     shutdown_runtime,
+)
+from ..composition.stores import (
+    open_autonomy_store,
+    project_checkpoints,
+    project_worktrees,
 )
 from ..execution.directory import DirectoryExecutionCoordinator
 from ..session_runtime.publisher import EventPublisher
@@ -96,8 +97,8 @@ class SessionDirectory:
         self.capacity = capacity
         self.base_args = base_args or argparse.Namespace()
         self.coordinator = coordinator or DirectoryExecutionCoordinator()
-        self.worktrees = WorktreeManager(self.project_root)
-        self.checkpoints = FileSessionRepository(session_dir(self.project_root))
+        self.worktrees = project_worktrees(self.project_root)
+        self.checkpoints = project_checkpoints(self.project_root)
         self._assemble = assemble
         self._sessions: dict[str, OpenSession] = {}
         self._hosts: dict[Path, ApplicationHost] = {}
@@ -483,14 +484,10 @@ class SessionDirectory:
                 return host.run_history(run_id)
             except KeyError:
                 continue
-        store = AutonomyStore(
-            task_db_path(self.project_root),
-            session_id="__history_query__",
-            workspace_dir=self.project_root,
-        )
+        store = open_autonomy_store(self.project_root, "__history_query__")
         try:
             return store.run_history(run_id)
-        except AutonomyNotFoundError as exc:
+        except JobNotFoundError as exc:
             raise SessionDirectoryError("durable run not found", kind="not_found") from exc
         finally:
             store.close()

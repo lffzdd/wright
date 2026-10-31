@@ -13,7 +13,7 @@ from ...domain.model.skills import (
     SkillNotFoundError,
     SkillStoreError,
 )
-from ...infrastructure.storage.skills import (
+from .skills import (
     load_skill_file,
     normalize_skill_id,
     scan_skills,

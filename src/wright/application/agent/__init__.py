@@ -3,7 +3,6 @@
 from .assembly import (
     assemble_agent_components,
     bind_root_checkpoint,
-    create_agent,
     ensure_system_prompt,
     prepare_model_tools,
 )
@@ -54,7 +53,6 @@ __all__ = [
     "assemble_agent_components",
     "bind_root_checkpoint",
     "build_agent_tools",
-    "create_agent",
     "ensure_system_prompt",
     "make_spawn_agent_tool",
     "prepare_model_tools",

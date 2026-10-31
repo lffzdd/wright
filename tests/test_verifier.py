@@ -1,5 +1,5 @@
 from tests.responses import event, response
-from wright.application.agent import create_agent
+from wright.application.composition.agent_factory import create_agent
 from wright.application.lifecycle import HookRegistration, LifecycleManager
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
