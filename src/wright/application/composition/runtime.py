@@ -370,6 +370,73 @@ def _select_base_tools(config: RuntimeConfig) -> tuple[list, list]:
     return active_base_tools, knowledge_tools
 
 
+def _create_llm_clients(
+    config: RuntimeConfig,
+    session_state: Session,
+    model: str,
+    attachment_store: AttachmentStore,
+    artifact_store: ArtifactStore,
+    *,
+    base_url: str | None,
+    api_key: str | None,
+    context_limit: int | None,
+) -> tuple[LLMClient, LLMClient]:
+    requested_transport = (
+        session_state.llm_transport
+        or config.transport
+        or os.getenv("WRIGHT_LLM_TRANSPORT", "auto")
+    )
+    llm_client = LLMClient(
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        context_limit=context_limit or 128000,
+        transport=requested_transport,
+        attachment_store=attachment_store,
+        artifact_store=artifact_store,
+    )
+    session_state.llm_transport = llm_client.transport_name
+    # 记忆的召回/提取 side-query 可选用更便宜的模型省钱(对标 memdir 用 Sonnet 选记忆)。
+    # 配了 OPENAI_MEMORY_MODEL 就单独建个非流式 client,否则复用主 client。
+    memory_model = os.getenv("OPENAI_MEMORY_MODEL")
+    selector_llm = (
+        LLMClient(
+            base_url=base_url,
+            api_key=api_key,
+            model=memory_model,
+            stream=False,
+            transport=session_state.llm_transport,
+        )
+        if memory_model
+        else llm_client
+    )
+    return llm_client, selector_llm
+
+
+def _open_autonomy_store(
+    project_root: Path,
+    workspace_dir: Path,
+    session_id: str,
+    application_host: ApplicationHost | None,
+) -> AutonomyStore:
+    autonomy_store = AutonomyStore(
+        task_db_path(project_root),
+        session_id=session_id,
+        workspace_dir=workspace_dir,
+    )
+    # A resumed Web session can rebind its pre-existing application owner.
+    # Its durable store is the durable fact source; do not create a competing
+    # scheduler/owner merely to reconstruct a conversation runtime.
+    if application_host is not None:
+        try:
+            scheduler = application_host.scheduler_for(autonomy_store)
+            autonomy_store = application_host.retained_store(scheduler.session_id)
+        except Exception:
+            autonomy_store.close()
+            raise
+    return autonomy_store
+
+
 def assemble_runtime(
     config: RuntimeConfig,
     *,
@@ -429,39 +496,13 @@ def assemble_runtime(
     session_state.model_name = model
     attachment_store = AttachmentStore(attachment_dir(project_root), session_state.session_id)
     artifact_store = ArtifactStore(artifact_dir(project_root))
-    requested_transport = (
-        session_state.llm_transport
-        or config.transport
-        or os.getenv("WRIGHT_LLM_TRANSPORT", "auto")
+    llm_client, selector_llm = _create_llm_clients(
+        config, session_state, model, attachment_store, artifact_store,
+        base_url=base_url, api_key=api_key, context_limit=context_limit,
     )
-    llm_client = LLMClient(
-        base_url=base_url,
-        api_key=api_key,
-        model=model,
-        context_limit=context_limit or 128000,
-        transport=requested_transport,
-        attachment_store=attachment_store,
-        artifact_store=artifact_store,
-    )
-    session_state.llm_transport = llm_client.transport_name
     llm_client.session_attachments = session_state.attachments
     draft_attachments = DraftAttachments(attachment_store, session_state.attachments)
     runtime_resources = None  # created after the event queue exists
-
-    # 记忆的召回/提取 side-query 可选用更便宜的模型省钱(对标 memdir 用 Sonnet 选记忆)。
-    # 配了 OPENAI_MEMORY_MODEL 就单独建个非流式 client,否则复用主 client。
-    memory_model = os.getenv("OPENAI_MEMORY_MODEL")
-    selector_llm = (
-        LLMClient(
-            base_url=base_url,
-            api_key=api_key,
-            model=memory_model,
-            stream=False,
-            transport=session_state.llm_transport,
-        )
-        if memory_model
-        else llm_client
-    )
 
     opened = _OpenedRuntime(application_host)
     opened.session_state = session_state
@@ -473,21 +514,12 @@ def assemble_runtime(
     agent_idle = threading.Event()
     agent_idle.set()
     background_runtime = AgentBackgroundRuntime(event_queue)
-    autonomy_store = AutonomyStore(
-        task_db_path(project_root),
-        session_id=automation_session_id or session_state.session_id,
-        workspace_dir=workspace_dir,
+    autonomy_store = _open_autonomy_store(
+        project_root,
+        workspace_dir,
+        automation_session_id or session_state.session_id,
+        application_host,
     )
-    # A resumed Web session can rebind its pre-existing application owner.
-    # Its durable store is the durable fact source; do not create a competing
-    # scheduler/owner merely to reconstruct a conversation runtime.
-    if application_host is not None:
-        try:
-            scheduler = application_host.scheduler_for(autonomy_store)
-            autonomy_store = application_host.retained_store(scheduler.session_id)
-        except Exception:
-            autonomy_store.close()
-            raise
     opened.background_runtime = background_runtime
     opened.autonomy_store = autonomy_store
     from ..command.execution import CommandExecution
