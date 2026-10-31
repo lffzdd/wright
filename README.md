@@ -204,7 +204,7 @@ RAG package. Wright does not vendor that stack.
 | `~/.wright/skills/` | User skills |
 | `src/wright/` | Agent runtime |
 | `web/` | React + TypeScript Web console source |
-| `src/wright/web/static/` | Prebuilt Web assets included in the Python package |
+| `src/wright/interfaces/web/static/` | Prebuilt Web assets included in the Python package |
 | `tests/` | pytest suite |
 | `examples/` | Sample skills and an `mcp.json` template |
 | `docs/` | Design notes |

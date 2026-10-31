@@ -12,7 +12,7 @@ Changes 当前行为和验收标准见 [Changes 功能约定](changes-contract.m
 
 | 设计区域 | 状态 | 代码入口与调用链 |
 | --- | --- | --- |
-| 顶栏项目登记、选择、切换 | C | `WorkspaceCatalog` → `infrastructure/persistence/workspace/registry.py`（`~/.wright/workspaces.json`）。`GET/POST /api/v1/workspaces`、`POST /workspaces/select`、`DELETE /workspaces/{id}`。选择只写登记项。`RuntimeManager.project_root` 和已打开会话的 `workspace_dir` 不变。注销不删除目录或任务库。 |
+| 顶栏项目登记、选择、切换 | C | `WorkspaceCatalog` → `core/workspace_registry.py`（`~/.wright/workspaces.json`）。`GET/POST /api/v1/workspaces`、`POST /workspaces/select`、`DELETE /workspaces/{id}`。选择只写登记项。`RuntimeManager.project_root` 和已打开会话的 `workspace_dir` 不变。注销不删除目录或任务库。 |
 | 任务新建、恢复、关闭、归档 | A，多项目为 C | 原有 `POST /sessions`、close、archive 仍绑定启动项目的 `SessionDirectory`。其他项目走 `POST /workspaces/{id}/sessions`，句柄记录 `owner`，close/archive 用该目录。状态来自 `SessionService.summary`：`lifecycle`、`execution`、`agent_status` 分开。 |
 | local / worktree、分支、变更摘要 | A + B | `SessionDirectory.open` 仍用 `ProjectContext` / `WorktreeManager`。`GET /sessions/{id}/workspace` 返回执行根、项目根、环境、`base_commit`、`branch_name`，以及 `summarize_git` 的分支和未提交数量。摘要不改进程 cwd。 |
 | 文件浏览、引用、内容 | C | `files.resolve_inside` 拒绝绝对路径、`..` 和解析后越出根的符号链接。工作区树用登记根；会话树用该会话的 `workspace_dir`。 |
@@ -78,7 +78,7 @@ Changes 当前行为和验收标准见 [Changes 功能约定](changes-contract.m
 - `web/src/workspace/widgets.tsx` 是任务栏、时间线、审批卡、输入框、检查器和新建会话对话框。测试仍从 `App.tsx` 引入这些组件。
 - `web/src/workspace/panels.tsx` 是搜索、记忆、规则、定时任务和设置。它们使用同一套面板变量，不另做一套后台页。
 - `web/src/styles.css` 提取设计里的颜色、边框、圆角和栏宽。没有引入 Tailwind CDN。Markdown 和 diff 继续用原来的变量别名。
-- Vite 仍输出到 `src/wright/web/static`。没有手改打包产物。
+- Vite 仍输出到 `src/wright/interfaces/web/static`。没有手改打包产物。
 
 时间线优先使用快照里的 `timeline`。工具调用插在发出它的那条助手消息后面，不再把全部工具堆到最终回答之后。快照没有时间线时，仍按原来的 history 加 active turn 渲染，保证旧事件流测试可读。实时里尚未进入时间线的工具和文本追加在后面。用户离开底部时不强制滚动，并提供回到底部。
 
@@ -89,7 +89,7 @@ Changes 当前行为和验收标准见 [Changes 功能约定](changes-contract.m
 ## 第二阶段测试
 
 - `web` 下 `npm test`：35 passed。
-- `npm run build` 通过，产物写入 `src/wright/web/static`。
+- `npm run build` 通过，产物写入 `src/wright/interfaces/web/static`。
 - `npm run test:e2e`：Playwright 2 passed。这组测试使用页面内的 fetch 和 WebSocket 替身，只证明前端协议和会话隔离，不证明后端接入。
 - 修改过的 `timeline.py` 和 `workspace_routes.py` 已用 Ruff 检查。`tests/workspace/test_workspace_phase1.py` 与 `tests/test_web_server.py` 通过。
 - 真实联调：在临时 `WRIGHT_HOME` 上启动当前 FastAPI，静态文件是这次构建。模型是本地替身，第一次补全请求 `write_file`，之后返回文本，不访问网络模型。浏览器在 `http://127.0.0.1:8765` 完成新建会话，并收到真实的 `waiting_for_input` 审批，选项来自后端。1440×960、1280×800、1024×768，以及浅色中文，都对照过同一条等待审批的任务。
@@ -108,7 +108,7 @@ Changes 当前行为和验收标准见 [Changes 功能约定](changes-contract.m
 
 每一项都按「功能 → 实现入口 → 验证方式 → 实际结果 → 剩余问题」记录。没有把前两阶段的“已完成”直接当成验收结论。
 
-- 默认界面 → `web/src/App.tsx` 与 `src/wright/web/static` → 打开 FastAPI `http://127.0.0.1:8765/`，响应里的脚本是当次构建的 `index-DDBYxpsI.js` → 三栏工作台，不是旧布局，也不是独立 demo 路由 → 搜索、记忆、规则、定时任务对话框的字段标签仍是英文。
+- 默认界面 → `web/src/App.tsx` 与 `src/wright/interfaces/web/static` → 打开 FastAPI `http://127.0.0.1:8765/`，响应里的脚本是当次构建的 `index-DDBYxpsI.js` → 三栏工作台，不是旧布局，也不是独立 demo 路由 → 搜索、记忆、规则、定时任务对话框的字段标签仍是英文。
 - 两个项目、切换、刷新恢复 → `WorkspaceCatalog`、`POST /workspaces/select`、会话列表 → `tests/workspace/test_workspace_phase1.py` 的登记、注销和执行根隔离；浏览器里刷新 `/?v=10` 后同一条空闲任务仍在 → 选择写入登记文件，不改已打开任务的执行根 → 这次浏览器只在预览项目里操作，没有在用户仓库里登记第二个项目。
 - local / worktree、发指令、换模型、停止与恢复 → `SessionDirectory.open`、`POST /sessions/{id}/model`、websocket `turn.submit` / `turn.cancel` → 预览会话是 local；模型下拉是 `deterministic-preview`；pytest 覆盖 worktree 打开路径 → 浏览器发出的指令停在真实 `waiting_for_input`，允许一次后任务回到空闲并写出 `preview-note.txt` → 没有在浏览器里再走一遍 worktree 创建。
 - 草稿、附件、工具、审批不串线 → `App.tsx` 按会话保存草稿；附件删除调用 `DELETE` 附件接口 → Playwright `two-sessions.spec.ts` 2 passed；`isolation.test.tsx` 4 passed → 切换会话不发送 `turn.cancel`，迟到的 changes 响应被丢掉 → 文档芯片移除只影响下一次提交，没有删除已保存文件的接口。
