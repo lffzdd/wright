@@ -5,10 +5,16 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from threading import RLock
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..gateway.tool_capabilities import ToolCapabilities
 from ..policy.permission.scope import AccessScope
+
+if TYPE_CHECKING:
+    from ..gateway.runtime_protocols import (
+        AuthorizedExecutionPort,
+        AuthorizedNetworkPort,
+    )
 
 
 class ToolCancelledError(RuntimeError):
@@ -22,9 +28,9 @@ class ToolRuntime:
     tool_name: str = ""
     tool_call_id: str = ""
     capabilities: ToolCapabilities | None = None
-    # AuthorizedExecution and AuthorizedNetwork instances, bound per invocation.
-    execution: Any = None
-    network: Any = None
+    # Bound per invocation; None when the tool did not request the capability.
+    execution: AuthorizedExecutionPort | None = None
+    network: AuthorizedNetworkPort | None = None
     access_scope: AccessScope | None = None
     lifecycle: Any = None
     scratch_lock: RLock = field(default_factory=RLock, repr=False)

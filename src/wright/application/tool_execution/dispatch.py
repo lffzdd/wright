@@ -12,12 +12,11 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
 
 from wright.application.permission.workflow import AuthorizationWorkflow
 
 from ...core.logger import get_logger
-from ...domain.gateway.runtime_protocols import ExecutionBackend
+from ...domain.gateway.runtime_protocols import AuthorizedExecutionPort, ExecutionBackend
 from ...domain.gateway.runtime_types import ExecutionPath
 from ...domain.gateway.tool_executor import IToolExecutor
 from ...domain.model.agent import CapabilitySnapshot
@@ -67,8 +66,8 @@ class PreparedInvocation:
     effective_timeout: float
     local_cancel: threading.Event
     runtime: ToolRuntime
-    # An AuthorizedExecution bound to this invocation; None when nothing was granted.
-    execution: Any = None
+    # Bound to this invocation; None when nothing was granted.
+    execution: AuthorizedExecutionPort | None = None
     before_execute: Callable[[], None] | None = None
 
 

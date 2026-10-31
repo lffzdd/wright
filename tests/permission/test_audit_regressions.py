@@ -399,3 +399,16 @@ def test_revoking_an_unrelated_rule_keeps_a_running_shell_alive(tmp_path):
     service._repository.write_session(session.session_id, ())
     with pytest.raises(PermissionConflict):
         guard()
+
+
+def test_runtime_authorities_satisfy_the_tool_ports(tmp_path):
+    from wright.domain.gateway.runtime_protocols import (
+        AuthorizedExecutionPort,
+        AuthorizedNetworkPort,
+    )
+    from wright.infrastructure.runtime import AuthorizedExecution
+    from wright.infrastructure.runtime.network import AuthorizedNetwork
+
+    grant = _grant(tmp_path, "true")
+    assert isinstance(AuthorizedExecution(LocalExecutionBackend(tmp_path, lambda: tmp_path), grant), AuthorizedExecutionPort)
+    assert isinstance(AuthorizedNetwork(grant), AuthorizedNetworkPort)

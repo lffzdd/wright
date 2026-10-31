@@ -87,3 +87,62 @@ class ExecutionBackend(Protocol):
     ) -> Iterable[SearchMatch]: ...
 
     def start_shell(self, command: str, *, cwd: ExecutionPath, grant: InvocationGrant) -> ProcessHandle: ...
+
+
+@runtime_checkable
+class AuthorizedExecutionPort(Protocol):
+    """One invocation's granted view of an execution backend."""
+
+    @property
+    def environment_id(self) -> str: ...
+
+    def close(self) -> None: ...
+
+    def cwd(self) -> ExecutionPath: ...
+
+    def resolve_path(self, requested: str) -> ExecutionPath: ...
+
+    def display_path(self, path: ExecutionPath) -> str: ...
+
+    def metadata(self, path: ExecutionPath) -> FileMetadata: ...
+
+    def read_bytes(self, path: ExecutionPath, limit: int | None = None) -> bytes: ...
+
+    def read_text(self, path: ExecutionPath, *, encoding: str, errors: str = "strict") -> str: ...
+
+    def write_text(self, path: ExecutionPath, content: str, *, encoding: str) -> None: ...
+
+    def ensure_directory(self, path: ExecutionPath) -> None: ...
+
+    def iter_directory(self, path: ExecutionPath) -> Iterable[DirectoryEntry]: ...
+
+    def glob(self, path: ExecutionPath, pattern: str) -> Iterable[DirectoryEntry]: ...
+
+    def iter_search_candidates(
+        self,
+        path: ExecutionPath,
+        *,
+        glob: str | None = None,
+        deadline: float | None = None,
+        cancellation_check: Callable[[], bool] | None = None,
+    ) -> Iterable[ExecutionPath]: ...
+
+    def search_files(
+        self,
+        paths: Iterable[ExecutionPath],
+        pattern: str,
+        *,
+        case_sensitive: bool = False,
+        fixed_string: bool = False,
+        deadline: float | None = None,
+        cancellation_check: Callable[[], bool] | None = None,
+    ) -> Iterable[SearchMatch]: ...
+
+    def start_shell(self, command: str) -> ProcessHandle: ...
+
+
+@runtime_checkable
+class AuthorizedNetworkPort(Protocol):
+    """One invocation's granted outbound HTTP authority."""
+
+    def request(self, method: str, url: str, *, operation: str, params=None, **kwargs): ...
