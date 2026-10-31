@@ -17,13 +17,6 @@ from ...domain.model.session import Session
 from ...domain.model.tool import ToolAccess, ToolResult
 from ...domain.model.tool_definition import Tool
 from ...domain.model.tool_runtime import ToolRuntime
-from ...infrastructure.tools.agent_tools import (
-    agent_execution_view,
-    agent_tools,
-    public_agent_tree,
-)
-from ...infrastructure.tools.command.control import command_tools
-from ...infrastructure.tools.schedule import schedule_tools
 from ..command.execution import CommandExecution
 from ..execution.directory import current_directory_binding
 from ..execution.identity import bind_identity
@@ -31,7 +24,14 @@ from ..execution.roles import tools_for_role
 from ..session_runtime.events import EventScope, SessionEvents
 from ..session_runtime.live_resources import RuntimeResources
 from ..session_runtime.publisher import EventPublisher, open_session_events
+from ..tool_execution.agent_tools import (
+    agent_execution_view,
+    agent_tools,
+    public_agent_tree,
+)
 from ..tool_execution.capabilities import assemble_tool_capabilities
+from ..tool_execution.command_control import command_tools
+from ..tool_execution.schedule import schedule_tools
 from .assembly import (
     assemble_agent_components,
     ensure_system_prompt,

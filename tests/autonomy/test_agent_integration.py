@@ -14,6 +14,7 @@ from wright.application.memory.memory_service import MemoryService
 from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.application.scheduling.scheduler import JobScheduler
 from wright.application.skills import SkillRegistry
+from wright.application.tool_execution.schedule import schedule_tools
 from wright.domain.model.agent import AgentProfile
 from wright.domain.model.scheduling import TriggerSpec
 from wright.domain.model.session import Session
@@ -29,7 +30,6 @@ from wright.infrastructure.storage.skills import write_skill
 from wright.infrastructure.tools.human_input import ask_user_tool
 from wright.infrastructure.tools.knowledge import build_knowledge_tools
 from wright.infrastructure.tools.memory import build_memory_tools
-from wright.infrastructure.tools.schedule import schedule_tools
 from wright.infrastructure.tools.skill_tools import build_skill_tools
 
 

@@ -19,10 +19,6 @@ from ...domain.model.tool_definition import Tool
 from ...domain.policy.verifier import Verifier
 from ...domain.prompt import build_system_prompt
 from ...domain.protocol import encode_tools
-from ...infrastructure.tools.tool_search import (
-    MAX_ACTIVE_DEFERRED_TOOLS,
-    make_tool_search_tool,
-)
 from ..execution.services import RuntimeServices
 from ..memory import MemoryManager
 from ..session_runtime.events import SessionEvents
@@ -34,6 +30,10 @@ from ..tool_execution.capabilities import (
     assemble_tool_capabilities,
 )
 from ..tool_execution.dispatch import ToolDispatchService
+from ..tool_execution.tool_search import (
+    MAX_ACTIVE_DEFERRED_TOOLS,
+    make_tool_search_tool,
+)
 from .cancellation import CancellationToken
 from .components import AgentComponents, PreparedTools
 from .context import ContextBuilder, ContextCompactor

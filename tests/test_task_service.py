@@ -4,17 +4,17 @@ from tests.runtime_helpers import tool_runtime_for_session
 from wright.application.agent import build_agent_tools
 from wright.application.agent.assembly import prepare_model_tools
 from wright.application.execution.agent_operations import agent_completion_notice
-from wright.domain.model.session import Session
-from wright.infrastructure.tools.agent_tools import (
+from wright.application.tool_execution.agent_tools import (
     cancel_agent_tool,
     get_agent_tool,
     wait_agent_tool,
 )
-from wright.infrastructure.tools.command import execute_command
-from wright.infrastructure.tools.command.control import (
+from wright.application.tool_execution.command_control import (
     terminate_command_tool,
     wait_command_tool,
 )
+from wright.domain.model.session import Session
+from wright.infrastructure.tools.command import execute_command
 
 
 def _session(tmp_path):

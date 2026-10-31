@@ -6,9 +6,12 @@ from tests.responses import event, response
 from tests.runtime_helpers import tool_runtime_for_session
 from wright.application.agent import AgentBackgroundRuntime, make_spawn_agent_tool
 from wright.application.execution.services import RuntimeServices
+from wright.application.tool_execution.agent_tools import (
+    cancel_agent_tool,
+    get_agent_tool,
+)
 from wright.domain.model.llm.events import ContentDone
 from wright.domain.model.session import Session
-from wright.infrastructure.tools.agent_tools import cancel_agent_tool, get_agent_tool
 
 
 def _final(answer: str) -> ContentDone:

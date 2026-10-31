@@ -1,8 +1,6 @@
 from tests.runtime_helpers import tool_runtime_for_session
 from wright.application.execution.services import RuntimeServices
-from wright.domain.model.session import Session
-from wright.infrastructure.persistence.autonomy_store import AutonomyStore
-from wright.infrastructure.tools.schedule import (
+from wright.application.tool_execution.schedule import (
     cancel_schedule_tool,
     create_schedule_tool,
     get_schedule_tool,
@@ -11,6 +9,8 @@ from wright.infrastructure.tools.schedule import (
     pause_schedule_tool,
     resume_schedule_tool,
 )
+from wright.domain.model.session import Session
+from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 
 
 def _runtime(tmp_path):

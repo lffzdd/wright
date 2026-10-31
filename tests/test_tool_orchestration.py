@@ -3,6 +3,7 @@ import time
 
 from tests.runtime_helpers import tool_runtime_for_session
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
+from wright.application.tool_execution.command_control import get_command
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
@@ -13,7 +14,6 @@ from wright.infrastructure.tools.command import (
     execute_command,
     is_execute_command_concurrency_safe,
 )
-from wright.infrastructure.tools.command.control import get_command
 from wright.infrastructure.tools.file import read_file, write_file
 from wright.infrastructure.tools.web_tools import http_request_tool
 

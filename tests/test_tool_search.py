@@ -4,13 +4,13 @@ import json
 
 from tests.responses import event, response
 from wright.application.agent import create_agent
+from wright.application.tool_execution.tool_search import make_tool_search_tool
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolAccess, ToolResult
 from wright.domain.model.tool_definition import Tool
 from wright.domain.model.tool_runtime import ToolRuntime
 from wright.domain.protocol import encode_tools
 from wright.infrastructure.tools import tools as built_in_tools
-from wright.infrastructure.tools.tool_search import make_tool_search_tool
 
 
 def _tool(name: str, description: str, *, deferred: bool = False) -> Tool:

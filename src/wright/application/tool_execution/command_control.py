@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from ....domain.model.execution import (
+from ...domain.model.execution import (
     ExecutionKindMismatch,
     ExecutionNotFound,
     ExecutionWaitCancelled,
 )
-from ....domain.model.tool import ToolAccess, ToolResult
-from ....domain.model.tool_definition import Tool
-from ....domain.model.tool_runtime import ToolCancelledError, ToolRuntime
+from ...domain.model.tool import ToolAccess, ToolResult
+from ...domain.model.tool_definition import Tool
+from ...domain.model.tool_runtime import ToolCancelledError, ToolRuntime
 
 
 def _commands(runtime: ToolRuntime | None):

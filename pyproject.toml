@@ -115,10 +115,6 @@ allow_indirect_imports = true
 # Known violations: shrink this list, never grow it.
 ignore_imports = [
     "wright.application.composition.** -> wright.infrastructure.**",
-    "wright.application.agent.assembly -> wright.infrastructure.tools.tool_search",
-    "wright.application.agent.subagent -> wright.infrastructure.tools.agent_tools",
-    "wright.application.agent.subagent -> wright.infrastructure.tools.command.control",
-    "wright.application.agent.subagent -> wright.infrastructure.tools.schedule",
     "wright.application.session.directory -> wright.infrastructure.persistence.autonomy_store",
     "wright.application.session.directory -> wright.infrastructure.persistence.session.repository",
     "wright.application.session.directory -> wright.infrastructure.workspace.worktrees",

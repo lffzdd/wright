@@ -307,7 +307,7 @@ def test_domain_records_do_not_carry_runtime_callbacks() -> None:
 
 
 def test_schedule_tools_do_not_wake_the_scheduler() -> None:
-    root = PACKAGE_ROOT / "infrastructure/tools/schedule"
+    root = PACKAGE_ROOT / "application/tool_execution/schedule"
     text = "\n".join(
         path.read_text(encoding="utf-8")
         for path in root.rglob("*.py")

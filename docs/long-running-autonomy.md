@@ -1,7 +1,7 @@
 # Job scheduling
 
 调度子系统按 Job Scheduling 理解，实现在 `application/scheduling`、
-`domain/model/scheduling` 和 `infrastructure/tools/schedule`。它没有把
+`domain/model/scheduling` 和 `application/tool_execution/schedule`。它没有把
 Scheduler、Agent 和 Shell 合并成一个巨型状态机。SQLite 文件位于
 `~/.wright/projects/<project-id>/tasks.sqlite3`。
 

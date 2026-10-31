@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from wright.application.agent import create_agent
+from wright.application.tool_execution.tool_search import make_tool_search_tool
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolResult, split_tool_catalog
 from wright.domain.model.tool_definition import Tool
 from wright.domain.prompt import build_system_prompt
-from wright.infrastructure.tools.tool_search import make_tool_search_tool
 
 
 def _tool(name: str, *, deferred: bool = False, expose: bool = True) -> Tool:
