@@ -192,7 +192,52 @@ export type ReviewChange = {
   review?: string;
   reversible?: boolean;
   current_sha256?: string | null;
+  additions?: number;
+  deletions?: number;
+  binary?: boolean;
+  truncated?: boolean;
+  can_revert?: boolean;
+  reason?: string;
+  committed?: boolean;
 };
+
+export type GitChangeScope = "working" | "unstaged" | "staged";
+export type ChangeScope = GitChangeScope | "session";
+export type GitChange = {
+  path: string;
+  old_path?: string;
+  status: string;
+  untracked?: boolean;
+  staged?: boolean;
+  unstaged?: boolean;
+  additions?: number;
+  deletions?: number;
+  binary?: boolean;
+  truncated?: boolean;
+  size?: number;
+  reason?: string;
+  capabilities?: { stage?: boolean; unstage?: boolean; discard?: boolean; hunk?: boolean };
+};
+export type ChangesSummary = {
+  scope?: GitChangeScope;
+  baseline: string;
+  local_warning: boolean;
+  git?: boolean;
+  revision?: string;
+  changes: GitChange[];
+};
+export type ChangePatch = {
+  path: string;
+  patch: string;
+  revision?: string;
+  truncated: boolean;
+  binary: boolean;
+  reason?: string;
+  unavailable?: boolean;
+};
+export type ChangeAction = "stage" | "unstage" | "discard" | "commit";
+export type ChangeActionResult = { applied: boolean; results?: Array<Record<string, string>>; error?: string };
+export type ReviewSummary = { changes: ReviewChange[]; revision?: string; semantics?: Record<string, string> };
 
 export type WaitReason = { kind: "permission" | "ask_user" | "user_input" | "blocked"; request_ids: string[]; detail?: string };
 export type PlanStep = {

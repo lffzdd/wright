@@ -41,32 +41,26 @@ describe("Inspector request and content state", () => {
     expect(await screen.findByText("selected patch")).toBeTruthy();
   });
 
-  it("does not discard the review response when a patch opens", async () => {
-    const review = deferred<Awaited<ReturnType<typeof api.review>>>();
-    vi.mocked(api.review).mockReturnValue(review.promise);
-    vi.spyOn(api, "patch").mockResolvedValue(patch("new text"));
+  it("keeps task review separate from the working tree", async () => {
+    vi.mocked(api.changes).mockResolvedValue({ changes: [], baseline: "HEAD", local_warning: false });
+    vi.mocked(api.review).mockResolvedValue({ changes: [{ path: "a.txt", state: "task", origin: "task", can_revert: true }], revision: "session-r1" });
     render(inspector(view()));
     fireEvent.click(screen.getByRole("tab", { name: /Changes/ }));
-    fireEvent.click(await screen.findByRole("button", { name: /M\s*a.txt/ }));
-    await act(async () => { review.resolve({ changes: [{ path: "a.txt", state: "task" }] }); });
-    expect(await screen.findByText("a.txt · task")).toBeTruthy();
+    expect(await screen.findByText("No uncommitted changes.")).toBeTruthy();
+    expect(api.review).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Change scope"), { target: { value: "session" } });
+    expect(await screen.findByRole("button", { name: /a.txt/ })).toBeTruthy();
+    expect(screen.queryByText("No uncommitted changes.")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Accept review" })).toBeNull();
   });
 
-  it("only enables bulk review actions when something is ready", async () => {
-    const accept = () => screen.getByRole("button", { name: "Accept ready" }) as HTMLButtonElement;
-    const revert = () => screen.getByRole("button", { name: "Revert ready" }) as HTMLButtonElement;
-    const { unmount } = render(inspector(view()));
-    fireEvent.click(screen.getByRole("tab", { name: /Changes/ }));
-    await waitFor(() => expect(api.review).toHaveBeenCalled());
-    expect(accept().disabled).toBe(true);
-    expect(revert().disabled).toBe(true);
-    unmount();
-    vi.mocked(api.review).mockResolvedValue({ changes: [{ path: "a.txt", state: "accepted" }] });
+  it("only enables session undo when the server says it is safe", async () => {
+    vi.mocked(api.review).mockResolvedValue({ changes: [{ path: "a.txt", state: "conflict", origin: "task", can_revert: false }], revision: "session-r1" });
     render(inspector(view()));
     fireEvent.click(screen.getByRole("tab", { name: /Changes/ }));
-    await screen.findByText("a.txt · accepted");
-    expect(accept().disabled).toBe(true);
-    expect(revert().disabled).toBe(false);
+    fireEvent.change(screen.getByLabelText("Change scope"), { target: { value: "session" } });
+    const undo = await screen.findByRole("button", { name: /Undo \d+ available changes/ }) as HTMLButtonElement;
+    expect(undo.disabled).toBe(true);
   });
 
   it("does not show a directory as empty while loading or after a failed request", async () => {
@@ -111,10 +105,12 @@ describe("Inspector request and content state", () => {
   it("does not write a review action result into a different session", async () => {
     const pending = deferred<Awaited<ReturnType<typeof api.reviewAction>>>();
     vi.spyOn(api, "reviewAction").mockReturnValue(pending.promise);
-    vi.mocked(api.review).mockResolvedValue({ changes: [{ path: "a.txt", state: "task" }] });
+    vi.mocked(api.review).mockResolvedValue({ changes: [{ path: "a.txt", state: "task", origin: "task", can_revert: true }], revision: "session-r1" });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     const { rerender } = render(inspector(view()));
     fireEvent.click(screen.getByRole("tab", { name: /Changes/ }));
-    fireEvent.click(await screen.findByRole("button", { name: "Accept review" }));
+    fireEvent.change(screen.getByLabelText("Change scope"), { target: { value: "session" } });
+    fireEvent.click(await screen.findByRole("button", { name: /Undo \d+ available changes/ }));
     rerender(inspector(view("b")));
     await act(async () => { pending.resolve({ applied: false, results: [], error: "old session failed" }); });
     expect(screen.queryByText("old session failed")).toBeNull();

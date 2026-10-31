@@ -11,6 +11,7 @@ from typing import Any
 from ..permission.resources import GrantError
 from ..permission.service import PermissionConflict
 from ..session.errors import SessionServiceError
+from .change_lock import ChangeBusyError, change_operation
 from .documents import DocumentError
 from .grants import list_grants
 from .journal import ChangeJournalError, SessionChangeJournal
@@ -72,14 +73,18 @@ def sandbox_action(service: Any, action: str) -> dict[str, Any]:
         raise SessionServiceError(str(error)) from error
 
 
-def review_action(service: Any, action: str, paths: list[str], *, confirm: bool) -> dict[str, Any]:
+def review_action(service: Any, action: str, paths: list[str], *, confirm: bool,
+                  expected_revision: str | None = None) -> dict[str, Any]:
     journal = SessionChangeJournal(service.runtime.session_state)
     try:
-        if action == "accept":
-            return journal.accept(paths, confirm=confirm)
-        if action == "revert":
-            return journal.revert(paths, confirm=confirm)
-    except ChangeJournalError as exc:
+        if not expected_revision:
+            raise ChangeJournalError("expected_revision is required; refresh the task changes first")
+        with change_operation(service):
+            if action == "accept":
+                return journal.accept(paths, confirm=confirm, expected_revision=expected_revision)
+            if action == "revert":
+                return journal.revert(paths, confirm=confirm, expected_revision=expected_revision)
+    except (ChangeJournalError, ChangeBusyError) as exc:
         raise SessionServiceError(str(exc)) from exc
     raise SessionServiceError("review action must be accept or revert")
 

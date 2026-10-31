@@ -20,13 +20,22 @@ def summarize_git(root: Path) -> dict[str, object]:
             "dirty": False,
         }
     branch = _git(resolved, "rev-parse", "--abbrev-ref", "HEAD").strip() or None
-    status = _git(resolved, "status", "--porcelain")
-    lines = [line for line in status.splitlines() if line.strip()]
+    status = _git(resolved, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+    prefix = _git(resolved, "rev-parse", "--show-prefix").strip()
+    entries = iter(status.split("\0"))
+    count = 0
+    for entry in entries:
+        if not entry:
+            continue
+        if entry[0] in {"R", "C"}:
+            next(entries, None)
+        if not prefix or entry[3:].startswith(prefix):
+            count += 1
     return {
         "git": True,
         "branch": branch,
-        "uncommitted_count": len(lines),
-        "dirty": bool(lines),
+        "uncommitted_count": count,
+        "dirty": bool(count),
     }
 
 

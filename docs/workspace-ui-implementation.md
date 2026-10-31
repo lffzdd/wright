@@ -1,5 +1,7 @@
 # 工作台实现记录
 
+Changes 当前行为和验收标准见 [Changes 功能约定](changes-contract.md)。下文保留早期实现记录，其中关于 Git diff 只读、Accept 审阅按钮及 Changes 混合列表的描述已被新的完整审阅流程替代。
+
 第一阶段交付能力和 Web 接口。第二阶段用选定设计替换默认 Web UI，并接上这些接口。设计稿只作产品参照，其中的演示脚本、SIMULATE、固定耗时、示例 PID 和示例 PR 编号没有被实现，也没有执行。
 
 基线是当前工作区。没有 reset、clean、commit 或 push。设计文件没有修改。

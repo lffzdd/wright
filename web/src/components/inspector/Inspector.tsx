@@ -1,11 +1,11 @@
-import { Check, Circle, Folder, Warning, X } from "@phosphor-icons/react";
+import { Check, Circle, Folder, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { DiffViewer } from "../../DiffViewer";
 import { api } from "../../api";
 import { parseDiff } from "../../diff";
 import { useT } from "../../i18n";
-import type { Grants, PlanStep, ReviewChange, ViewState, WaitReason } from "../../types";
+import type { Grants, PlanStep, ViewState, WaitReason } from "../../types";
 import { PermissionsPanel } from "../permissions/permissions";
+import { ChangesPanel } from "./ChangesPanel";
 
 type InspectorTab = "task" | "files" | "changes" | "permissions" | "context";
 
@@ -19,7 +19,7 @@ export function projectRelative(path: string, root?: string): string | null {
   return null;
 }
 
-export function Inspector({ state, sessionId, open, narrow = false, focusPath = null, focusRequest = 0, close, onResume }: { state: ViewState; sessionId: string; open: boolean; narrow?: boolean; focusPath?: string | null; focusRequest?: number; close: () => void; onResume?: () => Promise<unknown> }) {
+export function Inspector({ state, sessionId, open, narrow = false, focusPath = null, focusRequest = 0, close, onResume, onFeedback }: { state: ViewState; sessionId: string; open: boolean; narrow?: boolean; focusPath?: string | null; focusRequest?: number; close: () => void; onResume?: () => Promise<unknown>; onFeedback?: (feedback: string) => void }) {
   const tr = useT();
   const panelRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -33,23 +33,7 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
   }, [open, narrow]);
   const [tab, setTab] = useState<InspectorTab>("task");
   const [changes, setChanges] = useState<Array<{ path: string; status: string }> | null>(null);
-  const [changesError, setChangesError] = useState("");
-  const [warning, setWarning] = useState(false);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [patch, setPatch] = useState("");
-  const [patchLoading, setPatchLoading] = useState(false);
-  const [patchError, setPatchError] = useState("");
-  const [changesLoading, setChangesLoading] = useState(false);
-  const [wide, setWide] = useState(false);
-  const wideRef = useRef<HTMLDivElement>(null);
-  const expandRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (!wide) return;
-    wideRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
-    return () => { if (expandRef.current?.isConnected) expandRef.current.focus(); };
-  }, [wide]);
-  const [review, setReview] = useState<ReviewChange[]>([]);
-  const [reviewNote, setReviewNote] = useState("");
+  const [changeCount, setChangeCount] = useState(0);
   const [files, setFiles] = useState<Array<{ name: string; path: string; kind: string }>>([]);
   const [directory, setDirectory] = useState("");
   const [browseWorkspace, setBrowseWorkspace] = useState(false);
@@ -110,39 +94,22 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
   }, [livePlan, state.plan]);
   const [panelError, setPanelError] = useState("");
   const changesGeneration = useRef(0);
-  const patchGeneration = useRef(0);
-  const ownerGeneration = useRef(0);
   useEffect(() => {
-    ++ownerGeneration.current; ++changesGeneration.current; ++patchGeneration.current;
-    setSelected(null); setPatch(""); setPatchError(""); setPatchLoading(false); setChanges(null); setChangesError(""); setChangesLoading(false); setReview([]);
-    setWarning(false); setReviewNote(""); setWide(false); setPermissionsError(""); setFileError("");
+    ++changesGeneration.current;
+    setChanges(null); setChangeCount(0); setPermissionsError(""); setFileError("");
     setDirectory(""); setBrowseWorkspace(false); setRecentFileMeta({}); setFilePath(""); setFileText(null); setFileLoading(false); setFilesLoading(false); setFiles([]); setPanelError("");
     setGrants(null);
-    return () => { ++ownerGeneration.current; ++changesGeneration.current; ++patchGeneration.current; };
+    return () => { ++changesGeneration.current; };
   }, [sessionId, historyOnly]);
   const refresh = useCallback(() => {
     if (historyOnly) return;
     const request = ++changesGeneration.current;
-    const requestOwner = sessionId;
-    setChangesLoading(true);
-    api.changes(requestOwner).then((result) => {
+    api.changes(sessionId).then((result) => {
       if (changesGeneration.current !== request) return;
-      setChangesLoading(false);
-      setChanges(result.changes);
-      setWarning(result.local_warning);
-      setChangesError("");
-    }).catch((error) => {
-      if (changesGeneration.current !== request) return;
-      setChangesLoading(false);
-      setChangesError(error instanceof Error ? error.message : String(error));
-      setChanges(null);
-    });
-    api.review(requestOwner).then((result) => {
-      if (changesGeneration.current !== request) return;
-      setReview((result.changes ?? []) as ReviewChange[]);
-    }).catch(() => { if (changesGeneration.current === request) setReview([]); });
+      setChanges(result.changes); setChangeCount(result.changes.length);
+    }).catch(() => { if (changesGeneration.current === request) { setChanges(null); setChangeCount(0); } });
   }, [sessionId, historyOnly]);
-  useEffect(() => { refresh(); }, [refresh, state.session.status, state.connection, tab === "changes"]);
+  useEffect(() => { if (tab !== "changes") refresh(); else ++changesGeneration.current; }, [refresh, state.session.status, state.connection, tab]);
   useEffect(() => {
     let current = true;
     setPanelError("");
@@ -215,45 +182,13 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
     }
     return () => { current = false; };
   }, [filePath, sessionId, canReadFiles, state.session.execution_root, readFile, tr]);
-  const openPatch = (path: string) => {
-    const request = ++patchGeneration.current;
-    setSelected(path);
-    setPatch(""); setPatchError(""); setPatchLoading(true);
-    api.patch(sessionId, path).then((result) => {
-      if (patchGeneration.current !== request) return;
-      setPatchLoading(false); setPatch(result.patch);
-    }).catch((error) => {
-      if (patchGeneration.current !== request) return;
-      setPatchLoading(false); setPatch("");
-      setPatchError(error instanceof Error ? error.message : String(error));
-    });
-  };
-  const acceptable = review.filter((item) => item.state === "task").map((item) => item.path);
-  const revertible = review.filter((item) => item.state === "task" || item.state === "accepted").map((item) => item.path);
-  const paired = (path: string) => {
-    const item = review.find((entry) => entry.path === path);
-    return item?.rename_with ? [path, item.rename_with] : [path];
-  };
-  const act = async (action: "accept" | "revert", paths: string[]) => {
-    const unique = [...new Set(paths)];
-    if (!unique.length) { setReviewNote(tr("web.nothing_ready")); return; }
-    setReviewNote("");
-    const requestOwner = ownerGeneration.current;
-    try {
-      const result = await api.reviewAction(sessionId, action, unique);
-      if (ownerGeneration.current !== requestOwner) return;
-      if (!result.applied) setReviewNote(result.results.map((item) => `${item.path}: ${item.state} ${item.result}`).join("; ") || result.error || "The server did not apply this review.");
-      if (result.applied) { ++patchGeneration.current; setSelected(null); setPatch(""); setPatchLoading(false); setPatchError(""); setWide(false); }
-      refresh();
-    } catch (error) { if (ownerGeneration.current === requestOwner) setReviewNote(String(error)); }
-  };
   const breakdown = state.context_breakdown;
   const tabs: InspectorTab[] = ["task", "files", "changes", "permissions", "context"];
   const steps = state.plan.steps ?? [];
   const accessedFiles = [...new Map((state.accessed_files ?? []).map((file) => [projectRelative(file.path, state.session.execution_root) ?? file.path, file])).values()];
   const completedSteps = steps.filter((step) => step.status === "completed").length;
   const currentStep = steps.findIndex((step) => ["in_progress", "running", "active"].includes(step.status));
-  const tabCount = (item: InspectorTab) => item === "files" ? accessedFiles.length : item === "changes" ? changes?.length || 0 : 0;
+  const tabCount = (item: InspectorTab) => item === "files" ? accessedFiles.length : item === "changes" ? changeCount : 0;
   const fileMeta = (path: string) => recentFileMeta[projectRelative(path, state.session.execution_root) ?? path] ?? {};
   const formatTokens = (value: number | null | undefined) => value == null ? tr("web.unknown") : new Intl.NumberFormat().format(value);
   const contextCategoryLabel = (id: string) => {
@@ -357,36 +292,8 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
       </section>}
     </div>}
     {tab === "changes" && <div className="inspector-body" role="tabpanel" id="inspector-panel-changes" aria-labelledby="inspector-tab-changes">
-      {historyOnly ? resumeStatus ?? <p className="hint">{tr("web.inspector_history_changes")}</p> : <>
-      {changesLoading && <p className="hint" role="status">{tr("web.inspector_loading")}</p>}
-      {warning && <div className="local-warning"><Warning size={14} />{tr("web.local_warning")}</div>}
-      {changesError && <p className="form-error" role="alert">{changesError}</p>}
-      {reviewNote && <p className="form-error" role="status">{reviewNote}</p>}
-      <div className="changes-head">
-        <div className="section-label"><span>{tr("web.working_tree")}</span></div>
-        <button type="button" className="text-button" disabled={changesLoading} onClick={() => { ++patchGeneration.current; setSelected(null); setPatch(""); setPatchLoading(false); setPatchError(""); setWide(false); refresh(); }}>{tr("web.refresh_changes")}</button>
-        <button type="button" className="button accept" disabled={!acceptable.length} onClick={() => act("accept", acceptable)}>{tr("web.accept_ready")}</button>
-        <button type="button" className="button revert" disabled={!revertible.length} onClick={() => {
-          if (window.confirm(tr("web.revert_confirm", { paths: revertible.join(", ") }))) act("revert", revertible);
-        }}>{tr("web.revert_ready")}</button>
-      </div>
-      <div className="change-list">{(changes ?? []).map((change) => <button key={change.path} className={selected === change.path ? "change-card selected" : "change-card"} onClick={() => openPatch(change.path)}><b>{change.status}</b><span>{change.path}</span></button>)}</div>
-      {review.map((item) => <div className="queue-item" key={`review-${item.path}`}><span>{item.display_kind === "rename" ? `rename ${item.kind === "delete" ? item.path : item.rename_with} → ${item.kind === "delete" ? item.rename_with : item.path}` : item.path} · {item.state}</span>
-        <button type="button" className="button" onClick={() => act("accept", paired(item.path))}>{tr("web.accept_review")}</button>
-        <button type="button" className="button" onClick={() => { const paths = paired(item.path); if (window.confirm(tr("web.revert_single_confirm", { paths: paths.join(", ") }))) act("revert", paths); }}>{tr("web.revert_change")}</button>
-      </div>)}
-      {selected && <div className="patch">{patchError ? <p className="form-error" role="alert">{patchError}</p> : patchLoading ? <p className="hint" role="status">{tr("web.inspector_loading")}</p> : <DiffViewer patch={patch} filename={selected} />}<button type="button" className="button" ref={expandRef} disabled={patchLoading || !!patchError} onClick={() => setWide(true)}>{tr("web.expand_diff")}</button></div>}
-      {changes && !changesLoading && !changes.length && !changesError && <p className="empty-small">{tr("web.tree_clean")}</p>}
-      {wide && selected && <div ref={wideRef} className="wide-diff" role="dialog" aria-modal="true" aria-label={selected} onKeyDown={(event) => {
-        if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setWide(false); }
-        if (event.key !== "Tab") return;
-        event.stopPropagation();
-        const controls = Array.from(wideRef.current?.querySelectorAll<HTMLButtonElement>("button:not([disabled])") ?? []);
-        const first = controls[0], last = controls[controls.length - 1];
-        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-      }}><button type="button" className="button" autoFocus onClick={() => setWide(false)}>{tr("web.close")}</button><DiffViewer patch={patch} filename={selected} /></div>}
-      </>}
+      {historyOnly ? resumeStatus ?? <p className="hint">{tr("web.inspector_history_changes")}</p> : <ChangesPanel sessionId={sessionId} state={state} onCount={setChangeCount} onWorkingChanges={setChanges} onFeedback={onFeedback} />}
+
     </div>}
     {tab === "permissions" && <div className="inspector-body" role="tabpanel" id="inspector-panel-permissions" aria-labelledby="inspector-tab-permissions">
       {historyOnly ? resumeStatus ?? <p className="hint">{tr("web.inspector_history_permissions")}</p> : <>

@@ -58,3 +58,18 @@ def test_large_and_binary_changes_return_metadata_only(tmp_path):
 
     assert large["truncated"] is True and large["patch"] == ""
     assert binary["binary"] is True and binary["patch"] == ""
+
+
+@pytest.mark.parametrize("tracked", [True, False])
+def test_binary_marker_words_in_source_are_normal_text_changes(tmp_path, tracked):
+    root = _repo(tmp_path)
+    path = "tracked.txt" if tracked else "new.py"
+    (root / path).write_text(
+        'binary_markers = ["Binary files ", "GIT binary patch"]\n',
+        encoding="utf-8",
+    )
+    result = change_patch(ProjectContext.local(root), path)
+    assert result["binary"] is False
+    assert result["truncated"] is False
+    assert result["additions"] == 1
+    assert '+binary_markers = ["Binary files ", "GIT binary patch"]' in result["patch"]

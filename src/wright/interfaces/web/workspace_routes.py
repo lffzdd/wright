@@ -19,7 +19,7 @@ from ...application.workspace.catalog import WorkspaceCatalogError
 from ...application.workspace.documents import DocumentError
 from ...application.workspace.files import PathRejected, list_directory, read_text
 from ...application.workspace.git_status import summarize_git
-from ...application.workspace.journal import SessionChangeJournal
+from ...application.workspace.journal import ChangeJournalError, SessionChangeJournal
 from ...application.workspace.memory_view import (
     MemoryViewError,
     bound_project,
@@ -102,6 +102,10 @@ class PolicyBody(BaseModel):
 class ConfirmBody(BaseModel):
     confirm: bool = False
     paths: list[str] = Field(default_factory=list)
+
+
+class ReviewBody(ConfirmBody):
+    expected_revision: str = Field(min_length=1)
 
 
 class RevokeBody(BaseModel):
@@ -386,15 +390,26 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
     @router.get("/sessions/{session_id}/review")
     def review(session_id: str, request: Request) -> dict[str, Any]:
         require(request)
-        return _journal(manager, session_id).projection()
+        try:
+            return _journal(manager, session_id).projection()
+        except (ChangeJournalError, OSError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @router.get("/sessions/{session_id}/review/patch")
+    def review_patch(session_id: str, path: str, request: Request) -> dict[str, Any]:
+        require(request)
+        try:
+            return _journal(manager, session_id).patch(path)
+        except (ChangeJournalError, OSError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @router.post("/sessions/{session_id}/review/accept")
-    def accept_review(session_id: str, body: ConfirmBody, request: Request) -> dict[str, Any]:
+    def accept_review(session_id: str, body: ReviewBody, request: Request) -> dict[str, Any]:
         require(request)
         return _review_action(manager, session_id, body, "accept")
 
     @router.post("/sessions/{session_id}/review/revert")
-    def revert_review(session_id: str, body: ConfirmBody, request: Request) -> dict[str, Any]:
+    def revert_review(session_id: str, body: ReviewBody, request: Request) -> dict[str, Any]:
         require(request)
         return _review_action(manager, session_id, body, "revert")
 
@@ -670,16 +685,17 @@ def _journal(manager: RuntimeManager, session_id: str) -> SessionChangeJournal:
     return SessionChangeJournal(_handle(manager, session_id).runtime.session_state)
 
 
-def _review_action(manager: RuntimeManager, session_id: str, body: ConfirmBody, action: str) -> dict[str, Any]:
+def _review_action(manager: RuntimeManager, session_id: str, body: ReviewBody, action: str) -> dict[str, Any]:
     try:
         return review_action(
             _handle(manager, session_id).service,
             action,
             body.paths,
             confirm=body.confirm,
+            expected_revision=body.expected_revision,
         )
     except SessionServiceError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 def _memory(handle: Any):

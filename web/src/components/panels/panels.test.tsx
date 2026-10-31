@@ -109,14 +109,15 @@ describe("workspace panels", () => {
         return { ok: true, statusText: "OK", json: async () => ({ applied: false, results: [{ path: "a.txt", state: "conflict", result: "bytes changed outside this task" }] }) };
       }
       if (String(url).endsWith("/review")) {
-        return { ok: true, statusText: "OK", json: async () => ({ changes: [{ path: "a.txt", state: "task" }] }) };
+        return { ok: true, statusText: "OK", json: async () => ({ revision: "session-r1", changes: [{ path: "a.txt", state: "task", origin: "task", can_revert: true }] }) };
       }
       return { ok: true, statusText: "OK", json: async () => ({ local_warning: false, baseline: "head", changes: [{ path: "a.txt", status: "M" }] }) };
     }));
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<Inspector state={view("session-a")} sessionId="session-a" open close={() => undefined} />);
     fireEvent.click(screen.getByRole("tab", { name: /changes/i }));
-    fireEvent.click(await screen.findByRole("button", { name: "Revert" }));
+    fireEvent.change(screen.getByLabelText("Change scope"), { target: { value: "session" } });
+    fireEvent.click(await screen.findByRole("button", { name: /Undo \d+ available changes/ }));
     expect(await screen.findByText(/bytes changed outside this task/)).toBeDefined();
     expect(calls.filter((item) => item.includes("/review/revert"))).toHaveLength(1);
   });

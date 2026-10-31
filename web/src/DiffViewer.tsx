@@ -1,19 +1,30 @@
-import { Check, Copy } from "@phosphor-icons/react";
-import { memo, useMemo, useState } from "react";
+import { ChatCircle, Check, Copy } from "@phosphor-icons/react";
+import { memo, useMemo, useState, type ReactNode } from "react";
 import { useT } from "./i18n";
 import { parseDiff } from "./diff";
+
+export type DiffFeedbackLine = { oldLine: number | null; newLine: number | null; content: string; side: "old" | "new" };
 
 export const DiffViewer = memo(function DiffViewer({
   patch,
   filename,
+  onLineFeedback,
+  renderHunkActions,
 }: {
   patch: string;
   filename?: string;
+  onLineFeedback?: (line: DiffFeedbackLine) => void;
+  renderHunkActions?: (hunk: number) => ReactNode;
 }) {
   const tr = useT();
   const [copied, setCopied] = useState(false);
 
   const { lines, additions, deletions } = useMemo(() => parseDiff(patch), [patch]);
+  const hunkIndices = useMemo(() => {
+    let hunk = -1;
+    return lines.map((line) => line.type === "hunk" ? ++hunk : hunk);
+  }, [lines]);
+  const columns = onLineFeedback ? 5 : 4;
 
   const handleCopy = async () => {
     try {
@@ -57,8 +68,8 @@ export const DiffViewer = memo(function DiffViewer({
               if (line.type === "hunk") {
                 return (
                   <tr key={idx} className="diff-row diff-row-hunk">
-                    <td colSpan={4} className="diff-cell-hunk">
-                      {line.content}
+                    <td colSpan={columns} className="diff-cell-hunk">
+                      <div className="diff-hunk-heading"><span>{line.content}</span>{renderHunkActions && <div className="diff-hunk-actions">{renderHunkActions(hunkIndices[idx])}</div>}</div>
                     </td>
                   </tr>
                 );
@@ -66,7 +77,7 @@ export const DiffViewer = memo(function DiffViewer({
               if (line.type === "meta") {
                 return (
                   <tr key={idx} className="diff-row diff-row-meta">
-                    <td colSpan={4} className="diff-cell-meta">
+                    <td colSpan={columns} className="diff-cell-meta">
                       {line.content}
                     </td>
                   </tr>
@@ -81,6 +92,7 @@ export const DiffViewer = memo(function DiffViewer({
                   <td className="diff-code">
                     <pre>{line.content || " "}</pre>
                   </td>
+                  {onLineFeedback && <td className="diff-feedback-cell"><button type="button" className="diff-line-feedback icon-button" aria-label={tr("web.changes.line_feedback", { side: tr(line.type === "del" ? "web.changes.old" : "web.changes.new"), line: line.newNum ?? line.oldNum ?? "" })} title={tr("web.changes.feedback")} onClick={() => onLineFeedback({ oldLine: line.oldNum, newLine: line.newNum, content: line.content, side: line.type === "del" ? "old" : "new" })}><ChatCircle size={13} /></button></td>}
                 </tr>
               );
             })}

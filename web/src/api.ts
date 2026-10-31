@@ -1,4 +1,4 @@
-import type { ExecutionMode, Grants, SandboxStatus, SessionSummary, Snapshot } from "./types";
+import type { ChangeAction, ChangeActionResult, ChangePatch, ChangesSummary, ExecutionMode, GitChangeScope, Grants, ReviewSummary, SandboxStatus, SessionSummary, Snapshot } from "./types";
 
 export class ApiError extends Error {
   constructor(message: string, public status: number, public latest?: Grants) { super(message); }
@@ -67,8 +67,9 @@ export const api = {
   attachmentUrl: (id: string, attachmentId: string) => `/api/v1/sessions/${id}/attachments/${attachmentId}`,
   attachmentThumbnailUrl: (id: string, attachmentId: string) => `/api/v1/sessions/${id}/attachments/${attachmentId}/thumbnail`,
   artifactUrl: (id: string, artifactId: string) => `/api/v1/sessions/${id}/artifacts/${artifactId}`,
-  changes: (id: string) => json<{ local_warning: boolean; baseline: string; changes: Array<{ path: string; status: string }> }>(`/api/v1/sessions/${id}/changes`),
-  patch: (id: string, path: string) => json<{ path: string; patch: string; truncated: boolean; binary: boolean }>(`/api/v1/sessions/${id}/changes/${path.split("/").map(encodeURIComponent).join("/")}`),
+  changes: (id: string, scope: GitChangeScope = "working") => json<ChangesSummary>(`/api/v1/sessions/${id}/changes${scope === "working" ? "" : `?scope=${scope}`}`),
+  patch: (id: string, path: string, scope: GitChangeScope = "working") => json<ChangePatch>(`/api/v1/sessions/${id}/changes/${path.split("/").map(encodeURIComponent).join("/")}${scope === "working" ? "" : `?scope=${scope}`}`),
+  changeAction: (id: string, body: { action: ChangeAction; scope: GitChangeScope; paths: string[]; expected_revision: string; hunk?: number; message?: string; confirm?: boolean }) => json<ChangeActionResult>(`/api/v1/sessions/${id}/changes/actions`, { method: "POST", body: JSON.stringify(body) }),
   workspaces: () => json<{ selected_project_id: string | null; projects: Array<{ project_id: string; name: string; root: string; selected?: boolean; exists?: boolean }> }>("/api/v1/workspaces"),
   registerWorkspace: (path: string) => json<Record<string, unknown>>("/api/v1/workspaces", { method: "POST", body: JSON.stringify({ path }) }),
   selectWorkspace: (projectId: string) => json<Record<string, unknown>>("/api/v1/workspaces/select", { method: "POST", body: JSON.stringify({ project_id: projectId }) }),
@@ -87,8 +88,9 @@ export const api = {
   revokeGrant: (sessionId: string, ruleId: string, source: string, expected_version: string) => json<Grants>(`/api/v1/sessions/${sessionId}/grants/${ruleId}/revoke`, { method: "POST", body: JSON.stringify({ source, expected_version }) }),
   addGrant: (sessionId: string, resource: Record<string, unknown>, lifetime: string, expected_version: string) => json<Grants>(`/api/v1/sessions/${sessionId}/grants`, { method: "POST", body: JSON.stringify({ resource, lifetime, expected_version }) }),
   sandbox: (sessionId: string, action: "setup" | "cleanup") => json<SandboxStatus>(`/api/v1/sessions/${sessionId}/sandbox`, { method: "POST", body: JSON.stringify({ action }) }),
-  review: (sessionId: string) => json<{ changes: Array<Record<string, unknown>>; semantics?: Record<string, string> }>(`/api/v1/sessions/${sessionId}/review`),
-  reviewAction: (sessionId: string, action: "accept" | "revert", paths: string[]) => json<{ applied: boolean; results: Array<Record<string, string>>; error?: string }>(`/api/v1/sessions/${sessionId}/review/${action}`, { method: "POST", body: JSON.stringify({ confirm: true, paths }) }),
+  review: (sessionId: string) => json<ReviewSummary>(`/api/v1/sessions/${sessionId}/review`),
+  reviewPatch: (sessionId: string, path: string) => json<ChangePatch>(`/api/v1/sessions/${sessionId}/review/patch?path=${encodeURIComponent(path)}`),
+  reviewAction: (sessionId: string, action: "accept" | "revert", paths: string[], expectedRevision?: string) => json<ChangeActionResult>(`/api/v1/sessions/${sessionId}/review/${action}`, { method: "POST", body: JSON.stringify({ confirm: true, paths, expected_revision: expectedRevision }) }),
   memory: (sessionId: string) => json<Record<string, unknown>>(`/api/v1/sessions/${sessionId}/memory`),
   updateCore: (sessionId: string, body: Record<string, unknown>) => json<Record<string, unknown>>(`/api/v1/sessions/${sessionId}/memory/core`, { method: "PUT", body: JSON.stringify(body) }),
   createSemantic: (sessionId: string, body: Record<string, unknown>) => json<Record<string, unknown>>(`/api/v1/sessions/${sessionId}/memory/semantic`, { method: "POST", body: JSON.stringify(body) }),

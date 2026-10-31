@@ -15,6 +15,8 @@ from fastapi import (
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from ...application.workspace.change_lock import ChangeBusyError
+from ...application.workspace.changes import ChangeConflict, git_action
 from ...infrastructure.config.preferences import load_preferences, save_preference
 from ...infrastructure.workspace.worktrees import WorktreeError
 from ..i18n import t
@@ -67,6 +69,16 @@ class PreferenceRequest(BaseModel):
     theme: Literal["dark", "light"] | None = None
     inspector_open: bool | None = None
     inspector_width: int | None = None
+
+
+class ChangeActionRequest(BaseModel):
+    action: Literal["stage", "unstage", "discard", "commit"]
+    scope: Literal["working", "unstaged", "staged"] = "working"
+    paths: list[str] = []
+    expected_revision: str
+    hunk: int | None = None
+    message: str = ""
+    confirm: bool = False
 
 
 def _require_auth(request: Request, auth: BootstrapAuth) -> None:
@@ -323,23 +335,37 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @router.get("/sessions/{session_id}/changes")
-    def changes(session_id: str, request: Request) -> dict[str, Any]:
+    def changes(session_id: str, request: Request, scope: Literal["working", "unstaged", "staged"] = "working") -> dict[str, Any]:
         _require_auth(request, auth)
         try:
-            return list_changes(manager.get(session_id).runtime.project_context)
+            return list_changes(manager.get(session_id).runtime.project_context, scope)
         except RuntimeManagerError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except DiffError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @router.get("/sessions/{session_id}/changes/{path:path}")
-    def change(session_id: str, path: str, request: Request) -> dict[str, Any]:
+    @router.post("/sessions/{session_id}/changes/actions")
+    def change_action(session_id: str, body: ChangeActionRequest, request: Request) -> dict[str, Any]:
         _require_auth(request, auth)
         try:
-            return change_patch(manager.get(session_id).runtime.project_context, path)
+            return git_action(manager.get(session_id).service, **body.model_dump())
         except RuntimeManagerError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except DiffError as exc:
+        except (ChangeConflict, ChangeBusyError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (DiffError, OSError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.get("/sessions/{session_id}/changes/{path:path}")
+    def change(session_id: str, path: str, request: Request, scope: Literal["working", "unstaged", "staged"] = "working") -> dict[str, Any]:
+        _require_auth(request, auth)
+        try:
+            return change_patch(manager.get(session_id).runtime.project_context, path, scope)
+        except RuntimeManagerError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ChangeConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (DiffError, OSError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     add_workspace_routes(router, manager, auth)

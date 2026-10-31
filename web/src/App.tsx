@@ -952,7 +952,12 @@ export default function App() {
       {state && selected && inspectorOpen && !compactViewport ? (
         <InspectorResizeHandle width={inspectorWidth} onWidthChange={setInspectorWidth} onCommit={commitInspectorWidth} />
       ) : null}
-      {state && selected ? <Inspector key={selected} state={state} sessionId={selected} open={compactViewport ? inspectorOpen && narrowInspector : inspectorOpen} narrow={compactViewport && narrowInspector} focusPath={fileFocus?.sessionId === selected ? fileFocus.path : null} focusRequest={fileFocus?.request} close={closeInspector} onResume={resumeSelected} /> : null}
+      {state && selected ? <Inspector key={selected} state={state} sessionId={selected} open={compactViewport ? inspectorOpen && narrowInspector : inspectorOpen} narrow={compactViewport && narrowInspector} focusPath={fileFocus?.sessionId === selected ? fileFocus.path : null} focusRequest={fileFocus?.request} close={closeInspector} onResume={resumeSelected} onFeedback={(feedback) => {
+        const owner = selected;
+        updateDraft(owner, (current) => ({ ...current, prompt: `${current.prompt.trimEnd()}${current.prompt.trim() ? "\n\n" : ""}${feedback}` }));
+        if (compactViewport) closeInspector();
+        requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus());
+      }} /> : null}
     </div>
     {railOpen && <button className="sidebar-backdrop" aria-label={tr("web.close_sessions")} onClick={() => setRailOpen(false)} />}
     {state && selected && inspectorOpen && narrowInspector && compactViewport && <button className="inspector-backdrop" aria-label={tr("web.close_inspector")} onClick={closeInspector} tabIndex={-1} />}

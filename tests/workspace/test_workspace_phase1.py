@@ -175,7 +175,7 @@ def test_change_attribution_conflict_and_batch_failure(tmp_path: Path, monkeypat
     session = SimpleNamespace(session_id="s1", project_root=root, workspace_dir=root)
     journal = SessionChangeJournal(session)
     journal.ensure_baseline()
-    preexisting = {item["path"]: item for item in journal.projection()["changes"]}
+    preexisting = {item["path"]: item for item in journal.projection()["unowned_changes"]}
     assert preexisting["tracked.txt"]["state"] == "preexisting"
     blocked = journal.revert(["tracked.txt"], confirm=True)
     assert blocked["applied"] is False
