@@ -12,8 +12,8 @@ import tempfile
 import threading
 from pathlib import Path
 
-from ....core.file_lock import FileLock
-from ....core.paths import project_id, workspace_registry_path
+from .file_lock import FileLock
+from .paths import project_id, workspace_registry_path
 
 _LOCK = threading.RLock()
 

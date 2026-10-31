@@ -123,7 +123,6 @@ ignore_imports = [
     "wright.application.tool_execution.capabilities -> wright.infrastructure.runtime",
     "wright.application.tool_execution.capabilities -> wright.infrastructure.runtime.network",
     "wright.application.tool_execution.dispatch -> wright.infrastructure.config.permission_store",
-    "wright.application.workspace.catalog -> wright.infrastructure.persistence.workspace.registry",
     "wright.application.workspace.rules -> wright.infrastructure.storage.skills",
     "wright.application.workspace.schedule_api -> wright.infrastructure.persistence.autonomy_store",
 ]

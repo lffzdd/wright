@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ...infrastructure.persistence.workspace.registry import (
+from ...core.workspace_registry import (
     identity_for,
     load_registry,
     save_registry,
