@@ -14,8 +14,13 @@ from collections.abc import Callable, Iterable, Iterator
 from itertools import islice
 from pathlib import Path
 
+from ...domain.gateway.runtime_types import (
+    DirectoryEntry,
+    ExecutionPath,
+    FileMetadata,
+    SearchMatch,
+)
 from .process_group import OwnedProcessGroup
-from .types import DirectoryEntry, ExecutionPath, FileMetadata, SearchMatch
 
 
 class LocalProcessHandle:

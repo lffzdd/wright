@@ -150,7 +150,7 @@ def test_child_session_cannot_set_execution_mode(tmp_path):
     )
     service.runner = SimpleNamespace(state="idle")
     service._require_accepting_input = lambda: None
-    service._interaction_snapshot = lambda: []
+    service._interaction_snapshot = list
     service.is_evictable = lambda: True
     with pytest.raises(SessionServiceError, match="inherit the root execution mode"):
         service.set_execution_policy(execution_mode="sandbox")

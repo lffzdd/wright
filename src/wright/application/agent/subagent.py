@@ -25,9 +25,9 @@ from ...infrastructure.tools.command.control import command_tools
 from ...infrastructure.tools.runtime import ToolRuntime
 from ...infrastructure.tools.schedule import schedule_tools
 from ..command.execution import CommandExecution
-from ..composition.roles import tools_for_role
 from ..execution.directory import current_directory_binding
 from ..execution.identity import bind_identity
+from ..execution.roles import tools_for_role
 from ..session.events import EventScope, SessionEvents
 from ..session.live_resources import RuntimeResources
 from ..session.publisher import EventPublisher, open_session_events

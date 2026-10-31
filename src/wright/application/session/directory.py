@@ -22,12 +22,12 @@ from uuid import uuid4
 from ...core.paths import project_id, session_dir, task_db_path
 from ...domain.model.llm.model_adapters import available_models, process_model_name
 from ...domain.model.session.errors import CheckpointError
+from ...domain.model.workspace.project import ProjectContext
 from ...infrastructure.persistence.autonomy_store import (
     AutonomyNotFoundError,
     AutonomyStore,
 )
 from ...infrastructure.persistence.session.repository import FileSessionRepository
-from ...infrastructure.workspace.project import ProjectContext
 from ...infrastructure.workspace.worktrees import ArchiveResult, WorktreeManager
 from ..composition.host import ApplicationHost
 from ..composition.runtime import (

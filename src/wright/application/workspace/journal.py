@@ -18,9 +18,9 @@ import threading
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from ...core.file_lock import FileLock
 from ...core.paths import session_dir
 from ...domain.model.workspace.review import ChangeHead, disposition, preflight
-from ...infrastructure.file_lock import FileLock
 from .change_lock import workspace_change_lock
 
 MAX_BLOB_BYTES = 1_000_000

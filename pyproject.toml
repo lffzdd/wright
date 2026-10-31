@@ -123,17 +123,10 @@ ignore_imports = [
     "wright.application.agent.subagent -> wright.infrastructure.tools.runtime",
     "wright.application.agent.subagent -> wright.infrastructure.tools.schedule",
     "wright.application.command.execution -> wright.infrastructure.runtime.command_log",
-    "wright.application.command.execution -> wright.infrastructure.runtime.protocols",
-    "wright.application.command.execution -> wright.infrastructure.runtime.types",
-    "wright.application.memory.assembly -> wright.infrastructure.llm.context_selector",
-    "wright.application.memory.assembly -> wright.infrastructure.persistence.memory",
-    "wright.application.memory.assembly -> wright.infrastructure.persistence.memory.evidence",
-    "wright.application.memory.assembly -> wright.infrastructure.tools.memory",
     "wright.application.memory.eval_baseline -> wright.infrastructure.persistence.memory",
     "wright.application.memory.prompt -> wright.infrastructure.persistence.memory",
     "wright.application.session.directory -> wright.infrastructure.persistence.autonomy_store",
     "wright.application.session.directory -> wright.infrastructure.persistence.session.repository",
-    "wright.application.session.directory -> wright.infrastructure.workspace.project",
     "wright.application.session.directory -> wright.infrastructure.workspace.worktrees",
     "wright.application.session.dispatch -> wright.infrastructure.persistence.autonomy_store",
     "wright.application.skills.registry -> wright.infrastructure.storage.skills",
@@ -147,9 +140,6 @@ ignore_imports = [
     "wright.application.tool_execution.dispatch -> wright.infrastructure.tools.runtime",
     "wright.application.tool_execution.dispatch -> wright.infrastructure.tools.validation",
     "wright.application.workspace.catalog -> wright.infrastructure.persistence.workspace.registry",
-    "wright.application.workspace.change_lock -> wright.infrastructure.file_lock",
-    "wright.application.workspace.changes -> wright.infrastructure.workspace.project",
-    "wright.application.workspace.journal -> wright.infrastructure.file_lock",
     "wright.application.workspace.rules -> wright.infrastructure.storage.skills",
     "wright.application.workspace.schedule_api -> wright.infrastructure.persistence.autonomy_store",
 ]
@@ -162,7 +152,6 @@ forbidden_modules = ["wright.application", "wright.interfaces"]
 allow_indirect_imports = true
 # Known violations: shrink this list, never grow it.
 ignore_imports = [
-    "wright.infrastructure.tools.memory.semantic_tools -> wright.application.memory.memory_service",
 ]
 
 [[tool.importlinter.contracts]]
@@ -173,9 +162,4 @@ forbidden_modules = ["wright.infrastructure"]
 allow_indirect_imports = true
 # Known violations: shrink this list, never grow it.
 ignore_imports = [
-    "wright.interfaces.i18n.locale -> wright.infrastructure.config.preferences",
-    "wright.interfaces.web.routes -> wright.infrastructure.config.preferences",
-    "wright.interfaces.web.routes -> wright.infrastructure.workspace.worktrees",
-    "wright.interfaces.web.runtime_manager -> wright.infrastructure.storage.attachments",
-    "wright.interfaces.web.runtime_manager -> wright.infrastructure.workspace.worktrees",
 ]

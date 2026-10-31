@@ -11,7 +11,7 @@ from pathlib import Path
 
 from tests.responses import event, response
 from wright.application.agent import create_agent
-from wright.application.composition.roles import tools_for_role
+from wright.application.execution.roles import tools_for_role
 from wright.application.skills import SkillRegistry
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolResult

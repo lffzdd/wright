@@ -3,24 +3,11 @@
 from __future__ import annotations
 
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
 
 from ...core.paths import project_id, wright_home
-from .project import ProjectContext
-
-
-class WorktreeError(RuntimeError):
-    pass
-
-
-@dataclass(frozen=True)
-class ArchiveResult:
-    removed: bool
-    retained: bool
-    reason: str
-    path: Path
-    branch_name: str | None = None
+from ...domain.model.workspace.project import ProjectContext
+from ...domain.model.workspace.worktree import ArchiveResult, WorktreeError
 
 
 def _git(root: Path, *args: str, check: bool = True) -> str:

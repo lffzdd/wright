@@ -16,6 +16,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from ....core.file_lock import FileLock
 from ....domain.gateway.memory import ICoreMemoryStore
 from ....domain.model.memory.core import (
     DEFAULT_PERSONA,
@@ -24,7 +25,6 @@ from ....domain.model.memory.core import (
     ProjectCoreRecord,
 )
 from ....domain.model.memory.episode import PROJECT_ID_RE
-from ...file_lock import FileLock
 from .paths import memory_dir
 
 CORE_MEMORY_FILE = "core_memory.json"

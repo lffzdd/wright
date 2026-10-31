@@ -14,10 +14,10 @@ from pathlib import Path
 
 import pytest
 
+from wright.domain.gateway.runtime_types import ExecutionPath
 from wright.domain.policy.permission.types import InvocationGrant, InvocationIdentity
 from wright.infrastructure.runtime.local import LocalExecutionBackend
 from wright.infrastructure.runtime.sandbox import sandbox_status
-from wright.infrastructure.runtime.types import ExecutionPath
 
 pytestmark = pytest.mark.native_sandbox
 

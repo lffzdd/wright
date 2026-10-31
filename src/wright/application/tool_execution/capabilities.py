@@ -33,7 +33,7 @@ from ..session.live_resources import RuntimeResources
 
 if TYPE_CHECKING:
     from ...domain.model.session import Session
-    from ..composition.services import RuntimeServices
+    from ..execution.services import RuntimeServices
 
 
 @dataclass(frozen=True)

@@ -11,8 +11,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 
+from ..core.file_lock import FileLock
 from ..core.paths import user_permission_settings_path, wright_home
-from .file_lock import FileLock
 
 _LOCK = threading.RLock()
 _STATE = threading.local()

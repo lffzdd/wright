@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from wright.application.memory.assembly import assemble_memory_manager
+from wright.application.composition.memory_assembly import assemble_memory_manager
 from wright.application.memory.episode import episode_from_session
 from wright.application.memory.memory_service import MemoryService
 from wright.domain.gateway.memory import SelectorChoice

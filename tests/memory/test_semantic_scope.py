@@ -16,7 +16,10 @@ from types import SimpleNamespace
 import pytest
 
 from tests.responses import event
-from wright.application.memory.assembly import assemble_memory_manager, memory_tools
+from wright.application.composition.memory_assembly import (
+    assemble_memory_manager,
+    memory_tools,
+)
 from wright.application.memory.extract import extract_from_snapshot
 from wright.application.memory.llm_util import SideQueryResult
 from wright.application.memory.memory_service import MemoryService

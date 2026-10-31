@@ -824,7 +824,7 @@ def test_context_projection_without_tool_results_does_not_fold():
         output_reserve_tokens=0,
     )
     assert view.folded_record_ids == ()
-    assert renderer.context_compacts[-1]["folded_count"] == 0
+    assert renderer.context_compacts == []
 
 
 def test_context_projection_skips_below_watermark():

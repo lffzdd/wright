@@ -12,9 +12,9 @@ from pathlib import Path
 
 import pytest
 
+from wright.domain.gateway.runtime_types import ExecutionPath
 from wright.domain.policy.permission.types import InvocationGrant, InvocationIdentity
 from wright.infrastructure.runtime import sandbox, sandbox_profile
-from wright.infrastructure.runtime.types import ExecutionPath
 
 
 @pytest.fixture(autouse=True)

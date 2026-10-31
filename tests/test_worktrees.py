@@ -1,7 +1,7 @@
 import os
 import subprocess
 
-from wright.infrastructure.workspace.project import ProjectContext
+from wright.domain.model.workspace.project import ProjectContext
 from wright.infrastructure.workspace.worktrees import WorktreeManager
 
 

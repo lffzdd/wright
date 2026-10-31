@@ -4,8 +4,8 @@ import json
 import time
 
 from wright.application.command.execution import CommandExecution
-from wright.application.composition.services import RuntimeServices
 from wright.application.execution.identity import bind_identity
+from wright.application.execution.services import RuntimeServices
 from wright.application.session.live_resources import RuntimeResources
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService

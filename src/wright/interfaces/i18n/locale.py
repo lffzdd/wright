@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 
-from ...infrastructure.config.preferences import preference_value, save_preference
+from ...core.preferences import preference_value, save_preference
 
 DEFAULT_LOCALE = "en"
 SUPPORTED_LOCALES = ("en", "zh-CN")

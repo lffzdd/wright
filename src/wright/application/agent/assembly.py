@@ -23,7 +23,7 @@ from ...infrastructure.tools.tool_search import (
     MAX_ACTIVE_DEFERRED_TOOLS,
     make_tool_search_tool,
 )
-from ..composition.services import RuntimeServices
+from ..execution.services import RuntimeServices
 from ..memory import MemoryManager
 from ..session.events import SessionEvents
 from ..session.live_resources import RuntimeResources

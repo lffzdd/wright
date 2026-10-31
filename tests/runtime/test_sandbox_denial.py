@@ -8,8 +8,8 @@ from wright.application.command.sandbox_denial import (
     describe_sandbox_denial,
     sandbox_denial_message,
 )
+from wright.domain.gateway.runtime_types import ExecutionPath
 from wright.domain.policy.permission.types import InvocationGrant, InvocationIdentity
-from wright.infrastructure.runtime.types import ExecutionPath
 
 
 def grant(tmp_path, mode="sandbox"):

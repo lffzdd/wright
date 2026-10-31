@@ -8,7 +8,8 @@ from wright.application.agent import (
     build_agent_tools,
     create_agent,
 )
-from wright.application.composition.services import RuntimeServices
+from wright.application.execution.services import RuntimeServices
+from wright.application.memory.memory_service import MemoryService
 from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.application.scheduling.runner import _RunJournal, launch_job_run
 from wright.application.scheduling.scheduler import JobScheduler
@@ -23,6 +24,7 @@ from wright.domain.policy import (
     PermissionSettings,
 )
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
+from wright.infrastructure.persistence.memory import EpisodeStore, SemanticMemoryStore
 from wright.infrastructure.storage.skills import write_skill
 from wright.infrastructure.tools.human_input import ask_user_tool
 from wright.infrastructure.tools.knowledge import build_knowledge_tools
@@ -186,7 +188,11 @@ def test_durable_run_does_not_block_root_user_input(tmp_path):
 def test_durable_session_omits_ask_user_and_schedule_tools(tmp_path):
     workspace, store, session, scheduler, events, background, services = _runtime(tmp_path)
     run_id = _claim_run(store)
-    memory_tools = build_memory_tools(tmp_path / "memory")
+    memory_tools = build_memory_tools(
+        service=MemoryService(
+            SemanticMemoryStore(tmp_path / "memory"), EpisodeStore(tmp_path / "memory")
+        )
+    )
     write_skill(
         tmp_path / "skills",
         "release-check",

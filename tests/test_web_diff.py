@@ -2,7 +2,7 @@ import subprocess
 
 import pytest
 
-from wright.infrastructure.workspace.project import ProjectContext
+from wright.domain.model.workspace.project import ProjectContext
 from wright.interfaces.web.diff import DiffError, change_patch, list_changes
 
 

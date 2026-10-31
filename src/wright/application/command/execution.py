@@ -18,11 +18,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ...core.logger import get_logger
+from ...domain.gateway.runtime_protocols import ProcessHandle
+from ...domain.gateway.runtime_types import ExecutionPath
 from ...domain.model.command import CommandOutcome, CommandRecord
 from ...domain.policy.permission.scope import AccessScope
 from ...infrastructure.runtime.command_log import CommandOutputLog, OutputSlice
-from ...infrastructure.runtime.protocols import ProcessHandle
-from ...infrastructure.runtime.types import ExecutionPath
 from ..execution.directory import current_directory_binding
 from ..execution.identity import (
     ExecutionIdentity,

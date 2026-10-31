@@ -1,7 +1,7 @@
 import queue
 import threading
 
-from wright.application.composition.services import RuntimeServices
+from wright.application.execution.services import RuntimeServices
 from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.application.scheduling.scheduler import JobScheduler
 from wright.application.session.loops import SessionLoopRegistry

@@ -1,15 +1,15 @@
 """Runtime execution backends and contracts."""
 
-from .authorized import AuthorizedExecution
-from .local import LocalExecutionBackend, LocalProcessHandle
-from .protocols import ExecutionBackend, ProcessHandle
-from .types import (
+from ...domain.gateway.runtime_protocols import ExecutionBackend, ProcessHandle
+from ...domain.gateway.runtime_types import (
     CompletedProcess,
     DirectoryEntry,
     ExecutionPath,
     FileMetadata,
     SearchMatch,
 )
+from .authorized import AuthorizedExecution
+from .local import LocalExecutionBackend, LocalProcessHandle
 
 __all__ = [
     "AuthorizedExecution",

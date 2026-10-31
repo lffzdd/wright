@@ -19,7 +19,7 @@ from tests.responses import event, response
 from wright.application.agent import create_agent
 from wright.application.agent.context import ContextBuilder, ContextCompactor
 from wright.application.agent.subagent import make_spawn_agent_tool
-from wright.application.memory.assembly import assemble_memory_manager
+from wright.application.composition.memory_assembly import assemble_memory_manager
 from wright.application.memory.manager import MemoryManager
 from wright.application.memory.memory_service import MemoryService
 from wright.application.memory.projection import render_episode_for_budget

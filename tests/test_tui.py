@@ -86,6 +86,7 @@ def test_tui_keeps_application_host_alive_across_session_resume(tmp_path, monkey
             authorization=SessionAuthorization(session_id or "saved"),
             lifecycle="open",
             model_name="test",
+            execution_mode="sandbox",
             environment=getattr(project_context, "environment", "local"),
             workspace_dir=tmp_path,
             project_root=tmp_path,

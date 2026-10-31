@@ -31,6 +31,7 @@ from ...core.paths import (
 from ...domain.model.session import Session
 from ...domain.model.session.errors import CheckpointError
 from ...domain.model.tool_definition import Tool
+from ...domain.model.workspace.project import ProjectContext
 from ...domain.policy import (
     PermissionRequest,
     PermissionResponse,
@@ -54,7 +55,6 @@ from ...infrastructure.tools.mcp_client import (
     load_mcp_configs,
 )
 from ...infrastructure.tools.skill_tools import resident_skill_tools
-from ...infrastructure.workspace.project import ProjectContext
 from ..agent import (
     Agent,
     AgentBackgroundRuntime,
@@ -65,11 +65,8 @@ from ..agent import (
     prepare_model_tools,
 )
 from ..execution.directory import DirectoryExecutionCoordinator
+from ..execution.services import RuntimeServices
 from ..lifecycle import LifecycleConfigError
-from ..memory.assembly import (
-    assemble_memory_manager,
-    memory_tools,
-)
 from ..permission.service import PermissionService
 from ..session.events import SessionEvents, session_status
 from ..session.interaction import RoutedPrompter, UserPrompter
@@ -81,7 +78,10 @@ from ..tool_execution.approval import InteractiveApprovalHandler
 from ..tool_execution.capabilities import assemble_tool_capabilities
 from .host import ApplicationHost
 from .lifecycle_loader import load_lifecycle_manager
-from .services import RuntimeServices
+from .memory_assembly import (
+    assemble_memory_manager,
+    memory_tools,
+)
 
 logger = get_logger(__name__)
 

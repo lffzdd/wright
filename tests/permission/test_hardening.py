@@ -390,8 +390,8 @@ def test_corrupt_journal_checksum_blocks_all_authority(tmp_path):
 
 
 def test_protection_revalidated_before_shell_launch(tmp_path):
+    from wright.domain.gateway.runtime_types import ExecutionPath
     from wright.domain.policy.permission.types import InvocationGrant
-    from wright.infrastructure.runtime.types import ExecutionPath
     backend = LocalExecutionBackend(tmp_path, lambda: tmp_path)
     protected = tmp_path / 'protected'
     protected.mkdir()

@@ -12,8 +12,8 @@ import tempfile
 import threading
 from pathlib import Path
 
-from ...core.paths import user_preferences_path
-from ..file_lock import FileLock
+from .file_lock import FileLock
+from .paths import user_preferences_path
 
 _LOCK = threading.RLock()
 _KEY = "interface_language"

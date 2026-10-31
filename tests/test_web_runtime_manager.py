@@ -10,7 +10,7 @@ from wright.application.session.live_resources import RuntimeResources
 from wright.application.session.publisher import EventPublisher
 from wright.domain.model.session import Session, SessionAuthorization
 from wright.domain.model.tool import ArtifactRef, ToolCall, ToolResult
-from wright.infrastructure.workspace.project import ProjectContext
+from wright.domain.model.workspace.project import ProjectContext
 from wright.interfaces.interaction import InteractionBroker
 from wright.interfaces.web import runtime_manager as runtime_module
 from wright.interfaces.web.runtime_manager import (

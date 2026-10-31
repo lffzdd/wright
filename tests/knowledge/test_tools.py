@@ -1,6 +1,6 @@
 from jsonschema import validators
 
-from wright.application.composition.roles import tools_for_role
+from wright.application.execution.roles import tools_for_role
 from wright.application.skills import SkillRegistry
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService

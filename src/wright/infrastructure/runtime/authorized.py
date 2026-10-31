@@ -5,14 +5,19 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import replace
 
+from ...domain.gateway.runtime_protocols import ExecutionBackend, ProcessHandle
+from ...domain.gateway.runtime_types import (
+    DirectoryEntry,
+    ExecutionPath,
+    FileMetadata,
+    SearchMatch,
+)
 from ...domain.policy.permission.scope import is_under
 from ...domain.policy.permission.types import (
     GrantTarget,
     InvocationGrant,
     PermissionOperation,
 )
-from .protocols import ExecutionBackend, ProcessHandle
-from .types import DirectoryEntry, ExecutionPath, FileMetadata, SearchMatch
 
 
 class AuthorizedExecution:

@@ -12,6 +12,7 @@ import tempfile
 import threading
 from pathlib import Path
 
+from ....core.file_lock import FileLock
 from ....domain.gateway.memory import IEpisodeStore
 from ....domain.model.memory import (
     EPISODE_ID_RE,
@@ -27,7 +28,6 @@ from ....domain.model.memory import (
     episode_fact_pieces,
 )
 from ....domain.policy.memory import has_result_or_verification
-from ...file_lock import FileLock
 from .lexical import bm25_scores, tokenize
 from .paths import memory_dir
 

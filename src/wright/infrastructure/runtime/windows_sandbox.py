@@ -18,8 +18,8 @@ from uuid import uuid4
 import wright.infrastructure.runtime.windows_native as native
 import wright.infrastructure.runtime.windows_wfp as wfp
 
+from ...core.file_lock import FileLock
 from ...core.paths import wright_home
-from ..file_lock import FileLock
 from .sandbox_profile import SandboxUnavailable, clean_environment, profile_paths
 from .windows_process import WindowsProcessHandle as JobProcessHandle
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from ...domain.gateway.execution import ExecutionPath
+from .execution import ExecutionPath
 
 FileKind = Literal["file", "directory", "symlink", "other", "missing"]
 

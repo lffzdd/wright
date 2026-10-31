@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from ...core.file_lock import FileLock, FileLockUnavailable
 from ...core.paths import project_state_dir
-from ...infrastructure.file_lock import FileLock, FileLockUnavailable
 from ..execution.directory import DirectoryWaitCancelled
 
 

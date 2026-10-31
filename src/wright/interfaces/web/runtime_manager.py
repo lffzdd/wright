@@ -32,9 +32,9 @@ from ...application.session.service import (
 )
 from ...application.session.tool_projection import tool_phase
 from ...core.paths import project_id
+from ...domain.model.attachment import AttachmentError, AttachmentRecord
 from ...domain.model.tool import ArtifactRef
-from ...infrastructure.storage.attachments import AttachmentError, AttachmentRecord
-from ...infrastructure.workspace.worktrees import ArchiveResult
+from ...domain.model.workspace.worktree import ArchiveResult
 from ..interaction import InteractionBroker
 
 

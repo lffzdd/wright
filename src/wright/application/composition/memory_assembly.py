@@ -22,8 +22,8 @@ from ...infrastructure.tools.memory import (
     build_episode_tools,
     build_memory_tools,
 )
-from .manager import MemoryManager
-from .memory_service import MemoryService
+from ..memory.manager import MemoryManager
+from ..memory.memory_service import MemoryService
 
 
 def assemble_memory_manager(

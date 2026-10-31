@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import Protocol, runtime_checkable
 
-from ...domain.policy.permission.types import InvocationGrant
-from .types import (
+from ..policy.permission.types import InvocationGrant
+from .runtime_types import (
     DirectoryEntry,
     ExecutionPath,
     FileMetadata,

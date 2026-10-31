@@ -7,7 +7,6 @@ live in the service, not in a second copy of the rules.
 from __future__ import annotations
 
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 from ....domain.feedback import system_text
@@ -22,17 +21,10 @@ _READ_SCOPES = list(SEMANTIC_READ_SCOPES)
 _WRITE_SCOPES = ["project", "global"]
 
 
-def _service_for(
-    service: MemoryService | None,
-    directory: Path | None,
-) -> MemoryService:
-    if service is not None:
-        return service
-    from ....application.memory.memory_service import MemoryService as Service
-    from ...persistence.memory import EpisodeStore, SemanticMemoryStore, memory_dir
-
-    path = (directory or memory_dir()).expanduser().resolve()
-    return Service(SemanticMemoryStore(path), EpisodeStore(path))
+def _require_service(service: MemoryService | None) -> MemoryService:
+    if service is None:
+        raise ValueError("memory tools require a MemoryService")
+    return service
 
 
 def create_memory(
@@ -45,11 +37,10 @@ def create_memory(
     *,
     service: MemoryService | None = None,
     project_id: str = "",
-    directory: Path | None = None,
 ) -> ToolResult:
     del runtime
     chosen = scope or "project"
-    record, error = _service_for(service, directory).create_semantic(
+    record, error = _require_service(service).create_semantic(
         name=name,
         description=description,
         type_=type,  # type: ignore[arg-type]
@@ -70,12 +61,11 @@ def get_memory(
     *,
     service: MemoryService | None = None,
     project_id: str = "",
-    directory: Path | None = None,
 ) -> ToolResult:
     del runtime
     if scope not in SEMANTIC_READ_SCOPES:
         return fail_text(system_text("memory.scope_invalid", "The memory scope is invalid"))
-    record, reads, error = _service_for(service, directory).get_semantic(
+    record, reads, error = _require_service(service).get_semantic(
         memory_id,
         project_id=project_id,
         read_scope=scope,
@@ -102,12 +92,11 @@ def update_memory(
     *,
     service: MemoryService | None = None,
     project_id: str = "",
-    directory: Path | None = None,
 ) -> ToolResult:
     del runtime
     if scope not in SEMANTIC_READ_SCOPES:
         return fail_text(system_text("memory.scope_invalid", "The memory scope is invalid"))
-    record, error = _service_for(service, directory).update_semantic(
+    record, error = _require_service(service).update_semantic(
         memory_id,
         expected_revision=expected_revision,
         project_id=project_id,
@@ -130,12 +119,11 @@ def delete_memory(
     *,
     service: MemoryService | None = None,
     project_id: str = "",
-    directory: Path | None = None,
 ) -> ToolResult:
     del runtime
     if scope not in SEMANTIC_READ_SCOPES:
         return fail_text(system_text("memory.scope_invalid", "The memory scope is invalid"))
-    deleted, error = _service_for(service, directory).delete_semantic(
+    deleted, error = _require_service(service).delete_semantic(
         memory_id,
         project_id=project_id,
         read_scope=scope,
@@ -161,12 +149,11 @@ def search_memory(
     *,
     service: MemoryService | None = None,
     project_id: str = "",
-    directory: Path | None = None,
 ) -> ToolResult:
     del runtime
     if scope not in SEMANTIC_READ_SCOPES:
         return fail_text(system_text("memory.scope_invalid", "The memory scope is invalid"))
-    records, error = _service_for(service, directory).search_semantic(
+    records, error = _require_service(service).search_semantic(
         query,
         type_=type,  # type: ignore[arg-type]
         limit=limit,
@@ -227,19 +214,18 @@ _MEMORY_FIELDS = {
 
 
 def build_memory_tools(
-    directory: Path | None = None,
     *,
     service: MemoryService | None = None,
     project_id: str = "",
     service_reader: Callable[[], MemoryService] | None = None,
     project_id_reader: Callable[[], str] | None = None,
 ) -> list[Tool]:
-    """Build tools bound to one service. ``directory`` remains for older callers."""
+    """Build tools bound to one service."""
 
     def resolve_service() -> MemoryService:
         if service_reader is not None:
             return service_reader()
-        return _service_for(service, directory)
+        return _require_service(service)
 
     def resolve_project() -> str:
         if project_id_reader is not None:

@@ -232,7 +232,7 @@ def test_memory_manager_does_not_construct_stores() -> None:
     assert "FileCoreMemoryStore" not in text
     assert "EpisodeStore(" not in text
     assert "LlmContextSelector" not in text
-    assembly = (PACKAGE_ROOT / "application/memory/assembly.py").read_text(encoding="utf-8")
+    assembly = (PACKAGE_ROOT / "application/composition/memory_assembly.py").read_text(encoding="utf-8")
     assert "SemanticMemoryStore" in assembly
     assert "def memory_tools" in assembly
 

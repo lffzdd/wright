@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 
 from wright.application.execution.directory import DirectoryExecutionCoordinator
 from wright.application.workspace.journal import SessionChangeJournal
-from wright.infrastructure.workspace.project import ProjectContext
+from wright.domain.model.workspace.project import ProjectContext
 from wright.interfaces.web.auth import BootstrapAuth
 from wright.interfaces.web.server import create_app
 

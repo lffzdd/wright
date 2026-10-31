@@ -12,6 +12,7 @@ import re
 import threading
 from pathlib import Path
 
+from ....core.file_lock import FileLock
 from ....domain.gateway.memory import ISemanticMemoryStore
 from ....domain.model.memory import (
     PROJECT_ID_RE,
@@ -25,7 +26,6 @@ from ....domain.model.memory import (
     parse_semantic_memory_type,
     parse_semantic_status,
 )
-from ...file_lock import FileLock
 from .semantic_document import (
     _atomic_write,
     _encode_refs,

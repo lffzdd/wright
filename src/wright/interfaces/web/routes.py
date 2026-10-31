@@ -17,8 +17,8 @@ from pydantic import BaseModel
 
 from ...application.workspace.change_lock import ChangeBusyError
 from ...application.workspace.changes import ChangeConflict, git_action
-from ...infrastructure.config.preferences import load_preferences, save_preference
-from ...infrastructure.workspace.worktrees import WorktreeError
+from ...core.preferences import load_preferences, save_preference
+from ...domain.model.workspace.worktree import WorktreeError
 from ..i18n import t
 from ..i18n.locale import LOCALE_LABELS, SUPPORTED_LOCALES, get_locale, set_locale
 from .auth import COOKIE_NAME, BootstrapAuth

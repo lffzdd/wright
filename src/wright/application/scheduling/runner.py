@@ -34,14 +34,14 @@ from ..agent import (
     prepare_model_tools,
 )
 from ..command.execution import CommandExecution
-from ..composition.roles import tools_for_role
-from ..composition.services import RuntimeServices
 from ..execution.directory import (
     DirectoryLease,
     bind_directory_work,
     reset_directory_work,
 )
 from ..execution.identity import bind_identity
+from ..execution.roles import tools_for_role
+from ..execution.services import RuntimeServices
 from ..session.live_resources import RuntimeResources
 from ..session.publisher import open_session_events
 from ..tool_execution.capabilities import assemble_tool_capabilities

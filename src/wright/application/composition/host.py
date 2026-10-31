@@ -17,10 +17,10 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from uuid import uuid4
 
+from ...core.file_lock import FileLock, FileLockUnavailable
 from ...domain.model.agent.control import AgentControlPlane
 from ...domain.model.scheduling import JobRun
 from ...domain.model.tool_definition import Tool
-from ...infrastructure.file_lock import FileLock, FileLockUnavailable
 from ...infrastructure.llm.llm import LLMClient
 from ...infrastructure.persistence.autonomy_store import AutonomyStore
 from ...infrastructure.storage.artifacts import ArtifactStore
@@ -33,10 +33,10 @@ from ..execution.directory import (
     DirectoryExecutionCoordinator,
     DirectoryWaitCancelled,
 )
+from ..execution.services import RuntimeServices
 from ..permission.service import PermissionService
 from ..scheduling.runner import launch_job_run
 from ..scheduling.scheduler import JobScheduler
-from .services import RuntimeServices
 
 
 @dataclass(frozen=True)

@@ -22,6 +22,10 @@ from wright.infrastructure.tools.memory import (
 )
 
 
+def _tool_service(path: Path) -> MemoryService:
+    return MemoryService(SemanticMemoryStore(path), EpisodeStore(path))
+
+
 class FakeLLM:
     """假 LLMClient:吐一个携带预设 JSON 的 ContentDone,模拟 side-query。"""
 
@@ -99,7 +103,7 @@ def test_create_memory_tool_writes_and_indexes(tmp_path: Path):
     res = create_memory(
         "user-likes-bun", "prefers bun", "feedback", "用 bun 不用 npm",
         scope="global",
-        directory=tmp_path,
+        service=_tool_service(tmp_path),
     )
     assert res.ok
     assert (tmp_path / f"{res.data['id']}.md").is_file()
@@ -109,55 +113,55 @@ def test_create_memory_tool_writes_and_indexes(tmp_path: Path):
 
 
 def test_create_memory_rejects_bad_type(tmp_path: Path):
-    res = create_memory("x", "d", "bogus", "c", directory=tmp_path)
+    res = create_memory("x", "d", "bogus", "c", service=_tool_service(tmp_path))
     assert not res.ok
     assert "type" in res.err
 
 
 def test_search_memory_lists(tmp_path: Path):
-    created = create_memory("a", "desc a", "user", "x", scope="global", directory=tmp_path)
-    res = search_memory("desc", directory=tmp_path)
+    created = create_memory("a", "desc a", "user", "x", scope="global", service=_tool_service(tmp_path))
+    res = search_memory("desc", service=_tool_service(tmp_path))
     assert res.ok
     assert res.data["count"] == 1
     assert created.data["id"] in res.data["memories"]
-    missed = search_memory("anything", directory=tmp_path)
+    missed = search_memory("anything", service=_tool_service(tmp_path))
     assert missed.ok and missed.data["count"] == 0
 
 
 def test_explicit_memory_crud_tools(tmp_path: Path):
     created = create_memory(
-        "project-api", "API decision", "project", "use v2", scope="global", directory=tmp_path
+        "project-api", "API decision", "project", "use v2", scope="global", service=_tool_service(tmp_path)
     )
     assert created.ok
     memory_id = created.data["id"]
     duplicate = create_memory(
-        "project-api", "duplicate", "project", "other body", scope="global", directory=tmp_path
+        "project-api", "duplicate", "project", "other body", scope="global", service=_tool_service(tmp_path)
     )
     assert duplicate.ok and duplicate.data["id"] != memory_id
-    assert get_memory(memory_id, directory=tmp_path).data["content"] == "use v2"
+    assert get_memory(memory_id, service=_tool_service(tmp_path)).data["content"] == "use v2"
 
-    fetched = get_memory(memory_id, directory=tmp_path)
+    fetched = get_memory(memory_id, service=_tool_service(tmp_path))
     assert fetched.ok and fetched.data["content"] == "use v2"
 
     updated = update_memory(
         memory_id,
         content="use v3",
         expected_revision=created.data["revision"],
-        directory=tmp_path,
+        service=_tool_service(tmp_path),
     )
     assert updated.ok and updated.data["content"] == "use v3"
     assert updated.data["id"] == memory_id
     assert not update_memory(
-        memory_id, expected_revision=updated.data["revision"], directory=tmp_path
+        memory_id, expected_revision=updated.data["revision"], service=_tool_service(tmp_path)
     ).ok
 
-    deleted = delete_memory(memory_id, directory=tmp_path)
+    deleted = delete_memory(memory_id, service=_tool_service(tmp_path))
     assert deleted.ok
-    assert not get_memory(memory_id, directory=tmp_path).ok
+    assert not get_memory(memory_id, service=_tool_service(tmp_path)).ok
 
 
 def test_bound_toolset_uses_explicit_crud(tmp_path: Path):
-    tools = build_memory_tools(tmp_path)
+    tools = build_memory_tools(service=_tool_service(tmp_path))
     assert [tool.name for tool in tools] == [
         "create_memory", "get_memory", "update_memory", "delete_memory", "search_memory"
     ]

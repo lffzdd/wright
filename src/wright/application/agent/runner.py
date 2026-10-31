@@ -22,7 +22,7 @@ from ...domain.model.session import Session
 from ...domain.policy.verifier import Verifier
 from ...domain.protocol import encode_tools
 from ...utils.token_counter import estimate_message_tokens
-from ..composition.services import RuntimeServices
+from ..execution.services import RuntimeServices
 from ..memory import MemoryManager
 from ..session.events import SessionEvents
 from ..session.live_resources import RuntimeResources

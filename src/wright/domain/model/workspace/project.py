@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from ...domain.model.session.environment import ExecutionEnvironment
+from ..session.environment import ExecutionEnvironment
 
 
 @dataclass(frozen=True)

@@ -12,6 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from ...domain.gateway.runtime_types import ExecutionPath
 from ...domain.policy.permission.types import InvocationGrant, InvocationIdentity
 from .sandbox_profile import (
     SandboxUnavailable,
@@ -20,7 +21,6 @@ from .sandbox_profile import (
     runtime_roots,
 )
 from .shell_script import bash_launch_script
-from .types import ExecutionPath
 
 
 def _provider() -> str:

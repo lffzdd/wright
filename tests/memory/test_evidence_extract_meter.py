@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from wright.application.memory.assembly import assemble_memory_manager
+from wright.application.composition.memory_assembly import assemble_memory_manager
 from wright.application.memory.episode import episode_from_session
 from wright.application.memory.extract import extract_from_snapshot
 from wright.application.memory.llm_util import SideQueryResult

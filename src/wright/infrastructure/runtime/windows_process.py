@@ -8,7 +8,7 @@ from pathlib import Path
 
 import wright.infrastructure.runtime.windows_native as native
 
-from .types import ExecutionPath
+from ...domain.gateway.runtime_types import ExecutionPath
 
 
 class WindowsProcessHandle:

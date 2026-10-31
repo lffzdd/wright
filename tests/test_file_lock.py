@@ -9,7 +9,7 @@ from pathlib import Path
 import portalocker
 import pytest
 
-from wright.infrastructure.file_lock import FileLock, FileLockUnavailable
+from wright.core.file_lock import FileLock, FileLockUnavailable
 
 
 def _hold_lock(path, channel):

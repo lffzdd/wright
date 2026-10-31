@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from ...infrastructure.workspace.project import ProjectContext
+from ...domain.model.workspace.project import ProjectContext
 from .change_lock import change_operation, workspace_change_lock
 
 MAX_PATCH_BYTES = 1024 * 1024
