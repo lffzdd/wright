@@ -30,13 +30,17 @@ Web 权限文案和审批测试数据由 `uv run python scripts/generate_permiss
 
 项目空间位于用户运行状态目录 `projects/<现有项目身份>/permissions.json`，不读取仓库里的授权文件。worktree 共用项目授权；工作区规则相对当前执行根解析。外部资源使用基础设施解析出的绝对规范路径。主 Agent、交互子 Agent 共用用户会话授权；父会话的硬模式限制会约束子 Agent，模式变化使旧许可失效。会话授权独立存储在 `permissions-sessions/<session_id>.json`，checkpoint 只记录该会话授权快照。恢复时仓储里的撤销结果优先。
 
-固定优先级：保护资源、模式硬限制和只读边界 → deny → ask → 明确授权 → 模式默认。bypass 只减少当前边界内的确认。HTTP 授权包含协议、主机、端口、方法及所选路径范围；HTTP 拒绝规则不影响 HTTPS。精确 Shell 命令记忆绑定工作目录及沙箱能力，限本会话；程序与参数范围可显式保存到会话、项目或用户期限，绑定程序路径和执行方式，不绑定工作目录或授权目录列表，文件范围仍由当前沙箱决定。副作用不明的工具调用只支持一次批准。
+固定优先级：保护资源、模式硬限制和只读边界 → deny → ask → 明确授权 → 模式默认。bypass 只减少当前边界内的确认：host 模式没有隔离边界，Shell 仍须确认。只读目录授权覆盖其下全部路径：给工作区的上级目录授只读，工作区也不可写；嵌套的读写授权不会放宽外层只读，错误提示会说明这一点。
+
+Shell 的 deny 和 ask 规则按 bash 语义解析后匹配：路径、引号、转义、连续空白、控制结构、`env`/`sudo` 等前缀、`sh -c` 和 `eval` 都会还原成程序名，`git` 的全局选项也会去掉；程序名在运行前无法确定（变量、命令替换、通配符）时规则直接命中。程序自己执行的代码（如 `python -c`）无法从命令文本看出，仍由沙箱约束。Windows PowerShell 不套用这个解析器，只匹配原文。
+
+文件和目录 deny 规则同时约束逐资源访问：`*` 规则和当前工具名的规则由 `AuthorizedExecution` 逐个校验，`grep`、`glob` 遍历时跳过被拒资源。`*` 规则在 Shell 启动时展开为沙箱路径：拒绝读的资源完全遮蔽，只拒绝写的资源设为只读；命令运行中新建的文件不会再次匹配。HTTP 授权包含协议、主机、端口、方法及所选路径范围；HTTP 拒绝规则不影响 HTTPS。精确 Shell 命令记忆绑定工作目录及沙箱能力，限本会话；程序与参数范围可显式保存到会话、项目或用户期限，绑定程序路径和执行方式，不绑定工作目录或授权目录列表，文件范围仍由当前沙箱决定。副作用不明的工具调用只支持一次批准。
 
 权限文件独立使用版本 2，不改变会话 checkpoint 版本。旧授权格式、additionalDirectories 和含糊规则直接报错，不迁移、不扩大授权。新记录携带稳定 ID、lifetime、project_id、资源、操作和来源。会话、项目、用户授权各自保存，不把长期记录复制成会话记录。
 
-管理接口添加授权传入 resource、lifetime、expected_version；撤销传入稳定 ID、source、expected_version。旧版本更新返回 409 及最新状态。审批完成、保存之后及实际执行之前都检查版本；跨进程修改会被重新读取。撤销取消待审批请求，令待执行调用失效，并停止依赖该授权的后台 Shell；已完成副作用不回滚。
+管理接口添加授权传入 resource、lifetime、expected_version；撤销传入稳定 ID、source、expected_version。旧版本更新返回 409 及最新状态。审批完成、保存之后及实际执行之前都检查版本；跨进程修改会被重新读取。撤销取消待审批请求，令待执行调用失效，并停止依赖该授权的后台 Shell（目录规则影响所有 Shell，命令规则只影响使用该程序的 Shell）；已完成副作用不回滚。
 
-管理页按会话、项目、用户期限展示文件、目录、命令、程序、网络和具名工具规则，显示其真实范围并使用同一个撤销入口。撤销删除指定记录；若仍存在其他匹配规则，访问可能继续有效，不能把删除一条规则解释为对资源新增拒绝。命令文本规则只匹配 Wright 当前直接发起的调用，无法拦截已授权程序内部所有间接调用；sandbox 模式的文件和网络限制由执行沙箱落实；host 模式不提供这些系统隔离。
+管理页按会话、项目、用户期限展示文件、目录、命令、程序、网络和具名工具规则，显示其真实范围并使用同一个撤销入口。撤销删除指定记录；若仍存在其他匹配规则，访问可能继续有效，不能把删除一条规则解释为对资源新增拒绝。命令文本规则只匹配 Wright 当前直接发起的调用及上面列出的前缀和 Shell 包装，无法拦截已授权程序内部所有间接调用；sandbox 模式的文件和网络限制由执行沙箱落实；host 模式不提供这些系统隔离。
 
 ## 调用、网络与事务边界
 
@@ -60,7 +64,7 @@ CLI 新会话可显式使用 `wright --execution-mode host` 或 `wright --execut
 
 sandbox 模式的 Shell 默认离线；单次联网是独立能力，仍保留文件隔离。隔离启动失败返回错误，不重试为普通进程。
 
-批准命令只允许其启动，不扩大沙箱可访问的目录。审批卡列出当前可读、可写目录。命令失败且输出显示系统拒绝时，结果附带 `sandbox_denial` 和说明，Web 工具卡可一键为本会话只读授权目录；该判断来自输出文本，只作提示，不改变命令结果或授权。
+批准命令只允许其启动，不扩大沙箱可访问的目录。审批卡列出当前可读、可写目录，并说明系统运行时目录同样可读。命令失败且输出显示系统拒绝时，结果附带 `sandbox_denial` 和说明，Web 工具卡可一键为本会话只读授权目录；该判断来自输出文本，只作提示，不改变命令结果或授权。
 
 host 模式使用真正的宿主 Shell，以运行 Wright 的账户权限执行，无系统文件或网络隔离，程序和子进程可以访问该账户能访问的宿主资源。审批策略照常生效：选择 host 不会自动选择 bypass；Plan/Ask 仍禁止 Shell。文件、HTTP 工具继续使用原授权入口和边界，但这些工具的授权不能限制宿主 Shell 内部的文件和网络行为。宿主审批显示该范围，不提供沙箱单次联网勾选，也不因沙箱组件不可用而禁止批准。
 
@@ -70,14 +74,22 @@ host 模式使用真正的宿主 Shell，以运行 Wright 的账户权限执行�
 
 管理员初始化和网络规则属于一次设置。日常执行不更改系统目录 ACL，不请求管理员权限。无法取得资源能力 ACL 时执行失败，不扩大到整个用户目录。
 
+## 工作区是不可信输入
+
+sandbox 模式的命令能写工作区，所以 Wright 在沙箱外读取工作区内容时把它当作不可信输入：
+
+* 主机侧 `git` 统一走 `core/git.py`。仓库本地配置只保留白名单内的键，其余（`core.fsmonitor`、`filter.*`、`diff.*`、`include` 引入的键以及今后新增的键）都被覆盖为空；钩子一律不运行，包括界面发起的提交。用户级和系统级 Git 配置仍然生效。
+* 沙箱内不能写 `.git/config`、`.git/config.worktree` 和 `.git/hooks`，所以沙箱内的 `git config` 和安装钩子会失败，`git add`、`git commit` 正常。沙箱内也不能重命名 `.git`。
+* 项目 `.env` 只提供 `OPENAI_API_KEY`、`OPENAI_MODEL`、`OPENAI_CONTEXT_LIMIT`、`OPENAI_MEMORY_MODEL` 和 `TAVILY_API_KEY`。其他设置（`OPENAI_BASE_URL`、全部 `WRIGHT_*`）放在 `~/.wright/.env` 或真实环境变量。项目 `.env` 声明了 `OPENAI_BASE_URL` 而可信来源没有时，它的 `OPENAI_API_KEY` 也不加载，避免密钥发到默认地址。
+* `~/.wright` 下影响主机执行的文件属于保护范围：`.env`、`mcp.json`、`skills`、`memory`、`preferences.json`、`workspaces.json`、`backups`。`worktrees` 不在其中，因为 worktree 会话以它为工作区。
+* `pre_tool_use` 钩子失败时拒绝工具调用，其余事件的钩子失败只记录。
+
+macOS Seatbelt 的已知限制：`file-read-metadata` 全局开放，沙箱内可以 `stat` 工作区外的路径，得知文件是否存在及其大小，但不能列目录或读内容。收紧后经符号链接启动的运行时（uv、venv）无法启动，所以保留。Seatbelt 规则按路径生效，因此受保护路径的所有上级目录（到可写根为止）禁止重命名，这些目录本身的权限和时间戳也不能修改，其中的其他文件不受影响。
+
 ## 验收与支持声明
 
 `.github/workflows/ci.yml` 的 native-sandbox 矩阵在 Linux、macOS、Windows 上运行真实进程；Windows job 明确完成管理员初始化及最终清理。启用 `WRIGHT_SANDBOX_INTEGRATION=1` 后，任何缺失的依赖或隔离能力都会导致验收失败，不跳过测试。Windows 以 junction 验证路径绕过；普通账户的符号链接限制只影响对应符号链接用例。
 
-当前实现不能仅凭单元测试声明三平台 Shell 支持完成。必须看到三平台原生隔离 CI 全部通过，才能改变支持状态。本地 Linux WSL 已通过真实隔离验收；当前本地 Windows 尚未初始化隔离账户，macOS 无本地验收环境，Windows 与 macOS 验收仍待对应 CI 完成。
-
-2026-10-03 本地验证记录：Linux 完整后端测试 881 项通过、10 项跳过；单独启用真实隔离验收后，Linux 8 项全部通过。前端 63 项单元测试、2 项 Playwright 流程通过，覆盖审批、撤销冲突刷新、窄屏和中英文交互。后端 lint、前端生产构建及两个离线 Agent 回归脚本通过。生产资源输出到实际服务目录 `src/wright/interfaces/web/static`。这些结果不替代 Windows 和 macOS 的真实进程验收。
-
-2026-10-03 前端权限对齐后验证：权限相关后端 208 项通过、1 项跳过；前端 70 项单元测试及 7 项 Playwright 流程通过，lint、TypeScript 和生产构建通过。完整 WSL 后端运行 902 项通过、10 项跳过、3 项失败；进程恢复与检查点文件单独复测 22 项全部通过，包含原失败用例，未修改超时或恢复逻辑。没有将该次完整运行描述为全部通过。
+当前实现不能仅凭单元测试声明三平台 Shell 支持完成。必须看到三平台原生隔离 CI 全部通过，才能改变支持状态。
 
 参考：[Bubblewrap](https://github.com/containers/bubblewrap)、[Seatbelt 实现](https://github.com/openai/codex/blob/main/codex-rs/sandboxing/src/seatbelt.rs)、[Windows 隔离工程](https://openai.com/index/building-codex-windows-sandbox/)。

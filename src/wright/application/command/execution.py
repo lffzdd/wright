@@ -502,7 +502,7 @@ class CommandExecution:
             (item for item in self._live.values() if item.process is process),
             None,
         )
-        if access_scope is not None and not access_scope.contains(new_cwd.value):
+        if access_scope is not None and access_scope.classify(new_cwd.value).value in {"outside", "forbidden"}:
             origin = ExecutionPath(new_cwd.environment_id, str(access_scope.origin))
             set_cwd(origin)
             if live is not None:

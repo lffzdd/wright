@@ -9,6 +9,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from ...core.git import git_command
+
 
 def summarize_git(root: Path) -> dict[str, object]:
     resolved = root.expanduser().resolve()
@@ -41,7 +43,7 @@ def summarize_git(root: Path) -> dict[str, object]:
 
 def _inside_git(root: Path) -> bool:
     result = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
+        git_command(root, "rev-parse", "--is-inside-work-tree"),
         check=False,
         capture_output=True,
         text=True,
@@ -51,7 +53,7 @@ def _inside_git(root: Path) -> bool:
 
 def _git(root: Path, *args: str) -> str:
     result = subprocess.run(
-        ["git", "-C", str(root), *args],
+        git_command(root, *args),
         check=False,
         capture_output=True,
         text=True,

@@ -11,7 +11,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 from wright.application.permission.workflow import AuthorizationWorkflow
 
@@ -27,6 +27,7 @@ from ...core.paths import (
     task_db_path,
     trace_dir,
     user_mcp_config_path,
+    wright_home,
 )
 from ...domain.model.session import Session
 from ...domain.model.session.errors import CheckpointError
@@ -84,6 +85,8 @@ from .memory_assembly import (
 )
 
 logger = get_logger(__name__)
+# The only settings a project .env can set; everything else belongs in ~/.wright/.env.
+_PROJECT_ENV_KEYS = frozenset({"OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_CONTEXT_LIMIT", "OPENAI_MEMORY_MODEL", "TAVILY_API_KEY"})
 
 
 @dataclass
@@ -251,18 +254,28 @@ def _open_session(
 
 
 def load_env() -> None:
-    """Load API keys from the nearest .env without requiring a specific cwd."""
-    here = Path(__file__).resolve()
-    candidates = [
-        Path.cwd() / ".env",
-        here.parents[2] / ".env",  # repo root (src/wright/runtime.py)
-        here.parent / ".env",
-    ]
-    for path in candidates:
-        if path.is_file():
-            load_dotenv(path)
-            return
-    load_dotenv()
+    """Load trusted configuration, then only credentials from the current project.
+
+    A project's .env can come from a cloned repository or a sandboxed command,
+    so it must not reach permission, trust, path or endpoint settings.
+    """
+    load_dotenv(wright_home() / ".env")
+    project_env = Path.cwd() / ".env"
+    if not project_env.is_file():
+        return
+    values = dotenv_values(project_env)
+    ignored = sorted(key for key in values if key not in _PROJECT_ENV_KEYS)
+    if ignored:
+        logger.warning(
+            "Ignored settings in %s; move them to %s: %s",
+            project_env, wright_home() / ".env", ", ".join(ignored),
+        )
+    # A key meant for a custom endpoint must not reach the default one instead.
+    drop_key = "OPENAI_BASE_URL" in ignored and not os.getenv("OPENAI_BASE_URL")
+    for key in _PROJECT_ENV_KEYS:
+        value = values.get(key)
+        if value is not None and key not in os.environ and not (drop_key and key == "OPENAI_API_KEY"):
+            os.environ[key] = value
 
 
 def _trusted_mcp_config_paths(

@@ -208,7 +208,7 @@ def test_hook_rewrite_is_applied_before_concurrency_partition(tmp_path):
     assert peak == 1
 
 
-def test_hook_crash_is_traced_and_fails_open(tmp_path):
+def test_tool_gate_hook_crash_is_traced_and_fails_closed(tmp_path):
     recorder = TraceRecorder(tmp_path / "trace.jsonl")
     manager = LifecycleManager("session", recorder)
 
@@ -220,7 +220,7 @@ def test_hook_crash_is_traced_and_fails_open(tmp_path):
     ))
     decision = manager.emit("pre_tool_use", {"tool_name": "sample"})
 
-    assert decision.decision == "allow"
+    assert decision.decision == "deny" and "broken" in decision.reason
     assert [row["event"] for row in recorder.read()] == [
         "pre_tool_use", "hook_error"
     ]

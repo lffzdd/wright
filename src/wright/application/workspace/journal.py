@@ -19,6 +19,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from ...core.file_lock import FileLock
+from ...core.git import git_command
 from ...core.paths import session_dir
 from ...domain.model.workspace.review import ChangeHead, disposition, preflight
 from .change_lock import workspace_change_lock
@@ -429,7 +430,7 @@ class SessionChangeJournal:
     def _snapshot(self) -> dict[str, dict[str, Any]]:
         if not self.execution_root.is_dir():
             raise ChangeJournalError("the execution workspace no longer exists")
-        result = subprocess.run(["git", "-C", str(self.execution_root), "ls-files", "--cached", "--others", "--exclude-standard", "-z"], capture_output=True, check=False)
+        result = subprocess.run(git_command(self.execution_root, "ls-files", "--cached", "--others", "--exclude-standard", "-z"), capture_output=True, check=False)
         if result.returncode == 0:
             paths = set(filter(None, result.stdout.decode("utf-8", errors="surrogateescape").split("\0")))
         else:
@@ -572,7 +573,7 @@ class SessionChangeJournal:
         return details
 
     def _git_head(self) -> str:
-        result = subprocess.run(["git", "-C", str(self.execution_root), "rev-parse", "--verify", "HEAD"], capture_output=True, check=False)
+        result = subprocess.run(git_command(self.execution_root, "rev-parse", "--verify", "HEAD"), capture_output=True, check=False)
         return result.stdout.decode().strip() if result.returncode == 0 else ""
 
     def _committed(self, path: str, raw: dict[str, Any], info: dict[str, Any]) -> bool:
@@ -582,13 +583,13 @@ class SessionChangeJournal:
         if not head or head == raw.get("recorded_head"):
             return False
         if raw.get("after_mode") is not None and raw.get("after_sha256") is not None:
-            tree = subprocess.run(["git", "-C", str(self.execution_root), "ls-tree", "HEAD", "--", path], capture_output=True, check=False)
+            tree = subprocess.run(git_command(self.execution_root, "ls-tree", "HEAD", "--", path), capture_output=True, check=False)
             expected_mode = b"100755" if raw["after_mode"] & 0o111 else b"100644"
             if not tree.stdout.startswith(expected_mode + b" "):
                 return False
         # Revision object paths are repository-relative unless prefixed ./.
         # Pathspec-based commands above already honor the execution cwd.
-        result = subprocess.run(["git", "-C", str(self.execution_root), "show", f"HEAD:./{path}"], capture_output=True, check=False)
+        result = subprocess.run(git_command(self.execution_root, "show", f"HEAD:./{path}"), capture_output=True, check=False)
         if raw.get("after_sha256") is None:
             return result.returncode != 0
         return result.returncode == 0 and _sha(result.stdout) == raw.get("after_sha256")
@@ -603,13 +604,13 @@ class SessionChangeJournal:
         if not current or base is None or base == current:
             return False
         if not base:
-            result = subprocess.run(["git", "-C", str(self.execution_root), "ls-tree", "HEAD", "--", path], capture_output=True, check=False)
+            result = subprocess.run(git_command(self.execution_root, "ls-tree", "HEAD", "--", path), capture_output=True, check=False)
             return result.returncode != 0 or bool(result.stdout)
-        result = subprocess.run(["git", "-C", str(self.execution_root), "diff", "--quiet", str(base), "HEAD", "--", path], capture_output=True, check=False)
+        result = subprocess.run(git_command(self.execution_root, "diff", "--quiet", str(base), "HEAD", "--", path), capture_output=True, check=False)
         return result.returncode != 0
 
     def _revision(self, state: dict[str, Any], current: dict[str, dict[str, Any]]) -> str:
-        index = subprocess.run(["git", "-C", str(self.execution_root), "ls-files", "--stage", "-z"], capture_output=True, check=False)
+        index = subprocess.run(git_command(self.execution_root, "ls-files", "--stage", "-z"), capture_output=True, check=False)
         data = {"heads": state.get("heads", {}), "head": self._git_head(),
                 "index": hashlib.sha256(index.stdout).hexdigest(),
                 "files": {path: _file_token(current.get(path) or self._read_path(path)) for path in state.get("heads", {})}}
@@ -692,7 +693,7 @@ def _annotate_renames(changes: list[dict[str, Any]]) -> None:
 
 
 def _status_paths(root: Path) -> list[tuple[str, str]]:
-    result = subprocess.run(["git", "-C", str(root), "status", "--porcelain=v1", "--untracked-files=all", "-z"], capture_output=True, check=False)
+    result = subprocess.run(git_command(root, "status", "--porcelain=v1", "--untracked-files=all", "-z"), capture_output=True, check=False)
     if result.returncode != 0:
         return []
     parts = result.stdout.decode("utf-8", errors="surrogateescape").split("\0")

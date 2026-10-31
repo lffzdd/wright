@@ -26,8 +26,10 @@ Install the optional local Web console dependencies when needed:
 uv sync --group dev --extra web
 ```
 
-Copy `.env.example` to `.env` and set an OpenAI-compatible endpoint and model
-that support native function calling:
+Put your OpenAI-compatible endpoint and model, which must support native function
+calling, in `~/.wright/.env`. A `.env` in the project only supplies API keys and
+model names; Wright ignores anything else there, because a cloned repository or a
+sandboxed command can write that file:
 
 ```bash
 OPENAI_BASE_URL=https://api.openai.com/v1

@@ -7,7 +7,7 @@
 
 - `TraceRecorder` 是只追加的事实日志，失败也不改变 Agent 决策；
 - `LifecycleManager` 把事实分发给可选 Hook；
-- Hook 只有返回合法的 `decision: deny` 才能阻断，异常会写入 `hook_error` 后 fail-open；
+- `pre_tool_use` hook 出错时拒绝这次工具调用；其余事件的 hook 只有返回合法的 `decision: deny` 才能阻断，异常会写入 `hook_error` 后 fail-open；
 - `pre_tool_use` 改写的参数必须重新通过 JSON Schema 与 PermissionResolver，Hook 不是后门。
 
 这个边界借鉴了 Claude Code 的 Session / Tool / Stop / Subagent / Compact 事件划分，但没有

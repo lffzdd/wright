@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -101,10 +102,8 @@ class LocalProcessHandle:
         except (OSError, ValueError):
             self._cwd_result = None
         finally:
-            try:
-                self._cwd_file.unlink()
-            except FileNotFoundError:
-                pass
+            # The scratch holds the command text, which can contain secrets.
+            shutil.rmtree(self._cwd_file.parent, ignore_errors=True)
 
 
 class LocalExecutionBackend:
@@ -171,17 +170,19 @@ class LocalExecutionBackend:
         return FileMetadata(kind, stat.st_size, stat.st_mtime_ns)
 
     def read_bytes(self, path: ExecutionPath, limit: int | None = None) -> bytes:
-        with self._local(path).open("rb") as source:
+        with os.fdopen(_open_nofollow(self._local(path), os.O_RDONLY), "rb") as source:
             return source.read() if limit is None else source.read(limit)
 
     def read_text(
         self, path: ExecutionPath, *, encoding: str, errors: str = "strict"
     ) -> str:
-        with self._local(path).open("r", encoding=encoding, errors=errors, newline="") as source:
+        descriptor = _open_nofollow(self._local(path), os.O_RDONLY)
+        with os.fdopen(descriptor, "r", encoding=encoding, errors=errors, newline="") as source:
             return source.read()
 
     def write_text(self, path: ExecutionPath, content: str, *, encoding: str) -> None:
-        with self._local(path).open("w", encoding=encoding, newline="") as target:
+        descriptor = _open_nofollow(self._local(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        with os.fdopen(descriptor, "w", encoding=encoding, newline="") as target:
             target.write(content)
 
     def ensure_directory(self, path: ExecutionPath) -> None:
@@ -319,7 +320,6 @@ class LocalExecutionBackend:
 
     def resolve_executable(self, program: str, *, cwd: ExecutionPath) -> str | None:
         """Resolve the literal program using the same clean PATH as Shell launch."""
-        import shutil
         import sys
 
         from .sandbox_profile import clean_environment
@@ -367,12 +367,16 @@ class LocalExecutionBackend:
         try:
             process = launch(command, grant, scratch, cwd_path)
         except Exception:
-            import shutil
             shutil.rmtree(scratch)
             raise
         if hasattr(process, "read_output"):
             return process
         return LocalProcessHandle(process, self, cwd_path)
+
+
+def _open_nofollow(path: Path, flags: int) -> int:
+    """Open a canonical path; a link swapped in after resolving it is refused."""
+    return os.open(path, flags | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0), 0o666)
 
 
 def _start_rg(argv: list[str]) -> subprocess.Popen:

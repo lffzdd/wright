@@ -73,6 +73,9 @@ class InvocationGrant:
     command_argv: tuple[str, ...] = ()
     executable_target: str = ""
     execution_mode: str = "sandbox"
+    # Deny rules that also bind resources this invocation reaches on its own.
+    denied_rules: tuple[PermissionRule, ...] = ()
+    origin: str = ""
 
 
 @dataclass(frozen=True)

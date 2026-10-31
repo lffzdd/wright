@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from ...core.git import git_command
 from ...domain.model.workspace.project import ProjectContext
 from .change_lock import change_operation, workspace_change_lock
 
@@ -41,7 +42,7 @@ def _run(
     if index_file is not None:
         environment["GIT_INDEX_FILE"] = str(index_file.resolve())
     result = subprocess.run(
-        ["git", "--literal-pathspecs", "-C", str(root), *args],
+        git_command(root, *args, flags=("--literal-pathspecs",)),
         input=data,
         capture_output=True,
         check=False,

@@ -136,6 +136,7 @@ class AuthorizationWorkflow:
                 backend=backend,
                 scope=scope,
                 remember_rule=remember_rule,
+                tool_name=subject.name,
                 command_argv=self._command_argv(access_subject, prepared.executable) if prepared.command_rule else (),
                 executable_target=prepared.executable_target if prepared.command_rule else "",
                 reason_code=reason_code,
@@ -266,6 +267,7 @@ class AuthorizationWorkflow:
             backend=backend,
             scope=scope,
             remember_rule=remember_rule,
+            tool_name=subject.name,
             choice=response.choice,
             selected_rule=selected_rule,
             selected_rules=prepared.missing_command_rules if command_set else (),
@@ -374,7 +376,7 @@ class AuthorizationWorkflow:
         sandbox_writable = tuple(str(root) for root in scope.roots
                                  if not any(is_under(str(root), str(path)) for path in scope.read_only)) if sandboxed else ()
         if sandboxed:
-            shell_note += f" Readable directories: {', '.join(sandbox_readable)}. Approval does not widen them."
+            shell_note += f" Readable directories: {', '.join(sandbox_readable)}, plus system runtime directories. Approval does not widen them."
         return PermissionPrompt(
             request_id=tool_call.id or f"{identity.session_id}:{identity.call_id}",
             tool_name=tool_name,
@@ -426,6 +428,7 @@ class AuthorizationWorkflow:
         selected_rules: tuple[PermissionRule, ...] = (),
         command_argv: tuple[str, ...] = (),
         executable_target: str = "",
+        tool_name: str = "",
     ) -> PermissionResolution:
         session_rules: list[PermissionRule] = []
         persistent_rules: list[PermissionRule] = []
@@ -451,7 +454,7 @@ class AuthorizationWorkflow:
             elif lifetime == "user":
                 persistent_rules.extend(records)
         return self.resolver.issue(arguments, access, targets, cwd, identity, reason, source, backend=backend, scope=scope,
-            changes=AuthorizationChange(tuple(session_rules), tuple(persistent_rules), tuple(project_rules)), network_enabled=choice == "allow_once_network", command_argv=command_argv, executable_target=executable_target, reason_code=reason_code, reason_params=reason_params)
+            changes=AuthorizationChange(tuple(session_rules), tuple(persistent_rules), tuple(project_rules)), network_enabled=choice == "allow_once_network", tool_name=tool_name, command_argv=command_argv, executable_target=executable_target, reason_code=reason_code, reason_params=reason_params)
 
     @staticmethod
     def _command_argv(command: str, executable: str) -> tuple[str, ...]:

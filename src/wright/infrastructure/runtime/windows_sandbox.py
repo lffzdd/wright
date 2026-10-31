@@ -20,7 +20,12 @@ import wright.infrastructure.runtime.windows_wfp as wfp
 
 from ...core.file_lock import FileLock
 from ...core.paths import wright_home
-from .sandbox_profile import SandboxUnavailable, clean_environment, profile_paths
+from .sandbox_profile import (
+    SandboxUnavailable,
+    clean_environment,
+    git_control_paths,
+    profile_paths,
+)
 from .windows_process import WindowsProcessHandle as JobProcessHandle
 
 _LOCK = threading.RLock()
@@ -221,6 +226,7 @@ def _launch(command, grant, scratch: Path, cwd_file: Path):
     # Runtime writes are denied to the fixed restricting SID during bootstrap.
     # Daily execution must never require changing system ACLs as administrator.
     denied = {path.value: _WRITE for path in grant.shell_readonly if not any(Path(path.value).is_relative_to(Path(root)) for root in state["runtime_roots"])}
+    denied.update({str(path): _WRITE for path in git_control_paths(grant) if path.exists()})
     bootstrap_protected = {str(Path(path).resolve()).casefold() for path in state.get("protected_runtime_paths", [])}
     denied.update({path.value: 0x1F01FF for path in grant.blocked_paths
                    if Path(path.value).exists() and str(Path(path.value).resolve()).casefold() not in bootstrap_protected})
@@ -255,7 +261,7 @@ def _launch(command, grant, scratch: Path, cwd_file: Path):
         argv = [interpreter, "-E", "-s", "-S", str(runtime_dir() / "windows_runner.py"), str(request_path)]
         process = native.logon_process(state["accounts"][kind], passwords[kind], interpreter, subprocess.list2cmdline(argv), str(scratch))
         native.assign_job(job, process.process)
-        native.resume(process.thread)
+        native.check(native.resume(process.thread) != 0xFFFFFFFF)
         return WindowsProcessHandle(process, job, lease_id, scratch, cwd_file)
     except Exception:
         native.terminate_job(job)

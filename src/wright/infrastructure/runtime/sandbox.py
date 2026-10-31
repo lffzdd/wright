@@ -16,7 +16,9 @@ from ...domain.gateway.runtime_types import ExecutionPath
 from ...domain.policy.permission.types import InvocationGrant, InvocationIdentity
 from .sandbox_profile import (
     SandboxUnavailable,
+    ancestors_within,
     clean_environment,
+    git_control_paths,
     profile_paths,
     runtime_roots,
 )
@@ -97,6 +99,9 @@ def linux_argv(command: str, grant: InvocationGrant, scratch: Path, cwd_file: Pa
         argv += ["--ro-bind", str(root), str(root)]
     for root in grant.shell_readonly:
         argv += ["--ro-bind", root.value, root.value]
+    for path in git_control_paths(grant):
+        if path.exists():
+            argv += ["--ro-bind", str(path), str(path)]
     hidden = []
     for blocked in sorted(grant.blocked_paths, key=lambda item: len(Path(item.value).parts)):
         path = Path(blocked.value)
@@ -119,8 +124,8 @@ def macos_argv(command: str, grant: InvocationGrant, scratch: Path, cwd_file: Pa
     # private scratch, preserving the immutable paths issued by authorization.
     runtime = tuple(path.resolve() for path in runtime_roots())
     scratch = scratch.resolve()
-    profile = ['(version 1)', '(deny default)', '(allow process-fork process-exec signal)',
-               '(allow sysctl-read)', '(allow file-read-metadata)', '(allow mach-lookup (global-name "com.apple.system.logger"))']
+    profile = ['(version 1)', '(deny default)', '(allow process-fork process-exec)',
+               '(allow signal (target same-sandbox))', '(allow sysctl-read)', '(allow file-read-metadata)', '(allow mach-lookup (global-name "com.apple.system.logger"))']
     # dyld's libignition opens the root directory to locate the system cryptex.
     # A literal match allows that directory (including listing), never its children.
     profile.append('(allow file-read-data (literal "/"))')
@@ -135,8 +140,16 @@ def macos_argv(command: str, grant: InvocationGrant, scratch: Path, cwd_file: Pa
         profile.append(f'(deny file-write* (subpath {quote(path)}))')
     for path in grant.shell_readonly:
         profile.append(f'(deny file-write* (subpath {quote(path.value)}))')
+    for path in git_control_paths(grant):
+        profile.append(f'(deny file-write* (subpath {quote(path)}))')
     for path in grant.blocked_paths:
         profile.append(f'(deny file-read* file-write* (subpath {quote(path.value)}))')
+    # Seatbelt rules follow paths, so a renamed parent would carry a boundary
+    # out of its rule. Children of these directories remain writable.
+    bounded = (*(Path(item.value) for item in (*grant.shell_readonly, *grant.blocked_paths)), *git_control_paths(grant))
+    parents = dict.fromkeys(parent for path in bounded for parent in ancestors_within(path.parent, [*writable, scratch]))
+    for path in parents:
+        profile.append(f'(deny file-write* (literal {quote(path)}))')
     if grant.network_enabled:
         profile.append('(allow network*)')
     script = bash_launch_script(command, scratch, cwd_file)
@@ -168,7 +181,7 @@ _PROCESS_OWNER = ThreadPoolExecutor(max_workers=1, thread_name_prefix="wright-sa
 
 def _spawn(argv, cwd, env, *, pass_fds=()):
     return _PROCESS_OWNER.submit(subprocess.Popen, argv, cwd=cwd,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, bufsize=0,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env, bufsize=0,
         start_new_session=True, pass_fds=pass_fds).result()
 
 

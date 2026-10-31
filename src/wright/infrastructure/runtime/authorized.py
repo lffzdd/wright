@@ -13,6 +13,7 @@ from ...domain.gateway.runtime_types import (
     SearchMatch,
 )
 from ...domain.policy.permission.scope import is_under
+from ...domain.policy.permission.settings import MatchContext
 from ...domain.policy.permission.types import (
     GrantTarget,
     InvocationGrant,
@@ -68,6 +69,7 @@ class AuthorizedExecution:
             raise PermissionError("path belongs to another execution environment")
         current = self._backend.revalidate_path(path)
         self._ensure_not_blocked(current)
+        self._ensure_not_denied(current, operation)
         if operation == "file_write":
             self._ensure_writable(current)
         if not any(
@@ -247,6 +249,7 @@ class AuthorizedExecution:
                 raise PermissionError("Sandbox resource changed since approval")
         cwd = self.cwd()
         grant = replace(self.grant, cwd=cwd) if self._dynamic_cwd else self.grant
+        grant = self._with_denied_resources(grant)
         if grant.command_argv:
             import shlex
 
@@ -273,6 +276,25 @@ class AuthorizedExecution:
 
             threading.Thread(target=monitor, daemon=True).start()
         return handle
+
+    def _ensure_not_denied(self, path: ExecutionPath, operation: PermissionOperation) -> None:
+        context = MatchContext(session_origin=self.grant.origin, files=((path.value, operation),))
+        if any(rule.matches(rule.tool_name, path.value, effect="deny", context=context) for rule in self.grant.denied_rules):
+            raise PermissionError("path is denied by a permission rule")
+
+    def _with_denied_resources(self, grant: InvocationGrant) -> InvocationGrant:
+        """Name deny rules as sandbox paths. A sandbox cannot evaluate rule patterns."""
+        blocked, readonly = list(grant.blocked_paths), list(grant.shell_readonly)
+        for rule in grant.denied_rules:
+            if rule.tool_name != "*":
+                continue
+            root = ExecutionPath(self.environment_id, rule.resource_root(grant.origin))
+            paths = [root] if rule.kind == "directory" else [
+                entry.path for entry in self._backend.glob(root, rule.pattern)
+            ]
+            target = blocked if not rule.operations or "file_read" in rule.operations else readonly
+            target.extend(path for path in paths if path not in target)
+        return replace(grant, blocked_paths=tuple(blocked), shell_readonly=tuple(readonly))
 
     def _ensure_writable(self, path: ExecutionPath) -> None:
         for root in self.grant.shell_readonly:

@@ -6,13 +6,17 @@ import hashlib
 import json
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 from ...domain.gateway.permissions import PermissionRepository
 from ...domain.model.session.authorization import AuthorizationState
 from ...domain.policy.permission.scope import AccessScope
-from ...domain.policy.permission.settings import PermissionConfiguration, PermissionRule
+from ...domain.policy.permission.settings import (
+    PermissionConfiguration,
+    PermissionRule,
+    command_segments,
+)
 from ...domain.policy.permission.types import AuthorizationChange
 from .checkpoint import CheckpointParticipant
 from .workflow import AuthorizationWorkflow
@@ -280,12 +284,7 @@ class PermissionService:
             previous = {
                 json.dumps(rule.to_persistent(), sort_keys=True)
                 for rule in (*baseline.rules, *baseline.settings.allow)
-                if grant is None
-                or rule.kind == "directory"
-                or (
-                    rule.kind in {"shell", "command", "tool"}
-                    and rule.tool_name == "execute_command"
-                )
+                if grant is None or rule.kind == "directory" or _shell_depends_on(rule, grant)
             }
             latest = {
                 json.dumps(rule.to_persistent(), sort_keys=True)
@@ -378,6 +377,16 @@ class PermissionService:
             return invocation.execution.read_bytes(backend.resolve_path(str(path)), limit=max_bytes)
         finally:
             invocation.execution.close()
+
+
+def _shell_depends_on(rule: PermissionRule, grant) -> bool:
+    """Whether revoking this rule withdraws what let this Shell command start."""
+    if rule.tool_name != "execute_command":
+        return False
+    if rule.kind == "command":
+        programs = command_segments(grant.command or "") or ()
+        return PurePosixPath(rule.argv[0]).name in {PurePosixPath(argv[0]).name for argv in programs}
+    return rule.kind == "tool" or (rule.kind == "shell" and rule.pattern == grant.command)
 
 
 @dataclass(frozen=True)

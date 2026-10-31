@@ -72,10 +72,21 @@ def analyze_shell(command: str) -> ShellAnalysis:
         ch = command[i]
         if quote:
             buf.append(ch)
-            if ch == quote and (i == 0 or command[i - 1] != "\\"):
+            # Only double quotes have escapes: \\ escapes itself, so \\" still closes.
+            if quote == '"' and ch == "\\" and i + 1 < length:
+                buf.append(command[i + 1])
+                i += 2
+                continue
+            if ch == quote:
                 quote = ""
             i += 1
             continue
+        if ch == "\\" and i + 1 < length:
+            buf.extend((ch, command[i + 1]))
+            i += 2
+            continue
+        if ch == "#" and (not buf or buf[-1].isspace()):
+            break
         if ch in {"'", '"'}:
             quote = ch
             buf.append(ch)
@@ -135,7 +146,173 @@ def shell_rule_matches(pattern: str | None, command: str, *, effect: str) -> boo
         return bool(analysis.simple and analysis.segments and fnmatch(analysis.segments[0], pattern))
     if not analysis.analyzable:
         return True
-    return any(fnmatch(segment, pattern) for segment in analysis.segments)
+    if any(fnmatch(segment, pattern) for segment in analysis.segments):
+        return True
+    programs = _deny_candidates(command)
+    return programs is None or any(fnmatch(text, pattern) for text in programs)
+
+
+_CONTROL_WORDS = frozenset({"if", "then", "else", "elif", "fi", "do", "done", "while", "until", "esac", "{", "}", "!", "time"})
+_PREFIX_COMMANDS = frozenset({"env", "command", "builtin", "exec", "nohup", "nice", "ionice", "time", "timeout", "sudo", "doas", "su", "xargs", "stdbuf", "setsid", "caffeinate"})
+_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
+_GIT_VALUE_OPTIONS = frozenset({"-c", "-C", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env", "--super-prefix"})
+
+
+def _program_name(word: str) -> str:
+    name = PurePosixPath(word).name
+    return name[:-4] if name.lower().endswith(".exe") else name
+
+
+def _shell_words(command: str) -> tuple[tuple[tuple[str, bool], ...], ...] | None:
+    """Split as bash does into commands of (word, changes at runtime); None if unclear."""
+    commands: list[tuple[tuple[str, bool], ...]] = []
+    words: list[tuple[str, bool]] = []
+    word: list[str] = []
+    started = dynamic = skip_target = False
+    quote = ""
+    index, length = 0, len(command)
+
+    def end_word() -> None:
+        nonlocal started, dynamic, skip_target
+        if started:
+            if not skip_target:
+                words.append(("".join(word), dynamic))
+            skip_target = False
+        word.clear()
+        started = dynamic = False
+
+    def end_command() -> None:
+        end_word()
+        if words:
+            commands.append(tuple(words))
+            words.clear()
+
+    while index < length:
+        char = command[index]
+        following = command[index + 1] if index + 1 < length else ""
+        if quote == "'":
+            if char == "'":
+                quote = ""
+            else:
+                word.append(char)
+        elif char == "\\":
+            if not following:
+                return None
+            if following != "\n" and (not quote or following in '"\\$`'):
+                word.append(following)
+            elif quote:
+                word.append(char + following)
+            started = True
+            index += 2
+            continue
+        elif char == "`" or (char == "$" and following in "({"):
+            return None
+        elif char == "$":
+            dynamic = started = True
+            word.append(char)
+        elif quote == '"':
+            if char == '"':
+                quote = ""
+            else:
+                word.append(char)
+        elif char in "\"'":
+            quote = char
+            started = True
+        elif char.isspace() and char != "\n":
+            end_word()
+        elif char == "#" and not started:
+            while index < length and command[index] != "\n":
+                index += 1
+            continue
+        elif char in "<>" or (char == "&" and following == ">"):
+            if following == "(" :
+                return None
+            if word and "".join(word).isdigit():
+                word.clear()
+                started = False
+            end_word()
+            index += 1
+            while index < length and command[index] in "<>&|":
+                index += 1
+            skip_target = True
+            continue
+        elif char in ";&|()\n":
+            end_command()
+        else:
+            if char in "*?[" or (char == "{" and not started and following not in " \t"):
+                dynamic = True
+            word.append(char)
+            started = True
+        index += 1
+    if quote:
+        return None
+    end_command()
+    return tuple(commands)
+
+
+def _deny_candidates(command: str, depth: int = 0) -> tuple[str, ...] | None:
+    """Every spelling a deny rule should see; None when the program cannot be known.
+
+    Names programs through paths, quoting, wrappers and ``sh -c``. Code a program
+    runs for itself (``python -c``) stays outside what command text can show.
+    """
+    parsed = _shell_words(command)
+    if parsed is None or depth > 3:
+        return None
+    result: list[str] = []
+    for entry in parsed:
+        index = 0
+        while index < len(entry) and (
+            entry[index][0] in _CONTROL_WORDS
+            or (not entry[index][1] and re.match(r"^[A-Za-z_][A-Za-z0-9_]*\+?=", entry[index][0]))
+        ):
+            index += 1
+        if index == len(entry):
+            continue
+        if entry[index][1]:
+            return None
+        nested = _command_spellings(tuple(item[0] for item in entry[index:]), depth)
+        if nested is None:
+            return None
+        result.extend(nested)
+    return tuple(result)
+
+
+def _command_spellings(argv: tuple[str, ...], depth: int) -> tuple[str, ...] | None:
+    name = _program_name(argv[0])
+    arguments = argv[1:]
+    if name == "git":
+        rest = list(arguments)
+        while rest and rest[0].startswith("-"):
+            rest = rest[2:] if rest[0] in _GIT_VALUE_OPTIONS else rest[1:]
+        arguments = tuple(rest)
+    joined = " ".join((name, *arguments))
+    # The trailing space lets `rm *` see a bare `rm`, whose arguments may come from a pipe.
+    result = [" ".join(argv), joined, joined + " "]
+    if name in _PREFIX_COMMANDS:
+        for start in range(1, len(argv)):
+            word = argv[start]
+            if not word.startswith("-") and not re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", word):
+                nested = _command_spellings(argv[start:], depth)
+                if nested is None:
+                    return None
+                result.extend(nested)
+    if name == "eval":
+        nested = _deny_candidates(" ".join(arguments), depth + 1)
+        if nested is None:
+            return None
+        result.extend(nested)
+    if name in _SHELLS:
+        for position, word in enumerate(arguments):
+            if re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", word):
+                if position + 1 >= len(arguments):
+                    return None
+                nested = _deny_candidates(arguments[position + 1], depth + 1)
+                if nested is None:
+                    return None
+                result.extend(nested)
+                break
+    return tuple(result)
 
 
 def direct_command_argv(command: str, *, dialect: str = "posix") -> tuple[str, ...] | None:

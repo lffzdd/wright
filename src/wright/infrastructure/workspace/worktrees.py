@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from ...core.git import git_command
 from ...core.paths import project_id, wright_home
 from ...domain.model.workspace.project import ProjectContext
 from ...domain.model.workspace.worktree import ArchiveResult, WorktreeError
@@ -12,7 +13,7 @@ from ...domain.model.workspace.worktree import ArchiveResult, WorktreeError
 
 def _git(root: Path, *args: str, check: bool = True) -> str:
     result = subprocess.run(
-        ["git", "-C", str(root), *args],
+        git_command(root, *args),
         check=False,
         capture_output=True,
         text=True,

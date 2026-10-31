@@ -115,10 +115,20 @@ def _packaged_path() -> Path:
 
 
 def protected_permission_paths(project: Path | None = None) -> tuple[Path, ...]:
-    from ...core.paths import project_permission_settings_path, wright_home
+    from ...core.paths import (
+        project_permission_settings_path,
+        user_mcp_config_path,
+        user_preferences_path,
+        user_skills_dir,
+        workspace_registry_path,
+        wright_home,
+    )
 
+    home = wright_home()
     paths = [default_settings_path(), _user_path(), _packaged_path(),
-             wright_home() / "sandbox", wright_home() / "projects", wright_home() / "permission-transaction.lock", journal_directory()]
+             home / "sandbox", home / "projects", home / "permission-transaction.lock", journal_directory(),
+             home / ".env", user_mcp_config_path(), user_skills_dir(), home / "memory", user_preferences_path(),
+             workspace_registry_path(), home / "backups"]
     if project is not None:
         paths.append(project_permission_settings_path(project))
     return tuple(dict.fromkeys(path.resolve() for path in paths))

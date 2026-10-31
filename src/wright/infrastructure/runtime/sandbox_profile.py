@@ -64,3 +64,16 @@ def profile_paths(grant: InvocationGrant) -> tuple[list[Path], list[Path]]:
     return list(dict.fromkeys(readable)), list(dict.fromkeys(writable))
 
 
+def git_control_paths(grant: InvocationGrant) -> tuple[Path, ...]:
+    """Repository files whose content decides what Git runs."""
+    _, writable = profile_paths(grant)
+    return tuple(root / ".git" / name for root in writable if (root / ".git").is_dir()
+                 for name in ("config", "config.worktree", "hooks"))
+
+
+def ancestors_within(path: Path, roots: list[Path]) -> tuple[Path, ...]:
+    """Directories whose rename would move ``path`` out from under a path rule."""
+    return tuple(parent for parent in (path, *path.parents)
+                 if any(parent == root or parent.is_relative_to(root) for root in roots))
+
+

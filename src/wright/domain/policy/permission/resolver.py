@@ -126,7 +126,9 @@ class PermissionPolicy:
 
         if mode in {"bypass", "acceptEdits"} and in_scope and access.operations <= self._EDIT_OPERATIONS:
             return "allow", "Workspace editing is enabled", "mode", "permission.accept_edits", {}
-        if mode == "bypass" and in_scope and access.operations <= {"shell", "internal_read", "execution_control", "persistent_write", "plan_update", "user_interaction"}:
+        # Bypass removes confirmations inside a boundary; host Shell has none.
+        host_shell = "shell" in access.operations and context is not None and context.execution_mode == "host"
+        if mode == "bypass" and in_scope and not host_shell and access.operations <= {"shell", "internal_read", "execution_control", "persistent_write", "plan_update", "user_interaction"}:
             return "allow", "Sandbox command approval is disabled", "mode", "permission.bypass_allow", {}
 
         if "unknown" in access.operations:
@@ -329,7 +331,7 @@ class PermissionResolver:
                 item.path is not None and item.declaration.operation == "file_write" and is_under(item.path.value, root)
                 for item in resolved
             ):
-                return self._deny(arguments, "This directory is read-only", source="scope", reason_code="permission.read_only_directory")
+                return self._deny(arguments, "This directory is read-only; a read-only authorization covers everything under it", source="scope", reason_code="permission.read_only_directory")
         decision, reason, source, reason_code, reason_params = self.policy.apply(
             effective_access,
             tool_name=subject.name,
@@ -397,6 +399,7 @@ class PermissionResolver:
         reason_params: dict[str, str] | None = None,
         command_argv: tuple[str, ...] = (),
         executable_target: str = "",
+        tool_name: str = "",
     ) -> PermissionResolution:
         grant_targets = tuple(
             GrantTarget(item.path, item.declaration.operation, item.declaration.recursive)
@@ -421,7 +424,9 @@ class PermissionResolver:
             executable_target=executable_target,
             shell_readonly=tuple(ExecutionPath(cwd.environment_id, str(path)) for path in scope.read_only),
             network_targets=tuple(NetworkTarget(str(item.declaration.value), item.declaration.http_method or "GET", item.declaration.operation) for item in targets if item.declaration.kind == "url"),
-
+            denied_rules=tuple(rule for rule in (self.policy.settings.deny if self.policy.settings else ())
+                               if rule.kind in {"file", "directory"} and rule.tool_name in {"*", tool_name}),
+            origin=str(scope.origin),
         )
         return PermissionResolution(
             arguments,

@@ -59,8 +59,15 @@ class LifecycleManager:
                 decision = HookDecision.from_value(
                     registration.callback(lifecycle_event)
                 )
-            except Exception as exc:  # hook 失败 fail-open，已记入 hook_error
+            except Exception as exc:  # 已记入 hook_error；只有工具闸门失败时拒绝，其余 fail-open
                 self._record_hook_error(lifecycle_event, registration.name, exc)
+                if event == "pre_tool_use":
+                    return HookDecision(
+                        decision="deny",
+                        reason=f"hook {registration.name} failed: {exc}",
+                        updated_input=aggregate.updated_input,
+                        additional_context=aggregate.additional_context,
+                    )
                 continue
             self._record_hook_result(lifecycle_event, registration.name, decision)
             if decision.updated_input is not None:
