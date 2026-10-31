@@ -239,10 +239,73 @@ class Agent:
             self._prompt_manager.visible_schema_tools(),
             active_deferred=set(self._active_deferred_tools),
         )
-        response = ContentDone("", finish_reason="incomplete")
-        usage_record: UsageRecord | None = None
         self.ui.on_turn_begin()
 
+        view, recall, reminders = self._build_turn_view(reminders)
+        if view.omitted_optional_reminders:
+            logger.info("episode_recall omitted reason=context_budget")
+        self.session_state.request_context_tokens = view.estimated_tokens
+        from ..workspace.context_usage import classify_context
+
+        breakdown = classify_context(view)
+        breakdown["limit"] = self.context_limit
+        self.session_state.request_context_breakdown = breakdown
+        self._emit_compaction_lifecycle(view)
+        if view.over_budget:
+            raise ContextBudgetExceeded(
+                view.budget_reason
+                or "context exceeds the request budget after deterministic compression"
+            )
+        note_injection = (
+            getattr(self.memory, "note_injection", None)
+            if self.memory is not None
+            else None
+        )
+        if callable(note_injection):
+            try:
+                note_injection(recall, omitted=bool(view.omitted_optional_reminders))
+            except Exception:
+                logger.info("memory_meter failure_type=exception")
+        wire_messages = view.messages
+
+        self._emit_lifecycle("llm_start", {
+            "model": str(getattr(self.llm, "model", "")),
+            "message_count": len(wire_messages),
+            "context_tokens": view.estimated_tokens,
+            "has_plan_reminder": any(
+                "<plan-state>" in str(message.get("content", ""))
+                for message in reminders
+            ),
+        })
+        started = time.monotonic()
+        response, usage_record = self._stream_model_response(view, wire_messages, started)
+
+        self.ui.on_usage(
+            usage_record.prompt_tokens if usage_record else None,
+            usage_record.completion_tokens if usage_record else None,
+            usage_record.total_tokens if usage_record else None,
+            self.context_limit,
+            context_tokens=getattr(self.session_state, "request_context_tokens", None),
+        )
+
+        self._emit_lifecycle("llm_end", {
+            "duration_ms": round((time.monotonic() - started) * 1_000, 3),
+            "output_chars": len(response.content),
+            "tool_call_count": len(response.tool_calls),
+            "usage": (
+                {
+                    "prompt_tokens": usage_record.prompt_tokens,
+                    "completion_tokens": usage_record.completion_tokens,
+                    "total_tokens": usage_record.total_tokens,
+                }
+                if usage_record is not None else None
+            ),
+        })
+
+        return response, usage_record
+
+    def _build_turn_view(self, reminders: Sequence[dict]):
+        """Project the transcript and this turn's reminders into one request view."""
         system_prompt = None
         if self.memory is not None:
             base_prompt = next(
@@ -273,14 +336,9 @@ class Agent:
             context_limit=self.context_limit,
             conversation_key=self.session_state.session_id,
         )
-        if view.omitted_optional_reminders:
-            logger.info("episode_recall omitted reason=context_budget")
-        self.session_state.request_context_tokens = view.estimated_tokens
-        from ..workspace.context_usage import classify_context
+        return view, recall, reminders
 
-        breakdown = classify_context(view)
-        breakdown["limit"] = self.context_limit
-        self.session_state.request_context_breakdown = breakdown
+    def _emit_compaction_lifecycle(self, view) -> None:
         if view.folded_record_ids:
             # The projection folded older tool results. Activated tool schemas
             # belong to the session and stay available on later requests.
@@ -297,33 +355,16 @@ class Agent:
                 "folded_record_ids": list(view.folded_record_ids),
                 "over_budget": view.over_budget,
             })
-        if view.over_budget:
-            raise ContextBudgetExceeded(
-                view.budget_reason
-                or "context exceeds the request budget after deterministic compression"
-            )
-        note_injection = (
-            getattr(self.memory, "note_injection", None)
-            if self.memory is not None
-            else None
-        )
-        if callable(note_injection):
-            try:
-                note_injection(recall, omitted=bool(view.omitted_optional_reminders))
-            except Exception:
-                logger.info("memory_meter failure_type=exception")
-        wire_messages = view.messages
 
-        self._emit_lifecycle("llm_start", {
-            "model": str(getattr(self.llm, "model", "")),
-            "message_count": len(wire_messages),
-            "context_tokens": view.estimated_tokens,
-            "has_plan_reminder": any(
-                "<plan-state>" in str(message.get("content", ""))
-                for message in reminders
-            ),
-        })
-        started = time.monotonic()
+    def _stream_model_response(
+        self,
+        view,
+        wire_messages,
+        started: float,
+    ) -> tuple[ContentDone, UsageRecord | None]:
+        """Read one model stream, stopping early when the run is cancelled."""
+        response = ContentDone("", finish_reason="incomplete")
+        usage_record: UsageRecord | None = None
         self._partial_content: list[str] = []
         self._partial_reasoning: list[str] = []
         try:
@@ -374,29 +415,6 @@ class Agent:
                 "duration_ms": round((time.monotonic() - started) * 1_000, 3),
             })
             raise
-
-        self.ui.on_usage(
-            usage_record.prompt_tokens if usage_record else None,
-            usage_record.completion_tokens if usage_record else None,
-            usage_record.total_tokens if usage_record else None,
-            self.context_limit,
-            context_tokens=getattr(self.session_state, "request_context_tokens", None),
-        )
-
-        self._emit_lifecycle("llm_end", {
-            "duration_ms": round((time.monotonic() - started) * 1_000, 3),
-            "output_chars": len(response.content),
-            "tool_call_count": len(response.tool_calls),
-            "usage": (
-                {
-                    "prompt_tokens": usage_record.prompt_tokens,
-                    "completion_tokens": usage_record.completion_tokens,
-                    "total_tokens": usage_record.total_tokens,
-                }
-                if usage_record is not None else None
-            ),
-        })
-
         return response, usage_record
 
     def _plan_reminder(self) -> dict | None:
