@@ -25,9 +25,9 @@ from ...infrastructure.tools.tool_search import (
 )
 from ..execution.services import RuntimeServices
 from ..memory import MemoryManager
-from ..session.events import SessionEvents
-from ..session.live_resources import RuntimeResources
-from ..session.publisher import open_session_events
+from ..session_runtime.events import SessionEvents
+from ..session_runtime.live_resources import RuntimeResources
+from ..session_runtime.publisher import open_session_events
 from ..skills import SkillRegistry
 from ..tool_execution.capabilities import (
     CapabilityAssembly,

@@ -13,7 +13,7 @@ from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
 from wright.application.execution.directory import DirectoryExecutionCoordinator
-from wright.application.session.errors import SessionServiceError
+from wright.application.session_runtime.errors import SessionServiceError
 from wright.application.workspace.change_lock import (
     ChangeBusyError,
     workspace_change_lock,

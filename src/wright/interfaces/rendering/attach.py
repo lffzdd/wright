@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...application.session.publisher import EventPublisher
+from ...application.session_runtime.publisher import EventPublisher
 from .contracts import Renderer
 from .subscriber import RendererEventSubscriber
 

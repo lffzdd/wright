@@ -1,9 +1,9 @@
 import threading
 from types import SimpleNamespace
 
-from wright.application.session.events import notice_text
 from wright.application.session.history_projection import project_history
-from wright.application.session.publisher import EventPublisher
+from wright.application.session_runtime.events import notice_text
+from wright.application.session_runtime.publisher import EventPublisher
 from wright.interfaces.web.websocket import opening_frames
 
 
@@ -152,7 +152,10 @@ def test_frontend_contract_matches_backend_event_types():
     import json
     from pathlib import Path
 
-    from wright.application.session.events import UI_EVENT_TYPES, UI_EVENT_VERSION
+    from wright.application.session_runtime.events import (
+        UI_EVENT_TYPES,
+        UI_EVENT_VERSION,
+    )
 
     payload = json.loads((Path(__file__).resolve().parents[1] / "web/src/ui-event-contract.json").read_text())
     assert payload["version"] == UI_EVENT_VERSION == 2

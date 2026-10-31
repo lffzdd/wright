@@ -37,8 +37,8 @@ from ..composition.runtime import (
     shutdown_runtime,
 )
 from ..execution.directory import DirectoryExecutionCoordinator
+from ..session_runtime.publisher import EventPublisher
 from .opening import OpenIntentError, load_resume_checkpoint, resolve_new_environment
-from .publisher import EventPublisher
 from .service import SessionService
 
 logger = logging.getLogger(__name__)

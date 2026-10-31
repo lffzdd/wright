@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-from wright.application.session.publisher import EventPublisher
+from wright.application.session_runtime.publisher import EventPublisher
 from wright.domain.model.tool import ArtifactRef
 from wright.interfaces.web.auth import COOKIE_NAME, BootstrapAuth
 from wright.interfaces.web.runtime_manager import RuntimeManagerError

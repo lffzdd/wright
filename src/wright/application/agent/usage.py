@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from ...core.logger import get_logger
 from ...domain.model.llm import UsageRecord
 from ...domain.model.session import Session
-from ..session.events import SessionEvents
+from ..session_runtime.events import SessionEvents
 
 if TYPE_CHECKING:
     from ...domain.model.session import TurnRecord

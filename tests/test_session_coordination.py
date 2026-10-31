@@ -23,8 +23,8 @@ from wright.application.permission.service import PermissionService
 from wright.application.session.directory import SessionDirectory, SessionDirectoryError
 from wright.application.session.history_projection import project_history
 from wright.application.session.mailbox import InteractionMailbox
-from wright.application.session.publisher import EventPublisher
 from wright.application.session.service import SessionService
+from wright.application.session_runtime.publisher import EventPublisher
 from wright.domain.model.session import SessionAuthorization
 from wright.infrastructure.config.permission_store import FilePermissionRepository
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore

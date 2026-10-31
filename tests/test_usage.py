@@ -6,7 +6,7 @@ from rich.console import Console
 from tests.responses import response
 from wright.application.agent import create_agent
 from wright.application.memory.llm_util import metered_events
-from wright.application.session.publisher import open_session_events
+from wright.application.session_runtime.publisher import open_session_events
 from wright.domain.model.llm import UsageRecord
 from wright.domain.model.llm.events import UsageEvent
 from wright.domain.model.session import Session

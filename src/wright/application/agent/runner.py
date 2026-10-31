@@ -24,8 +24,8 @@ from ...domain.protocol import encode_tools
 from ...utils.token_counter import estimate_message_tokens
 from ..execution.services import RuntimeServices
 from ..memory import MemoryManager
-from ..session.events import SessionEvents
-from ..session.live_resources import RuntimeResources
+from ..session_runtime.events import SessionEvents
+from ..session_runtime.live_resources import RuntimeResources
 from ..skills import SkillRegistry
 from ..tool_execution.capabilities import (
     CapabilityAssembly,

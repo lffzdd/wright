@@ -68,11 +68,11 @@ from ..execution.directory import DirectoryExecutionCoordinator
 from ..execution.services import RuntimeServices
 from ..lifecycle import LifecycleConfigError
 from ..permission.service import PermissionService
-from ..session.events import SessionEvents, session_status
-from ..session.interaction import RoutedPrompter, UserPrompter
-from ..session.live_resources import RuntimeResources
-from ..session.loops import SessionLoopRegistry
-from ..session.publisher import EventPublisher
+from ..session_runtime.events import SessionEvents, session_status
+from ..session_runtime.interaction import RoutedPrompter, UserPrompter
+from ..session_runtime.live_resources import RuntimeResources
+from ..session_runtime.loops import SessionLoopRegistry
+from ..session_runtime.publisher import EventPublisher
 from ..skills import SkillRegistry
 from ..tool_execution.approval import InteractiveApprovalHandler
 from ..tool_execution.capabilities import assemble_tool_capabilities

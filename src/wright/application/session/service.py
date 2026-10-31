@@ -20,8 +20,8 @@ from ...core.logger import get_logger
 from ...domain.model.attachment import AttachmentError
 from ...domain.model.llm.model_adapters import available_models
 from ...domain.model.session.run import TERMINAL_RUN_STATUSES
-from .errors import SessionClosedError, SessionServiceError
-from .events import session_status
+from ..session_runtime.errors import SessionClosedError, SessionServiceError
+from ..session_runtime.events import session_status
 from .runner import RuntimeShutdown, SessionRunner
 
 logger = get_logger(__name__)

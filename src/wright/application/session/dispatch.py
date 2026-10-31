@@ -16,23 +16,23 @@ from ...core.logger import get_logger
 from ...domain.gateway.scheduling import SchedulingError
 from ...domain.model.attachment import AttachmentError
 from ...infrastructure.persistence.autonomy_store import AutonomyStore
-from ..agent.operations import agent_completion_notice
+from ..composition.job_runner import launch_job_run
 from ..composition.runtime import WrightRuntime
+from ..execution.agent_operations import agent_completion_notice
 from ..execution.directory import (
     DirectoryWaitCancelled,
     bind_directory_work,
     reset_directory_work,
 )
-from ..scheduling.runner import launch_job_run
-from .events import session_status
+from ..session_runtime.events import session_status
+from ..session_runtime.loops import (
+    SessionLoopRegistry,
+    parse_loop_command,
+)
 from .history_projection import (
     current_run_id,
     latest_turn_history_id,
     public_attachment,
-)
-from .loops import (
-    SessionLoopRegistry,
-    parse_loop_command,
 )
 
 logger = get_logger(__name__)

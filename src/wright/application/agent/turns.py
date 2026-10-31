@@ -18,7 +18,7 @@ from ...domain.model.session import Session
 from ...domain.model.tool import ToolResult
 from ...domain.policy.verifier import Verifier
 from ...domain.protocol import build_tool_results_messages
-from ..session.events import SessionEvents
+from ..session_runtime.events import SessionEvents
 from ..tool_execution.dispatch import ToolDispatchService
 from .parse import TurnAbort
 

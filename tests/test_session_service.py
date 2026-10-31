@@ -5,12 +5,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from wright.application.session.publisher import EventPublisher
 from wright.application.session.service import (
     SessionClosedError,
     SessionService,
     SessionServiceError,
 )
+from wright.application.session_runtime.publisher import EventPublisher
 from wright.domain.model.session import SessionAuthorization
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 from wright.interfaces.interaction import InteractionBroker

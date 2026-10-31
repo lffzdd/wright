@@ -63,9 +63,9 @@ def test_shared_renderer_contract_does_not_load_console_toolkits() -> None:
         "interfaces/rendering/history.py",
         "interfaces/rendering/silent.py",
         "interfaces/rendering/subscriber.py",
-        "application/session/events.py",
-        "application/session/publisher.py",
-        "application/session/interaction.py",
+        "application/session_runtime/events.py",
+        "application/session_runtime/publisher.py",
+        "application/session_runtime/interaction.py",
     ):
         modules = _runtime_imports(PACKAGE_ROOT / relative)
         for module in modules:
@@ -78,6 +78,7 @@ def test_application_execution_does_not_import_interface_rendering() -> None:
         PACKAGE_ROOT / "application/agent",
         PACKAGE_ROOT / "application/scheduling",
         PACKAGE_ROOT / "application/session",
+        PACKAGE_ROOT / "application/session_runtime",
         PACKAGE_ROOT / "application/tool_execution",
         PACKAGE_ROOT / "application/composition",
         PACKAGE_ROOT / "application/command",

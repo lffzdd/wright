@@ -7,14 +7,14 @@ from types import SimpleNamespace
 import pytest
 
 from wright.application.session.dispatch import _publish_execution
-from wright.application.session.events import (
+from wright.application.session_runtime.events import (
     EventScope,
     SessionEvents,
     UiEventEnvelope,
     model_turn_started,
     session_status,
 )
-from wright.application.session.publisher import EventPublisher
+from wright.application.session_runtime.publisher import EventPublisher
 from wright.interfaces.rendering.subscriber import RendererEventSubscriber
 
 CONTRACT = json.loads(

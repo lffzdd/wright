@@ -19,18 +19,18 @@ from ...application.session.directory import (
     SessionDirectoryError,
 )
 from ...application.session.dispatch import process_session_event
-from ...application.session.events import notice_display, notice_text
 from ...application.session.history_projection import (
     project_history,
     public_attachment,
     seed_ids,
 )
-from ...application.session.publisher import EventPublisher
 from ...application.session.service import (
     SessionService,
     SessionServiceError,
 )
-from ...application.session.tool_projection import tool_phase
+from ...application.session_runtime.events import notice_display, notice_text
+from ...application.session_runtime.publisher import EventPublisher
+from ...application.session_runtime.tool_projection import tool_phase
 from ...core.paths import project_id
 from ...domain.model.attachment import AttachmentError, AttachmentRecord
 from ...domain.model.tool import ArtifactRef

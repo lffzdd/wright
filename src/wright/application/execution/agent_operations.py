@@ -14,7 +14,7 @@ from ...domain.model.agent import (
     AgentControlError,
     AgentTaskRecord,
 )
-from ..execution.identity import (
+from .identity import (
     ExecutionIdentity,
     ExecutionNotFound,
     ExecutionWaitCancelled,

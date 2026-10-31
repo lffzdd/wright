@@ -10,7 +10,7 @@ from typing import Any
 
 from ..permission.resources import GrantError
 from ..permission.service import PermissionConflict
-from ..session.errors import SessionServiceError
+from ..session_runtime.errors import SessionServiceError
 from .change_lock import ChangeBusyError, change_operation
 from .documents import DocumentError
 from .grants import list_grants

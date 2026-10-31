@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..session.tool_projection import public_tool_result, tool_phase
+from ..session_runtime.tool_projection import public_tool_result, tool_phase
 
 _SHELL = frozenset({"execute_command"})
 _EDIT = frozenset({"edit_file", "write_file"})

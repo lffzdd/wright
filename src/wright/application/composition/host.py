@@ -35,8 +35,8 @@ from ..execution.directory import (
 )
 from ..execution.services import RuntimeServices
 from ..permission.service import PermissionService
-from ..scheduling.runner import launch_job_run
 from ..scheduling.scheduler import JobScheduler
+from .job_runner import launch_job_run
 
 
 @dataclass(frozen=True)

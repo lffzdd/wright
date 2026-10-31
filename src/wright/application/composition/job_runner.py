@@ -42,10 +42,10 @@ from ..execution.directory import (
 from ..execution.identity import bind_identity
 from ..execution.roles import tools_for_role
 from ..execution.services import RuntimeServices
-from ..session.live_resources import RuntimeResources
-from ..session.publisher import open_session_events
+from ..scheduling.scheduler import JobScheduler
+from ..session_runtime.live_resources import RuntimeResources
+from ..session_runtime.publisher import open_session_events
 from ..tool_execution.capabilities import assemble_tool_capabilities
-from .scheduler import JobScheduler
 
 logger = get_logger(__name__)
 

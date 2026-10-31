@@ -18,7 +18,7 @@ from ..application.session.mailbox import (
 )
 
 if TYPE_CHECKING:
-    from ..application.session.publisher import EventPublisher
+    from ..application.session_runtime.publisher import EventPublisher
 
 # prompt_toolkit Application.exit(result=...) 用来打断正在进行的主输入。
 PROMPT_INTERRUPTED = object()

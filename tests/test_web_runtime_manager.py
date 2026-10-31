@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from wright.application.session.live_resources import RuntimeResources
-from wright.application.session.publisher import EventPublisher
+from wright.application.session_runtime.live_resources import RuntimeResources
+from wright.application.session_runtime.publisher import EventPublisher
 from wright.domain.model.session import Session, SessionAuthorization
 from wright.domain.model.tool import ArtifactRef, ToolCall, ToolResult
 from wright.domain.model.workspace.project import ProjectContext

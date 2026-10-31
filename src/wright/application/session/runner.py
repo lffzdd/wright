@@ -7,7 +7,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from ...core.logger import get_logger
-from .errors import SessionClosedError
+from ..session_runtime.errors import SessionClosedError
 
 logger = get_logger(__name__)
 

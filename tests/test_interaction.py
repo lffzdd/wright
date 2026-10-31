@@ -1,7 +1,7 @@
 import threading
 import time
 
-from wright.application.session.interaction import RoutedPrompter
+from wright.application.session_runtime.interaction import RoutedPrompter
 from wright.domain.policy import PermissionChoice, PermissionPrompt
 from wright.interfaces.cli.input import CliInputController
 from wright.interfaces.cli.prompter import ConsolePrompter

@@ -13,7 +13,7 @@ from ..application.composition.runtime import (
     assemble_runtime,
     shutdown_runtime,
 )
-from ..application.session.interaction import DeniedPrompter
+from ..application.session_runtime.interaction import DeniedPrompter
 
 
 def run_headless_host(

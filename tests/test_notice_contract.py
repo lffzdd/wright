@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from wright.application.session.events import notice_display, notice_text
+from wright.application.session_runtime.events import notice_display, notice_text
 
 CASES = json.loads(
     (Path(__file__).resolve().parents[1] / "web/src/notice-contract.json").read_text()

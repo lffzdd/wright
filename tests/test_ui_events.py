@@ -3,8 +3,15 @@ import time
 
 import pytest
 
-from wright.application.session.events import EventScope, SessionEvents, UiEventEnvelope
-from wright.application.session.publisher import EventPublisher, open_session_events
+from wright.application.session_runtime.events import (
+    EventScope,
+    SessionEvents,
+    UiEventEnvelope,
+)
+from wright.application.session_runtime.publisher import (
+    EventPublisher,
+    open_session_events,
+)
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.interfaces.interaction import InteractionBroker
 from wright.interfaces.rendering.subscriber import RendererEventSubscriber

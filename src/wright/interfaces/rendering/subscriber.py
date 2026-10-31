@@ -10,7 +10,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from ...application.session.events import UiEventEnvelope, model_turn_started
+from ...application.session_runtime.events import UiEventEnvelope, model_turn_started
 from ...domain.model.tool import ToolCall, ToolResult
 from ..i18n import format_issues, present, t
 from .contracts import Renderer

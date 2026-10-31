@@ -27,7 +27,7 @@ _WORKSPACE = Path(_TMP.name)
 os.environ.setdefault("WRIGHT_HOME", str(_WORKSPACE / "wright-state"))
 
 from wright.application.agent import Agent, create_agent
-from wright.application.session.publisher import open_session_events
+from wright.application.session_runtime.publisher import open_session_events
 from wright.domain.model.llm import UsageRecord
 from wright.domain.model.llm.events import ContentDelta, ContentDone, UsageEvent
 from wright.domain.model.session import Session

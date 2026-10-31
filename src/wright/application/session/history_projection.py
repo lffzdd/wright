@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from ...domain.model.session.run import TERMINAL_RUN_STATUSES
-from .tool_projection import tool_phase
+from ..session_runtime.tool_projection import tool_phase
 
 _USER_SOURCE = "user_input"
 

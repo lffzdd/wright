@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ..agent import AgentBackgroundRuntime
     from ..scheduling.scheduler import JobScheduler
-    from ..session.loops import SessionLoopRegistry
+    from ..session_runtime.loops import SessionLoopRegistry
 
 
 @dataclass

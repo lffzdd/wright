@@ -28,9 +28,9 @@ from ..command.execution import CommandExecution
 from ..execution.directory import current_directory_binding
 from ..execution.identity import bind_identity
 from ..execution.roles import tools_for_role
-from ..session.events import EventScope, SessionEvents
-from ..session.live_resources import RuntimeResources
-from ..session.publisher import EventPublisher, open_session_events
+from ..session_runtime.events import EventScope, SessionEvents
+from ..session_runtime.live_resources import RuntimeResources
+from ..session_runtime.publisher import EventPublisher, open_session_events
 from ..tool_execution.capabilities import assemble_tool_capabilities
 from .assembly import (
     assemble_agent_components,

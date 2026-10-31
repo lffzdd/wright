@@ -7,8 +7,8 @@ import pytest
 
 from wright.application.permission.service import PermissionConflict, PermissionService
 from wright.application.permission.workflow import AuthorizationWorkflow
-from wright.application.session.interaction import RoutedPrompter
-from wright.application.session.publisher import EventPublisher
+from wright.application.session_runtime.interaction import RoutedPrompter
+from wright.application.session_runtime.publisher import EventPublisher
 from wright.application.tool_execution.approval import InteractiveApprovalHandler
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService

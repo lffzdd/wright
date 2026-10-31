@@ -7,7 +7,7 @@ import pytest
 
 from tests.responses import event, response
 from wright.application.agent import create_agent
-from wright.application.session.loops import (
+from wright.application.session_runtime.loops import (
     LoopError,
     SessionLoopRegistry,
     parse_interval,

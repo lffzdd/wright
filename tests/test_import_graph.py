@@ -169,3 +169,26 @@ def test_permission_resolver_does_not_depend_on_tools() -> None:
     assert not any("tools" in target for target in graph[approval_mod])
     assert resolver_mod not in graph[approval_mod]
 
+
+
+def test_application_subpackages_have_no_runtime_cycles() -> None:
+    modules = _collect_modules()
+    known = set(modules)
+    prefix = "application."
+    edges: dict[str, set[str]] = {}
+    for name, path in modules.items():
+        if not name.startswith(prefix) or name.count(".") < 2:
+            continue
+        source = name.split(".")[1]
+        for target in _runtime_edges(name, path, known):
+            if target.startswith(prefix) and target.count(".") >= 1:
+                other = target.split(".")[1]
+                if other != source:
+                    edges.setdefault(source, set()).add(other)
+    cycles = sorted(
+        (source, target)
+        for source, targets in edges.items()
+        for target in targets
+        if source < target and source in edges.get(target, set())
+    )
+    assert cycles == []

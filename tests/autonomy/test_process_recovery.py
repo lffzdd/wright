@@ -69,7 +69,7 @@ def test_real_process_command_crash_windows_are_recovered_honestly(
         from wright.domain.model.scheduling import TriggerSpec
         from wright.interfaces.interaction import InteractionBroker
         from wright.application.session.service import SessionService
-        from wright.application.session.publisher import EventPublisher
+        from wright.application.session_runtime.publisher import EventPublisher
 
         from pathlib import Path
         workspace, db, point = sys.argv[1:]
@@ -153,7 +153,7 @@ def _minimal_runtime(store, workspace):
     import threading
     from types import SimpleNamespace
 
-    from wright.application.session.publisher import EventPublisher
+    from wright.application.session_runtime.publisher import EventPublisher
     from wright.interfaces.interaction import InteractionBroker
 
     publisher = EventPublisher(project_id="project", session_id="session")

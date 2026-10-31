@@ -13,7 +13,7 @@ from wright.application.session.dispatch import (
     process_session_event,
     slash_command_matches,
 )
-from wright.application.session.interaction import RoutedPrompter
+from wright.application.session_runtime.interaction import RoutedPrompter
 from wright.domain.model.session import SessionAuthorization
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.domain.policy import PermissionChoice, PermissionPrompt
@@ -44,8 +44,8 @@ def test_tui_exposes_a_visible_stop_binding():
 
 
 def test_tui_keeps_application_host_alive_across_session_resume(tmp_path, monkeypatch):
-    from wright.application.session.publisher import EventPublisher
     from wright.application.session.service import SessionService
+    from wright.application.session_runtime.publisher import EventPublisher
     from wright.interfaces.interaction import InteractionHub
 
     class Host:
@@ -378,7 +378,7 @@ def test_tui_attach_flag_tracks_lifecycle():
 
 
 def test_history_slash_on_non_console_renderer():
-    from wright.application.session.publisher import EventPublisher
+    from wright.application.session_runtime.publisher import EventPublisher
     from wright.interfaces.rendering.subscriber import RendererEventSubscriber
 
     class Capture(SilentRenderer):

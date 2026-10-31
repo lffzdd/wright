@@ -11,7 +11,7 @@ from tests.runtime_helpers import tool_runtime_for_session
 from wright.application.permission.projection import summarize_policy
 from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.application.planning.projection import bind_plan_events, project_plan
-from wright.application.session.publisher import EventPublisher
+from wright.application.session_runtime.publisher import EventPublisher
 from wright.application.workspace.grants import list_grants
 from wright.domain.gateway.execution import ExecutionPath
 from wright.domain.model.planning import PlanError, PlanManager

@@ -25,11 +25,11 @@ from ...infrastructure.tools.capabilities import (
     SchedulingOperations,
     ToolCapabilities,
 )
-from ..agent.operations import AgentExecution
+from ..execution.agent_operations import AgentExecution
 from ..execution.identity import bind_identity
 from ..permission.service import PermissionService
 from ..scheduling.service import SchedulingService
-from ..session.live_resources import RuntimeResources
+from ..session_runtime.live_resources import RuntimeResources
 
 if TYPE_CHECKING:
     from ...domain.model.session import Session

@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from ...application.permission.service import PermissionConflict
 from ...application.session.dispatch import SLASH_COMMANDS
-from ...application.session.errors import SessionServiceError
+from ...application.session_runtime.errors import SessionServiceError
 from ...application.workspace.catalog import WorkspaceCatalogError
 from ...application.workspace.documents import DocumentError
 from ...application.workspace.files import PathRejected, list_directory, read_text

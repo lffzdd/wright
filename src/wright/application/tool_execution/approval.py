@@ -7,7 +7,7 @@ from typing import Any
 
 from ...domain.policy.permission.approval import PermissionRequest
 from ...domain.policy.permission.types import PermissionResponse
-from ..session.interaction import UserPrompter
+from ..session_runtime.interaction import UserPrompter
 
 PhaseNotifier = Callable[[Any, str], None]
 

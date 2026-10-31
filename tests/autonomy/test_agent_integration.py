@@ -8,10 +8,10 @@ from wright.application.agent import (
     build_agent_tools,
     create_agent,
 )
+from wright.application.composition.job_runner import _RunJournal, launch_job_run
 from wright.application.execution.services import RuntimeServices
 from wright.application.memory.memory_service import MemoryService
 from wright.application.permission.workflow import AuthorizationWorkflow
-from wright.application.scheduling.runner import _RunJournal, launch_job_run
 from wright.application.scheduling.scheduler import JobScheduler
 from wright.application.skills import SkillRegistry
 from wright.domain.model.agent import AgentProfile

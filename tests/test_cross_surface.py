@@ -16,8 +16,8 @@ from wright.application.session.opening import (
     load_resume_checkpoint,
     resolve_new_environment,
 )
-from wright.application.session.publisher import EventPublisher
 from wright.application.session.service import SessionService
+from wright.application.session_runtime.publisher import EventPublisher
 from wright.application.workspace.references import (
     active_mention_query,
     capture_references,
