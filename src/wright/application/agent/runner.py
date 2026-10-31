@@ -1,5 +1,4 @@
 import json
-import time
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, ClassVar
 
@@ -9,18 +8,13 @@ from ...domain.model.attachment import (
     MAX_ATTACHMENTS_PER_TURN,
     MAX_TOTAL_ATTACHMENT_BYTES,
 )
-from ...domain.model.llm import ModelRequest, UsageRecord
+from ...domain.model.llm import UsageRecord
 from ...domain.model.llm.events import (
-    ContentDelta,
     ContentDone,
-    ReasoningDelta,
-    UsageEvent,
 )
 from ...domain.model.llm.model_errors import describe_model_error
-from ...domain.model.llm.provider_usage import usage_from_provider
 from ...domain.model.session import Session
 from ...domain.policy.verifier import Verifier
-from ...domain.protocol import encode_tools
 from ...utils.token_counter import estimate_message_tokens
 from ..execution.services import RuntimeServices
 from ..memory import MemoryManager
@@ -33,8 +27,10 @@ from ..tool_execution.capabilities import (
 )
 from .components import AgentComponents, PreparedTools
 from .context import ContextBudgetExceeded
+from .model_turn import ModelTurnRunner
 from .parse import TurnAbort, parse_turn
 from .prompt import AgentPromptManager
+from .run_events import AgentRunEvents
 from .turns import (
     RetryCounters,
     TurnControl,
@@ -106,6 +102,9 @@ class Agent:
                 bind_project(self.session_state.project_root)
             self._recover_pending_episodes()
         self.lifecycle = lifecycle
+        self._run_events = AgentRunEvents(
+            session_state, lifecycle=lifecycle, journal=execution_journal
+        )
         self._memory_finalized_turns: set[str] = set()
         if max_verification_retries < 1:
             raise ValueError("max_verification_retries 必须 >= 1")
@@ -115,8 +114,6 @@ class Agent:
         self.capabilities = prepared.capabilities
         self._active_deferred_tools = session_state.active_deferred_tools
         self._schema_tools = prepared.tools
-        self.tool_schemas = prepared.schemas
-        self._tool_names = prepared.names
 
         self.cancellation = components.cancellation
         self.context_builder = components.context_builder
@@ -135,287 +132,42 @@ class Agent:
             skills=skills,
             schema_tools=self._schema_tools,
         )
+        self._model_turn = ModelTurnRunner(
+            llm,
+            session_state,
+            events,
+            memory=memory,
+            context_builder=self.context_builder,
+            prompt_manager=self._prompt_manager,
+            active_deferred_tools=self._active_deferred_tools,
+            tool_schemas=prepared.schemas,
+            tool_names=prepared.names,
+            emit_lifecycle=self._run_events.emit,
+            is_cancelled=self._is_cancelled,
+            record_auxiliary_usage=self._record_auxiliary_usage,
+        )
 
     @property
     def context_limit(self) -> int | None:
         return self.llm.context_limit
 
     @property
+    def tool_schemas(self) -> list[dict]:
+        return self._model_turn.tool_schemas
+
+    @property
+    def _tool_names(self) -> dict[str, str]:
+        return self._model_turn._tool_names
+
+    @property
     def messages(self) -> Sequence[dict]:
         return self.session_state.messages
-
-    def _emit_lifecycle(self, event: str, payload: dict):
-        if self.lifecycle is None:
-            return None
-        return self.lifecycle.emit(
-            event,
-            payload,
-            agent_task_id=self.session_state.agent_task_id,
-            root_turn_id=self.session_state.agent_root_turn_id,
-        )
-
-    def _record_run_event(
-        self,
-        event_type: str,
-        payload: dict[str, object] | None = None,
-        *,
-        event_key: str = "",
-    ) -> None:
-        """Persist one durable history fact before the run advances.
-
-        Interactive sessions have no journal.  Durable hosts provide the
-        narrow journal object.  A history write failure is a run failure, not
-        a reason to keep executing with an unverifiable state transition.
-        """
-        journal = self._execution_journal
-        recorder = getattr(journal, "record_event", None) if journal is not None else None
-        if not callable(recorder):
-            return
-        try:
-            recorder(event_type, payload or {}, event_key=event_key)
-        except Exception as exc:
-            logger.error("durable Run history write failed", exc_info=True)
-            raise RuntimeError(
-                f"durable Run history persistence failed for {event_type}"
-            ) from exc
-
-    def _emit_agent_start(
-        self,
-        prompt: str,
-        *,
-        resumed: bool = False,
-        source: str = "user",
-    ) -> None:
-        event = (
-            "subagent_start"
-            if self.session_state.agent_task_id is not None
-            else "agent_start"
-        )
-        self._emit_lifecycle(event, {
-            "prompt": prompt,
-            "resumed": resumed,
-            "source": source,
-            "max_steps": self.session_state.max_steps,
-        })
-
-    def _emit_agent_stop(
-        self,
-        status: str,
-        *,
-        final_answer: str | None = None,
-        reason: str = "",
-    ):
-        event = (
-            "subagent_stop"
-            if self.session_state.agent_task_id is not None
-            else "agent_stop"
-        )
-        return self._emit_lifecycle(event, {
-            "status": status,
-            "final_answer": final_answer or "",
-            "reason": reason,
-            "steps": self.session_state.step_count,
-            "usage": {
-                "prompt_tokens": self.session_state.total_usage.prompt_tokens,
-                "completion_tokens": self.session_state.total_usage.completion_tokens,
-                "total_tokens": self.session_state.total_usage.total_tokens,
-            },
-        })
 
     def _run_turn(
         self,
         reminders: Sequence[dict] = (),
     ) -> tuple[ContentDone, UsageRecord | None]:
-        """渲染事件流，返回包含正文和工具调用的完整响应。
-
-        ``reminders`` 只叠在本轮请求末尾，不写入 transcript。调用方先算
-        token 再传入同一份列表，用量校准才能扣掉这笔临时开销。
-        """
-
-        # Schema exposure is snapshotted for this request. tool_search updates
-        # the session set during tool execution, so new names apply next request.
-        # Request compaction must not clear that set: folding is a projection.
-        self.tool_schemas, self._tool_names = encode_tools(
-            self._prompt_manager.visible_schema_tools(),
-            active_deferred=set(self._active_deferred_tools),
-        )
-        self.ui.on_turn_begin()
-
-        view, recall, reminders = self._build_turn_view(reminders)
-        if view.omitted_optional_reminders:
-            logger.info("episode_recall omitted reason=context_budget")
-        self.session_state.request_context_tokens = view.estimated_tokens
-        from ..workspace.context_usage import classify_context
-
-        breakdown = classify_context(view)
-        breakdown["limit"] = self.context_limit
-        self.session_state.request_context_breakdown = breakdown
-        self._emit_compaction_lifecycle(view)
-        if view.over_budget:
-            raise ContextBudgetExceeded(
-                view.budget_reason
-                or "context exceeds the request budget after deterministic compression"
-            )
-        note_injection = (
-            getattr(self.memory, "note_injection", None)
-            if self.memory is not None
-            else None
-        )
-        if callable(note_injection):
-            try:
-                note_injection(recall, omitted=bool(view.omitted_optional_reminders))
-            except Exception:
-                logger.info("memory_meter failure_type=exception")
-        wire_messages = view.messages
-
-        self._emit_lifecycle("llm_start", {
-            "model": str(getattr(self.llm, "model", "")),
-            "message_count": len(wire_messages),
-            "context_tokens": view.estimated_tokens,
-            "has_plan_reminder": any(
-                "<plan-state>" in str(message.get("content", ""))
-                for message in reminders
-            ),
-        })
-        started = time.monotonic()
-        response, usage_record = self._stream_model_response(view, wire_messages, started)
-
-        self.ui.on_usage(
-            usage_record.prompt_tokens if usage_record else None,
-            usage_record.completion_tokens if usage_record else None,
-            usage_record.total_tokens if usage_record else None,
-            self.context_limit,
-            context_tokens=getattr(self.session_state, "request_context_tokens", None),
-        )
-
-        self._emit_lifecycle("llm_end", {
-            "duration_ms": round((time.monotonic() - started) * 1_000, 3),
-            "output_chars": len(response.content),
-            "tool_call_count": len(response.tool_calls),
-            "usage": (
-                {
-                    "prompt_tokens": usage_record.prompt_tokens,
-                    "completion_tokens": usage_record.completion_tokens,
-                    "total_tokens": usage_record.total_tokens,
-                }
-                if usage_record is not None else None
-            ),
-        })
-
-        return response, usage_record
-
-    def _build_turn_view(self, reminders: Sequence[dict]):
-        """Project the transcript and this turn's reminders into one request view."""
-        system_prompt = None
-        if self.memory is not None:
-            base_prompt = next(
-                (
-                    record.message["content"]
-                    for record in self.session_state.message_records
-                    if record.message.get("role") == "system"
-                ),
-                "",
-            )
-            system_prompt = self.memory.project_system_prompt(base_prompt)
-        optional_reminders: list[dict] = []
-        recall = None
-        recall_for_turn = getattr(self.memory, "recall_for_turn", None) if self.memory is not None else None
-        if callable(recall_for_turn):
-            recall = recall_for_turn(self.session_state)
-            reminders = list(reminders)
-            if recall.semantic_text:
-                reminders.append({"role": "user", "content": recall.semantic_text})
-            if recall.episode_text:
-                optional_reminders.append({"role": "user", "content": recall.episode_text})
-        view = self.context_builder.build(
-            self.session_state.message_records,
-            tools=self.tool_schemas,
-            reminders=reminders,
-            optional_reminders=optional_reminders,
-            system_prompt=system_prompt,
-            context_limit=self.context_limit,
-            conversation_key=self.session_state.session_id,
-        )
-        return view, recall, reminders
-
-    def _emit_compaction_lifecycle(self, view) -> None:
-        if view.folded_record_ids:
-            # The projection folded older tool results. Activated tool schemas
-            # belong to the session and stay available on later requests.
-            self._emit_lifecycle("pre_compact", {
-                "context_tokens": view.estimated_tokens,
-                "context_limit": self.context_limit,
-                "watermark": self.compactor.context_watermark,
-            })
-            self._emit_lifecycle("post_compact", {
-                "folded_count": len(view.folded_record_ids),
-                "token_savings": 0,
-                "context_tokens": view.estimated_tokens,
-                "deactivated_tools": 0,
-                "folded_record_ids": list(view.folded_record_ids),
-                "over_budget": view.over_budget,
-            })
-
-    def _stream_model_response(
-        self,
-        view,
-        wire_messages,
-        started: float,
-    ) -> tuple[ContentDone, UsageRecord | None]:
-        """Read one model stream, stopping early when the run is cancelled."""
-        response = ContentDone("", finish_reason="incomplete")
-        usage_record: UsageRecord | None = None
-        self._partial_content: list[str] = []
-        self._partial_reasoning: list[str] = []
-        try:
-            run_config = (
-                self.session_state.active_run().model_config
-                if self.session_state.active_run() is not None
-                else {}
-            )
-            request = ModelRequest(
-                messages=tuple(wire_messages),
-                tools=tuple(view.tools),
-                context_token_estimate=view.estimated_tokens,
-                model=run_config.get("model") or None,
-                transport=run_config.get("transport") or None,
-            )
-            stream = self.llm(request, tools=self.tool_schemas)
-            for event in stream:
-                # A complete response that already arrived is kept: the normal
-                # cancellation path records it and closes its tool calls.
-                if self._is_cancelled() and not isinstance(event, (ContentDone, UsageEvent)):
-                    # Stop reading as soon as the person presses Stop. Closing
-                    # the generator closes the provider stream underneath.
-                    close = getattr(stream, "close", None)
-                    if callable(close):
-                        close()
-                    response = ContentDone(
-                        "".join(self._partial_content),
-                        reasoning="".join(self._partial_reasoning),
-                        finish_reason="cancelled",
-                    )
-                    break
-                if isinstance(event, ReasoningDelta):
-                    self._partial_reasoning.append(event.piece)
-                    self.ui.on_reasoning_delta(event.piece)
-                elif isinstance(event, ContentDelta):
-                    self._partial_content.append(event.piece)
-                    self.ui.on_content_delta(event.piece)
-                elif isinstance(event, ContentDone):
-                    response = event
-                elif isinstance(event, UsageEvent):
-                    usage_record = usage_from_provider(event.usage)
-
-        except Exception as exc:
-            if usage_record is not None:
-                self._record_auxiliary_usage(usage_record)
-            self._emit_lifecycle("llm_error", {
-                "error": f"{type(exc).__name__}: {exc}",
-                "duration_ms": round((time.monotonic() - started) * 1_000, 3),
-            })
-            raise
-        return response, usage_record
+        return self._model_turn.run(reminders)
 
     def _plan_reminder(self) -> dict | None:
         return self._prompt_manager.plan_reminder()
@@ -482,7 +234,7 @@ class Agent:
         if record_memory:
             self._finalize_memory(None, extract_semantic=False)
         self._checkpoint()
-        self._emit_agent_stop("cancelled", reason="agent cancellation requested")
+        self._run_events.agent_stop("cancelled", reason="agent cancellation requested")
         return True
 
     def run(
@@ -531,7 +283,7 @@ class Agent:
                 self.on_run_started(active_run.run_id)
         prompt_decision = None
         if self.session_state.agent_task_id is None:
-            prompt_decision = self._emit_lifecycle(
+            prompt_decision = self._run_events.emit(
                 "user_prompt_submit", {
                     "prompt": prompt,
                     "attachments": [record.to_dict() for record in records],
@@ -543,10 +295,10 @@ class Agent:
                     f"A lifecycle hook rejected the request: {prompt_decision.reason}"
                 )
                 self._checkpoint()
-                self._emit_agent_stop("failed", reason=prompt_decision.reason)
+                self._run_events.agent_stop("failed", reason=prompt_decision.reason)
                 return None
         self.session_state.append_user_message(prompt, attachment_ids)
-        self._record_run_event(
+        self._run_events.record(
             "user_input",
             {
                 "session_run_id": active_run.run_id if active_run is not None else "",
@@ -569,7 +321,7 @@ class Agent:
         # to the transcript, so later turns do not accumulate old recall blocks.
         self._recover_pending_episodes()
         self._checkpoint()
-        self._emit_agent_start(turn_goal)
+        self._run_events.agent_start(turn_goal)
 
         return self._run_with_cancellation(
             max_steps,
@@ -626,12 +378,12 @@ class Agent:
             )
         self._bind_executor_run()
         self.runtime_resources.responses.begin_response(active_run.run_id)
-        self._emit_lifecycle("runtime_event", event)
+        self._run_events.emit("runtime_event", event)
         self.session_state.append_message(
             {"role": "user", "content": content}, source="runtime_event"
         )
         self._checkpoint()
-        self._emit_agent_start(
+        self._run_events.agent_start(
             str(event.get("type") or "runtime_event"), source="runtime_event"
         )
         result = self._run_loop(budget, record_memory=False, render_summary=False)
@@ -705,7 +457,7 @@ class Agent:
         self._bind_executor_run()
         self._recover_pending_episodes()
         self._checkpoint()
-        self._emit_agent_start(self.session_state.current_goal(), resumed=True)
+        self._run_events.agent_start(self.session_state.current_goal(), resumed=True)
         return self._run_with_cancellation(
             budget,
             cancellation_check=cancellation_check,
@@ -795,7 +547,7 @@ class Agent:
                 termination_reason=status,
             )
         self._checkpoint()
-        self._emit_agent_stop(status, reason=reason)
+        self._run_events.agent_stop(status, reason=reason)
 
     def _fail_run(self, exc: BaseException, *, record_memory: bool) -> None:
         detail = describe_model_error(exc)
@@ -817,7 +569,7 @@ class Agent:
                 logger.warning("memory finalize after failure failed", exc_info=True)
         self._checkpoint()
         try:
-            self._emit_agent_stop("failed", reason=detail)
+            self._run_events.agent_stop("failed", reason=detail)
         except Exception:
             logger.warning("agent_stop hook failed", exc_info=True)
 
@@ -842,11 +594,11 @@ class Agent:
             responses=self.runtime_resources.responses,
             max_verification_retries=self.max_verification_retries,
             max_consecutive_invalid=self.max_consecutive_invalid,
-            record_run_event=self._record_run_event,
+            record_run_event=self._run_events.record,
             record_usage=self._record_usage_for_turn,
             stop_if_cancelled=lambda: self._stop_if_cancelled(record_memory=record_memory),
             checkpoint=self._checkpoint,
-            emit_agent_stop=self._emit_agent_stop,
+            emit_agent_stop=self._run_events.agent_stop,
             finalize_memory=finalize_memory,
             terminate=terminate,
         )
