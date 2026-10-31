@@ -9,7 +9,7 @@ from ....domain.gateway.memory.tool_service import IMemoryToolService as MemoryS
 from ....domain.model.memory import EPISODE_STATUSES
 from ....domain.model.tool import ToolAccess, ToolResult
 from ....domain.model.tool_definition import Tool
-from ..runtime import ToolRuntime
+from ....domain.model.tool_runtime import ToolRuntime
 from ..system_result import fail_text
 
 _SCOPES = ("current_project", "all_projects")

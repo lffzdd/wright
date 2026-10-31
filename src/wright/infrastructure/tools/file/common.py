@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Literal
 
 from ....domain.model.tool import AccessTarget, ToolAccess, ToolResult
+from ....domain.model.tool_runtime import ToolRuntime
 from ...runtime import AuthorizedExecution, ExecutionPath
-from ..runtime import ToolRuntime
 
 MAX_READ_CHARS = 1_000_000
 FILE_UNCHANGED = "File unchanged since last read."

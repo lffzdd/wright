@@ -121,7 +121,7 @@ def test_tool_protocol_does_not_depend_on_runtime_assembly() -> None:
     }
 
     base_mod = "domain.model.tool_definition"
-    runtime_mod = "infrastructure.tools.runtime" if "infrastructure.tools.runtime" in graph else "tools.runtime"
+    runtime_mod = "domain.model.tool_runtime"
     proto_mod = "domain.model.tool" if "domain.model.tool" in graph else "domain.tool_protocol"
 
     assert not graph[base_mod] & {
@@ -146,7 +146,7 @@ def test_loop_tool_depends_on_a_port_not_the_engine() -> None:
     }
 
     loop_mod = "infrastructure.tools.loop_tools" if "infrastructure.tools.loop_tools" in graph else "tools.loop_tools"
-    ports_mod = "infrastructure.tools.ports" if "infrastructure.tools.ports" in graph else "tools.ports"
+    ports_mod = "domain.gateway.tool_ports"
 
     assert ports_mod in graph[loop_mod]
     assert not any(

@@ -8,7 +8,7 @@ from typing import Any
 
 from ....domain.model.tool import ToolResult
 from ....domain.model.tool_definition import Tool
-from ..runtime import ToolRuntime
+from ....domain.model.tool_runtime import ToolRuntime
 from .common import (
     _backend,
     _describe_file_read,

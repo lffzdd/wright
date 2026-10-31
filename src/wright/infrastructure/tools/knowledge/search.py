@@ -14,11 +14,11 @@ from ....domain.model.knowledge import (
 )
 from ....domain.model.tool import ToolAccess, ToolResult
 from ....domain.model.tool_definition import Tool
+from ....domain.model.tool_runtime import ToolRuntime
 from ...knowledge.rag_provider import (
     RagKnowledgeProvider,
     knowledge_enabled,
 )
-from ..runtime import ToolRuntime
 
 
 def _describe_network(args: dict[str, Any]) -> ToolAccess:

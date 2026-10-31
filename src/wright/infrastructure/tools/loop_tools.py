@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from ...domain.gateway.tool_ports import LoopOperations
 from ...domain.model.tool import ToolAccess, ToolResult
 from ...domain.model.tool_definition import Tool
-from .ports import LoopOperations
-from .runtime import ToolRuntime
+from ...domain.model.tool_runtime import ToolRuntime
 
 
 def _describe_loop(arguments: dict[str, Any]) -> ToolAccess:

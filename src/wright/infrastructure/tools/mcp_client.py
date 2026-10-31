@@ -47,8 +47,8 @@ from mcp.client.streamable_http import streamablehttp_client
 from ...core.logger import get_logger
 from ...domain.model.tool import ArtifactRef, ToolAccess, ToolResult
 from ...domain.model.tool_definition import Tool
+from ...domain.model.tool_runtime import ToolRuntime
 from ..storage.artifacts import ArtifactStore
-from .runtime import ToolRuntime
 
 logger = get_logger(__name__)
 

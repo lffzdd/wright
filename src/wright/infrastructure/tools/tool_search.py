@@ -9,7 +9,7 @@ from typing import Any
 
 from ...domain.model.tool import ToolAccess, ToolResult, split_tool_catalog
 from ...domain.model.tool_definition import Tool
-from .runtime import ToolRuntime
+from ...domain.model.tool_runtime import ToolRuntime
 
 MAX_ACTIVE_DEFERRED_TOOLS = 12
 _STOP_WORDS = frozenset({

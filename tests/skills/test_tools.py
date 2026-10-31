@@ -4,10 +4,10 @@ from jsonschema import validators
 
 from tests.runtime_helpers import tool_runtime_for_session
 from wright.application.skills import SkillRegistry
+from wright.application.tool_execution.validation import validate_tool_arguments
 from wright.domain.model.session import Session
 from wright.infrastructure.storage.skills import write_skill
 from wright.infrastructure.tools.skill_tools import build_skill_tools
-from wright.infrastructure.tools.validation import validate_tool_arguments
 
 
 def _runtime(tmp_path: Path, registry: SkillRegistry | None = None):

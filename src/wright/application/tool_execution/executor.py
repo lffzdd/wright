@@ -21,7 +21,7 @@ from ...domain.model.tool import (
     ToolExecutionStatus,
     ToolResult,
 )
-from .runtime import ToolCancelledError
+from ...domain.model.tool_runtime import ToolCancelledError
 
 logger = get_logger(__name__)
 

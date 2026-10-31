@@ -16,7 +16,7 @@ from ...domain.model.execution import (
 )
 from ...domain.model.tool import ToolAccess, ToolResult
 from ...domain.model.tool_definition import Tool
-from .runtime import ToolRuntime
+from ...domain.model.tool_runtime import ToolRuntime
 
 
 def agent_execution_view(record: AgentTaskRecord) -> dict[str, Any]:

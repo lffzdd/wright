@@ -7,7 +7,7 @@ from typing import Any
 from ....domain.model.execution import ExecutionWaitCancelled
 from ....domain.model.tool import ToolAccess, ToolResult
 from ....domain.model.tool_definition import Tool
-from ..runtime import ToolRuntime
+from ....domain.model.tool_runtime import ToolRuntime
 from .convert import TOOL_FAILURES, run_failure, run_view, scheduling
 
 

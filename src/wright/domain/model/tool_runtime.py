@@ -7,10 +7,8 @@ from dataclasses import dataclass, field
 from threading import RLock
 from typing import Any
 
-from ...domain.policy.permission.scope import AccessScope
-from ..runtime import AuthorizedExecution
-from ..runtime.network import AuthorizedNetwork
-from .capabilities import ToolCapabilities
+from ..gateway.tool_capabilities import ToolCapabilities
+from ..policy.permission.scope import AccessScope
 
 
 class ToolCancelledError(RuntimeError):
@@ -24,8 +22,9 @@ class ToolRuntime:
     tool_name: str = ""
     tool_call_id: str = ""
     capabilities: ToolCapabilities | None = None
-    execution: AuthorizedExecution | None = None
-    network: AuthorizedNetwork | None = None
+    # AuthorizedExecution and AuthorizedNetwork instances, bound per invocation.
+    execution: Any = None
+    network: Any = None
     access_scope: AccessScope | None = None
     lifecycle: Any = None
     scratch_lock: RLock = field(default_factory=RLock, repr=False)

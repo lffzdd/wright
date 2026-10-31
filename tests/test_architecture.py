@@ -9,7 +9,7 @@ def test_core_records_context_and_execution_do_not_import_chat_sdk_types():
         "domain/model/session/session.py", "domain/model/session/run.py", "application/agent/context.py",
         "application/agent/runner.py",
         "application/tool_execution/dispatch.py",
-        "infrastructure/tools/executor.py",
+        "application/tool_execution/executor.py",
         "domain/model/session/conversation.py", "domain/protocol.py", "domain/policy/verifier.py",
     ):
         text = (root / relative).read_text(encoding="utf-8")

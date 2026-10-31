@@ -12,10 +12,13 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
 from wright.application.permission.workflow import AuthorizationWorkflow
 
 from ...core.logger import get_logger
+from ...domain.gateway.runtime_protocols import ExecutionBackend
+from ...domain.gateway.runtime_types import ExecutionPath
 from ...domain.gateway.tool_executor import IToolExecutor
 from ...domain.model.agent import CapabilitySnapshot
 from ...domain.model.tool import (
@@ -24,6 +27,10 @@ from ...domain.model.tool import (
     ToolResult,
 )
 from ...domain.model.tool_definition import Tool
+from ...domain.model.tool_runtime import (
+    ToolCancelledError,
+    ToolRuntime,
+)
 from ...domain.policy import (
     AccessScope,
     InvocationIdentity,
@@ -32,18 +39,9 @@ from ...domain.policy import (
     PermissionResolution,
     PermissionSubject,
 )
-from ...infrastructure.runtime import (
-    AuthorizedExecution,
-    ExecutionBackend,
-    ExecutionPath,
-)
-from ...infrastructure.tools.executor import ConcurrentToolExecutor
-from ...infrastructure.tools.runtime import (
-    ToolCancelledError,
-    ToolRuntime,
-)
-from ...infrastructure.tools.validation import validate_tool_arguments
 from .capabilities import CapabilityAssembly
+from .executor import ConcurrentToolExecutor
+from .validation import validate_tool_arguments
 
 logger = get_logger(__name__)
 
@@ -69,7 +67,8 @@ class PreparedInvocation:
     effective_timeout: float
     local_cancel: threading.Event
     runtime: ToolRuntime
-    execution: AuthorizedExecution | None = None
+    # An AuthorizedExecution bound to this invocation; None when nothing was granted.
+    execution: Any = None
     before_execute: Callable[[], None] | None = None
 
 

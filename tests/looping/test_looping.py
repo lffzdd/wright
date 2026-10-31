@@ -13,11 +13,11 @@ from wright.application.session_runtime.loops import (
     parse_interval,
     parse_loop_command,
 )
+from wright.domain.gateway.tool_capabilities import RunScope, ToolCapabilities
 from wright.domain.model.session import Session
+from wright.domain.model.tool_runtime import ToolRuntime
 from wright.infrastructure.persistence.session.repository import FileSessionRepository
-from wright.infrastructure.tools.capabilities import RunScope, ToolCapabilities
 from wright.infrastructure.tools.loop_tools import manage_loop_tool
-from wright.infrastructure.tools.runtime import ToolRuntime
 
 
 def _final(answer):

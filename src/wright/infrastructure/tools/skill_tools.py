@@ -10,7 +10,7 @@ from ...domain.model.skills import (
 )
 from ...domain.model.tool import ToolAccess, ToolResult
 from ...domain.model.tool_definition import Tool
-from .runtime import ToolRuntime
+from ...domain.model.tool_runtime import ToolRuntime
 
 
 def optional_skill_tools(registry: ISkillCatalog) -> list[Tool]:

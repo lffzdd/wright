@@ -16,7 +16,7 @@ from ....domain.model.execution import (
     ExecutionWaitCancelled,
 )
 from ....domain.model.scheduling import JobDefinition, JobRun, TriggerSpec
-from ..runtime import ToolRuntime
+from ....domain.model.tool_runtime import ToolRuntime
 
 
 def scheduling(runtime: ToolRuntime):

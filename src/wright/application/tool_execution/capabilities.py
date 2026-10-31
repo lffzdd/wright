@@ -11,13 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ...infrastructure.runtime import (
-    AuthorizedExecution,
-    ExecutionBackend,
-    LocalExecutionBackend,
-)
-from ...infrastructure.runtime.network import AuthorizedNetwork
-from ...infrastructure.tools.capabilities import (
+from ...domain.gateway.tool_capabilities import (
     AgentOperations,
     CommandOperations,
     DelegationOperations,
@@ -25,6 +19,12 @@ from ...infrastructure.tools.capabilities import (
     SchedulingOperations,
     ToolCapabilities,
 )
+from ...infrastructure.runtime import (
+    AuthorizedExecution,
+    ExecutionBackend,
+    LocalExecutionBackend,
+)
+from ...infrastructure.runtime.network import AuthorizedNetwork
 from ..execution.agent_operations import AgentExecution
 from ..execution.identity import bind_identity
 from ..permission.service import PermissionService

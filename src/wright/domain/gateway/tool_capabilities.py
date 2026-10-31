@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from .ports import LoopOperations
+from .tool_ports import LoopOperations
 
 
 @dataclass(frozen=True)

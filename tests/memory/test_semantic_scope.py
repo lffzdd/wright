@@ -23,6 +23,7 @@ from wright.application.composition.memory_assembly import (
 from wright.application.memory.extract import extract_from_snapshot
 from wright.application.memory.llm_util import SideQueryResult
 from wright.application.memory.memory_service import MemoryService
+from wright.application.tool_execution.executor import ConcurrentToolExecutor
 from wright.core.paths import project_id
 from wright.domain.gateway.memory import SelectorChoice
 from wright.domain.model.llm import UsageRecord
@@ -33,6 +34,7 @@ from wright.domain.model.memory import (
 )
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall
+from wright.domain.model.tool_runtime import ToolRuntime
 from wright.infrastructure.persistence.memory import EpisodeStore, SemanticMemoryStore
 from wright.infrastructure.persistence.memory.evidence import SessionEvidenceSource
 from wright.infrastructure.persistence.memory.semantic import (
@@ -41,9 +43,7 @@ from wright.infrastructure.persistence.memory.semantic import (
     update_memory,
 )
 from wright.infrastructure.persistence.session.repository import FileSessionRepository
-from wright.infrastructure.tools.executor import ConcurrentToolExecutor
 from wright.infrastructure.tools.memory import build_memory_tools
-from wright.infrastructure.tools.runtime import ToolRuntime
 
 
 class _QuietLLM:

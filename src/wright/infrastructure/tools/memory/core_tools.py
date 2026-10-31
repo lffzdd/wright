@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from ....domain.model.tool import AccessTarget, ToolAccess, ToolResult
 from ....domain.model.tool_definition import Tool
-from ..runtime import ToolRuntime
+from ....domain.model.tool_runtime import ToolRuntime
 from ..system_result import fail_text
 
 if TYPE_CHECKING:

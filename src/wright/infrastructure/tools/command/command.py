@@ -5,7 +5,7 @@ from __future__ import annotations
 from ....domain.model.command import CommandOutcome
 from ....domain.model.tool import ToolResult
 from ....domain.model.tool_definition import Tool
-from ..runtime import ToolCancelledError, ToolRuntime
+from ....domain.model.tool_runtime import ToolCancelledError, ToolRuntime
 from .permissions import (
     describe_execute_command_access,
     is_execute_command_concurrency_safe,

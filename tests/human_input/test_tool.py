@@ -1,6 +1,6 @@
+from wright.domain.model.tool_runtime import ToolRuntime
 from wright.infrastructure.tools import tools as base_tools
 from wright.infrastructure.tools.human_input import ask_user
-from wright.infrastructure.tools.runtime import ToolRuntime
 
 
 def _runtime(handler=None):

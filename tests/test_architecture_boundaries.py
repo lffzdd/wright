@@ -216,7 +216,7 @@ def test_lifecycle_orchestrator_does_not_import_adapters() -> None:
 
 
 def test_tool_runtime_does_not_import_application_assembly() -> None:
-    modules = _runtime_imports(PACKAGE_ROOT / "infrastructure/tools/runtime.py")
+    modules = _runtime_imports(PACKAGE_ROOT / "domain/model/tool_runtime.py")
     assert not any("application" in module for module in modules)
 
 

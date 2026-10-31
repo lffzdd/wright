@@ -23,6 +23,7 @@ from wright.application.composition.memory_assembly import assemble_memory_manag
 from wright.application.memory.manager import MemoryManager
 from wright.application.memory.memory_service import MemoryService
 from wright.application.memory.projection import render_episode_for_budget
+from wright.application.tool_execution.executor import ConcurrentToolExecutor
 from wright.core.paths import project_id
 from wright.domain.gateway.memory import SelectorChoice
 from wright.domain.model.llm import UsageRecord
@@ -30,6 +31,7 @@ from wright.domain.model.llm.events import ContentDelta, ContentDone, UsageEvent
 from wright.domain.model.memory import EpisodeRecord
 from wright.domain.model.session import MessageRecord, Session
 from wright.domain.model.tool import ToolCall, ToolResult
+from wright.domain.model.tool_runtime import ToolRuntime
 from wright.infrastructure.llm.context_selector import (
     SELECT_SYSTEM_PROMPT,
     LlmContextSelector,
@@ -40,9 +42,7 @@ from wright.infrastructure.persistence.memory import (
     SemanticMemoryStore,
 )
 from wright.infrastructure.persistence.session.repository import FileSessionRepository
-from wright.infrastructure.tools.executor import ConcurrentToolExecutor
 from wright.infrastructure.tools.memory import build_episode_tools
-from wright.infrastructure.tools.runtime import ToolRuntime
 from wright.utils.token_counter import estimate_tokens
 
 

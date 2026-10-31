@@ -23,18 +23,18 @@ from wright.application.composition.memory_assembly import (
 )
 from wright.application.memory.memory_service import MemoryService
 from wright.application.permission.workflow import AuthorizationWorkflow
+from wright.application.tool_execution.executor import ConcurrentToolExecutor
 from wright.core.paths import project_id
 from wright.domain.model.memory import CoreMemoryStoreError
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall
+from wright.domain.model.tool_runtime import ToolRuntime
 from wright.domain.policy import PermissionResponse
 from wright.domain.policy.memory import CoreMemoryPolicy
 from wright.infrastructure.persistence.memory import (
     CORE_MEMORY_FILE,
     FileCoreMemoryStore,
 )
-from wright.infrastructure.tools.executor import ConcurrentToolExecutor
-from wright.infrastructure.tools.runtime import ToolRuntime
 
 
 def _service(directory: Path, policy: CoreMemoryPolicy | None = None) -> MemoryService:
