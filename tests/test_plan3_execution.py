@@ -17,10 +17,10 @@ from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.agent import AgentProfile, CapabilitySnapshot
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
+from wright.domain.model.tool_definition import Tool
 from wright.domain.policy import PermissionResponse, ToolAccess
 from wright.infrastructure.runtime import ExecutionPath, LocalExecutionBackend
 from wright.infrastructure.runtime import local as local_execution
-from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.file import grep_files, grep_tool, write_file_tool
 
 

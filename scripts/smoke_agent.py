@@ -33,7 +33,7 @@ from wright.domain.model.llm.events import ContentDelta, ContentDone, UsageEvent
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolAccess, ToolCall, ToolResult
 from wright.infrastructure.llm.llm import LLMClient
-from wright.infrastructure.tools.base import Tool
+from wright.domain.model.tool_definition import Tool
 from wright.infrastructure.tools.runtime import ToolRuntime
 from wright.interfaces.rendering.silent import SilentRenderer
 from wright.interfaces.rendering.subscriber import RendererEventSubscriber

@@ -2,8 +2,8 @@ import os
 from typing import Any
 
 from ...domain.model.tool import AccessTarget, ToolAccess, ToolResult
+from ...domain.model.tool_definition import Tool
 from ..runtime.network import request_target
-from .base import Tool
 
 SEARCH_ENDPOINT = "https://api.tavily.com/search"
 

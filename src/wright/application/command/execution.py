@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ...core.logger import get_logger
-from ...domain.model.command import CommandRecord
+from ...domain.model.command import CommandOutcome, CommandRecord
 from ...domain.policy.permission.scope import AccessScope
 from ...infrastructure.runtime.command_log import CommandOutputLog, OutputSlice
 from ...infrastructure.runtime.protocols import ProcessHandle
@@ -44,14 +44,6 @@ _STORAGE_NOTE = (
 
 class CommandCancelled(RuntimeError):
     """The invoking turn was cancelled. The owned process group was signaled."""
-
-
-@dataclass(frozen=True)
-class CommandOutcome:
-    ok: bool
-    error: str = ""
-    data: dict | None = None
-    cancelled: bool = False
 
 
 @dataclass

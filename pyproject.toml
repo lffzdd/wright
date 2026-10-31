@@ -41,7 +41,11 @@ Homepage = "https://github.com/lffzdd/wright"
 Repository = "https://github.com/lffzdd/wright"
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.15"]
+dev = [
+    "import-linter>=2.15",
+    "pytest>=8",
+    "ruff>=0.15",
+]
 # Browser end-to-end tests (tests/e2e_web), opt-in with WRIGHT_E2E_WEB=1.
 e2e = ["playwright>=1.50"]
 
@@ -91,3 +95,87 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["tests", "wright"]
+
+[tool.importlinter]
+root_package = "wright"
+
+[[tool.importlinter.contracts]]
+name = "domain stays pure"
+type = "forbidden"
+source_modules = ["wright.domain"]
+forbidden_modules = ["wright.application", "wright.infrastructure", "wright.interfaces"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "application does not depend on infrastructure or interfaces"
+type = "forbidden"
+source_modules = ["wright.application"]
+forbidden_modules = ["wright.infrastructure", "wright.interfaces"]
+allow_indirect_imports = true
+# Known violations: shrink this list, never grow it.
+ignore_imports = [
+    "wright.application.composition.** -> wright.infrastructure.**",
+    "wright.application.agent.assembly -> wright.infrastructure.persistence.session.repository",
+    "wright.application.agent.assembly -> wright.infrastructure.tools.tool_search",
+    "wright.application.agent.runner -> wright.infrastructure.persistence.session.repository",
+    "wright.application.agent.subagent -> wright.infrastructure.tools.agent_tools",
+    "wright.application.agent.subagent -> wright.infrastructure.tools.command.control",
+    "wright.application.agent.subagent -> wright.infrastructure.tools.runtime",
+    "wright.application.agent.subagent -> wright.infrastructure.tools.schedule",
+    "wright.application.command.execution -> wright.infrastructure.runtime.command_log",
+    "wright.application.command.execution -> wright.infrastructure.runtime.protocols",
+    "wright.application.command.execution -> wright.infrastructure.runtime.types",
+    "wright.application.memory.assembly -> wright.infrastructure.llm.context_selector",
+    "wright.application.memory.assembly -> wright.infrastructure.persistence.memory",
+    "wright.application.memory.assembly -> wright.infrastructure.persistence.memory.evidence",
+    "wright.application.memory.assembly -> wright.infrastructure.tools.memory",
+    "wright.application.memory.eval_baseline -> wright.infrastructure.persistence.memory",
+    "wright.application.memory.prompt -> wright.infrastructure.persistence.memory",
+    "wright.application.session.directory -> wright.infrastructure.persistence.autonomy_store",
+    "wright.application.session.directory -> wright.infrastructure.persistence.session.repository",
+    "wright.application.session.directory -> wright.infrastructure.workspace.project",
+    "wright.application.session.directory -> wright.infrastructure.workspace.worktrees",
+    "wright.application.session.dispatch -> wright.infrastructure.persistence.autonomy_store",
+    "wright.application.skills.registry -> wright.infrastructure.storage.skills",
+    "wright.application.tool_execution.capabilities -> wright.infrastructure.config.permission_store",
+    "wright.application.tool_execution.capabilities -> wright.infrastructure.runtime",
+    "wright.application.tool_execution.capabilities -> wright.infrastructure.runtime.network",
+    "wright.application.tool_execution.capabilities -> wright.infrastructure.tools.capabilities",
+    "wright.application.tool_execution.dispatch -> wright.infrastructure.config.permission_store",
+    "wright.application.tool_execution.dispatch -> wright.infrastructure.runtime",
+    "wright.application.tool_execution.dispatch -> wright.infrastructure.tools.executor",
+    "wright.application.tool_execution.dispatch -> wright.infrastructure.tools.runtime",
+    "wright.application.tool_execution.dispatch -> wright.infrastructure.tools.validation",
+    "wright.application.workspace.catalog -> wright.infrastructure.persistence.workspace.registry",
+    "wright.application.workspace.change_lock -> wright.infrastructure.file_lock",
+    "wright.application.workspace.changes -> wright.infrastructure.workspace.project",
+    "wright.application.workspace.journal -> wright.infrastructure.file_lock",
+    "wright.application.workspace.rules -> wright.infrastructure.storage.skills",
+    "wright.application.workspace.schedule_api -> wright.infrastructure.persistence.autonomy_store",
+]
+
+[[tool.importlinter.contracts]]
+name = "infrastructure does not depend on application or interfaces"
+type = "forbidden"
+source_modules = ["wright.infrastructure"]
+forbidden_modules = ["wright.application", "wright.interfaces"]
+allow_indirect_imports = true
+# Known violations: shrink this list, never grow it.
+ignore_imports = [
+    "wright.infrastructure.tools.memory.semantic_tools -> wright.application.memory.memory_service",
+]
+
+[[tool.importlinter.contracts]]
+name = "interfaces do not depend on infrastructure"
+type = "forbidden"
+source_modules = ["wright.interfaces"]
+forbidden_modules = ["wright.infrastructure"]
+allow_indirect_imports = true
+# Known violations: shrink this list, never grow it.
+ignore_imports = [
+    "wright.interfaces.i18n.locale -> wright.infrastructure.config.preferences",
+    "wright.interfaces.web.routes -> wright.infrastructure.config.preferences",
+    "wright.interfaces.web.routes -> wright.infrastructure.workspace.worktrees",
+    "wright.interfaces.web.runtime_manager -> wright.infrastructure.storage.attachments",
+    "wright.interfaces.web.runtime_manager -> wright.infrastructure.workspace.worktrees",
+]

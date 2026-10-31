@@ -8,7 +8,7 @@ import time
 from collections.abc import Iterable
 from typing import Any
 
-from ....application.scheduling.contracts import RecordPage, RunCancelResult
+from ....domain.gateway.scheduling import RecordPage, RunCancelResult
 from ....domain.model.scheduling import JobDefinition, JobRun, schedule_retry
 from ._base import AutonomyNotFoundError, AutonomyStoreError, _StoreBase
 from ._helpers import (

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+MAX_ATTACHMENTS_PER_TURN = 10
+MAX_TOTAL_ATTACHMENT_BYTES = 50 * 1024 * 1024
 ALLOWED_ATTACHMENT_MEDIA_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
 
 

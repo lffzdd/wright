@@ -17,6 +17,8 @@ jobs:
         run: uv sync --group dev
       - name: Lint
         run: uv run ruff check src tests
+      - name: Architecture boundaries
+        run: PYTHONPATH=src uv run lint-imports --no-cache
       - name: Install Bubblewrap
         run: |
           sudo apt-get update && sudo apt-get install -y bubblewrap ripgrep

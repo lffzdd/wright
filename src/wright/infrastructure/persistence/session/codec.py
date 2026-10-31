@@ -26,10 +26,10 @@ from ....domain.model.session import (
     TurnRoute,
     VerificationRecord,
 )
+from ....domain.model.session.errors import CheckpointError
 from ....domain.model.session.run import RunRecord
 from ....domain.model.tool import ArtifactRef, ToolCall, ToolResult
 from ...storage.attachments import AttachmentError, AttachmentRecord
-from .errors import CheckpointError
 from .links import validate_session_links
 from .recovery import recover_interrupted_tool_calls
 

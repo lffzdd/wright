@@ -13,11 +13,11 @@ from typing import Any
 
 from ...domain.model.llm import UsageRecord
 from ...domain.model.llm.events import ContentDone
+from ...domain.model.llm.wire import assistant_message
 from ...domain.model.session import Session
 from ...domain.model.tool import ToolResult
 from ...domain.policy.verifier import Verifier
 from ...domain.protocol import build_tool_results_messages
-from ...infrastructure.llm.wire import assistant_message
 from ..session.events import SessionEvents
 from ..tool_execution.dispatch import ToolDispatchService
 from .parse import TurnAbort

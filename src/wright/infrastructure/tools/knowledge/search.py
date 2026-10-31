@@ -13,11 +13,11 @@ from ....domain.model.knowledge import (
     truncate_hits,
 )
 from ....domain.model.tool import ToolAccess, ToolResult
+from ....domain.model.tool_definition import Tool
 from ...knowledge.rag_provider import (
     RagKnowledgeProvider,
     knowledge_enabled,
 )
-from ..base import Tool
 from ..runtime import ToolRuntime
 
 

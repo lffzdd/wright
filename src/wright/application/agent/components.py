@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ...domain.model.agent import AgentProfile, CapabilitySnapshot
-from ...infrastructure.tools.base import Tool
+from ...domain.model.tool_definition import Tool
 from ..tool_execution.dispatch import ToolDispatchService
 from .cancellation import CancellationToken
 from .context import ContextBuilder

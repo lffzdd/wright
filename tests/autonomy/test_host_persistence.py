@@ -13,6 +13,7 @@ from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.scheduling import TriggerSpec
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolAccess, ToolCall, ToolResult
+from wright.domain.model.tool_definition import Tool
 from wright.domain.policy import (
     PermissionPolicy,
     PermissionSettings,
@@ -21,7 +22,6 @@ from wright.infrastructure.persistence.autonomy_store import (
     AutonomyStore,
     AutonomyStoreError,
 )
-from wright.infrastructure.tools.base import Tool
 
 
 class ScriptLLM:

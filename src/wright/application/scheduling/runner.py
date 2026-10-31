@@ -16,13 +16,15 @@ from typing import Any
 from wright.application.permission.workflow import AuthorizationWorkflow
 
 from ...core.logger import get_logger
+from ...domain.gateway.llm_gateway import ILLMProvider
+from ...domain.gateway.scheduling import RunExecution
 from ...domain.model.agent import AgentProfile
 from ...domain.model.agent.control import AgentControlError, AgentControlPlane
 from ...domain.model.llm import UsageRecord
+from ...domain.model.llm.model_errors import resolve_transport
 from ...domain.model.scheduling import JobRun
 from ...domain.model.session import Session
-from ...infrastructure.llm.llm import LLMClient, resolve_transport
-from ...infrastructure.tools.base import Tool
+from ...domain.model.tool_definition import Tool
 from ..agent import (
     Agent,
     AgentBackgroundRuntime,
@@ -43,7 +45,6 @@ from ..execution.identity import bind_identity
 from ..session.live_resources import RuntimeResources
 from ..session.publisher import open_session_events
 from ..tool_execution.capabilities import assemble_tool_capabilities
-from .contracts import RunExecution
 from .scheduler import JobScheduler
 
 logger = get_logger(__name__)
@@ -233,7 +234,7 @@ def launch_job_run(
     workspace_dir=None,
     control_plane: AgentControlPlane | None = None,
     scheduler: JobScheduler,
-    llm: LLMClient,
+    llm: ILLMProvider,
     base_tools: Sequence[Tool],
     permission_service,
     background_runtime: AgentBackgroundRuntime,

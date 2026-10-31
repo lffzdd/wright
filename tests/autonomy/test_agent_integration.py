@@ -17,13 +17,13 @@ from wright.domain.model.agent import AgentProfile
 from wright.domain.model.scheduling import TriggerSpec
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolAccess, ToolResult
+from wright.domain.model.tool_definition import Tool
 from wright.domain.policy import (
     PermissionPolicy,
     PermissionSettings,
 )
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 from wright.infrastructure.storage.skills import write_skill
-from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.human_input import ask_user_tool
 from wright.infrastructure.tools.knowledge import build_knowledge_tools
 from wright.infrastructure.tools.memory import build_memory_tools

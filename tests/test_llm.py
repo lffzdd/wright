@@ -10,13 +10,13 @@ from wright.application.agent.parse import TurnAbort, parse_turn
 from wright.application.memory.llm_util import side_query
 from wright.domain.model.llm import ModelRequest
 from wright.domain.model.llm.events import ContentDone, UsageEvent
+from wright.domain.model.llm.wire import assistant_message
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolResult
+from wright.domain.model.tool_definition import Tool
 from wright.domain.policy import ToolAccess
 from wright.infrastructure.llm.llm import LLMClient
-from wright.infrastructure.llm.wire import assistant_message
 from wright.infrastructure.storage.attachments import AttachmentStore
-from wright.infrastructure.tools.base import Tool
 
 
 def _client(handler, *, stream):

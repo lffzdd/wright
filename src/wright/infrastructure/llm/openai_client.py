@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from ...domain.model.llm.model_adapters import ChatAdapter, ResponsesAdapter
 from .llm import LLMClient
-from .model_adapters import ChatAdapter, ResponsesAdapter
 
 # OpenAIClient is the canonical OpenAI-compatible implementation of ILLMGateway
 OpenAIClient = LLMClient

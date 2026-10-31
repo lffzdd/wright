@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from . import (
-    base,
     capabilities,
     command,
     executor,
@@ -59,7 +58,6 @@ __all__ = [
     "ToolExecutor",
     "ask_user",
     "ask_user_tool",
-    "base",
     "capabilities",
     "command",
     "describe_execute_command_access",

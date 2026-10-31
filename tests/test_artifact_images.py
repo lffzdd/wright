@@ -11,10 +11,10 @@ from tests.test_llm import _client, _reply, _responses_client
 from wright.application.agent import create_agent
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolResult
+from wright.domain.model.tool_definition import Tool
 from wright.domain.policy import ToolAccess
 from wright.infrastructure.persistence.session.repository import FileSessionRepository
 from wright.infrastructure.storage.artifacts import ArtifactStore
-from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.mcp_client import _to_tool_result
 
 
@@ -42,7 +42,7 @@ def test_artifact_rejects_oversized_base64_before_decoding(tmp_path, monkeypatch
 
 
 def test_foreign_tool_image_reference_is_not_read(tmp_path):
-    from wright.infrastructure.llm.model_adapters import ChatAdapter
+    from wright.domain.model.llm.model_adapters import ChatAdapter
 
     adapter = ChatAdapter(
         lambda _: pytest.fail("not an attachment"),

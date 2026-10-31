@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ....domain.model.tool import ToolResult
-from ..base import Tool
+from ....domain.model.tool_definition import Tool
 from ..runtime import ToolRuntime
 from .common import (
     _EDIT_OCCURRENCE_LIMIT,

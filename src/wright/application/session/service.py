@@ -17,9 +17,9 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from ...core.logger import get_logger
+from ...domain.model.attachment import AttachmentError
+from ...domain.model.llm.model_adapters import available_models
 from ...domain.model.session.run import TERMINAL_RUN_STATUSES
-from ...infrastructure.llm.model_adapters import available_models
-from ...infrastructure.storage.attachments import AttachmentError
 from .errors import SessionClosedError, SessionServiceError
 from .events import session_status
 from .runner import RuntimeShutdown, SessionRunner

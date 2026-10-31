@@ -3,6 +3,7 @@ import sys
 import threading
 import time
 
+from wright.application.composition.lifecycle_loader import load_lifecycle_manager
 from wright.application.lifecycle import (
     HookDecision,
     HookRegistration,
@@ -11,9 +12,9 @@ from wright.application.lifecycle import (
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.tool import ToolCall, ToolResult
+from wright.domain.model.tool_definition import Tool
 from wright.domain.policy import ToolAccess
-from wright.infrastructure.lifecycle import TraceRecorder, load_lifecycle_manager
-from wright.infrastructure.tools.base import Tool
+from wright.infrastructure.lifecycle import TraceRecorder
 
 
 def _tool(call):

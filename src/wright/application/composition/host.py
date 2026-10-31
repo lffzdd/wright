@@ -19,11 +19,11 @@ from uuid import uuid4
 
 from ...domain.model.agent.control import AgentControlPlane
 from ...domain.model.scheduling import JobRun
+from ...domain.model.tool_definition import Tool
 from ...infrastructure.file_lock import FileLock, FileLockUnavailable
 from ...infrastructure.llm.llm import LLMClient
 from ...infrastructure.persistence.autonomy_store import AutonomyStore
 from ...infrastructure.storage.artifacts import ArtifactStore
-from ...infrastructure.tools.base import Tool
 from ...infrastructure.tools.mcp_client import (
     McpManager,
     McpServerConfig,

@@ -5,14 +5,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ...application.lifecycle.contracts import (
+from ...domain.model.lifecycle import (
     HOOKABLE_EVENT_NAMES,
     HookRegistration,
     LifecycleConfigError,
 )
-from ...application.lifecycle.manager import LifecycleManager
-from .command_hook import CommandHook
-from .trace_recorder import TraceRecorder
+from ...infrastructure.lifecycle import CommandHook, TraceRecorder
+from ..lifecycle.manager import LifecycleManager
 
 
 def load_lifecycle_manager(

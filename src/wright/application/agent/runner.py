@@ -4,6 +4,11 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, ClassVar
 
 from ...core.logger import get_logger
+from ...domain.gateway.llm_gateway import ILLMProvider
+from ...domain.model.attachment import (
+    MAX_ATTACHMENTS_PER_TURN,
+    MAX_TOTAL_ATTACHMENT_BYTES,
+)
 from ...domain.model.llm import ModelRequest, UsageRecord
 from ...domain.model.llm.events import (
     ContentDelta,
@@ -11,15 +16,11 @@ from ...domain.model.llm.events import (
     ReasoningDelta,
     UsageEvent,
 )
+from ...domain.model.llm.model_errors import describe_model_error
+from ...domain.model.llm.provider_usage import usage_from_provider
 from ...domain.model.session import Session
 from ...domain.policy.verifier import Verifier
 from ...domain.protocol import encode_tools
-from ...infrastructure.llm.llm import LLMClient, describe_model_error
-from ...infrastructure.llm.usage import usage_from_provider
-from ...infrastructure.storage.attachments import (
-    MAX_ATTACHMENTS_PER_TURN,
-    MAX_TOTAL_ATTACHMENT_BYTES,
-)
 from ...utils.token_counter import estimate_message_tokens
 from ..composition.services import RuntimeServices
 from ..memory import MemoryManager
@@ -56,7 +57,7 @@ class Agent:
     }
     def __init__(
         self,
-        llm: LLMClient,
+        llm: ILLMProvider,
         session_state: Session,
         events: SessionEvents,
         prepared: PreparedTools,

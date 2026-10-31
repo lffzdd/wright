@@ -17,11 +17,13 @@ from uuid import uuid4
 
 from PIL import Image, UnidentifiedImageError
 
-from ...domain.model.attachment import AttachmentError, AttachmentRecord
+from ...domain.model.attachment import (
+    MAX_ATTACHMENTS_PER_TURN,
+    AttachmentError,
+    AttachmentRecord,
+)
 
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
-MAX_ATTACHMENTS_PER_TURN = 10
-MAX_TOTAL_ATTACHMENT_BYTES = 50 * 1024 * 1024
 MAX_IMAGE_PIXELS = 40_000_000
 _FORMATS = {
     "JPEG": ("image/jpeg", ".jpg"),

@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from ...infrastructure.llm.model_adapters import available_models, process_model_name
+from ...domain.model.llm.model_adapters import available_models, process_model_name
 
 __all__ = ["available_models", "process_model_name"]

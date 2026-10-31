@@ -12,7 +12,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from ...domain.model.scheduling import JobDefinition, JobRun, TriggerSpec
+from ..model.scheduling import JobDefinition, JobRun, TriggerSpec
 
 
 class SchedulingError(ValueError):

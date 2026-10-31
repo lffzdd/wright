@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from ....application.command.execution import CommandOutcome
+from ....domain.model.command import CommandOutcome
 from ....domain.model.tool import ToolResult
-from ..base import Tool
+from ....domain.model.tool_definition import Tool
 from ..runtime import ToolCancelledError, ToolRuntime
 from .permissions import (
     describe_execute_command_access,

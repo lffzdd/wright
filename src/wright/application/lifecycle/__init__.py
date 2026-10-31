@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .contracts import (
+from ...domain.model.lifecycle import (
     BLOCKING_EVENTS,
     HOOKABLE_EVENT_NAMES,
     LIFECYCLE_EVENT_NAMES,

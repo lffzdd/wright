@@ -10,8 +10,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from uuid import uuid4
 
+from ...domain.gateway.scheduling import JobDispatch, SchedulingError
 from ...domain.model.scheduling import JobDefinition, JobRun
-from .contracts import JobDispatch, SchedulingError
 from .triggers import probe_public_web_page
 
 

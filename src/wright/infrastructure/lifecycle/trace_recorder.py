@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from ...application.lifecycle.contracts import LifecycleEvent
+from ...domain.model.lifecycle import LifecycleEvent
 
 
 class TraceRecorder:

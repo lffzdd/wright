@@ -5,7 +5,7 @@ from __future__ import annotations
 from ...domain.feedback import system_text
 from ...domain.model.planning.plan import PlanError
 from ...domain.model.tool import ToolAccess, ToolResult
-from .base import Tool
+from ...domain.model.tool_definition import Tool
 from .runtime import ToolRuntime
 from .system_result import fail_text
 

@@ -8,7 +8,8 @@ from openai import APIStatusError
 
 from wright.application.agent.parse import TurnAbort, parse_turn
 from wright.domain.model.llm.events import ContentDone
-from wright.infrastructure.llm.llm import describe_model_error, merge_tool_call_delta
+from wright.domain.model.llm.model_errors import describe_model_error
+from wright.infrastructure.llm.llm import merge_tool_call_delta
 
 
 def frag(index=None, id=None, name=None, arguments=None):

@@ -120,7 +120,7 @@ def test_tool_protocol_does_not_depend_on_runtime_assembly() -> None:
         name: _runtime_edges(name, path, known) for name, path in modules.items()
     }
 
-    base_mod = "infrastructure.tools.base" if "infrastructure.tools.base" in graph else "tools.base"
+    base_mod = "domain.model.tool_definition"
     runtime_mod = "infrastructure.tools.runtime" if "infrastructure.tools.runtime" in graph else "tools.runtime"
     proto_mod = "domain.model.tool" if "domain.model.tool" in graph else "domain.tool_protocol"
 

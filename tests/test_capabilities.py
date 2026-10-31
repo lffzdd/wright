@@ -13,11 +13,11 @@ from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.agent import AgentProfile, CapabilityCatalog, CapabilityError
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
+from wright.domain.model.tool_definition import Tool
 from wright.domain.policy import ToolAccess
 from wright.infrastructure.persistence.session.repository import FileSessionRepository
 from wright.infrastructure.runtime import LocalExecutionBackend
 from wright.infrastructure.storage.artifacts import ArtifactStore
-from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.command import execute_command
 from wright.infrastructure.tools.file import read_file_tool
 from wright.infrastructure.tools.mcp_client import _to_tool_result

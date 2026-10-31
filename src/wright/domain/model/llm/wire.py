@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...domain.model.llm.events import ContentDone
+from .events import ContentDone
 
 
 def assistant_message(done: ContentDone) -> dict[str, Any]:

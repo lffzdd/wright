@@ -7,7 +7,7 @@ import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
-from ...application.lifecycle.contracts import (
+from ...domain.model.lifecycle import (
     HookDecision,
     HookExecutionError,
     LifecycleConfigError,

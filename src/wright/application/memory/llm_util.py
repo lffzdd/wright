@@ -13,10 +13,10 @@ from typing import TYPE_CHECKING
 
 from ...domain.model.llm import UsageRecord
 from ...domain.model.llm.events import ContentDone, UsageEvent
-from ...infrastructure.llm.usage import usage_from_provider
+from ...domain.model.llm.provider_usage import usage_from_provider
 
 if TYPE_CHECKING:
-    from ...infrastructure.llm.llm import LLMClient
+    from ...domain.gateway.llm_gateway import ILLMProvider
 
 
 @dataclass(frozen=True)
@@ -32,7 +32,7 @@ class SideQueryResult:
 
 
 def run_side_query(
-    llm: LLMClient,
+    llm: ILLMProvider,
     system: str,
     user: str,
     observer=None,
@@ -95,7 +95,7 @@ def run_side_query(
     )
 
 
-def side_query(llm: LLMClient, system: str, user: str) -> str:
+def side_query(llm: ILLMProvider, system: str, user: str) -> str:
     """发一轮 system+user 的 side-query,返回最终文本内容。
 
     仅此类结构化数据查询使用 JSON mode；不传入 Agent 的工具清单。

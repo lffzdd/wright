@@ -2,8 +2,8 @@ from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.tool import ToolCall, ToolResult
+from wright.domain.model.tool_definition import Tool
 from wright.domain.policy import PermissionResponse, ToolAccess
-from wright.infrastructure.tools.base import Tool
 
 
 def _schema_tool(calls, permission_calls=None):

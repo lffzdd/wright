@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...domain.model.llm.usage import UsageRecord
+from .usage import UsageRecord
 
 
 def usage_from_provider(usage: Any) -> UsageRecord:

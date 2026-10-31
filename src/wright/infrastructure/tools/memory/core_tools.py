@@ -10,12 +10,14 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from ....domain.model.tool import AccessTarget, ToolAccess, ToolResult
-from ..base import Tool
+from ....domain.model.tool_definition import Tool
 from ..runtime import ToolRuntime
 from ..system_result import fail_text
 
 if TYPE_CHECKING:
-    from ....application.memory.memory_service import MemoryService
+    from ....domain.gateway.memory.tool_service import (
+        IMemoryToolService as MemoryService,
+    )
 
 
 def _global_target(operation: str) -> AccessTarget:

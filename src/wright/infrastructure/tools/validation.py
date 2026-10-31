@@ -13,7 +13,7 @@ from typing import Any
 from jsonschema import SchemaError, ValidationError, validators
 
 from ...domain.model.tool import ToolResult
-from .base import Tool
+from ...domain.model.tool_definition import Tool
 
 
 def validate_tool_arguments(tool: Tool, arguments: dict[str, Any]) -> ToolResult | None:

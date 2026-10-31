@@ -241,8 +241,8 @@ def test_live_child_tracks_parent_revocation(setup):
 
 
 def test_legacy_permission_data_is_rejected(setup):
+    from wright.domain.model.session.errors import CheckpointError
     from wright.domain.policy import PermissionSettings
-    from wright.infrastructure.persistence.session.errors import CheckpointError
     session, _, _ = setup
     with pytest.raises(ValueError, match="version"):
         PermissionSettings.from_dict({"permissions": {"allow": ["write_file"]}})

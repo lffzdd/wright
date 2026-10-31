@@ -7,7 +7,7 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
-from .contracts import (
+from ...domain.model.lifecycle import (
     BLOCKING_EVENTS,
     HookDecision,
     HookRegistration,

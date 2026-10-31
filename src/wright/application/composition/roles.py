@@ -11,7 +11,7 @@ from copy import deepcopy
 from dataclasses import replace
 from typing import Literal
 
-from ...infrastructure.tools.base import Tool
+from ...domain.model.tool_definition import Tool
 
 ExecutionRole = Literal["root", "child", "durable"]
 

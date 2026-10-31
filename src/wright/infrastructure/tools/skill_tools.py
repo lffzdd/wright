@@ -1,22 +1,26 @@
-"""把 SkillRegistry 暴露成 load_skill 工具。调用把正文快照写入 tool_result。"""
+"""把技能目录暴露成 load_skill 工具。调用把正文快照写入 tool_result。"""
 
 from __future__ import annotations
 
-from ...application.skills import SKILL_LOADER_NAME, SkillRegistry
-from ...domain.model.skills import SkillNotFoundError, SkillStoreError
+from ...domain.gateway.skills import ISkillCatalog
+from ...domain.model.skills import (
+    SKILL_LOADER_NAME,
+    SkillNotFoundError,
+    SkillStoreError,
+)
 from ...domain.model.tool import ToolAccess, ToolResult
-from .base import Tool
+from ...domain.model.tool_definition import Tool
 from .runtime import ToolRuntime
 
 
-def optional_skill_tools(registry: SkillRegistry) -> list[Tool]:
+def optional_skill_tools(registry: ISkillCatalog) -> list[Tool]:
     """No skills at this instant: do not register a loader."""
     if not registry.has_skills():
         return []
     return build_skill_tools(registry)
 
 
-def resident_skill_tools(registry: SkillRegistry) -> list[Tool]:
+def resident_skill_tools(registry: ISkillCatalog) -> list[Tool]:
     """Root loader.
 
     The tool is registered even when the registry is currently empty, so a
@@ -32,7 +36,7 @@ def invoke_skill(
     skill_id: str,
     runtime: ToolRuntime | None = None,
     *,
-    registry: SkillRegistry,
+    registry: ISkillCatalog,
 ) -> ToolResult:
     del runtime
     try:
@@ -68,7 +72,7 @@ def invoke_skill(
     )
 
 
-def build_skill_tools(registry: SkillRegistry) -> list[Tool]:
+def build_skill_tools(registry: ISkillCatalog) -> list[Tool]:
     def bind(function):
         return lambda args, runtime: function(
             **args, runtime=runtime, registry=registry

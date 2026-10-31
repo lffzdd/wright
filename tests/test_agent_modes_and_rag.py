@@ -11,13 +11,13 @@ from wright.application.composition.runtime import (
 from wright.domain.model.agent import AgentProfile
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolResult
+from wright.domain.model.tool_definition import Tool
 from wright.domain.prompt import (
     DEFAULT_CODING_ROLE,
     DEFAULT_GENERAL_ROLE,
     build_system_prompt,
     get_role_instruction,
 )
-from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.knowledge import optional_knowledge_tools
 from wright.interfaces.cli.args import parse_cli_args, runtime_config_from_args
 

@@ -3,7 +3,7 @@ import pytest
 from tests.responses import response
 from wright.application.agent.parse import TurnAbort, parse_turn
 from wright.domain.model.llm.events import ContentDone
-from wright.infrastructure.llm.wire import assistant_message
+from wright.domain.model.llm.wire import assistant_message
 
 
 def test_natural_text_and_json_answers_are_not_control_protocols():

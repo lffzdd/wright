@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from ....application.execution.identity import (
+from ....domain.model.execution import (
     ExecutionKindMismatch,
     ExecutionNotFound,
     ExecutionWaitCancelled,
 )
 from ....domain.model.tool import ToolAccess, ToolResult
-from ..base import Tool
+from ....domain.model.tool_definition import Tool
 from ..runtime import ToolCancelledError, ToolRuntime
 
 

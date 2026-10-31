@@ -16,6 +16,7 @@ from wright.application.permission.service import PermissionConflict, Permission
 from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.application.session.service import SessionService, SessionServiceError
 from wright.domain.model.session import Session
+from wright.domain.model.session.errors import CheckpointError
 from wright.domain.model.tool import ToolCall
 from wright.domain.policy.permission.scope import AccessScope
 from wright.domain.policy.permission.settings import PermissionSettings
@@ -29,7 +30,6 @@ from wright.infrastructure.persistence.session.codec import (
     _deserialize_session,
     _serialize_session,
 )
-from wright.infrastructure.persistence.session.errors import CheckpointError
 from wright.infrastructure.runtime import AuthorizedExecution, LocalExecutionBackend
 from wright.infrastructure.tools.command import execute_command_tool
 

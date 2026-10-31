@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ....domain.model.tool import ToolAccess, ToolResult
-from ..base import Tool
+from ....domain.model.tool_definition import Tool
 from ..runtime import ToolRuntime
 from .convert import (
     TOOL_FAILURES,

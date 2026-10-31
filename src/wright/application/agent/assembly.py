@@ -11,14 +11,14 @@ from typing import TYPE_CHECKING
 
 from wright.application.permission.workflow import AuthorizationWorkflow
 
+from ...domain.gateway.llm_gateway import ILLMProvider
 from ...domain.model.agent import AgentProfile, CapabilityCatalog, CapabilitySnapshot
 from ...domain.model.llm import UsageRecord
 from ...domain.model.session import Session
+from ...domain.model.tool_definition import Tool
 from ...domain.policy.verifier import Verifier
 from ...domain.prompt import build_system_prompt
 from ...domain.protocol import encode_tools
-from ...infrastructure.llm.llm import LLMClient
-from ...infrastructure.tools.base import Tool
 from ...infrastructure.tools.tool_search import (
     MAX_ACTIVE_DEFERRED_TOOLS,
     make_tool_search_tool,
@@ -159,7 +159,7 @@ def bind_root_checkpoint(agent: Agent) -> None:
 
 
 def create_agent(
-    llm: LLMClient,
+    llm: ILLMProvider,
     tools: list[Tool],
     session_state: Session,
     events: SessionEvents | None = None,

@@ -23,6 +23,7 @@ from ...domain.model.tool import (
     ToolExecutionOutcome,
     ToolResult,
 )
+from ...domain.model.tool_definition import Tool
 from ...domain.policy import (
     AccessScope,
     InvocationIdentity,
@@ -36,7 +37,6 @@ from ...infrastructure.runtime import (
     ExecutionBackend,
     ExecutionPath,
 )
-from ...infrastructure.tools.base import Tool
 from ...infrastructure.tools.executor import ConcurrentToolExecutor
 from ...infrastructure.tools.runtime import (
     ToolCancelledError,

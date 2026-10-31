@@ -10,11 +10,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from ....application.memory.memory_service import MemoryService
 from ....domain.feedback import system_text
+from ....domain.gateway.memory.tool_service import IMemoryToolService as MemoryService
 from ....domain.model.memory import SEMANTIC_MEMORY_TYPES, SEMANTIC_READ_SCOPES
 from ....domain.model.tool import ToolAccess, ToolResult
-from ..base import Tool
+from ....domain.model.tool_definition import Tool
 from ..runtime import ToolRuntime
 from ..system_result import fail_text
 

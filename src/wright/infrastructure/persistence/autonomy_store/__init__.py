@@ -1,7 +1,7 @@
 """Shared SQLite store for job scheduling, commands, interactions, and tool logs.
 
 Scheduling application code depends on the ports in
-``application.scheduling.contracts``. This class is the one adapter that
+``domain.gateway.scheduling``. This class is the one adapter that
 implements those ports and the command ledger together, so a definition, a
 run, and its tool log can still commit in one transaction.
 """

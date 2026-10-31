@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from ....application.memory.memory_service import MemoryService
 from ....domain.feedback import system_text
+from ....domain.gateway.memory.tool_service import IMemoryToolService as MemoryService
 from ....domain.model.memory import EPISODE_STATUSES
 from ....domain.model.tool import ToolAccess, ToolResult
-from ..base import Tool
+from ....domain.model.tool_definition import Tool
 from ..runtime import ToolRuntime
 from ..system_result import fail_text
 

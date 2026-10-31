@@ -15,6 +15,7 @@ from typing import Any
 from ....core.logger import get_logger
 from ....domain.gateway.session_repository import ISessionRepository
 from ....domain.model.session import Session
+from ....domain.model.session.errors import CheckpointError as _CheckpointError
 from ...permission_transaction import (
     atomic_write,
     register_checkpoint_root,
@@ -31,7 +32,6 @@ from .codec import (
 from .codec import (
     _serialize_session as _encode_session,
 )
-from .errors import CheckpointError as _CheckpointError
 
 logger = get_logger(__name__)
 

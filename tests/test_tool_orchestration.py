@@ -6,9 +6,9 @@ from wright.application.tool_execution.capabilities import assemble_tool_capabil
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
+from wright.domain.model.tool_definition import Tool
 from wright.domain.policy import ToolAccess
 from wright.infrastructure.runtime import LocalExecutionBackend
-from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.command import (
     execute_command,
     is_execute_command_concurrency_safe,

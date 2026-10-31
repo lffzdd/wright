@@ -11,6 +11,7 @@ from wright.application.tool_execution.capabilities import assemble_tool_capabil
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
+from wright.domain.model.tool_definition import Tool
 from wright.domain.policy import (
     AccessScope,
     AccessTarget,
@@ -22,7 +23,6 @@ from wright.domain.policy import (
 )
 from wright.infrastructure.config.permission_store import protected_permission_paths
 from wright.infrastructure.runtime import AuthorizedExecution, LocalExecutionBackend
-from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.command import execute_command
 from wright.infrastructure.tools.file import (
     edit_file,

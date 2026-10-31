@@ -18,3 +18,4 @@ web/*.tsbuildinfo
 .specstory
 .design-qa/
 .cursor/
+.import_linter_cache/

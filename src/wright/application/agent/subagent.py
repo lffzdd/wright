@@ -9,18 +9,18 @@ from typing import Any
 
 from wright.application.permission.workflow import AuthorizationWorkflow
 
+from ...domain.gateway.llm_gateway import ILLMProvider
 from ...domain.model.agent import AgentProfile
 from ...domain.model.agent.control import AgentControlError, AgentTaskRecord
 from ...domain.model.llm import UsageRecord
 from ...domain.model.session import Session
 from ...domain.model.tool import ToolAccess, ToolResult
-from ...infrastructure.llm.llm import LLMClient
+from ...domain.model.tool_definition import Tool
 from ...infrastructure.tools.agent_tools import (
     agent_execution_view,
     agent_tools,
     public_agent_tree,
 )
-from ...infrastructure.tools.base import Tool
 from ...infrastructure.tools.command.control import command_tools
 from ...infrastructure.tools.runtime import ToolRuntime
 from ...infrastructure.tools.schedule import schedule_tools
@@ -100,7 +100,7 @@ def _emit(runtime: ToolRuntime, record: AgentTaskRecord) -> None:
 
 
 def make_spawn_agent_tool(
-    llm: LLMClient,
+    llm: ILLMProvider,
     base_tools: Sequence[Tool],
     *,
     depth: int = 0,
@@ -435,7 +435,7 @@ get_agent_tree_tool = Tool(
 
 
 def build_agent_tools(
-    llm: LLMClient,
+    llm: ILLMProvider,
     base_tools: Sequence[Tool],
     *,
     depth: int = 0,

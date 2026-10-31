@@ -10,11 +10,11 @@ from pathlib import Path
 from typing import Any
 
 from ...core.paths import task_db_path
+from ...domain.gateway.scheduling import SchedulingError
 from ...domain.model.agent.control import AgentControlPlane
 from ...domain.model.scheduling import TriggerSpec
 from ...infrastructure.persistence.autonomy_store import AutonomyStore
 from ..execution.identity import bind_identity
-from ..scheduling.contracts import SchedulingError
 from ..scheduling.service import SchedulingService
 
 

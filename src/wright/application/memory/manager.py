@@ -31,7 +31,7 @@ from .turn_snapshot import (
 )
 
 if TYPE_CHECKING:
-    from ...infrastructure.llm.llm import LLMClient
+    from ...domain.gateway.llm_gateway import ILLMProvider
     from .memory_service import MemoryService
 
 logger = get_logger(__name__)
@@ -42,11 +42,11 @@ class MemoryManager:
 
     def __init__(
         self,
-        llm: LLMClient,
+        llm: ILLMProvider,
         service: MemoryService,
         directory: Path,
         *,
-        selector_llm: LLMClient | None = None,
+        selector_llm: ILLMProvider | None = None,
         episode_policy: EpisodePolicy | None = None,
         semantic_policy: SemanticExtractPolicy | None = None,
         session_repository: Any = None,

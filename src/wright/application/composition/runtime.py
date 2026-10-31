@@ -29,16 +29,16 @@ from ...core.paths import (
     user_mcp_config_path,
 )
 from ...domain.model.session import Session
+from ...domain.model.session.errors import CheckpointError
+from ...domain.model.tool_definition import Tool
 from ...domain.policy import (
     PermissionRequest,
     PermissionResponse,
 )
 from ...domain.policy.verifier import Verifier
 from ...domain.prompt import get_role_instruction
-from ...infrastructure.lifecycle.loader import load_lifecycle_manager
 from ...infrastructure.llm.llm import LLMClient
 from ...infrastructure.persistence.autonomy_store import AutonomyStore
-from ...infrastructure.persistence.session.errors import CheckpointError
 from ...infrastructure.persistence.session.repository import FileSessionRepository
 from ...infrastructure.storage.artifacts import ArtifactStore
 from ...infrastructure.storage.attachments import (
@@ -46,7 +46,6 @@ from ...infrastructure.storage.attachments import (
     DraftAttachments,
 )
 from ...infrastructure.tools import tools as base_tools
-from ...infrastructure.tools.base import Tool
 from ...infrastructure.tools.human_input import ask_user_tool
 from ...infrastructure.tools.knowledge import optional_knowledge_tools
 from ...infrastructure.tools.loop_tools import manage_loop_tool
@@ -81,6 +80,7 @@ from ..skills import SkillRegistry
 from ..tool_execution.approval import InteractiveApprovalHandler
 from ..tool_execution.capabilities import assemble_tool_capabilities
 from .host import ApplicationHost
+from .lifecycle_loader import load_lifecycle_manager
 from .services import RuntimeServices
 
 logger = get_logger(__name__)
@@ -280,6 +280,96 @@ def _trusted_mcp_config_paths(
     return paths, project if project.is_file() else None
 
 
+def _restore_permissions(project_root: Path, session_state: Session) -> PermissionService:
+    from ...infrastructure.config.permission_store import FilePermissionRepository
+    from ...infrastructure.runtime import AuthorizedExecution, LocalExecutionBackend
+
+    permissions = PermissionService(FilePermissionRepository(project_root), execution_factory=AuthorizedExecution)
+    try:
+        permissions.restore(session_state, LocalExecutionBackend(session_state.workspace_dir, session_state.get_cwd))
+        if session_state.authorization.permission_mode is None:
+            permissions.set_modes(session_state, permission_mode=permissions.snapshot(session_state).mode)
+    except (OSError, ValueError, TypeError) as exc:
+        raise SystemExit(f"Could not restore current permissions: {exc}") from exc
+    return permissions
+
+
+def _bind_interaction_persistence(
+    interaction_target: Any,
+    session_state: Session,
+    autonomy_store: AutonomyStore,
+    publisher_reader: Callable[[], EventPublisher],
+) -> None:
+    bind_persistence = getattr(interaction_target, "set_persistence", None)
+    if callable(bind_persistence):
+        interaction_scope = f"session:{session_state.session_id}"
+
+        def record_interaction(request_id, kind, payload) -> None:
+            active = session_state.active_run()
+            autonomy_store.record_interaction(
+                interaction_scope, request_id, kind=str(kind), payload=payload,
+                run_id=active.run_id if active is not None else "",
+            )
+            publisher_reader().publish(
+                "session.status_changed",
+                session_status(
+                    session_state.session_id, lifecycle="open", execution="waiting_for_input",
+                    queue_reason="waiting for permission or a reply",
+                ),
+            )
+
+        def resolve_interaction(request_id, _kind, resolution) -> None:
+            status = str(resolution.get("status") or "resolved")
+            if status not in {"approved", "denied", "cancelled", "resolved"}:
+                status = "cancelled"
+            autonomy_store.resolve_interaction(
+                interaction_scope,
+                request_id,
+                resolution={
+                    "status": status,
+                    "choice": resolution.get("choice"),
+                    "tool_name": resolution.get("tool_name", ""),
+                },
+                status=status,
+            )
+            publisher_reader().publish(
+                "session.status_changed",
+                session_status(
+                    session_state.session_id, lifecycle="open", execution="running",
+                    queue_reason="",
+                ),
+            )
+
+        bind_persistence(record_interaction, resolve_interaction)
+
+
+def _is_interactive(interaction_broker: Any, prompter: UserPrompter | None) -> bool:
+    env_interactive = os.getenv("WRIGHT_PERMISSION_INTERACTIVE")
+    tty_interactive = (
+        env_interactive == "1" if env_interactive is not None else sys.stdin.isatty()
+    )
+    # Web and TUI pass a broker and collect elsewhere. A CLI prompter still
+    # follows the tty, so a piped session does not wait on a hub nobody reads.
+    return tty_interactive or (
+        interaction_broker is not None and prompter is None
+    )
+
+
+def _select_base_tools(config: RuntimeConfig) -> tuple[list, list]:
+    if config.with_rag:
+        try:
+            knowledge_tools = optional_knowledge_tools(enabled=True)
+        except TypeError:
+            knowledge_tools = optional_knowledge_tools()
+    else:
+        knowledge_tools = optional_knowledge_tools()
+    active_base_tools = base_tools
+    if config.mode == "general":
+        coding_only = {"edit_file", "write_file", "execute_command"}
+        active_base_tools = [t for t in base_tools if t.name not in coding_only]
+    return active_base_tools, knowledge_tools
+
+
 def assemble_runtime(
     config: RuntimeConfig,
     *,
@@ -329,16 +419,7 @@ def assemble_runtime(
     except CheckpointError as exc:
         raise SystemExit(f"Could not resume the session: {exc}") from exc
 
-    from ...infrastructure.config.permission_store import FilePermissionRepository
-    from ...infrastructure.runtime import AuthorizedExecution, LocalExecutionBackend
-
-    permissions = PermissionService(FilePermissionRepository(project_root), execution_factory=AuthorizedExecution)
-    try:
-        permissions.restore(session_state, LocalExecutionBackend(session_state.workspace_dir, session_state.get_cwd))
-        if session_state.authorization.permission_mode is None:
-            permissions.set_modes(session_state, permission_mode=permissions.snapshot(session_state).mode)
-    except (OSError, ValueError, TypeError) as exc:
-        raise SystemExit(f"Could not restore current permissions: {exc}") from exc
+    permissions = _restore_permissions(project_root, session_state)
 
     # An explicit --model wins. Otherwise resuming retains the model selected
     # in that session, falling back to OPENAI_MODEL for new/legacy sessions.
@@ -433,47 +514,11 @@ def assemble_runtime(
     )
     interaction_target = interaction_broker
     if interaction_target is not None:
-        bind_persistence = getattr(interaction_target, "set_persistence", None)
-        if callable(bind_persistence):
-            interaction_scope = f"session:{session_state.session_id}"
-
-            def record_interaction(request_id, kind, payload) -> None:
-                active = session_state.active_run()
-                autonomy_store.record_interaction(
-                    interaction_scope, request_id, kind=str(kind), payload=payload,
-                    run_id=active.run_id if active is not None else "",
-                )
-                publisher.publish(
-                    "session.status_changed",
-                    session_status(
-                        session_state.session_id, lifecycle="open", execution="waiting_for_input",
-                        queue_reason="waiting for permission or a reply",
-                    ),
-                )
-
-            def resolve_interaction(request_id, _kind, resolution) -> None:
-                status = str(resolution.get("status") or "resolved")
-                if status not in {"approved", "denied", "cancelled", "resolved"}:
-                    status = "cancelled"
-                autonomy_store.resolve_interaction(
-                    interaction_scope,
-                    request_id,
-                    resolution={
-                        "status": status,
-                        "choice": resolution.get("choice"),
-                        "tool_name": resolution.get("tool_name", ""),
-                    },
-                    status=status,
-                )
-                publisher.publish(
-                    "session.status_changed",
-                    session_status(
-                        session_state.session_id, lifecycle="open", execution="running",
-                        queue_reason="",
-                    ),
-                )
-
-            bind_persistence(record_interaction, resolve_interaction)
+        # The publisher may be created later in assembly, so read it when a
+        # callback fires instead of binding the current value.
+        _bind_interaction_persistence(
+            interaction_target, session_state, autonomy_store, lambda: publisher
+        )
     mcp_manager: McpManager | None = None
     constructed_application_host: ApplicationHost | None = application_host
 
@@ -538,15 +583,7 @@ def assemble_runtime(
 
     # Permission policy is centralized in the resolver.  Approval adapters only
     # collect a structured choice and never mutate settings themselves.
-    env_interactive = os.getenv("WRIGHT_PERMISSION_INTERACTIVE")
-    tty_interactive = (
-        env_interactive == "1" if env_interactive is not None else sys.stdin.isatty()
-    )
-    # Web and TUI pass a broker and collect elsewhere. A CLI prompter still
-    # follows the tty, so a piped session does not wait on a hub nobody reads.
-    interactive = tty_interactive or (
-        interaction_broker is not None and prompter is None
-    )
+    interactive = _is_interactive(interaction_broker, prompter)
     approval_handler = (
         InteractiveApprovalHandler(
             user_prompter,
@@ -571,17 +608,7 @@ def assemble_runtime(
     # 默认只委派叶子子 Agent（max_depth=1）。嵌套 spawn 仍由控制面支持，
     # 无人值守 durable run 会显式打开第二层。
     # knowledge_search 是只读检索：启用后放进 base，让子 Agent 也能查知识库。
-    if config.with_rag:
-        try:
-            knowledge_tools = optional_knowledge_tools(enabled=True)
-        except TypeError:
-            knowledge_tools = optional_knowledge_tools()
-    else:
-        knowledge_tools = optional_knowledge_tools()
-    active_base_tools = base_tools
-    if config.mode == "general":
-        coding_only = {"edit_file", "write_file", "execute_command"}
-        active_base_tools = [t for t in base_tools if t.name not in coding_only]
+    active_base_tools, knowledge_tools = _select_base_tools(config)
 
     # defer_to_model 只推迟 MCP 工具的 schema 暴露。McpManager.start() 已经
     # 在启动时连接服务器并发现工具，这里不是延迟初始化。

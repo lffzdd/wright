@@ -5,13 +5,13 @@ import pytest
 from wright.application.tool_execution.capabilities import assemble_tool_capabilities
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.tool import ToolCall, ToolResult
+from wright.domain.model.tool_definition import Tool
 from wright.domain.policy import (
     AccessTarget,
     PermissionPolicy,
     PermissionResponse,
     ToolAccess,
 )
-from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.command import execute_command_tool
 from wright.infrastructure.tools.command.permissions import _command_risk_flags
 from wright.infrastructure.tools.file import (

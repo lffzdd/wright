@@ -11,9 +11,9 @@ from wright.domain.model.llm import UsageRecord
 from wright.domain.model.llm.events import UsageEvent
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
+from wright.domain.model.tool_definition import Tool
 from wright.domain.policy.verifier import Verifier
 from wright.infrastructure.persistence.session.repository import FileSessionRepository
-from wright.infrastructure.tools.base import Tool
 from wright.interfaces.cli.console_renderer import ConsoleRenderer
 from wright.interfaces.rendering.silent import SilentRenderer
 from wright.interfaces.rendering.subscriber import RendererEventSubscriber
@@ -198,11 +198,11 @@ def test_console_live_takes_a_snapshot_not_a_callback(monkeypatch):
 def test_checkpoint_requires_explicit_task_usage_boundary(tmp_path):
     import pytest
 
+    from wright.domain.model.session.errors import CheckpointError
     from wright.infrastructure.persistence.session.codec import (
         _deserialize_session,
         _serialize_session,
     )
-    from wright.infrastructure.persistence.session.errors import CheckpointError
 
     session = Session.create("task", tmp_path)
     session.begin_user_turn("task")

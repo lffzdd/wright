@@ -6,13 +6,13 @@ from collections.abc import Callable, Sequence
 from os import environ
 from typing import Any
 
-from ...domain.model.llm.events import (
+from ....utils.token_counter import tool_image_references
+from .events import (
     ContentDelta,
     ContentDone,
     LLMEvent,
     ReasoningDelta,
 )
-from ...utils.token_counter import tool_image_references
 
 
 def _with_tool_images(messages, artifact_data_url):

@@ -6,8 +6,8 @@ from wright.application.agent import create_agent, make_spawn_agent_tool
 from wright.application.lifecycle import HookRegistration, LifecycleManager
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolResult
+from wright.domain.model.tool_definition import Tool
 from wright.infrastructure.lifecycle import TraceRecorder
-from wright.infrastructure.tools.base import Tool
 
 
 def _final(answer):

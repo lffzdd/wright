@@ -36,4 +36,12 @@ class CommandRecord:
             self.started_at = self.created_at
 
 
-__all__ = ["CommandDisposition", "CommandRecord"]
+__all__ = ["CommandDisposition", "CommandOutcome", "CommandRecord"]
+
+
+@dataclass(frozen=True)
+class CommandOutcome:
+    ok: bool
+    error: str = ""
+    data: dict | None = None
+    cancelled: bool = False

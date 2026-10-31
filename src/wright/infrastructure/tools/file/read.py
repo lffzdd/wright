@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 
 from ....domain.model.tool import ToolResult
-from ..base import Tool
+from ....domain.model.tool_definition import Tool
 from ..runtime import ToolRuntime
 from .common import (
     FILE_UNCHANGED,

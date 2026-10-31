@@ -15,9 +15,9 @@ from wright.application.composition.roles import tools_for_role
 from wright.application.skills import SkillRegistry
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolResult
+from wright.domain.model.tool_definition import Tool
 from wright.infrastructure.persistence.session.repository import FileSessionRepository
 from wright.infrastructure.storage.skills import write_skill
-from wright.infrastructure.tools.base import Tool
 from wright.infrastructure.tools.skill_tools import resident_skill_tools
 
 

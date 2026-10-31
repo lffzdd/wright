@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 
 from ....domain.model.session import MessageRecord, ToolExecutionRecord, TurnRecord
-from .errors import CheckpointError
+from ....domain.model.session.errors import CheckpointError
 
 
 def validate_session_links(

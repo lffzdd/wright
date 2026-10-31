@@ -14,7 +14,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from ....application.scheduling.contracts import JobNotFoundError, SchedulingError
+from ....domain.gateway.scheduling import JobNotFoundError, SchedulingError
 
 
 class AutonomyStoreError(SchedulingError):

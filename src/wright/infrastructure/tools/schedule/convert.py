@@ -9,12 +9,12 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from ....application.execution.identity import (
+from ....domain.gateway.scheduling import SchedulingError
+from ....domain.model.execution import (
     ExecutionKindMismatch,
     ExecutionNotFound,
     ExecutionWaitCancelled,
 )
-from ....application.scheduling.contracts import SchedulingError
 from ....domain.model.scheduling import JobDefinition, JobRun, TriggerSpec
 from ..runtime import ToolRuntime
 

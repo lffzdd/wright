@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from prompt_toolkit import prompt
 
-from ...infrastructure.persistence.session.errors import CheckpointError
+from ...domain.model.session.errors import CheckpointError
 from ..i18n import t
 
 

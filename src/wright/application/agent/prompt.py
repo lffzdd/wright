@@ -10,7 +10,7 @@ from ..skills import SKILL_LOADER_NAME, catalog_reminder
 
 if TYPE_CHECKING:
     from ...domain.model.session import Session
-    from ...infrastructure.tools.base import Tool
+    from ...domain.model.tool_definition import Tool
     from ..skills import SkillRegistry
 
 

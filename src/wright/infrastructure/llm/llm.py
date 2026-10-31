@@ -18,7 +18,6 @@ import random
 import time
 from collections.abc import Callable, Iterator
 from typing import Any
-from urllib.parse import urlparse
 
 from openai import APIConnectionError, APIStatusError, OpenAI, omit
 
@@ -31,10 +30,11 @@ from ...domain.model.llm.events import (
     ReasoningDelta,
     UsageEvent,
 )
+from ...domain.model.llm.model_adapters import ChatAdapter, ResponsesAdapter
+from ...domain.model.llm.model_errors import resolve_transport
 from ...domain.model.tool import ArtifactRef
 from ..storage.artifacts import ArtifactStore
 from ..storage.attachments import AttachmentError, AttachmentStore
-from .model_adapters import ChatAdapter, ResponsesAdapter
 
 
 class LLMClient(ILLMProvider):
@@ -363,29 +363,6 @@ def _merge_piece(current: str, piece: str, *, repeated_is_whole: bool) -> str:
     return current + piece
 
 
-def describe_model_error(exception: BaseException) -> str:
-    """One readable line for a failed model request, safe to show to people.
-
-    SDK errors carry a dict body whose repr is noisy; prefer the provider's
-    own message and the HTTP status when they exist.
-    """
-    if isinstance(exception, APIStatusError):
-        message = ""
-        body = getattr(exception, "body", None)
-        if isinstance(body, dict):
-            error = body.get("error", body)
-            if isinstance(error, dict):
-                message = str(error.get("message") or "")
-            elif isinstance(error, str):
-                message = error
-        message = message or str(getattr(exception, "message", "") or exception)
-        return f"Model request failed (HTTP {exception.status_code}): {message}"[:2_000]
-    if isinstance(exception, APIConnectionError):
-        return f"Could not reach the model endpoint: {exception}"[:2_000]
-    text = str(exception) or type(exception).__name__
-    return f"{type(exception).__name__}: {text}"[:2_000]
-
-
 def is_retryable(exception: Exception) -> bool:
     """判断这个异常是否值得重试。
 
@@ -399,16 +376,6 @@ def is_retryable(exception: Exception) -> bool:
         # 4xx 客户端错误（除429）→ 不可重试
         return exception.status_code == 429 or exception.status_code >= 500
     return False
-
-
-def resolve_transport(base_url: str, requested: str | None) -> str:
-    """Resolve automatic transport without speculative duplicate API calls."""
-    choice = (requested or "auto").strip().lower()
-    if choice not in {"auto", "chat", "responses"}:
-        raise ValueError("WRIGHT_LLM_TRANSPORT must be auto, chat, or responses")
-    if choice != "auto":
-        return choice
-    return "responses" if urlparse(base_url).hostname == "api.openai.com" else "chat"
 
 
 def call_with_retry(fn: Callable, max_attempts=3, base_wait=1.0, max_wait=60.0):

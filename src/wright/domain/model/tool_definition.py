@@ -6,11 +6,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
-from ...domain.model.tool import ToolAccess
+from .tool import ToolAccess
 
 if TYPE_CHECKING:
-    from ...domain.model.tool import ToolResult
-    from .runtime import ToolRuntime
+    from .tool import ToolResult
 
 
 TimeoutOwner = Literal["executor", "tool"]
@@ -27,7 +26,7 @@ class Tool:
     name: str
     description: str
     parameters: dict
-    call: Callable[[dict[str, Any], ToolRuntime], ToolResult]
+    call: Callable[[dict[str, Any], Any], ToolResult]
     access_descriptor: Callable[[dict[str, Any]], ToolAccess] = (
         lambda args: ToolAccess.unknown()
     )

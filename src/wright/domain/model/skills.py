@@ -7,6 +7,10 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Stable tool name shared by the loader adapter and request disclosure.
+# Schema exposure is separate from registration.
+SKILL_LOADER_NAME = "load_skill"
+
 MAX_SKILL_FILE_BYTES = 256_000
 MAX_SKILL_BODY_CHARS = 100_000
 MAX_SKILLS = 40

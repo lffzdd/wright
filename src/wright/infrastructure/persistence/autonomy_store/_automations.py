@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ....application.scheduling.contracts import JobChange, RecordPage
+from ....domain.gateway.scheduling import JobChange, RecordPage
 from ....domain.model.scheduling import (
     JobDefinition,
     TriggerSpec,

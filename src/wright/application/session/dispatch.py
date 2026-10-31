@@ -13,8 +13,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ...core.logger import get_logger
+from ...domain.gateway.scheduling import SchedulingError
+from ...domain.model.attachment import AttachmentError
 from ...infrastructure.persistence.autonomy_store import AutonomyStore
-from ...infrastructure.storage.attachments import AttachmentError
 from ..agent.operations import agent_completion_notice
 from ..composition.runtime import WrightRuntime
 from ..execution.directory import (
@@ -22,7 +23,6 @@ from ..execution.directory import (
     bind_directory_work,
     reset_directory_work,
 )
-from ..scheduling.contracts import SchedulingError
 from ..scheduling.runner import launch_job_run
 from .events import session_status
 from .history_projection import (

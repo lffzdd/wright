@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ...domain.model.session.errors import CheckpointError
 from .autonomy_store import (
     AutonomyNotFoundError,
     AutonomyStore,
@@ -28,7 +29,6 @@ from .memory import (
     update_memory,
     write_memory_file,
 )
-from .session.errors import CheckpointError
 from .session.repository import FileSessionRepository
 
 __all__ = [

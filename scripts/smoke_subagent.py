@@ -27,7 +27,7 @@ from wright.application.agent import (
 from wright.domain.model.llm.events import ContentDone
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolAccess, ToolResult
-from wright.infrastructure.tools.base import Tool
+from wright.domain.model.tool_definition import Tool
 
 _TMP = tempfile.TemporaryDirectory(
     prefix="wright-subagent-", ignore_cleanup_errors=True

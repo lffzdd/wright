@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from ...domain.model.llm.events import ContentDone
+from ...domain.model.llm.wire import assistant_message
 from ...domain.model.tool import ToolCall
-from ...infrastructure.llm.wire import assistant_message
 
 
 class TurnAbort(Exception):

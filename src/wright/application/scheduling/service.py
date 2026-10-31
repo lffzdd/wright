@@ -10,18 +10,18 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from ...domain.model.scheduling import TriggerSpec
-from ..execution.identity import (
-    ExecutionIdentity,
-    ExecutionWaitCancelled,
-)
-from .contracts import (
+from ...domain.gateway.scheduling import (
     JobCatalog,
     JobChange,
     JobRun,
     JobRunLedger,
     RecordPage,
     RunCancelResult,
+)
+from ...domain.model.scheduling import TriggerSpec
+from ..execution.identity import (
+    ExecutionIdentity,
+    ExecutionWaitCancelled,
 )
 from .scheduler import JobScheduler
 
