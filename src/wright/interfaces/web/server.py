@@ -120,7 +120,7 @@ def run_web(args: Any) -> None:
     auth = BootstrapAuth()
     port = _available_port(args.web_port)
     url = f"http://127.0.0.1:{port}/#bootstrap={auth.bootstrap_token}"
-    print(f"Wright Web: {url}")
+    print(f"Wright Web: {url}", flush=True)
     if not args.no_open:
         webbrowser.open(url)
     uvicorn.run(
