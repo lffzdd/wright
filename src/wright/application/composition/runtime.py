@@ -305,6 +305,16 @@ def _restore_permissions(project_root: Path, session_state: Session) -> Permissi
     return permissions
 
 
+def _approval_workflow(interactive: bool, user_prompter: Any, events: SessionEvents) -> AuthorizationWorkflow:
+    """Approval adapters only collect a structured choice; the resolver owns policy."""
+    if not interactive:
+        return AuthorizationWorkflow()
+    return AuthorizationWorkflow(
+        approval_handler=InteractiveApprovalHandler(user_prompter, notify_phase=events.on_tool_phase),
+        interaction_handler=_make_interaction_handler(user_prompter),
+    )
+
+
 def _bind_interaction_persistence(
     interaction_target: Any,
     session_state: Session,
@@ -624,27 +634,13 @@ def assemble_runtime(
     user_prompter = RoutedPrompter(interaction_target, fallback=prompter)
     coordinator = directory_coordinator or DirectoryExecutionCoordinator()
 
-    # Permission policy is centralized in the resolver.  Approval adapters only
-    # collect a structured choice and never mutate settings themselves.
-    interactive = _is_interactive(interaction_broker, prompter)
-    approval_handler = (
-        InteractiveApprovalHandler(
-            user_prompter,
-            notify_phase=event_renderer.on_tool_phase,
-        )
-        if interactive else None
-    )
-
     from ..permission.checkpoint import SessionCheckpoint
     if not config.no_session_persistence:
         permissions.bind_checkpoint(session_state.session_id, SessionCheckpoint(checkpoint_store, session_state))
     permissions.policy_updated = lambda owner_id, payload: publisher.publish("session.policy_updated", payload)
 
-    permission_workflow = AuthorizationWorkflow(
-        approval_handler=approval_handler,
-        interaction_handler=(
-            _make_interaction_handler(user_prompter) if interactive else None
-        ),
+    permission_workflow = _approval_workflow(
+        _is_interactive(interaction_broker, prompter), user_prompter, event_renderer
     )
 
     # 给主 Agent 装上"基础工具 + spawn_agent"的分层工具集:depth=0 是主 Agent,
