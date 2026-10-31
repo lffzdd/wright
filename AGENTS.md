@@ -61,6 +61,7 @@ npm run test:e2e   # 浏览器交互测试
 - **不要手改 `src/wright/interfaces/web/static`。** 它由 `npm run build` 生成。改了前端就要重新构建并提交产物，CI 会检查。
 - **不要提交或输出密钥。** API Key 只放在被 Git 忽略的 `.env` 里，新增配置项时同步更新 `.env.example`。
 - **新增模块或函数前，先搜索有没有现成的可以复用。**
+- **不要提交过程产物。** QA 截图、对比图和一次性验证报告放在被忽略的 `web/qa/` 或 `web/test-results/`。`docs/` 只放长期有效的设计说明，不放带基线和测试结果的实施记录。
 
 ## 代码风格
 

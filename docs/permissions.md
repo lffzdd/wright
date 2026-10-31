@@ -46,6 +46,8 @@ Dispatcher 准备工具与调度执行，调用 `PermissionService.authorize` �
 
 专用权限工作单元将授权文件与显式登记的检查点参与者放入同一个事务。基础设施版本 1 日志记录参与文件前后内容与校验和，执行 `PREPARED → 原子替换 → COMMITTED → 清理`，同步文件及目录。未提交事务回滚，已提交事务完成新内容；恢复可重复执行，逐项收集补偿失败。恢复不完整时禁止签发许可。普通检查点保存、重命名、执行检查点读取和授权操作共享锁顺序与恢复协调，避免旧日志覆盖后来的合法写入。日志目录属于保护范围，恢复只写登记的权限或检查点文件。
 
+授权缓存依赖轻量文件修订，不使用 TTL；目录遍历逐资源校验，后台监控持续检查撤销。后台调度使用同一权威仓储的独立权限服务，不持有用户 Session 的检查点生命周期。
+
 ## Shell 后端
 
 `Session.execution_mode` 为 `sandbox`（默认）或 `host`，与工作区 `environment=local|worktree`、审批策略 `permission_mode` 独立。worktree 仅隔离工作目录，不是系统安全沙箱。首版执行方式仅属于会话，不支持项目或全局 host 默认；新会话和旧检查点缺少该字段时使用 sandbox，恢复已有 host 会话会保留该选择。
@@ -76,6 +78,6 @@ host 模式使用真正的宿主 Shell，以运行 Wright 的账户权限执行�
 
 2026-10-03 本地验证记录：Linux 完整后端测试 881 项通过、10 项跳过；单独启用真实隔离验收后，Linux 8 项全部通过。前端 63 项单元测试、2 项 Playwright 流程通过，覆盖审批、撤销冲突刷新、窄屏和中英文交互。后端 lint、前端生产构建及两个离线 Agent 回归脚本通过。生产资源输出到实际服务目录 `src/wright/interfaces/web/static`。这些结果不替代 Windows 和 macOS 的真实进程验收。
 
-2026-10-03 前端权限对齐后验证：权限相关后端 208 项通过、1 项跳过；前端 70 项单元测试及 7 项 Playwright 流程通过，lint、TypeScript 和生产构建通过。完整 WSL 后端运行 902 项通过、10 项跳过、3 项失败；进程恢复与检查点文件单独复测 22 项全部通过，包含原失败用例，未修改超时或恢复逻辑。没有将该次完整运行描述为全部通过。详情及截图见 `web/qa/permission-alignment-20261003/report.md`。
+2026-10-03 前端权限对齐后验证：权限相关后端 208 项通过、1 项跳过；前端 70 项单元测试及 7 项 Playwright 流程通过，lint、TypeScript 和生产构建通过。完整 WSL 后端运行 902 项通过、10 项跳过、3 项失败；进程恢复与检查点文件单独复测 22 项全部通过，包含原失败用例，未修改超时或恢复逻辑。没有将该次完整运行描述为全部通过。
 
 参考：[Bubblewrap](https://github.com/containers/bubblewrap)、[Seatbelt 实现](https://github.com/openai/codex/blob/main/codex-rs/sandboxing/src/seatbelt.rs)、[Windows 隔离工程](https://openai.com/index/building-codex-windows-sandbox/)。

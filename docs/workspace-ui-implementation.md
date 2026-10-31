@@ -139,7 +139,7 @@ Changes 当前行为和验收标准见 [Changes 功能约定](changes-contract.m
 
 ## 视觉移植
 
-2026-09-30 更新：已删除独立的 `visual=fixture` / `visual=empty` 渲染分支及演示组件。下方旧记录仅作历史参考；当前验收以正常 `/` 入口、真实 FastAPI 会话与审批为准。生产构建统一写入 `src/wright/interfaces/web/static`，详见根目录 `design-qa.md` 和 `web/qa/production-*.png`。本次还修复了实时检查器数据不刷新、上下文条占比错误、回复重复与目录浏览失效。
+2026-09-30 更新：已删除独立的 `visual=fixture` / `visual=empty` 渲染分支及演示组件。下方旧记录仅作历史参考；当前验收以正常 `/` 入口、真实 FastAPI 会话与审批为准。生产构建统一写入 `src/wright/interfaces/web/static`。参考设计稿在 `docs/design/web-reference.html`；当时的 QA 记录和截图已从仓库移除，可在 Git 历史中查看。本次还修复了实时检查器数据不刷新、上下文条占比错误、回复重复与目录浏览失效。
 
 呈现层按设计稿 DOM 重写，业务回调仍走原来的会话、审批和检查器接口。对照场景是 `?visual=fixture`，只替换视图，不写生产数据。
 
@@ -153,5 +153,3 @@ Changes 当前行为和验收标准见 [Changes 功能约定](changes-contract.m
 - 没有改 Python，没有重跑 pytest。
 
 真实联调：`http://127.0.0.1:8765/?v=14` 打开已有预览会话，中文界面。新建会话对话框能打开并关闭。变更页列出 `README.md` 和 `preview-note.txt`，接受与回退按钮仍在。1280×800 列为 200 / 780 / 300。1024×768 左右栏离屏，发送按钮仍在中间栏。浅色只改了页面 class，没有写入偏好。
-
-对照图在 `docs/visual-compare/`。

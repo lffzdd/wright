@@ -19,3 +19,5 @@ web/*.tsbuildinfo
 .design-qa/
 .cursor/
 .import_linter_cache/
+web/test-results/
+web/qa/
