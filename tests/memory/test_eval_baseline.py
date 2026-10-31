@@ -1,6 +1,6 @@
 """Offline baseline. It does not call a model and does not score selector quality."""
 
-from wright.application.memory.eval_baseline import evaluate_offline
+from wright.application.composition.memory_eval_baseline import evaluate_offline
 
 
 def test_offline_baseline_reports_lexical_hits_and_known_misses():

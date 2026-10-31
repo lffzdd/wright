@@ -13,9 +13,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ...core.logger import get_logger
-from ...domain.gateway.scheduling import SchedulingError
+from ...domain.gateway.scheduling import JobRunLedger, SchedulingError
 from ...domain.model.attachment import AttachmentError
-from ...infrastructure.persistence.autonomy_store import AutonomyStore
 from ..composition.job_runner import launch_job_run
 from ..composition.runtime import WrightRuntime
 from ..execution.agent_operations import agent_completion_notice
@@ -78,7 +77,7 @@ def _publish_execution(rt: WrightRuntime, execution: str, reason: str = "") -> N
     )
 
 
-def _render_job_run_finished(store: AutonomyStore, run_id: str, rt: WrightRuntime) -> None:
+def _render_job_run_finished(store: JobRunLedger, run_id: str, rt: WrightRuntime) -> None:
     """只打一行摘要，不注入 root 上下文、不跑 Agent turn。"""
     try:
         run = store.get_run(run_id)

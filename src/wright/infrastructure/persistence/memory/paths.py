@@ -10,24 +10,12 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
-from ....core.paths import wright_home
+from ....core.paths import memory_dir
 
 # MEMORY.md:始终注入上下文的索引文件名(对标 Claude Code memdir 的 ENTRYPOINT)。
 MEMORY_INDEX = "MEMORY.md"
-
-
-def memory_dir() -> Path:
-    """解析记忆目录的绝对路径。
-
-    优先级:环境变量 WRIGHT_MEMORY_DIR > ~/.wright/memory。
-    环境变量给的相对路径按【当前工作目录】解析后再 resolve。
-    """
-    override = os.getenv("WRIGHT_MEMORY_DIR")
-    base = Path(override) if override else wright_home() / "memory"
-    return base.expanduser().resolve()
 
 
 def entrypoint_path() -> Path:

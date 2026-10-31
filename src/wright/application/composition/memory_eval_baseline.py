@@ -18,7 +18,7 @@ from ...domain.policy.memory import (
 )
 from ...infrastructure.persistence.memory import EpisodeStore
 from ...utils.token_counter import estimate_tokens
-from .projection import (
+from ..memory.projection import (
     budget_episode_manifest,
     candidate_summary,
     render_episode_for_budget,

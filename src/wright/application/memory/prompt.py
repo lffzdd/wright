@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ...core.paths import memory_dir
 from ...domain.model.memory import (
     FRONTMATTER_EXAMPLE,
     TRUSTING_RECALL,
@@ -16,7 +17,6 @@ from ...domain.model.memory import (
     WHAT_NOT_TO_SAVE,
     WHEN_TO_ACCESS,
 )
-from ...infrastructure.persistence.memory import memory_dir
 
 
 def project_core_memory(system_prompt: str, core_block: str) -> str:

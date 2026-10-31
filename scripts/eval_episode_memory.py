@@ -29,7 +29,7 @@ def main() -> int:
         help="Call the configured memory model. Default is offline and unverified.",
     )
     args = parser.parse_args()
-    from wright.application.memory.eval_baseline import evaluate_offline
+    from wright.application.composition.memory_eval_baseline import evaluate_offline
 
     report = evaluate_offline()
     report["model_quality"] = "未验证"
@@ -52,7 +52,7 @@ def _live() -> dict:
             "status": "未验证",
             "reason": "missing OPENAI_BASE_URL, OPENAI_API_KEY, or OPENAI_MODEL",
         }
-    from wright.application.memory.eval_baseline import recall_cases
+    from wright.application.composition.memory_eval_baseline import recall_cases
     from wright.application.memory.llm_util import metered_events
     from wright.application.memory.projection import candidate_summary
     from wright.infrastructure.llm.llm import LLMClient

@@ -22,7 +22,6 @@ from ...domain.gateway.runtime_protocols import ProcessHandle
 from ...domain.gateway.runtime_types import ExecutionPath
 from ...domain.model.command import CommandOutcome, CommandRecord
 from ...domain.policy.permission.scope import AccessScope
-from ...infrastructure.runtime.command_log import CommandOutputLog, OutputSlice
 from ..execution.directory import current_directory_binding
 from ..execution.identity import (
     ExecutionIdentity,
@@ -31,6 +30,7 @@ from ..execution.identity import (
     ExecutionWaitCancelled,
 )
 from ..execution.paging import bounded_page_limit, decode_cursor, encode_cursor
+from .output_log import CommandOutputLog, OutputSlice
 from .sandbox_denial import describe_sandbox_denial, sandbox_denial_message
 
 logger = get_logger(__name__)

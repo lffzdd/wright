@@ -106,3 +106,14 @@ def ensure_project_state(workspace: Path) -> Path:
     artifact_dir(workspace).mkdir(parents=True, exist_ok=True)
     trace_dir(workspace).mkdir(parents=True, exist_ok=True)
     return root
+
+
+def memory_dir() -> Path:
+    """解析记忆目录的绝对路径。
+
+    优先级:环境变量 WRIGHT_MEMORY_DIR > ~/.wright/memory。
+    环境变量给的相对路径按【当前工作目录】解析后再 resolve。
+    """
+    override = os.getenv("WRIGHT_MEMORY_DIR")
+    base = Path(override) if override else wright_home() / "memory"
+    return base.expanduser().resolve()

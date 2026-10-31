@@ -39,7 +39,7 @@ from .components import AgentComponents, PreparedTools
 from .context import ContextBuilder, ContextCompactor
 
 if TYPE_CHECKING:
-    from ...infrastructure.persistence.session.repository import FileSessionRepository
+    from ...domain.gateway.session_repository import SessionRepository
     from .runner import Agent
 
 
@@ -172,7 +172,7 @@ def create_agent(
     memory: MemoryManager | None = None,
     verifier: Verifier | None = None,
     max_verification_retries: int = 3,
-    checkpoint_store: FileSessionRepository | None = None,
+    checkpoint_store: SessionRepository | None = None,
     usage_observer: Callable[[UsageRecord], None] | None = None,
     allow_background_tasks: bool = True,
     on_shell_task_done: Callable[[str], None] | None = None,

@@ -123,7 +123,7 @@ Memory 侧另外记下三类事件，不把它们再加进总用量：
 
 ## 评测
 
-固定标注集在 `src/wright/application/memory/eval_baseline.py`。离线命令：
+固定标注集在 `src/wright/application/composition/memory_eval_baseline.py`。离线命令：
 
 ```
 uv run python scripts/eval_episode_memory.py
