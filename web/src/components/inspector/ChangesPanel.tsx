@@ -1,4 +1,5 @@
 import { ArrowsOutSimple, ArrowClockwise, ChatCircle, X } from "@phosphor-icons/react";
+import { confirmDialog } from "../ui/dialogs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api";
 import { DiffViewer, type DiffFeedbackLine } from "../../DiffViewer";
@@ -149,12 +150,14 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
     if (blocked(group) || (hunk !== undefined && (stalePatch || !patch)) || !revision) return;
     const paths = pathsFor(group, targets);
     if (action !== "commit" && !paths.length) return;
+    // Taken before any confirmation: the user may switch sessions while a dialog is open.
+    const owner = generation.current;
     if (action === "discard" || action === "undo") {
       const key = action === "undo" ? "web.changes.undo_confirm" : hunk !== undefined ? "web.changes.discard_hunk_confirm" : "web.changes.discard_confirm.unstaged";
-      if (!window.confirm(tr(key, { paths: paths.join(", ") }))) return;
+      if (!await confirmDialog({ title: tr(key, { paths: paths.join(", ") }), danger: true })) return;
     }
-    if (action === "commit" && (!commitMessage.trim() || !window.confirm(tr("web.changes.commit_confirm", { message: commitMessage.trim() })))) return;
-    const owner = generation.current;
+    if (action === "commit" && (!commitMessage.trim() || !await confirmDialog({ title: tr("web.changes.commit_confirm", { message: commitMessage.trim() }) }))) return;
+    if (generation.current !== owner) return;
     setActionPending(true); setNote("");
     try {
       const result = action === "undo"

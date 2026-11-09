@@ -1,13 +1,15 @@
-import { Image, Paperclip, PaperPlaneRight, Square, X } from "@phosphor-icons/react";
+import { CaretDown, Desktop, FolderSimple, GitFork, Image, Paperclip, PaperPlaneRight, ShieldCheck, Square, Warning, X } from "@phosphor-icons/react";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { api } from "../../api";
 import { useT } from "../../i18n";
 import { commandAfter } from "../../protocol";
 import type { Attachment, ExecutionMode, FileReference, ViewState } from "../../types";
 import { emptyDraft, type Draft } from "./draft";
+import { MenuButton } from "../ui/Menu";
+import { shortPath } from "../session/session";
 
 export function EnvironmentChoice({
-  sessionId, draft, updateDraft, git = false, workLabel = "", compact = false,
+  sessionId, draft, updateDraft, git = false, workLabel = "",
 }: {
   sessionId: string;
   draft: Draft;
@@ -18,29 +20,22 @@ export function EnvironmentChoice({
 }) {
   const tr = useT();
   const local = (draft.environment ?? "local") === "local";
-  return <div className={compact ? "row-actions environment-compact" : "environment-choice"}>
-    {workLabel && <p className="hint">{workLabel}</p>}
-    {compact ? <>
-      <button type="button" className="button" aria-pressed={local} onClick={() => updateDraft(sessionId, (current) => ({ ...current, environment: "local" }))}>{tr("web.work_here")}</button>
-      <button type="button" className="button" aria-pressed={!local} disabled={!git} onClick={() => updateDraft(sessionId, (current) => ({ ...current, environment: "worktree" }))}>{tr("web.isolated_option")}</button>
-      <span className="hint">{local ? tr("web.current_help") : tr("web.isolated_help")}</span>
-    </> : <div className="environment-grid">
-      <button type="button" className={local ? "selected" : ""} aria-pressed={local} onClick={() => updateDraft(sessionId, (current) => ({ ...current, environment: "local" }))}>
-        <strong>{tr("web.work_here")}</strong>
-        <span className="hint">{tr("web.current_help")}</span>
-      </button>
-      <button type="button" className={!local ? "selected" : ""} aria-pressed={!local} disabled={!git} onClick={() => updateDraft(sessionId, (current) => ({ ...current, environment: "worktree" }))}>
-        <strong>{tr("web.isolated_option")}</strong>
-        <span className="hint">{tr("web.isolated_help")}</span>
-      </button>
-    </div>}
-    <label className="hint">{tr("web.execution_mode")}
-      <select className="select" aria-label={tr("web.execution_mode")} value={draft.execution_mode ?? "sandbox"} onChange={(event) => updateDraft(sessionId, (current) => ({ ...current, execution_mode: event.target.value as ExecutionMode }))}>
-        <option value="sandbox">{tr("web.execution.sandbox")}</option>
-        <option value="host">{tr("web.execution.host")}</option>
-      </select>
-    </label>
-    <p className="hint">{tr(draft.execution_mode === "host" ? "web.execution.host_help" : "web.execution.sandbox_help")}</p>
+  const host = draft.execution_mode === "host";
+  const setEnvironment = (environment: "local" | "worktree") => updateDraft(sessionId, (current) => ({ ...current, environment }));
+  const setExecution = (execution_mode: ExecutionMode) => updateDraft(sessionId, (current) => ({ ...current, execution_mode }));
+  return <div className="environment-choice">
+    <div className="environment-pills">
+      {workLabel && <span className="env-pill static" title={workLabel}><FolderSimple size={13} /><span className="env-pill-text">{shortPath(workLabel)}</span></span>}
+      <MenuButton className="env-pill" label={tr("web.environment_label")} title={tr("web.environment_label")} align="start" wide items={[
+        { label: tr("web.work_here"), hint: tr("web.current_help"), checked: local, onSelect: () => setEnvironment("local") },
+        { label: tr("web.isolated_option"), hint: git ? tr("web.isolated_help") : tr("web.isolated_requires_git"), checked: !local, disabled: !git, onSelect: () => setEnvironment("worktree") },
+      ]}>{local ? <Desktop size={13} /> : <GitFork size={13} />}<span>{local ? tr("web.work_here") : tr("web.isolated_option")}</span><CaretDown size={10} weight="bold" /></MenuButton>
+      <MenuButton className={`env-pill${host ? " warn" : ""}`} label={tr("web.execution_label")} title={tr("web.execution_label")} align="start" wide items={[
+        { label: tr("web.execution.sandbox"), hint: tr("web.execution.sandbox_help"), checked: !host, onSelect: () => setExecution("sandbox") },
+        { label: tr("web.execution.host"), hint: tr("web.execution.host_help"), checked: host, onSelect: () => setExecution("host") },
+      ]}>{host ? <Warning size={13} /> : <ShieldCheck size={13} />}<span>{tr(host ? "web.execution.host" : "web.execution.sandbox")}</span><CaretDown size={10} weight="bold" /></MenuButton>
+    </div>
+    {host && <p className="hint environment-warning">{tr("web.execution.host_help")}</p>}
   </div>;
 }
 
@@ -213,7 +208,7 @@ export function Composer({
   return <form className="composer" onSubmit={(event) => { send(event).catch((reason) => updateDraft(sessionId, (item) => ({ ...item, phase: "unknown", reason: String(reason) }))); }}>
     <input ref={imageInput} className="file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple tabIndex={-1} aria-hidden="true" onChange={(event) => { if (event.target.files) upload(event.target.files, true); event.target.value = ""; }} />
     <input ref={fileInput} className="file-input" type="file" multiple tabIndex={-1} aria-hidden="true" onChange={(event) => { if (event.target.files) upload(event.target.files, false); event.target.value = ""; }} />
-    {chooseEnvironment && <EnvironmentChoice sessionId={sessionId} draft={draft} updateDraft={updateDraft} git={git} workLabel={workLabel} compact />}
+    {chooseEnvironment && <EnvironmentChoice sessionId={sessionId} draft={draft} updateDraft={updateDraft} git={git} workLabel={workLabel} />}
     {(draft.attachments.length > 0 || (draft.documents ?? []).length > 0 || (draft.references ?? []).length > 0 || (draft.localFiles ?? []).length > 0 || draft.command) && <div className="chips">
       {draft.attachments.map((attachment) => <span className="chip" key={attachment.id}>{attachment.filename}<button type="button" aria-label={tr("web.remove", { name: attachment.filename })} onClick={() => {
         const owner = sessionId;

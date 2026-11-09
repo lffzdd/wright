@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import App from "./App";
 
@@ -88,9 +88,9 @@ describe("web startup", () => {
 
     release();
     await waitFor(() => expect(screen.getByText("demo")).toBeTruthy());
-    expect(screen.getByText("New conversation")).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "New session" })).toBeTruthy();
     expect(document.querySelector(".welcome-pane .environment-choice")).toBeTruthy();
-    expect(document.querySelector(".composer .environment-choice, .composer .environment-compact")).toBeNull();
+    expect(document.querySelector(".composer .environment-choice")).toBeNull();
     expect(screen.queryByText(/Offline/)).toBeNull();
     expect(screen.queryByRole("tab", { name: "Task" })).toBeNull();
     const exchangeAt = calls.findIndex((call) => call.includes("/auth/exchange"));
@@ -152,9 +152,11 @@ describe("web startup", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Fix Redis leak" })).toBeTruthy());
     expect(screen.getByLabelText("Message Wright").hasAttribute("disabled")).toBe(false);
     expect(screen.queryByText(/Offline/)).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
+    fireEvent.click(within(document.querySelector(".conversation-head") as HTMLElement).getByRole("button", { name: "Session actions" }));
     expect(screen.getByRole("menuitem", { name: "Rename" })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "Archive" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Stop and close" })).toBeTruthy();
+    expect(screen.queryByText("#abc123")).toBeNull();
   });
 
   it.each(["fixture", "empty"])("uses the production workspace even with the old visual=%s query", async (visual) => {

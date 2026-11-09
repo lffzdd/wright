@@ -140,6 +140,7 @@ describe("Inspector request and content state", () => {
     fireEvent.click(screen.getByRole("tab", { name: /Changes/ }));
     fireEvent.change(screen.getByLabelText("Change scope"), { target: { value: "session" } });
     fireEvent.click(await screen.findByRole("button", { name: /Undo \d+ available changes/ }));
+    await waitFor(() => expect(api.reviewAction).toHaveBeenCalled());
     rerender(inspector(view("b")));
     await act(async () => { pending.resolve({ applied: false, results: [], error: "old session failed" }); });
     expect(screen.queryByText("old session failed")).toBeNull();

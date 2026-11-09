@@ -319,3 +319,12 @@ export type ViewState = Snapshot & {
   connection: "connecting" | "connected" | "reconnecting" | "disconnected" | "closed";
   resync?: boolean;
 };
+
+export type FolderListing = {
+  path: string;
+  parent: string | null;
+  home: string;
+  git: boolean;
+  entries: Array<{ name: string; path: string; git: boolean }>;
+  truncated: boolean;
+};

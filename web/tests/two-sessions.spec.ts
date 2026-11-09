@@ -205,7 +205,7 @@ test("isolates sessions and completes a structured permission flow", async ({ pa
 
   await page.goto("/");
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "This checkout" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "Where the session works" })).toContainText("This checkout");
   await expect(page.getByText("One active session max")).toHaveCount(0);
   await page.getByLabel("Message Wright").fill("First isolated task");
   await page.getByRole("button", { name: "Send" }).click();

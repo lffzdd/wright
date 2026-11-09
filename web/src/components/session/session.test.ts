@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { taskCode } from "./session";
+import { shortPath } from "./session";
 
-describe("taskCode", () => {
-  it("uses one format for the header, the selected card and compact rows", () => {
-    expect(taskCode("5a3312aa9f")).toBe("#5a3312");
-    expect(taskCode("task-12")).toBe("#12");
+describe("shortPath", () => {
+  it("keeps short paths and trims long ones to the last segments", () => {
+    expect(shortPath("/Users/me")).toBe("/Users/me");
+    expect(shortPath("/Users/me/Project/wright")).toBe("…/me/Project/wright");
+    expect(shortPath("C:\\Users\\me\\code\\app", 2)).toBe("…/code/app");
   });
 });

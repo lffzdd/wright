@@ -439,3 +439,15 @@ def test_project_owned_by_another_process_is_an_actionable_409(tmp_path, monkeyp
     detail = response.json()["detail"]
     assert str(project) in detail
     assert "Close the other Wright" in detail
+
+
+def test_folders_route_lists_directories_and_requires_auth(tmp_path):
+    client, _auth = _authenticated_client(tmp_path)
+    (tmp_path / "project").mkdir()
+
+    listed = client.get("/api/v1/folders", params={"path": str(tmp_path)})
+    assert listed.status_code == 200
+    assert "project" in [entry["name"] for entry in listed.json()["entries"]]
+
+    assert client.get("/api/v1/folders", params={"path": "relative"}).status_code == 400
+    assert TestClient(client.app).get("/api/v1/folders").status_code == 401

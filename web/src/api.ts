@@ -1,4 +1,4 @@
-import type { ChangeAction, ChangeActionResult, ChangePatch, ChangesSummary, ExecutionMode, GitChangeScope, Grants, ReviewSummary, SandboxStatus, SessionSummary, Snapshot } from "./types";
+import type { ChangeAction, ChangeActionResult, ChangePatch, ChangesSummary, ExecutionMode, FolderListing, GitChangeScope, Grants, ReviewSummary, SandboxStatus, SessionSummary, Snapshot } from "./types";
 
 export class ApiError extends Error {
   constructor(message: string, public status: number, public latest?: Grants) { super(message); }
@@ -71,6 +71,7 @@ export const api = {
   patch: (id: string, path: string, scope: GitChangeScope = "working") => json<ChangePatch>(`/api/v1/sessions/${id}/changes/${path.split("/").map(encodeURIComponent).join("/")}${scope === "working" ? "" : `?scope=${scope}`}`),
   changeAction: (id: string, body: { action: ChangeAction; scope: GitChangeScope; paths: string[]; expected_revision: string; hunk?: number; message?: string; confirm?: boolean }) => json<ChangeActionResult>(`/api/v1/sessions/${id}/changes/actions`, { method: "POST", body: JSON.stringify(body) }),
   workspaces: () => json<{ selected_project_id: string | null; projects: Array<{ project_id: string; name: string; root: string; selected?: boolean; exists?: boolean }> }>("/api/v1/workspaces"),
+  folders: (path?: string) => json<FolderListing>(`/api/v1/folders${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   registerWorkspace: (path: string) => json<Record<string, unknown>>("/api/v1/workspaces", { method: "POST", body: JSON.stringify({ path }) }),
   selectWorkspace: (projectId: string) => json<Record<string, unknown>>("/api/v1/workspaces/select", { method: "POST", body: JSON.stringify({ project_id: projectId }) }),
   unregisterWorkspace: (projectId: string) => json<Record<string, unknown>>(`/api/v1/workspaces/${projectId}`, { method: "DELETE" }),

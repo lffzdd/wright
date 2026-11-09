@@ -81,8 +81,9 @@ describe("draft environment", () => {
       git
       workLabel="/tmp/project"
     />);
-    expect(screen.getByRole("button", { name: "This checkout" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: "Isolated execution" }).hasAttribute("disabled")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Where the session works" }));
+    expect(screen.getByRole("menuitemradio", { name: /This checkout/ }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("menuitemradio", { name: /Isolated execution/ }).hasAttribute("disabled")).toBe(false);
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
@@ -255,7 +256,7 @@ describe("SessionRail", () => {
 
   it("shows no live dot when no open session is working", () => {
     const { container } = render(rail([]));
-    expect(screen.getByText("Open Tasks")).toBeTruthy();
+    expect(screen.getByText("Open sessions")).toBeTruthy();
     expect(container.querySelector(".live-dot")).toBeNull();
   });
 });

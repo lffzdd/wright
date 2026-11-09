@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { confirmDialog, promptDialog } from "../ui/dialogs";
 import { api } from "../../api";
 import { getLocale, useT } from "../../i18n";
 
@@ -152,13 +153,13 @@ export function MemoryDialog({ sessionId, close }: { sessionId: string | null; c
       {semantic.map((item) => <div className="queue-item" key={String(item.id)}><span>{String(item.name)} · rev {String(item.revision ?? "")}</span>
         <button type="button" className="button" onClick={async () => {
           if (!sessionId) return;
-          const next = window.prompt(tr("web.panel.replace_memory", { name: String(item.name) }), String(item.content ?? ""));
+          const next = await promptDialog({ title: tr("web.panel.replace_memory", { name: String(item.name) }), initial: String(item.content ?? ""), multiline: true });
           if (next == null) return;
           try { await api.updateSemantic(sessionId, String(item.id), { name: item.name, content: next, description: item.description ?? "", type: item.type ?? "project", scope: "project", expected_revision: item.revision }); await load(); }
           catch (error) { setNotice(noteOf(error)); }
         }}>{tr("web.panel.edit")}</button>
         <button type="button" className="button" onClick={async () => {
-          if (!sessionId || !window.confirm(tr("web.panel.delete_memory_confirm", { name: String(item.name) }))) return;
+          if (!sessionId || !await confirmDialog({ title: tr("web.panel.delete_memory_confirm", { name: String(item.name) }), danger: true })) return;
           try { await api.deleteSemantic(sessionId, String(item.id)); await load(); }
           catch (error) { setNotice(noteOf(error)); }
         }}>{tr("web.panel.delete")}</button>
@@ -177,7 +178,7 @@ export function MemoryDialog({ sessionId, close }: { sessionId: string | null; c
       <h3>{tr("web.panel.episodes")}</h3>
       {episodes.map((item) => <div className="queue-item" key={String(item.id)}><span>{String(item.title || item.id)}</span>
         <button type="button" className="button" onClick={async () => {
-          if (!sessionId || !window.confirm(tr("web.panel.delete_episode_confirm", { name: String(item.title || item.id) }))) return;
+          if (!sessionId || !await confirmDialog({ title: tr("web.panel.delete_episode_confirm", { name: String(item.title || item.id) }), danger: true })) return;
           try { await api.deleteEpisode(sessionId, String(item.id)); await load(); }
           catch (error) { setNotice(noteOf(error)); }
         }}>{tr("web.panel.delete")}</button>
@@ -213,7 +214,7 @@ export function RulesDialog({ sessionId, close }: { sessionId: string | null; cl
       {rules.map((rule) => <div className="queue-item" key={`${rule.scope}-${rule.id ?? rule.error}`}>
         <span>{String(rule.id ?? rule.error)} · {String(rule.scope ?? "")}{rule.shadowed ? ` · ${tr("web.panel.shadowed")}` : ""}</span>
         {Boolean(rule.id) && <button type="button" className="button" onClick={async () => {
-          if (!sessionId || !window.confirm(tr("web.panel.delete_rule_confirm", { name: String(rule.id), scope: String(rule.scope ?? "project") }))) return;
+          if (!sessionId || !await confirmDialog({ title: tr("web.panel.delete_rule_confirm", { name: String(rule.id), scope: String(rule.scope ?? "project") }), danger: true })) return;
           try { await api.deleteRule(sessionId, String(rule.id), String(rule.scope ?? "project")); await load(); }
           catch (error) { setNotice(noteOf(error)); }
         }}>{tr("web.panel.delete")}</button>}
@@ -228,7 +229,7 @@ export function RulesDialog({ sessionId, close }: { sessionId: string | null; cl
       <Field label={tr("web.panel.scope")}><select aria-label="Rule scope" value={scope} onChange={(event) => setScope(event.target.value)}><option value="project">{tr("web.panel.scope_project")}</option><option value="user">{tr("web.panel.scope_user")}</option></select></Field>
       <div className="dialog-actions"><button type="button" className="button primary" disabled={!sessionId} onClick={async () => {
         if (!sessionId || !skillId.trim() || !body.trim()) { setNotice({ tone: "error", text: tr("web.panel.rule_required") }); return; }
-        if (!window.confirm(tr("web.panel.save_rule_confirm", { name: skillId, scope }))) return;
+        if (!await confirmDialog({ title: tr("web.panel.save_rule_confirm", { name: skillId, scope }) })) return;
         setNotice({ tone: "busy", text: tr("web.saving") });
         try { await api.saveRule(sessionId, skillId.trim(), { scope, description, body, confirm: true }); setSkillId(""); setDescription(""); setBody(""); await load(); }
         catch (error) { setNotice(noteOf(error)); }
@@ -255,7 +256,7 @@ export function SchedulesDialog({ sessionId, projectId, close }: { sessionId: st
   useEffect(() => { load().catch(() => undefined); }, [projectId]);
   const act = async (id: string, action: string) => {
     if (!projectId) return;
-    if (action === "delete" && !window.confirm(tr("web.panel.delete_schedule_confirm", { name: id }))) return;
+    if (action === "delete" && !await confirmDialog({ title: tr("web.panel.delete_schedule_confirm", { name: id }), danger: true })) return;
     setNotice({ tone: "busy", text: tr("web.saving") });
     try { await api.scheduleAction(projectId, id, action, action === "delete" ? { confirm: true } : {}); await load(); }
     catch (error) { setNotice(noteOf(error)); }

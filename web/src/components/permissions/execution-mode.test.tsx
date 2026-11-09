@@ -14,11 +14,15 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); setLocale("en"); });
 it("defaults to sandbox and chooses host independently of the worktree", () => {
   function Create() { const [draft, setDraft] = useState(emptyDraft()); return <EnvironmentChoice sessionId="new" draft={draft} git updateDraft={(_, patch) => setDraft(patch)} />; }
   render(<Create />);
-  expect(screen.getByRole("combobox")).toHaveProperty("value", "sandbox");
-  fireEvent.change(screen.getByRole("combobox"), { target: { value: "host" } });
+  const execution = screen.getByRole("button", { name: "How shell commands run" });
+  expect(execution.textContent).toContain("Sandbox (default)");
+  fireEvent.click(execution);
+  fireEvent.click(screen.getByRole("menuitemradio", { name: /Host \(no sandbox\)/ }));
   expect(screen.getByText(/without OS file or network isolation/)).toBeTruthy();
-  fireEvent.click(screen.getAllByRole("button")[1]);
-  expect(screen.getByRole("combobox")).toHaveProperty("value", "host");
+  fireEvent.click(screen.getByRole("button", { name: "Where the session works" }));
+  fireEvent.click(screen.getByRole("menuitemradio", { name: /Isolated execution/ }));
+  expect(screen.getByRole("button", { name: "Where the session works" }).textContent).toContain("Isolated execution");
+  expect(screen.getByRole("button", { name: "How shell commands run" }).textContent).toContain("Host (no sandbox)");
 });
 it("approves host Shell without sandbox setup or network toggle", async () => {
   const read = vi.spyOn(api, "grants").mockResolvedValue(grants);

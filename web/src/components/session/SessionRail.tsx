@@ -1,8 +1,14 @@
-import { CaretDown, CaretRight, Check, Circle, DotsThreeVertical, Folder, Plus, Warning, X } from "@phosphor-icons/react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Archive, CaretDown, CaretRight, Check, Circle, Copy, DotsThree, Folder, PencilSimple, Plus, Trash, Warning, X } from "@phosphor-icons/react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useT } from "../../i18n";
 import type { SessionSummary } from "../../types";
-import { formatAgo, isToday, sessionTitle, taskCode } from "./session";
+import { InlineRename } from "../ui/InlineRename";
+import { MenuButton, useContextMenu, type MenuEntry } from "../ui/Menu";
+import { formatAgo, isToday, sessionTitle } from "./session";
+
+const TERMINAL = ["completed", "failed", "cancelled", "interrupted"];
+// Only these states are worth a word in the sidebar; everything else shows how long ago.
+const NOTABLE = ["running", "queued", "waiting_for_input", "cancelling", "failed", "interrupted"];
 
 function RecentMark({ outcome }: { outcome?: string }) {
   if (outcome === "failed" || outcome === "interrupted") return <X className="recent-mark fail" size={12} weight="bold" />;
@@ -12,26 +18,91 @@ function RecentMark({ outcome }: { outcome?: string }) {
 
 type WorkspaceRow = { project_id: string; name: string; selected?: boolean };
 
-function SessionMenu({ session, onRename, onArchive }: {
-  session: SessionSummary;
-  onRename?: (session: SessionSummary) => void;
+type RowActions = {
+  onRenameStart?: (session: SessionSummary) => void;
   onArchive?: (session: SessionSummary) => void;
+};
+
+function sessionMenu(session: SessionSummary, actions: RowActions, tr: ReturnType<typeof useT>): MenuEntry[] {
+  const items: MenuEntry[] = [];
+  if (actions.onRenameStart) items.push({ label: tr("web.rename"), icon: <PencilSimple size={13} />, onSelect: () => actions.onRenameStart?.(session) });
+  items.push({ label: tr("web.copy_session_id"), icon: <Copy size={13} />, onSelect: () => { navigator.clipboard?.writeText(session.session_id).catch(() => undefined); } });
+  if (actions.onArchive) items.push("separator", { label: tr("web.archive"), icon: <Archive size={13} />, onSelect: () => actions.onArchive?.(session) });
+  return items;
+}
+
+function SessionRow({ session, selected, active, progress, renaming, actions, onSelect, onRenameSubmit, onRenameCancel }: {
+  session: SessionSummary;
+  selected: boolean;
+  active: boolean;
+  progress?: string;
+  renaming: boolean;
+  actions: RowActions;
+  onSelect: () => void;
+  onRenameSubmit?: (title: string) => void;
+  onRenameCancel?: () => void;
 }) {
   const tr = useT();
-  const [open, setOpen] = useState(false);
-  if (!onRename && !onArchive) return null;
-  return <div className="session-actions">
-    <button type="button" className="icon-button" aria-label={tr("web.session_actions")} onClick={(event) => { event.stopPropagation(); setOpen((value) => !value); }}>
-      <DotsThreeVertical size={12} weight="bold" />
-    </button>
-    {open && <div className="session-menu" role="menu">
-      {onRename && <button type="button" role="menuitem" onClick={(event) => { event.stopPropagation(); setOpen(false); onRename(session); }}>{tr("web.rename")}</button>}
-      {onArchive && <button type="button" role="menuitem" onClick={(event) => { event.stopPropagation(); setOpen(false); onArchive(session); }}>{tr("web.archive")}</button>}
-    </div>}
+  const title = sessionTitle(session, tr);
+  const menuItems = () => sessionMenu(session, actions, tr);
+  const context = useContextMenu(menuItems, tr("web.session_actions"));
+  const raw = session.execution || session.status || "";
+  const execution = raw === "idle" && TERMINAL.includes(session.agent_status ?? "") ? session.agent_status ?? "" : raw;
+  const meta = session.pending_interactions
+    ? <span className="waiting-copy"><Warning size={11} weight="bold" />{tr("web.awaiting_permission")}</span>
+    : selected && progress ? progress
+      : active && NOTABLE.includes(execution) ? tr(`web.status.${execution}`)
+        : formatAgo(session.saved_at);
+  return <div className={`session-entry${selected ? " selected" : ""}`} onContextMenu={renaming ? undefined : context.onContextMenu}>
+    {renaming
+      ? <div className="session-row renaming">
+        {active ? <span className={`status-dot ${execution}`} /> : <RecentMark outcome={session.agent_status || session.status} />}
+        <InlineRename value={title} label={tr("web.rename_prompt")} onSubmit={(next) => onRenameSubmit?.(next)} onCancel={() => onRenameCancel?.()} />
+      </div>
+      : <button type="button" className={`session-row${selected ? " selected" : ""}`} aria-current={selected ? "page" : undefined} onClick={onSelect} onDoubleClick={() => actions.onRenameStart?.(session)} title={title}>
+        {active ? <span className={`status-dot ${execution}`} /> : <RecentMark outcome={session.agent_status || session.status} />}
+        <span className="session-title">{title}</span>
+        {meta && <span className={`session-meta${session.pending_interactions ? " attention" : ""}`}>{meta}</span>}
+      </button>}
+    {!renaming && <span className="session-actions">
+      <MenuButton label={tr("web.session_actions")} items={menuItems}><DotsThree size={14} weight="bold" /></MenuButton>
+    </span>}
+    {context.menu}
   </div>;
 }
 
-export function SessionRail({ sessions, selected, onSelect, onCreate, open, children, footer = "", connectionLatency = null, selectedProgress, workspaces = [], onSelectWorkspace, onRegisterWorkspace, onUnregisterWorkspace, onRename, onArchive }: {
+function WorkspaceHeader({ workspace, collapsed, onToggle, onSelect, onUnregister }: {
+  workspace: WorkspaceRow;
+  collapsed: boolean;
+  onToggle: () => void;
+  onSelect?: () => void;
+  onUnregister?: () => void;
+}) {
+  const tr = useT();
+  const items = (): MenuEntry[] => onUnregister ? [{ label: tr("web.unregister_workspace"), icon: <Trash size={13} />, danger: true, onSelect: onUnregister }] : [];
+  const context = useContextMenu(items, tr("web.workspace_actions", { name: workspace.name }));
+  return <div className={`workspace-project-row ${workspace.selected ? "selected" : ""}`} onContextMenu={onUnregister ? context.onContextMenu : undefined}>
+    <button
+      type="button"
+      className="workspace-caret"
+      aria-label={tr("web.toggle_project_sessions", { name: workspace.name })}
+      aria-expanded={!collapsed}
+      aria-controls={`project-sessions-${workspace.project_id}`}
+      onClick={onToggle}
+    >
+      {collapsed ? <CaretRight size={12} weight="bold" /> : <CaretDown size={12} weight="bold" />}
+    </button>
+    <button type="button" className="nav-row workspace-project-name" aria-current={workspace.selected ? "true" : undefined} onClick={onSelect}>
+      <Folder size={14} />{workspace.name}
+    </button>
+    {onUnregister && <span className="session-actions">
+      <MenuButton label={tr("web.workspace_actions", { name: workspace.name })} items={items}><DotsThree size={14} weight="bold" /></MenuButton>
+    </span>}
+    {context.menu}
+  </div>;
+}
+
+export function SessionRail({ sessions, selected, onSelect, onCreate, open, children, footer = "", connectionLatency = null, selectedProgress, workspaces = [], onSelectWorkspace, onRegisterWorkspace, onUnregisterWorkspace, renaming = null, onRenameStart, onRenameSubmit, onRenameCancel, onArchive }: {
   sessions: SessionSummary[];
   selected: string | null;
   onSelect: (session: SessionSummary) => void;
@@ -44,16 +115,17 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
   workspaces?: WorkspaceRow[];
   onSelectWorkspace?: (projectId: string) => void;
   onRegisterWorkspace?: () => void;
-  onUnregisterWorkspace?: () => void;
-  onRename?: (session: SessionSummary) => void;
+  onUnregisterWorkspace?: (workspace: WorkspaceRow) => void;
+  renaming?: string | null;
+  onRenameStart?: (session: SessionSummary) => void;
+  onRenameSubmit?: (session: SessionSummary, title: string) => void;
+  onRenameCancel?: () => void;
   onArchive?: (session: SessionSummary) => void;
 }) {
   const tr = useT();
   const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({});
   const [collapsedProjects, setCollapsedProjects] = useState<Record<string, boolean>>({});
-  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
-  const workspaceMenuRef = useRef<HTMLDivElement>(null);
-  const active = sessions.filter((item) => item.active);
+  const actions: RowActions = { onRenameStart, onArchive };
   const selectedProject = workspaces.find((item) => item.selected)?.project_id;
   const ownerOf = (session: SessionSummary) => session.project_id ?? selectedProject;
   // A session under a workspace row is not repeated in the top-level list.
@@ -64,72 +136,42 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
     const owner = sessions.find((session) => session.session_id === selected)?.project_id;
     if (owner) setCollapsedProjects((current) => current[owner] ? { ...current, [owner]: false } : current);
   }, [selected, sessions]);
-  useEffect(() => {
-    if (!workspaceMenuOpen) return;
-    const closeOnOutsidePress = (event: PointerEvent) => {
-      if (!workspaceMenuRef.current?.contains(event.target as Node)) setWorkspaceMenuOpen(false);
-    };
-    window.addEventListener("pointerdown", closeOnOutsidePress);
-    return () => window.removeEventListener("pointerdown", closeOnOutsidePress);
-  }, [workspaceMenuOpen]);
-  const statusLabel = (session: SessionSummary) => {
-    const execution = session.execution || session.status;
-    if (session.pending_interactions) return tr("web.awaiting_permission");
-    if (execution === "idle" && ["completed", "failed", "cancelled", "interrupted"].includes(session.agent_status ?? "")) return tr(`web.status.${session.agent_status}`);
-    if (session.active && execution === "idle") return tr("web.status.paused");
-    return tr(`web.status.${execution}`);
-  };
-  const renderActive = (activeItems = active, labeled = true) => <>
+  const row = (session: SessionSummary, active: boolean) => <SessionRow
+    key={session.session_id}
+    session={session}
+    active={active}
+    selected={selected === session.session_id}
+    progress={selectedProgress}
+    renaming={renaming === session.session_id}
+    actions={actions}
+    onSelect={() => onSelect(session)}
+    onRenameSubmit={(title) => onRenameSubmit?.(session, title)}
+    onRenameCancel={onRenameCancel}
+  />;
+  const renderActive = (activeItems: SessionSummary[], labeled = true) => <>
     {labeled && <div className="section-label"><span>{tr("web.active_tasks")}</span>{activeItems.some((session) => session.pending_interactions || ["running", "queued", "waiting_for_input", "cancelling"].includes(session.execution || session.status || "")) && <span className="live-dot" />}</div>}
-    {activeItems.map((session) => {
-      const title = sessionTitle(session, tr);
-      const current = selected === session.session_id;
-      const execution = (session.execution || session.status) === "idle" && ["completed", "failed", "cancelled", "interrupted"].includes(session.agent_status ?? "")
-        ? session.agent_status : session.execution || session.status;
-      const when = formatAgo(session.saved_at) || (session.environment === "worktree" ? tr("web.isolated_option") : "");
-      return <div className="session-entry" key={session.session_id}>
-        <button className={current ? "task-card" : "task-row"} onClick={() => onSelect(session)}>
-          {current ? <>
-            <span className="task-card-top"><span><span className={`status-dot ${execution}`} /><span className="task-id">{taskCode(session.session_id)}</span></span>{selectedProgress ? <span className="task-step">{selectedProgress}</span> : null}</span>
-            <span className="task-title">{title}</span>
-            <span className="task-meta"><span className={session.pending_interactions ? "waiting-copy" : ""}>{session.pending_interactions ? <><Warning size={11} weight="bold" />{tr("web.awaiting_permission")}</> : statusLabel(session)}</span><span>{when}</span></span>
-          </> : <>
-            <span className={`status-dot ${execution}`} /><span className="task-id">{taskCode(session.session_id)}</span><span className="task-title">{title}</span><span className="task-meta">{statusLabel(session)}</span>
-          </>}
-        </button>
-        {!current && <SessionMenu session={session} onRename={onRename} onArchive={onArchive} />}
-      </div>;
-    })}
-    {!activeItems.length && <p className="empty-small">{tr("web.no_active")}</p>}
+    {activeItems.map((session) => row(session, true))}
+    {labeled && !activeItems.length && <p className="empty-small">{tr("web.no_active")}</p>}
   </>;
-  const renderHistory = (historyItems = history, owner = "all", labeled = true) => {
+  const renderHistory = (historyItems: SessionSummary[], owner = "all", labeled = true) => {
     if (!historyItems.length) return null;
     const showAllHistory = expandedHistory[owner] ?? false;
     const visibleHistory = showAllHistory ? historyItems : historyItems.slice(0, 4);
     return <>
-    {labeled && <div className="section-label"><span>{tr("web.recent_tasks")}</span>{historyItems.some((session) => isToday(session.saved_at)) && <span>{tr("web.today")}</span>}</div>}
-    {visibleHistory.map((session) => <div className="session-entry" key={session.session_id}>
-      <button className={`recent-row ${selected === session.session_id ? "selected" : ""}`} aria-current={selected === session.session_id ? "page" : undefined} onClick={() => onSelect(session)}><RecentMark outcome={session.agent_status || session.status} />{sessionTitle(session, tr)}</button>
-      {selected !== session.session_id && <SessionMenu session={session} onRename={onRename} onArchive={onArchive} />}
-    </div>)}
-    {!showAllHistory && historyItems.length > visibleHistory.length && <button type="button" className="recent-more" onClick={() => setExpandedHistory((current) => ({ ...current, [owner]: true }))}>{tr("web.show_all_tasks", { count: historyItems.length - visibleHistory.length })}</button>}
-    {showAllHistory && historyItems.length > 4 && <button type="button" className="recent-more" onClick={() => setExpandedHistory((current) => ({ ...current, [owner]: false }))}>{tr("web.show_recent_tasks")}</button>}
-  </>;
+      {labeled && <div className="section-label"><span>{tr("web.recent_tasks")}</span>{historyItems.some((session) => isToday(session.saved_at)) && <span>{tr("web.today")}</span>}</div>}
+      {visibleHistory.map((session) => row(session, false))}
+      {!showAllHistory && historyItems.length > visibleHistory.length && <button type="button" className="recent-more" onClick={() => setExpandedHistory((current) => ({ ...current, [owner]: true }))}>{tr("web.show_all_tasks", { count: historyItems.length - visibleHistory.length })}</button>}
+      {showAllHistory && historyItems.length > 4 && <button type="button" className="recent-more" onClick={() => setExpandedHistory((current) => ({ ...current, [owner]: false }))}>{tr("web.show_recent_tasks")}</button>}
+    </>;
   };
   return <aside className={`sidebar ${open ? "responsive-open" : ""}`}>
     <div className="sidebar-scroll">
       <button className="primary-action" onClick={onCreate} aria-label={tr("web.new_session")}><span className="primary-action-label"><Plus size={14} weight="bold" /><span>{tr("web.new_task")}</span></span><kbd>{tr("web.alt_shortcut_key", { key: "N" })}</kbd></button>
-      {(!workspaces.length || unlisted.length > 0) && <div>{renderActive(unlisted)}</div>}
-      <div>{renderHistory()}</div>
-      {workspaces.length > 0 && <div>
+      {(!workspaces.length || unlisted.length > 0) && <div className="session-group">{renderActive(unlisted)}</div>}
+      {history.length > 0 && <div className="session-group">{renderHistory(history)}</div>}
+      <div>
         <div className="section-label workspace-heading"><span>{tr("web.workspaces")}</span>
-          <div className="workspace-actions" ref={workspaceMenuRef}>
-            <button type="button" className="icon-button workspace-actions-trigger" aria-label={tr("web.workspaces")} aria-expanded={workspaceMenuOpen} onClick={() => setWorkspaceMenuOpen((value) => !value)}><DotsThreeVertical size={13} weight="bold" /></button>
-            {workspaceMenuOpen && <div className="session-menu workspace-actions-menu" role="menu">
-              {onRegisterWorkspace && <button type="button" role="menuitem" onClick={() => { setWorkspaceMenuOpen(false); onRegisterWorkspace(); }}>{tr("web.register_workspace")}</button>}
-              {onUnregisterWorkspace && <button type="button" role="menuitem" onClick={() => { setWorkspaceMenuOpen(false); onUnregisterWorkspace(); }}>{tr("web.unregister_selected")}</button>}
-            </div>}
-          </div>
+          {onRegisterWorkspace && <button type="button" className="icon-button section-add" aria-label={tr("web.register_workspace")} title={tr("web.register_workspace")} onClick={onRegisterWorkspace}><Plus size={12} weight="bold" /></button>}
         </div>
         {workspaces.map((workspace) => {
           const owned = sessions.filter((session) => ownerOf(session) === workspace.project_id);
@@ -137,29 +179,21 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
           const recentItems = owned.filter((session) => !session.active);
           const collapsed = Boolean(collapsedProjects[workspace.project_id]);
           return <section className="workspace-block" key={workspace.project_id} aria-label={workspace.name}>
-            <div className={`workspace-project-row ${workspace.selected ? "selected" : ""}`}>
-              <button
-                type="button"
-                className="workspace-caret"
-                aria-label={tr("web.toggle_project_sessions", { name: workspace.name })}
-                aria-expanded={!collapsed}
-                aria-controls={`project-sessions-${workspace.project_id}`}
-                onClick={() => setCollapsedProjects((current) => ({ ...current, [workspace.project_id]: !current[workspace.project_id] }))}
-              >
-                {collapsed ? <CaretRight size={12} weight="bold" /> : <CaretDown size={12} weight="bold" />}
-              </button>
-              <button type="button" className="nav-row workspace-project-name" aria-current={workspace.selected ? "true" : undefined} onClick={() => onSelectWorkspace?.(workspace.project_id)}>
-                <Folder size={14} />{workspace.name}
-              </button>
-            </div>
-            {<div className="workspace-sessions" id={`project-sessions-${workspace.project_id}`} hidden={collapsed}>
-              {activeItems.length > 0 && <div>{renderActive(activeItems, false)}</div>}
-              {recentItems.length > 0 && <div>{renderHistory(recentItems, workspace.project_id, false)}</div>}
+            <WorkspaceHeader
+              workspace={workspace}
+              collapsed={collapsed}
+              onToggle={() => setCollapsedProjects((current) => ({ ...current, [workspace.project_id]: !current[workspace.project_id] }))}
+              onSelect={() => onSelectWorkspace?.(workspace.project_id)}
+              onUnregister={onUnregisterWorkspace ? () => onUnregisterWorkspace(workspace) : undefined}
+            />
+            <div className="workspace-sessions" id={`project-sessions-${workspace.project_id}`} hidden={collapsed}>
+              {activeItems.length > 0 && renderActive(activeItems, false)}
+              {recentItems.length > 0 && renderHistory(recentItems, workspace.project_id, false)}
               {!owned.length && <p className="empty-small">{tr("web.no_project_sessions")}</p>}
-            </div>}
+            </div>
           </section>;
         })}
-      </div>}
+      </div>
       {children}
     </div>
     {footer && <div className="sidebar-foot"><span className="profile-avatar">W</span><span className="profile-copy"><strong>Wright</strong></span><span className={`connection-latency${connectionLatency == null ? " offline" : ""}`} title={connectionLatency == null ? tr("web.connection.disconnected") : tr("web.connection.connected")} aria-label={connectionLatency == null ? tr("web.connection.disconnected") : `${connectionLatency} ms`}><i />{connectionLatency != null && <span>{connectionLatency}ms</span>}</span></div>}

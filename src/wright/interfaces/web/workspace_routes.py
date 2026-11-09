@@ -19,6 +19,7 @@ from ...application.session_runtime.errors import SessionServiceError
 from ...application.workspace.catalog import WorkspaceCatalogError
 from ...application.workspace.documents import DocumentError
 from ...application.workspace.files import PathRejected, list_directory, read_text
+from ...application.workspace.folders import FolderBrowseError, browse_folders
 from ...application.workspace.git_status import summarize_git
 from ...application.workspace.journal import ChangeJournalError, SessionChangeJournal
 from ...application.workspace.memory_view import (
@@ -178,6 +179,14 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
     def workspaces(request: Request) -> dict[str, Any]:
         require(request)
         return manager.workspaces()
+
+    @router.get("/folders")
+    def folders(request: Request, path: str | None = None) -> dict[str, Any]:
+        require(request)
+        try:
+            return browse_folders(path)
+        except FolderBrowseError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.post("/workspaces")
     def register_workspace(body: WorkspaceCreate, request: Request) -> dict[str, Any]:

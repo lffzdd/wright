@@ -1,11 +1,5 @@
 import { t } from "../../i18n";
 
-/** One short ID everywhere (header, selected card, compact rows). */
-export function taskCode(id: string): string {
-  const match = /^task[-_]?(\d+)/i.exec(id);
-  return `#${match ? match[1] : id.slice(0, 6)}`;
-}
-
 export function formatAgo(iso?: string): string {
   if (!iso) return "";
   const then = Date.parse(iso);
@@ -32,6 +26,9 @@ export function sessionTitle(session: { session_id: string; user_goal?: string }
   return tr("web.session_label", { id: session.session_id.slice(0, 6) });
 }
 
-export function archiveConfirm(): boolean {
-  return window.confirm(t("web.archive_confirm_generic"));
+/** Keep the last few segments of a long path: `/a/b/c/d/e` -> `…/c/d/e`. */
+export function shortPath(path: string, keep = 3): string {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  if (parts.length <= keep) return path;
+  return `…/${parts.slice(-keep).join("/")}`;
 }
