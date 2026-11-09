@@ -126,13 +126,9 @@ export function UserMessage({ text, userLabel, timestamp, tocId }: { text: strin
 }
 
 export function AssistantMessage({ text }: { text: string }) {
-  const tr = useT();
   return <div className="msg-row assistant-msg">
     <div className="avatar assistant" aria-hidden="true">W</div>
     <div className="msg-card">
-      <div className="msg-card-head">
-        <span><strong>Wright</strong> <span className="muted">{tr("web.assistant_reply")}</span></span>
-      </div>
       <div className="msg-body"><MarkdownContent content={text} /></div>
     </div>
   </div>;
@@ -252,8 +248,8 @@ export function ToolCard({
   const testFailed = family === "shell" && code !== null && code !== 0 && looksLikeTestFailure(body);
   const durationLabel = typeof duration === "number" ? formatDuration(duration) : "";
   return <div className="tl-indent">
-    <section className="tool-card">
-      <button type="button" className="tool-card-head" onClick={() => setToggled(!open)}>
+    <section className={`tool-card ${open ? "open" : ""}`}>
+      <button type="button" className="tool-card-head" aria-expanded={open} onClick={() => setToggled(!open)}>
         <span className="tool-title">
           <span className={`tool-badge ${family}`}>{badge}</span>
           {family === "shell" ? <span className="mono command">{command ? `$ ${command}` : name}</span> : <>

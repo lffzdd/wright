@@ -96,6 +96,21 @@ describe("real timeline projection", () => {
     expect(screen.getAllByText("Inspecting the input").length).toBeGreaterThan(0);
   });
 
+  it("renders replies without a header and marks tool cards open only when expanded", () => {
+    let state = emit(fresh(), "turn.started", { prompt: "List it" });
+    state = emit(state, "tool.planned", { call_id: "c", name: "list_directory", arguments: { path: "src" } });
+    state = emit(state, "tool.completed", { call_id: "c", name: "list_directory", result: { ok: true, data: { entries: ["a", "b"] } } });
+    state = emit(state, "content.final", { content: "Two files" });
+    state = emit(state, "turn.completed", {});
+    const { container } = render(transcript(state));
+    const reply = screen.getByText("Two files").closest(".msg-card")!;
+    expect(reply.querySelector(".msg-card-head")).toBeNull();
+    const card = container.querySelector(".tool-card:not(.reasoning-card)")!;
+    expect(card.classList.contains("open")).toBe(false);
+    fireEvent.click(card.querySelector("button")!);
+    expect(card.classList.contains("open")).toBe(true);
+  });
+
   it.each(["turn.completed", "turn.failed", "turn.cancelled"])("keeps ordered reasoning after %s and the next turn", (outcome) => {
     let state = emit(fresh(), "turn.started", { prompt: "Check it" });
     state = emit(state, "reasoning.delta", { piece: "Before " });
