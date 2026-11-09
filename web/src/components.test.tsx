@@ -191,8 +191,34 @@ describe("ToolCard states", () => {
     ] };
     render(<ToolCard name="list_directory" phase="succeeded" data={data} output={JSON.stringify(data, null, 2)} />);
     fireEvent.click(screen.getByRole("button"));
-    const body = document.querySelector(".term-body")?.textContent;
-    expect(body).toBe("├── src/\n└── README.md  2.0 KB");
+    const entries = [...document.querySelectorAll(".dir-entry")].map((entry) => entry.textContent);
+    expect(entries).toEqual(["src/", "README.md2.0 KB"]);
+    expect(document.querySelector(".term-body")).toBeNull();
+  });
+
+  it("groups search hits by file and marks the pattern", () => {
+    const data = { matches: [
+      { path: "a.py", line: 3, column: 1, text: "raise HostBusy()" },
+      { path: "a.py", line: 9, column: 5, text: "except HostBusy:" },
+      { path: "b.py", line: 1, column: 1, text: "from a import HostBusy" },
+    ], truncated: false };
+    render(<ToolCard name="grep" phase="succeeded" args={{ pattern: "Host[A-Z]\\w+" }} data={data} />);
+    expect(screen.getByText("3 matches in 2 files")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button"));
+    expect([...document.querySelectorAll(".search-path")].map((node) => node.textContent)).toEqual(["a.py", "b.py"]);
+    expect([...document.querySelectorAll(".search-results mark")].map((node) => node.textContent)).toEqual(["HostBusy", "HostBusy", "HostBusy"]);
+  });
+
+  it("shows read file content with a line-number gutter", () => {
+    render(<ToolCard name="read_file" phase="succeeded" args={{ path: "a.py" }} data={{ content: "10|def f():\n11|    return 1\n" }} />);
+    fireEvent.click(screen.getByRole("button"));
+    expect([...document.querySelectorAll(".code-num")].map((node) => node.textContent)).toEqual(["10", "11"]);
+    expect(screen.getByText("def f():")).toBeTruthy();
+  });
+
+  it("puts the shell command above its output", () => {
+    render(<ToolCard name="execute_command" phase="running" args={{ command: "pytest -q" }} output="collecting" />);
+    expect(document.querySelector(".tool-card-body .term-cmd")?.textContent).toBe("$ pytest -q");
   });
 
   it("shows what a search looked for and a quiet success for exit 0", () => {
@@ -201,7 +227,9 @@ describe("ToolCard states", () => {
       <ToolCard name="execute_command" phase="succeeded" args={{ command: "true" }} data={{ exit_code: 0 }} />
     </>);
     expect(screen.getByText("host_busy")).toBeTruthy();
-    expect(screen.getByText("Exit 0").className).toBe("read-success");
+    // Success is the default; only failures earn a label.
+    expect(screen.queryByText("Exit 0")).toBeNull();
+    expect(document.querySelectorAll(".step-icon.failed")).toHaveLength(0);
   });
 
   it("hides line counts until an edit has been applied", () => {

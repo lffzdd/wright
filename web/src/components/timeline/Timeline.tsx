@@ -2,7 +2,9 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { MarkdownContent } from "../../Markdown";
 import { present, useT } from "../../i18n";
 import type { ViewState } from "../../types";
-import { AssistantMessage, InteractionCard, ReasoningRow, UserMessage, toolCardFromState, toolCardFromTimeline } from "../cards/cards";
+import { AssistantMessage, InteractionCard, ReasoningRow, UserMessage, toolCardFromState } from "../cards/cards";
+import { StepGroup } from "./StepGroup";
+import { segmentTimeline, stepFromTool, type Segment } from "./steps";
 import { ConversationOutline, OUTLINE_DOCK_MIN_ITEMS, OUTLINE_TEXT_AT, TimelineTOC, useTimelineTOC } from "./toc";
 
 export function InteractionDock({ sessionId, pending, respond, root }: {
@@ -144,6 +146,18 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
     && !timeline.some((item) => item.role === "user" && item.turn_id !== undefined && item.turn_id === state.active_turn?.turn_id)
     ? state.active_turn.prompt : "";
   const liveText = state.active_turn?.content && !timeline.some((item) => item.kind === "text" && item.role === "assistant" && item.turn_id === state.active_turn?.turn_id && item.turn_id !== undefined) ? state.active_turn.content : "";
+  // Consecutive reasoning and tool calls fold into one group; live tools join
+  // the run they continue.
+  const segments = segmentTimeline(timeline);
+  const liveSteps = liveTools.map((tool) => stepFromTool(tool, activeTurn));
+  const tail = segments[segments.length - 1];
+  if (liveSteps.length && !pendingPrompt && tail?.type === "steps") tail.steps.push(...liveSteps);
+  const liveSegment: Segment | null = liveSteps.length && (pendingPrompt || tail?.type !== "steps")
+    ? { type: "steps", key: liveSteps[0].key, turnId: activeTurn, steps: liveSteps } : null;
+  // Groups after the latest prompt belong to the running turn.
+  let lastPrompt = -1;
+  segments.forEach((segment, index) => { if (segment.type === "item" && segment.item.kind === "text" && segment.item.role === "user") lastPrompt = index; });
+  const turnRunning = Boolean(state.active_turn);
   const outlineCompact = toc.items.length < OUTLINE_DOCK_MIN_ITEMS;
   const lastOutlineSessionRef = useRef<string | undefined>(state.session.session_id);
   useEffect(() => {
@@ -166,16 +180,16 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
     <TimelineTOC {...toc} />
     {!timeline.length && !state.history.length && !state.active_turn && <p className="empty-small">{tr("web.empty_timeline")}</p>}
     {timeline.length > 0 ? <>
-      {timeline.map((item) => {
+      {segments.map((segment, index) => {
+        if (segment.type === "steps") return <StepGroup key={segment.key} steps={segment.steps} live={turnRunning && (pendingPrompt ? false : index > lastPrompt)} sessionId={state.session?.session_id} entering={entering} />;
+        const item = segment.item;
         if (item.kind === "text" && item.role === "user") return <UserMessage key={item.id} text={item.text || ""} userLabel={userLabel} timestamp={timestamp} tocId={item.id} enter={entering(item.turn_id !== undefined ? `user:${item.turn_id}` : item.id)} />;
-        if (item.kind === "reasoning") return <ReasoningRow key={item.id} text={item.text || ""} durationMs={item.duration_ms} enter={entering(item.id)} />;
         if (item.kind === "text") return <AssistantMessage key={item.id} text={item.text || ""} enter={entering(item.turn_id !== undefined ? `reply:${item.turn_id}` : item.id)} />;
-        if (item.kind === "approval") return null;
         if (item.kind === "status") return <TurnOutcome key={item.id} status={item.status} detail={item.text} enter={entering(item.id)} />;
-        return toolCardFromTimeline(item, state.session?.session_id, entering(`tool:${item.call_id || item.id}`));
+        return null;
       })}
       {pendingPrompt && <UserMessage text={pendingPrompt} userLabel={userLabel} timestamp={timestamp} tocId={activeTurn ? `${activeTurn}:user` : "pending-user"} enter={entering(activeTurn ? `user:${activeTurn}` : "pending-user")} />}
-      {liveTools.map((tool) => toolCardFromState(tool, state.session?.session_id, entering(`tool:${tool.call_id}`)))}
+      {liveSegment?.type === "steps" && <StepGroup key={liveSegment.key} steps={liveSegment.steps} live={turnRunning} sessionId={state.session?.session_id} entering={entering} />}
       {liveText && <AssistantMessage text={liveText} enter={entering(activeTurn ? `reply:${activeTurn}` : "live-reply")} />}
       {state.active_turn && !liveText && !liveTools.length && !timeline.some((item) => item.turn_id !== undefined && item.turn_id === state.active_turn?.turn_id && item.role === "assistant") && <p className="empty-small working-indicator">{tr("web.working")}</p>}
     </> : <>

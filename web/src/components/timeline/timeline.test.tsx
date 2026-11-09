@@ -157,8 +157,13 @@ describe("real timeline projection", () => {
     fireEvent.click(first.querySelector("button")!);
     state = emit(state, outcome, {});
     rerender(transcript(state));
-    expect(container.querySelectorAll(".reasoning-card")).toHaveLength(2);
+    // The finished run of tools folds away; the reasoning the person opened stays.
+    const group = container.querySelector(".step-group")!;
+    expect(group.classList.contains("open")).toBe(false);
+    expect(container.querySelectorAll(".reasoning-card")).toHaveLength(1);
     expect(first.classList.contains("open")).toBe(true);
+    fireEvent.click(group.querySelector(".step-group-head")!);
+    expect(container.querySelectorAll(".reasoning-card")).toHaveLength(2);
     expect(order()?.slice(0, expected.length)).toEqual(expected);
     expect(screen.getAllByText("Final answer")).toHaveLength(1);
     state = emit(state, "turn.started", { prompt: "Next" }, "turn-2");
@@ -181,6 +186,7 @@ describe("real timeline projection", () => {
     state = emit(state, "content.final", { content: "Done" });
     state = emit(state, "turn.completed", {});
     const { container } = render(transcript(state));
+    fireEvent.click(container.querySelector(".step-group-head")!);
     expect(container.querySelectorAll(".reasoning-card")).toHaveLength(2);
     expect(screen.getAllByText("Partial continued")).toHaveLength(1);
     expect(screen.getAllByText("Done")).toHaveLength(1);
@@ -257,6 +263,43 @@ describe("real timeline projection", () => {
       result: { ok: true, data: { directory: ".", entries: [{ name: "a" }, { name: "src" }], truncated: false } },
     }));
     expect(screen.getByText("2 entries")).toBeTruthy();
+  });
+
+  it("folds a finished run of steps into a summary and keeps a live run open", () => {
+    let state = emit(fresh(), "turn.started", { prompt: "Look around" });
+    state = emit(state, "reasoning.delta", { piece: "Check the tree" });
+    state = emit(state, "tool.planned", { call_id: "d", name: "list_directory", arguments: { path: "." } });
+    state = emit(state, "tool.finished", { call_id: "d", ok: true, data: { entries: [] } });
+    state = emit(state, "tool.planned", { call_id: "g", name: "grep", arguments: { pattern: "x" } });
+    state = emit(state, "tool.finished", { call_id: "g", ok: true, data: { matches: [] } });
+    state = emit(state, "tool.planned", { call_id: "c", name: "execute_command", arguments: { command: "false" } });
+    const { container, rerender } = render(transcript(state));
+    expect(container.querySelectorAll(".step-group")).toHaveLength(1);
+    expect(container.querySelector(".step-group")!.classList.contains("open")).toBe(true);
+    expect(screen.getByText("false")).toBeTruthy();
+
+    state = emit(state, "tool.finished", { call_id: "c", ok: false, err: "boom", data: { returncode: 1 } });
+    state = emit(state, "content.final", { content: "Done looking" });
+    state = emit(state, "turn.completed", {});
+    rerender(transcript(state));
+    const group = container.querySelector(".step-group")!;
+    expect(group.classList.contains("open")).toBe(false);
+    expect(group.querySelector(".step-group-summary")?.textContent).toBe("Listed 1 folder · Searched once · Ran 1 command");
+    expect(group.querySelector(".step-group-failed")?.textContent).toBe("1 failed");
+    expect(container.querySelector(".tool-card")).toBeNull();
+    expect(screen.getByText("Done looking")).toBeTruthy();
+  });
+
+  it("shows a lone step without a group around it", () => {
+    let state = emit(fresh(), "turn.started", { prompt: "One" });
+    state = emit(state, "tool.planned", { call_id: "r", name: "read_file", arguments: { path: "a.py" } });
+    state = emit(state, "tool.finished", { call_id: "r", ok: true, data: { content: "1|x" } });
+    state = emit(state, "turn.completed", {});
+    const { container } = render(transcript(state));
+    expect(container.querySelector(".step-group")).toBeNull();
+    // The row shows the tool's own name; its icon is coloured by kind.
+    expect(screen.getByText("read_file")).toBeTruthy();
+    expect(container.querySelector(".step-icon")?.classList.contains("reads")).toBe(true);
   });
 
   it("lists each user prompt in the outline and ignores headings inside replies", async () => {

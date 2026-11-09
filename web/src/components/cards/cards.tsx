@@ -1,5 +1,5 @@
-import { CaretDown, Check, User, X } from "@phosphor-icons/react";
-import { useEffect, useRef, useState } from "react";
+import { ArrowsClockwise, BookOpen, Brain, CaretDown, ChatCircleDots, File, FileText, FolderSimple, Globe, Lightbulb, ListChecks, MagnifyingGlass, PencilSimple, TerminalWindow, User, Wrench, X, type Icon as PhosphorIcon } from "@phosphor-icons/react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { MarkdownContent } from "../../Markdown";
 import { api } from "../../api";
 import { parseDiff } from "../../diff";
@@ -38,7 +38,7 @@ function DiffBody({ text }: { text: string }) {
   </div>;
 }
 
-function formatDuration(duration: number): string {
+export function formatDuration(duration: number): string {
   return duration >= 1000 ? `${(duration / 1000).toFixed(1)}s` : `${duration}ms`;
 }
 
@@ -73,6 +73,94 @@ function formatSize(size: number): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function DirectoryTree({ source }: { source: Record<string, unknown> }) {
+  const tr = useT();
+  const entries = source.entries as DirectoryEntry[];
+  if (!entries.length) return <p className="empty-small">{tr("web.dir_empty")}</p>;
+  return <div className="dir-tree">
+    {entries.map((entry, index) => {
+      const name = String(entry.name ?? entry.path ?? "");
+      const folder = entry.type === "directory";
+      return <div className="dir-entry" key={`${name}-${index}`}>
+        {folder ? <FolderSimple size={13} aria-hidden="true" /> : <File size={13} aria-hidden="true" />}
+        <span className="dir-name">{folder ? `${name}/` : name}</span>
+        {!folder && typeof entry.size === "number" && <span className="dir-size">{formatSize(entry.size)}</span>}
+      </div>;
+    })}
+    {source.truncated === true && <div className="dir-entry muted">…</div>}
+  </div>;
+}
+
+type SearchMatch = { path?: unknown; line?: unknown; text?: unknown };
+
+function searchMatches(source: Record<string, unknown> | null | undefined): SearchMatch[] | null {
+  return source && Array.isArray(source.matches) ? source.matches as SearchMatch[] : null;
+}
+
+function highlighter(pattern: string, literal: boolean): RegExp | null {
+  if (!pattern) return null;
+  try {
+    return new RegExp(literal ? pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : pattern, "g");
+  } catch {
+    return null;
+  }
+}
+
+function Highlighted({ text, pattern }: { text: string; pattern: RegExp | null }) {
+  if (!pattern) return <>{text}</>;
+  const parts: ReactNode[] = [];
+  let last = 0;
+  for (const match of text.matchAll(pattern)) {
+    if (!match[0]) break;
+    const start = match.index ?? 0;
+    if (start > last) parts.push(text.slice(last, start));
+    parts.push(<mark key={start}>{match[0]}</mark>);
+    last = start + match[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return <>{parts}</>;
+}
+
+/** Search hits grouped by file, with the pattern marked in each line. */
+function SearchResults({ matches, pattern, literal }: { matches: SearchMatch[]; pattern: string; literal: boolean }) {
+  const tr = useT();
+  if (!matches.length) return <p className="empty-small">{tr("web.steps.no_matches")}</p>;
+  const files = new Map<string, SearchMatch[]>();
+  for (const match of matches) {
+    const path = String(match.path ?? "");
+    files.set(path, [...(files.get(path) ?? []), match]);
+  }
+  const regex = highlighter(pattern, literal);
+  return <div className="search-results">
+    {[...files].map(([path, hits]) => <div className="search-file" key={path}>
+      <div className="search-path">{path}</div>
+      {hits.filter((hit) => typeof hit.line === "number").map((hit, index) => <div className="code-line" key={index}>
+        <span className="code-num">{String(hit.line)}</span>
+        <span className="code-text"><Highlighted text={textOf(hit.text)} pattern={regex} /></span>
+      </div>)}
+    </div>)}
+  </div>;
+}
+
+/** File content read with numbered lines ("12|text"), shown with a gutter. */
+function NumberedContent({ text }: { text: string }) {
+  const lines = text.replace(/\n$/, "").split("\n");
+  return <div className="code-view">
+    {lines.map((line, index) => {
+      const match = /^(\d+)\|(.*)$/.exec(line);
+      return <div className="code-line" key={index}>
+        <span className="code-num">{match ? match[1] : ""}</span>
+        <span className="code-text">{match ? match[2] || " " : line}</span>
+      </div>;
+    })}
+  </div>;
+}
+
+function isNumbered(text: string): boolean {
+  const lines = text.split("\n").filter(Boolean);
+  return lines.length > 0 && lines.every((line) => /^\d+\|/.test(line));
 }
 
 /** Renders list_directory's structured entries as a tree, one entry per line. */
@@ -138,6 +226,42 @@ export function toolFamily(name: string, kind?: string): "shell" | "edit" | "rea
   return kind === "edit" ? "edit" : kind === "shell" ? "shell" : "tool";
 }
 
+export type StepCategory = "directories" | "reads" | "searches" | "web" | "commands" | "edits" | "memory" | "plans" | "tools";
+
+/** What kind of work a tool call does, for its colour and the group summary. */
+export function toolCategory(name: string, kind?: string): StepCategory {
+  const family = toolFamily(name, kind);
+  if (family === "shell") return "commands";
+  if (family === "edit") return "edits";
+  const lowered = name.toLowerCase();
+  if (lowered.startsWith("web_") || lowered.startsWith("http")) return "web";
+  // Memory and knowledge lookups are recall, not code search, even when named "search_*".
+  if (/memory|episode|knowledge/.test(lowered)) return "memory";
+  if (lowered.includes("plan")) return "plans";
+  if (lowered.includes("directory")) return "directories";
+  if (/grep|glob|search/.test(lowered)) return "searches";
+  if (lowered.startsWith("read")) return "reads";
+  return "tools";
+}
+
+function toolIcon(name: string, category: StepCategory): PhosphorIcon {
+  const lowered = name.toLowerCase();
+  switch (category) {
+    case "commands": return TerminalWindow;
+    case "edits": return PencilSimple;
+    case "web": return Globe;
+    case "memory": return lowered.includes("knowledge") ? BookOpen : Brain;
+    case "plans": return ListChecks;
+    case "directories": return FolderSimple;
+    case "searches": return MagnifyingGlass;
+    case "reads": return FileText;
+    default:
+      if (lowered === "ask_user") return ChatCircleDots;
+      if (lowered.includes("loop")) return ArrowsClockwise;
+      return Wrench;
+  }
+}
+
 export function UserMessage({ text, userLabel, timestamp, tocId, enter }: { text: string; userLabel?: string; timestamp?: string; tocId?: string; enter?: boolean }) {
   const tr = useT();
   const parts = text.split(/(@(?:[\w.-]+\/)*[\w.-]+)/g);
@@ -178,15 +302,15 @@ export function SummaryRow({ text, durationMs, enter }: { text: string; duration
         onClick={() => setOpen((value) => !value)}
       >
         <span className="tool-title">
-          <span className="tool-badge reasoning">REASON</span>
-          {durationLabel && <span className="tool-name">{durationLabel}</span>}
-          {!open && preview && <span className="reasoning-snippet">{preview}</span>}
+          <span className="step-icon reasoning" aria-hidden="true"><Lightbulb size={12} /></span>
+          <span className="reasoning-snippet">{open ? tr("web.steps.reasoning") : preview}</span>
         </span>
         <span className="tool-meta">
+          {durationLabel && <span className="step-meta">{durationLabel}</span>}
           <CaretDown size={12} className={open ? "" : "collapsed"} aria-hidden="true" />
         </span>
       </button>
-      {open && preview && <pre className="term-body">{text}</pre>}
+      {open && preview && <div className="tool-card-body"><div className="reasoning-body">{text}</div></div>}
     </section>
   </div>;
 }
@@ -269,7 +393,15 @@ export function ToolCard({
   const open = toggled ?? (!denied && (phase === "failed" || phase === "running" || family === "edit"));
   const hasDiff = family === "edit" && typeof metricSource?.diff === "string";
   const body = hasDiff ? metricSource.diff as string : compactToolBody(name, raw, result ?? (data && typeof data === "object" ? data as Record<string, unknown> : null));
-  const badge = family === "shell" ? "SHELL" : family === "edit" ? "FILE EDIT" : family === "read" ? "TOOL" : "TOOL";
+  const lowered = name.toLowerCase();
+  const category = toolCategory(name, kind);
+  const isDirectory = category === "directories";
+  const isSearch = category === "searches";
+  const matches = isSearch ? searchMatches(metricSource) : null;
+  const directory = isDirectory && Array.isArray(metricSource?.entries) ? metricSource : null;
+  const content = !isDirectory && !isSearch && family !== "shell" && family !== "edit" && typeof metricSource?.content === "string" ? metricSource.content : null;
+  const failed = phase === "failed" || (code !== null && code !== 0);
+  const Icon = failed && !denied ? X : toolIcon(name, category);
   const bodyLines = body.split("\n").filter(Boolean);
   const added = family === "edit" && typeof metricSource?.additions === "number" ? metricSource.additions : family === "edit" ? bodyLines.filter((line) => line.startsWith("+")).length : 0;
   const deleted = family === "edit" && typeof metricSource?.deletions === "number" ? metricSource.deletions : family === "edit" ? bodyLines.filter((line) => line.startsWith("-")).length : 0;
@@ -282,8 +414,8 @@ export function ToolCard({
     <section className={`tool-card ${open ? "open" : ""}`}>
       <button type="button" className="tool-card-head" aria-expanded={open} onClick={() => setToggled(!open)}>
         <span className="tool-title">
-          <span className={`tool-badge ${family}`}>{badge}</span>
-          {family === "shell" ? <span className="mono command">{command ? `$ ${command}` : name}</span> : <>
+          <span className={`step-icon ${category}${failed && !denied ? " failed" : ""}`} aria-hidden="true"><Icon size={13} weight={failed && !denied ? "bold" : "regular"} /></span>
+          {family === "shell" ? <span className="mono command">{command || name}</span> : <>
             {family !== "edit" && <span className="tool-name">{name}</span>}
             {pattern && <span className="mono tool-pattern" title={pattern}>{pattern}</span>}
             {path && <span className={`mono path ${family === "edit" ? "path-strong" : ""}`}>{path}</span>}
@@ -292,18 +424,24 @@ export function ToolCard({
         </span>
         <span className="tool-meta">
           {phase === "failed" && code === null && <span className={denied ? "denied-pill" : "fail-pill"}>{tr(denied ? "web.tool_denied" : "web.status.failed")}</span>}
-          {family === "read" && phase === "succeeded" && <span className="read-success"><Check size={12} weight="bold" />{directoryCount > 0 ? tr("web.n_files", { count: directoryCount }) : tr("web.status.succeeded")}{directoryCount > 0 && durationLabel ? ` (${durationLabel})` : ""}</span>}
+          {directoryCount > 0 && phase === "succeeded" && <span className="step-meta">{tr("web.n_files", { count: directoryCount })}{durationLabel ? ` (${durationLabel})` : ""}</span>}
+          {matches && phase === "succeeded" && <span className="step-meta">{tr("web.steps.match_count", { count: matches.length, files: new Set(matches.map((match) => String(match.path ?? ""))).size })}</span>}
           {family === "edit" && phase === "succeeded" && <span className="muted edit-summary">{t("web.applied")}</span>}
-          {code === 0 && <span className="read-success"><Check size={12} weight="bold" />Exit 0</span>}
           {code !== null && code !== 0 && <span className="fail-pill">Exit {code}{testFailed ? ` (${tr("web.bug_confirmed")})` : ""}</span>}
-          {durationLabel && directoryCount === 0 && <span className="mono muted">{durationLabel}</span>}
+          {durationLabel && directoryCount === 0 && <span className="step-meta">{durationLabel}</span>}
           <CaretDown size={12} className={open ? "" : "collapsed"} />
         </span>
       </button>
-      {open && body && (family === "edit" ? <DiffBody text={body} /> : testFailed ? <TestFailureOutput text={body} /> : <pre className={`term-body ${code !== null && code !== 0 ? "failed" : ""}`}>{body}</pre>)}
-      {open && Boolean(metricSource?.sandbox_denial) && <SandboxDenialHint denial={metricSource!.sandbox_denial as SandboxDenial} sessionId={sessionId} />}
-      {open && hasDiff && !body && <p className="empty-small">{tr("web.no_diff")}</p>}
-      {open && hasDiff && metricSource?.diff_truncated === true && <p className="hint" role="status">{tr("web.diff_truncated")}</p>}
+      {open && <div className={`tool-card-body${failed && !denied ? " failed" : ""}`}>
+        {family === "shell" && command && <div className="term-cmd">$ {command}</div>}
+        {directory ? <DirectoryTree source={directory} />
+          : matches && phase === "succeeded" ? <SearchResults matches={matches} pattern={pattern} literal={metricSource?.fixed_string === true || args?.fixed_string === true} />
+          : content !== null && isNumbered(content) ? <NumberedContent text={content} />
+          : body && (family === "edit" ? <DiffBody text={body} /> : testFailed ? <TestFailureOutput text={body} /> : isNumbered(body) ? <NumberedContent text={body} /> : <pre className={`term-body ${code !== null && code !== 0 ? "failed" : ""}`}>{body}</pre>)}
+        {Boolean(metricSource?.sandbox_denial) && <SandboxDenialHint denial={metricSource!.sandbox_denial as SandboxDenial} sessionId={sessionId} />}
+        {hasDiff && !body && <p className="empty-small">{tr("web.no_diff")}</p>}
+        {hasDiff && metricSource?.diff_truncated === true && <p className="hint" role="status">{tr("web.diff_truncated")}</p>}
+      </div>}
     </section>
   </div>;
 }

@@ -1,4 +1,11 @@
 :root, html.dark {
+  --step-read: #60a5fa;
+  --step-search: #fbbf24;
+  --step-shell: #a78bfa;
+  --step-edit: #34d399;
+  --step-tool: #f472b6;
+  --step-web: #22d3ee;
+  --step-chrome: rgba(255, 255, 255, 0.035);
   --font-sans: "Geist Variable", -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text", "Segoe UI", Roboto, sans-serif;
   --font-mono: "Geist Mono Variable", "JetBrains Mono", "Fira Code", Menlo, Monaco, Consolas, monospace;
   --bg-app: #0e1015;
@@ -59,6 +66,13 @@
 }
 
 html.light {
+  --step-read: #2563eb;
+  --step-search: #c2410c;
+  --step-shell: #7c3aed;
+  --step-edit: #15803d;
+  --step-tool: #db2777;
+  --step-web: #0891b2;
+  --step-chrome: #f6f6f4;
   --bg-app: #f5f6f9;
   --bg-sidebar: #eceef3;
   --bg-main: #ffffff;
@@ -513,6 +527,7 @@ code, pre, .mono { font-family: var(--font-mono); }
 }
 .tl-indent { min-width: 0; }
 .timeline .tl-indent,
+.timeline .step-group,
 .timeline .turn-outcome,
 .timeline .working-indicator,
 .timeline .turn,
@@ -609,30 +624,75 @@ html.light .msg-row.assistant-msg .msg-card {
 .muted { color: var(--text-muted); }
 .text-button { border: 0; background: transparent; color: var(--purple); font: var(--text-xs) var(--font-mono); }
 .collapsed { transform: rotate(-90deg); }
-/* Muted purple: recognizable at a glance, but quieter than tool tags and replies. */
-.tool-badge.reasoning { color: color-mix(in srgb, var(--purple) 70%, var(--text-muted)); background: color-mix(in srgb, var(--purple) 7%, transparent); }
-.reasoning-card .tool-title { flex: 1; min-width: 0; flex-wrap: nowrap; }
-.reasoning-snippet { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: var(--text-sm); font-weight: 400; }
-/* Process rows (reasoning, tools) stay quiet until opened; replies carry the surface. */
-.tool-card { background: transparent; border: 1px solid transparent; border-radius: var(--radius-lg); overflow: hidden; transition: background-color 0.15s ease, border-color 0.15s ease; }
-.tool-card.open { background: var(--bg-card); border-color: var(--border-subtle); box-shadow: var(--shadow-sm); }
-.tool-card-head { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 8px; background: transparent; border: 0; border-radius: var(--radius-md); color: var(--text-secondary); text-align: left; transition: background-color 0.15s ease, color 0.15s ease; }
+/* Process steps: a run of reasoning and tool calls folds into one group. */
+.step-group { grid-column: 2; min-width: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--bg-card); }
+.step-group-head { width: 100%; display: flex; align-items: center; gap: 8px; padding: 7px 10px; background: transparent; border: 0; border-radius: var(--radius-lg); color: var(--text-secondary); font-size: var(--text-sm); text-align: left; }
+.step-group-head:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+.step-group.open > .step-group-head { border-bottom: 1px solid var(--border-subtle); border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+.step-group-icon { color: var(--text-muted); flex-shrink: 0; }
+.step-group-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step-group-failed { color: var(--danger); white-space: nowrap; }
+.step-group-failed::before { content: "· "; color: var(--text-muted); }
+.step-group-duration { margin-left: auto; color: var(--text-muted); font-size: var(--text-xs); flex-shrink: 0; }
+/* A rail through the step icons ties the run together. */
+.step-group-body { position: relative; padding: 6px 4px 8px; }
+.step-group-body::before { content: ""; position: absolute; left: 22.5px; top: 14px; bottom: 16px; border-left: 1px solid var(--border-strong); }
+.step-group-body .tl-indent { position: relative; }
+/* Rows stay quiet; only an opened row shows its body, indented past the rail. */
+.tool-card { background: transparent; border: 0; border-radius: var(--radius-md); }
+.tool-card-head { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; padding: 4px 8px; background: transparent; border: 0; border-radius: var(--radius-md); color: var(--text-secondary); text-align: left; transition: background-color 0.15s ease, color 0.15s ease; }
 .tool-card-head:hover { background: var(--bg-card-hover); color: var(--text-primary); }
-.tool-card.open > .tool-card-head { padding: 6px 10px; border-radius: 0; background: var(--bg-card-secondary); border-bottom: 1px solid var(--border-subtle); color: var(--text-primary); }
+.tool-card.open > .tool-card-head { color: var(--text-primary); }
 .tool-card-head .tool-meta { color: var(--text-muted); flex-shrink: 0; }
 .tool-title, .tool-meta { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .tool-name { font-size: var(--text-sm); font-weight: 500; }
-.tool-badge { padding: 1px 5px; border-radius: var(--radius-sm); border-color: transparent !important; font: 600 var(--text-2xs) var(--font-mono); letter-spacing: 0.02em; }
-.tool-badge.read, .tool-badge.tool { color: var(--info); background: color-mix(in srgb, var(--info) 10%, transparent); border: 1px solid color-mix(in srgb, var(--info) 20%, transparent); }
-.tool-badge.shell { color: var(--text-secondary); background: color-mix(in srgb, var(--text-muted) 14%, transparent); }
-.tool-badge.edit { color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); border: 1px solid color-mix(in srgb, var(--ok) 20%, transparent); }
+/* Each kind of work has its own colour, carried by the glyph alone. */
+.step-icon { --step-color: var(--text-secondary); width: 20px; height: 20px; flex: 0 0 20px; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--bg-card); border: 1px solid var(--border-subtle); color: var(--step-color); position: relative; z-index: 1; }
+.step-icon.directories, .step-icon.reads { --step-color: var(--step-read); }
+.step-icon.searches { --step-color: var(--step-search); }
+.step-icon.commands { --step-color: var(--step-shell); }
+.step-icon.edits { --step-color: var(--step-edit); }
+.step-icon.web { --step-color: var(--step-web); }
+.step-icon.tools, .step-icon.memory, .step-icon.plans { --step-color: var(--step-tool); }
+.step-icon.failed { --step-color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--bg-card)); border-color: color-mix(in srgb, var(--danger) 30%, transparent); }
+/* Reasoning sits between actions as a quiet aside. */
+.step-icon.reasoning { --step-color: var(--text-muted); }
+.reasoning-card > .tool-card-head { min-height: 28px; }
+.reasoning-card .tool-title { flex: 1; min-width: 0; flex-wrap: nowrap; }
+/* A short preview leaves air on the right instead of a wall of text. */
+.reasoning-snippet { flex: 0 1 auto; max-width: 70ch; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: var(--text-xs); font-style: italic; font-weight: 400; opacity: 0.9; }
+.step-meta { font-size: var(--text-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tool-card .path { color: var(--text-muted); }
+.tool-card-body { margin: 2px 8px 8px 36px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); overflow: hidden; background: var(--bg-card); }
+.tool-card-body.failed { border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+/* Expanded output sits on the card itself; only headers get a faint neutral band. */
+.tool-card-body .term-body, .tool-card-body .diff-body { background: var(--bg-card) !important; border-top: 0 !important; }
+.tool-card-body .term-body { padding: 8px 10px; line-height: 1.55; }
+.tool-card-body > .sandbox-denial, .tool-card-body > .hint, .tool-card-body > .empty-small { margin: 0; padding: 8px 10px; }
+.reasoning-card .tool-card-body { border: 0; border-left: 2px solid var(--border-strong); border-radius: 0; background: transparent; }
+/* Reasoning reads in its own voice: serif, quoted, at body size. */
+.reasoning-body { padding: 2px 14px; max-height: 280px; overflow: auto; color: var(--text-secondary); font: var(--text-md)/1.75 ui-serif, Georgia, "Songti SC", "Noto Serif SC", serif; white-space: pre-wrap; overflow-wrap: anywhere; }
+.term-cmd { padding: 6px 10px; background: var(--step-chrome); border-bottom: 1px solid var(--border-subtle); font: var(--text-xs)/1.4 var(--font-mono); color: var(--text-primary); white-space: pre-wrap; overflow-wrap: anywhere; }
+.dir-tree { padding: 6px 0; max-height: 260px; overflow: auto; font: var(--text-xs)/1.7 var(--font-mono); }
+.dir-entry { display: flex; align-items: center; gap: 6px; padding: 2px 10px; color: var(--text-secondary); }
+.dir-entry svg { flex-shrink: 0; color: var(--text-muted); }
+.dir-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
+.dir-size { margin-left: auto; color: var(--text-muted); }
+.search-results, .code-view { max-height: 260px; overflow: auto; font: var(--text-xs)/1.5 var(--font-mono); }
+.search-path { padding: 4px 10px; background: var(--step-chrome); color: var(--text-secondary); border-bottom: 1px solid var(--border-subtle); }
+.search-file + .search-file .search-path { border-top: 1px solid var(--border-subtle); }
+.search-results mark { background: color-mix(in srgb, var(--warning) 28%, transparent); color: inherit; border-radius: 2px; }
+.code-line { display: flex; min-width: 0; }
+.code-num { flex: 0 0 44px; padding-right: 10px; text-align: right; color: var(--text-muted); user-select: none; }
+.code-text { min-width: 0; padding-right: 10px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-primary); }
+.code-view { padding: 4px 0; }
+.search-file { padding-bottom: 2px; }
 .command, .path { font-size: var(--text-xs); }
 .tool-pattern { min-width: 0; max-width: 36ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); color: var(--text-primary); padding: 0 5px; border-radius: var(--radius-sm); background: var(--bg-card-hover); }
 .path-strong { color: var(--text-primary); font-weight: 650; }
 .edit-add, .edit-del { font: var(--text-xs) var(--font-mono); }
-.edit-add, .read-success { color: var(--ok); }
+.edit-add { color: var(--ok); }
 .edit-del { color: var(--danger); }
-.read-success { display: inline-flex; align-items: center; gap: 3px; font: var(--text-xs) var(--font-mono); }
 .edit-summary { font-size: var(--text-xs); }
 .ok-pill, .fail-pill, .denied-pill { white-space: nowrap; flex-shrink: 0; }
 .ok-pill, .fail-pill { padding: 1px 6px; border-radius: var(--radius-sm); font: var(--text-xs) var(--font-mono); }
