@@ -25,7 +25,7 @@ from ...domain.model.llm.model_adapters import available_models, process_model_n
 from ...domain.model.session.errors import CheckpointError
 from ...domain.model.workspace.project import ProjectContext
 from ...domain.model.workspace.worktree import ArchiveResult
-from ..composition.host import ApplicationHost
+from ..composition.host import ApplicationHost, ProjectHostBusyError
 from ..composition.runtime import (
     RuntimeConfig,
     WrightRuntime,
@@ -303,6 +303,9 @@ class SessionDirectory:
                     directory_coordinator=self.coordinator,
                     resume_chooser=resume_chooser,
                 )
+            except ProjectHostBusyError as exc:
+                self._rollback_worktree(created_worktree, context)
+                raise SessionDirectoryError(str(exc), kind="host_busy") from exc
             except BaseException:
                 self._rollback_worktree(created_worktree, context)
                 raise

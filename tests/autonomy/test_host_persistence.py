@@ -16,6 +16,7 @@ from wright.domain.model.tool import ToolAccess, ToolCall, ToolResult
 from wright.domain.model.tool_definition import Tool
 from wright.domain.policy import (
     PermissionPolicy,
+    PermissionRule,
     PermissionSettings,
 )
 from wright.infrastructure.persistence.autonomy_store import (
@@ -254,7 +255,7 @@ def test_effect_is_not_called_when_intent_cannot_be_persisted(tmp_path):
         {"effect": tool},
         assemble_tool_capabilities(None, None, None, workspace_dir=tmp_path),
         execution_journal=FailingJournal(),
-        permission_policy=PermissionPolicy(PermissionSettings(mode="bypass")),
+        permission_policy=PermissionPolicy(PermissionSettings(mode="bypass", allow=[PermissionRule("effect")])),
     )
 
     outcome = executor.execute([ToolCall("effect", {"target": "x"}, "call-1")])[0]
@@ -285,12 +286,13 @@ def test_result_persistence_failure_stops_agent_without_retrying_effect(tmp_path
 
     session = Session.create("effect", tmp_path)
     session.authorization.set_modes(permission_mode="bypass", interaction_mode="agent")
+    session.authorization.add_rule(PermissionRule("effect", id="allow-effect"))
     agent = create_agent(
         ToolLLM(),
         [Tool("effect", "effect", {"type": "object"}, lambda _args, _rt: calls.append("ran") or ToolResult.success(), access_descriptor=lambda _: ToolAccess(frozenset({"persistent_write"})))],
         session,
         permission_workflow=AuthorizationWorkflow(
-            PermissionPolicy(PermissionSettings(mode="bypass"))
+            PermissionPolicy(PermissionSettings(mode="bypass", allow=[PermissionRule("effect")]))
         ),
         execution_journal=ResultFailJournal(),
     )
@@ -340,7 +342,7 @@ def test_host_does_not_retry_unknown_effect_even_with_retry_policy(tmp_path, mon
     host = ApplicationHost(
         workspace_dir=workspace, store=store, llm=Model(),
         base_tools=[Tool("effect", "append marker", {"type": "object"}, effect, access_descriptor=lambda _: ToolAccess(frozenset({"persistent_write"})))],
-        permission_service=memory_permissions(PermissionSettings(mode="bypass"), workspace), poll_interval=0.01,
+        permission_service=memory_permissions(PermissionSettings(mode="bypass", allow=[PermissionRule("effect")]), workspace), poll_interval=0.01,
         on_event=lambda *_: finished.set(),
     )
     try:
@@ -414,7 +416,7 @@ def test_sessions_sharing_host_share_dispatch_capacity(tmp_path):
     host = ApplicationHost(
         workspace_dir=workspace, store=first, llm=Model(),
         base_tools=[Tool("effect", "work", {"type": "object"}, effect, access_descriptor=lambda _: ToolAccess(frozenset({"persistent_write"})))],
-        permission_service=memory_permissions(PermissionSettings(mode="bypass"), workspace), poll_interval=0.01, on_event=completed,
+        permission_service=memory_permissions(PermissionSettings(mode="bypass", allow=[PermissionRule("effect")]), workspace), poll_interval=0.01, on_event=completed,
     )
     try:
         first.create_job(name="first", prompt="work", trigger=TriggerSpec(type="once", run_at=0))

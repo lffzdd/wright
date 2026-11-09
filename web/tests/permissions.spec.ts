@@ -67,7 +67,7 @@ for (const [locale, width] of [["en", 1440], ["zh-CN", 1440], ["zh-CN", 390]] as
   });
 }
 
-test("Shell setup is required before approval and network stays an explicit one-time capability", async ({ page }) => {
+test("Shell setup is required before approval; network can be once or a sandbox grant", async ({ page }) => {
   await permissionPage(page, "shell");
   const card = page.locator(".approval-card");
   await expect(card.getByRole("button", { name: /Allow once/i })).toBeDisabled();
@@ -76,10 +76,10 @@ test("Shell setup is required before approval and network stays an explicit one-
   await card.getByRole("button", { name: "Initialize / retry (administrator)" }).click();
   await expect(card.getByRole("button", { name: /Allow once/i })).toBeEnabled();
   expect(await page.evaluate(() => (window as unknown as { decisions: unknown[] }).decisions.length)).toBe(0);
-  await card.getByRole("button", { name: "More options" }).click();
-  await expect(card.getByText("Advanced: all projects")).toHaveCount(0);
   await card.getByRole("checkbox").check();
-  await expect(card.getByRole("button", { name: "Save and allow" })).toBeDisabled();
+  await expect(card.getByRole("button", { name: /Allow sandbox network for this session/ })).toBeEnabled();
+  await card.getByRole("button", { name: "More options" }).click();
+  await expect(card.getByRole("button", { name: "Save and allow" })).toBeEnabled();
   await card.getByRole("button", { name: /Allow once with network/i }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: "test-results/permission-shell-network.png", fullPage: true });
   await card.getByRole("button", { name: /Allow once with network/i }).click();
@@ -100,7 +100,7 @@ test("Python arbitrary arguments and subprocess capability stay explicit on a na
   await permissionPage(page, "python", "zh-CN", 390);
   const card = page.locator(".approval-card");
   await expect(card).toContainText("包括执行解释器代码和脚本；此程序可以启动子进程。");
-  await expect(card).toContainText("保持离线，文件访问仍受当前系统沙箱限制");
+  await expect(card).toContainText("保持离线，并受系统沙箱限制。");
   const quick = card.getByRole("button", { name: /允许.*任意参数运行.*本次会话内/ });
   await expect(quick).toBeEnabled();
   await quick.scrollIntoViewIfNeeded();

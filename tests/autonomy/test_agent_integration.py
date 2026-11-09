@@ -21,6 +21,7 @@ from wright.domain.model.tool import ToolAccess, ToolResult
 from wright.domain.model.tool_definition import Tool
 from wright.domain.policy import (
     PermissionPolicy,
+    PermissionRule,
     PermissionSettings,
 )
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
@@ -305,8 +306,9 @@ def test_durable_run_persists_history_and_child_side_effect_identity(tmp_path):
     llm = Script()
     root_journal = _RunJournal(store, run_id, agent_task_id="root-task")
     session.authorization.set_modes(permission_mode="bypass", interaction_mode="agent")
+    session.authorization.add_rule(PermissionRule("write_marker", id="allow-write_marker"))
     permission_workflow = AuthorizationWorkflow(
-        PermissionPolicy(PermissionSettings(mode="bypass"))
+        PermissionPolicy(PermissionSettings(mode="bypass", allow=[PermissionRule("write_marker")]))
     )
     tools = build_agent_tools(
         llm,

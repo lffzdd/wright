@@ -12,10 +12,15 @@ class GrantError(ValueError):
 def resource_change(session, backend, snapshot, resource: dict, lifetime: str) -> AuthorizationChange:
     """Normalize with the backend; reject raw tool and wildcard grants from UI."""
     kind, path = resource.get("kind"), resource.get("path")
-    if kind not in {"file", "directory"} or not isinstance(path, str) or not path.strip():
-        raise GrantError("Choose a file or directory and enter its path")
     if lifetime not in {"session", "project", "user"}:
         raise GrantError("Choose a supported authorization lifetime")
+    if kind == "sandbox_network":
+        record = replace(PermissionRule.sandbox_network_grant(), lifetime=lifetime)
+        return AuthorizationChange(session_rules=(record,) if lifetime == "session" else (),
+                                   project_rules=(record,) if lifetime == "project" else (),
+                                   persistent_rules=(record,) if lifetime == "user" else ())
+    if kind not in {"file", "directory"} or not isinstance(path, str) or not path.strip():
+        raise GrantError("Choose a file or directory and enter its path")
     operations = resource.get("operations")
     if operations not in (["file_read"], ["file_read", "file_write"]):
         raise GrantError("Choose read-only or read and write access")

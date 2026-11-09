@@ -13,7 +13,7 @@ import pytest
 
 from wright.application.command.execution import CommandExecution
 from wright.application.composition.capabilities import local_permission_service
-from wright.application.composition.host import ApplicationHost
+from wright.application.composition.host import ApplicationHost, ProjectHostBusyError
 from wright.application.execution.directory import (
     DirectoryExecutionCoordinator,
     bind_directory_work,
@@ -490,6 +490,25 @@ def test_failed_open_rolls_back_a_new_worktree(tmp_path, monkeypatch):
     directory = SessionDirectory(tmp_path, assemble=assemble)
     with pytest.raises(RuntimeError, match="assembly failed"):
         directory.open(environment="worktree")
+    listing = subprocess.run(
+        ["git", "-C", str(tmp_path), "worktree", "list"],
+        check=True, capture_output=True, text=True,
+    )
+    assert listing.stdout.strip().count("\n") == 0
+
+
+def test_project_owned_by_another_process_rolls_back_the_worktree_and_names_the_cause(tmp_path, monkeypatch):
+    _git_repo(tmp_path)
+    monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "home"))
+
+    def assemble(*_args, **_kwargs):
+        raise ProjectHostBusyError(tmp_path)
+
+    directory = SessionDirectory(tmp_path, assemble=assemble)
+    with pytest.raises(SessionDirectoryError) as caught:
+        directory.open(environment="worktree")
+    assert caught.value.kind == "host_busy"
+    assert "Close the other Wright process" in str(caught.value)
     listing = subprocess.run(
         ["git", "-C", str(tmp_path), "worktree", "list"],
         check=True, capture_output=True, text=True,

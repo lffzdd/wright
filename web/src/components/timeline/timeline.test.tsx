@@ -184,6 +184,17 @@ describe("real timeline projection", () => {
     await waitFor(() => expect(addGrant).toHaveBeenCalledWith("s", { kind: "directory", path: "/outside", operations: ["file_read"] }, "session", "v1"));
   });
 
+  it("grants a directory read-write when the sandbox blocked a write", async () => {
+    vi.spyOn(api, "grants").mockResolvedValue({ version: "v1" } as never);
+    const addGrant = vi.spyOn(api, "addGrant").mockResolvedValue({} as never);
+    const data = { returncode: 1, output: "touch: /lib/x: Read-only file system\n", sandbox_denial: { path: "/lib/x", grant_directory: "", grant_write_directory: "/lib", readable: ["/work", "/lib"], writable: ["/work"] } };
+    render(toolCardFromState({ call_id: "c", name: "execute_command", phase: "failed", arguments: { command: "touch /lib/x" }, data }, "s"));
+    expect(screen.queryByRole("button", { name: /read-only|只读/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /read and write|可读写/ }));
+    await waitFor(() => expect(addGrant).toHaveBeenCalledWith("s", { kind: "directory", path: "/lib", operations: ["file_read", "file_write"] }, "session", "v1"));
+    expect(await screen.findByText(/readable and writable|已可读写/)).toBeTruthy();
+  });
+
   it("does not invent diff line numbers or file counts from output lines", () => {
     const { container, rerender } = render(toolCardFromState({ call_id: "c", name: "edit_file", phase: "succeeded", data: "-old\n+new" }));
     expect(container.querySelector(".diff-line")?.textContent).toBe("");

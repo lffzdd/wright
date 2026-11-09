@@ -161,6 +161,32 @@ def test_git_node_python_and_cwd(sandbox):
         handle.terminate(grace_seconds=0)
 
 
+def test_git_control_files_stay_read_only_including_submodules(sandbox):
+    _, _, workspace, *_ = sandbox
+    gitdirs = (workspace / ".git", workspace / ".git" / "modules" / "lib" / "sub")
+    for gitdir in gitdirs:
+        (gitdir / "hooks").mkdir(parents=True)
+        (gitdir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+        (gitdir / "config").write_text("[core]\n", encoding="utf-8")
+    targets = [str(gitdir / name) for gitdir in gitdirs for name in ("config", "hooks/pre-commit")]
+    others = [str(gitdir / "index") for gitdir in gitdirs]
+    body = f"""
+for path in {targets!r}:
+    try:
+        open(path, 'a').write('x')
+        print('wrote', path)
+    except OSError:
+        print('blocked')
+for path in {others!r}:
+    open(path, 'w').write('index')
+    print('other-ok')
+"""
+    code, output, _ = run_script(sandbox, body)
+    assert code == 0 and "wrote" not in output, output
+    assert output.count("blocked") == 4 and output.count("other-ok") == 2, output
+    assert (gitdirs[1] / "config").read_text(encoding="utf-8") == "[core]\n"
+
+
 def test_cancel_kills_derived_background_processes(sandbox):
     backend, grant, workspace, *_ = sandbox
     script = workspace / "background.py"

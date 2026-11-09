@@ -11,14 +11,21 @@ from uuid import uuid4
 
 from ...domain.gateway.permissions import PermissionRepository
 from ...domain.model.session.authorization import AuthorizationState
-from ...domain.policy.permission.scope import AccessScope
+from ...domain.model.tool import AccessTarget, ToolAccess, ToolCall
+from ...domain.policy.permission.resolver import PermissionPolicy
+from ...domain.policy.permission.scope import AccessScope, path_module
 from ...domain.policy.permission.settings import (
     PermissionConfiguration,
     PermissionRule,
     command_segments,
 )
-from ...domain.policy.permission.types import AuthorizationChange
+from ...domain.policy.permission.types import (
+    AuthorizationChange,
+    InvocationIdentity,
+    PermissionSubject,
+)
 from .checkpoint import CheckpointParticipant
+from .resources import resource_change
 from .workflow import AuthorizationWorkflow
 
 
@@ -164,17 +171,17 @@ class PermissionService:
             for rule in (*settings.allow, *records)
             if rule.kind == "directory"
         ]
-        read_only = tuple(
+        writable = tuple(
             Path(rule.resource_root(str(session.workspace_dir)))
             for rule in (*settings.allow, *records)
-            if rule.kind == "directory" and "file_write" not in rule.operations
+            if rule.kind == "directory" and "file_write" in rule.operations
         )
         scope = AccessScope(
             session.workspace_dir,
             tuple(directories),
             tuple(Path(path) for path in protected),
             session.project_root or session.workspace_dir,
-            read_only,
+            writable,
         )
         payload = {
             "session_revisions": session_versions,
@@ -190,7 +197,7 @@ class PermissionService:
             "interaction": interaction,
             "workspace": str(session.workspace_dir),
             "protected": tuple(str(p) for p in scope.protected),
-            "read_only": tuple(str(p) for p in scope.read_only),
+            "writable": tuple(str(p) for p in scope.writable_roots),
             "project_root": str(scope.project_root),
         }
         version = hashlib.sha256(
@@ -283,8 +290,8 @@ class PermissionService:
                 baseline.scope.origin, baseline.scope.project_root
             ):
                 raise PermissionConflict("Execution boundaries changed")
-            if current.scope.read_only != baseline.scope.read_only:
-                raise PermissionConflict("Read-only boundaries changed")
+            if not set(baseline.scope.writable_roots) <= set(current.scope.writable_roots):
+                raise PermissionConflict("Writable boundaries changed")
             previous = {
                 json.dumps(rule.to_persistent(), sort_keys=True)
                 for rule in (*baseline.rules, *baseline.settings.allow)
@@ -300,8 +307,6 @@ class PermissionService:
         return validate
 
     def reference_roots(self, session) -> list[str]:
-        from ...domain.policy.permission.scope import path_module
-
         snapshot = self.snapshot(session)
         files = [
             path_module(rule.resource_root(str(session.workspace_dir))).join(
@@ -314,8 +319,6 @@ class PermissionService:
 
     def authorize(self, session, tool_call, subject, *, backend, workflow=None, cwd=None, scope=None, identity=None, requires_execution=False, requires_network=False):
         """The sole approval, commit, and permit-issuance workflow."""
-        from ...domain.policy.permission.resolver import PermissionPolicy
-        from ...domain.policy.permission.types import InvocationIdentity
         template = workflow or AuthorizationWorkflow()
         snapshot = self.snapshot(session) if session is not None else None
         if snapshot is not None:
@@ -362,15 +365,12 @@ class PermissionService:
             return AuthorizedInvocation(resolution, snapshot, snapshot.scope if snapshot else scope, execution, network, validator)
 
     def grant_resource(self, session, backend, resource, lifetime, expected_version):
-        from .resources import resource_change
         with self._repository.transaction():
             self.validate(session, expected_version)
             change = resource_change(session, backend, self.snapshot(session), resource, lifetime)
             self.commit(change, session, expected_version=expected_version)
 
     def read_file(self, session, backend, path, *, max_bytes: int) -> bytes:
-        from ...domain.model.tool import AccessTarget, ToolAccess, ToolCall
-        from ...domain.policy.permission.types import PermissionSubject
         subject = PermissionSubject("read_file", False,
             lambda args: ToolAccess(frozenset({"file_read"}), (AccessTarget("file", args["file"], "file_read", kind="file"),)), lambda _: None)
         invocation = self.authorize(session, ToolCall("read_file", {"file": str(path)}, "reference"), subject,
@@ -387,6 +387,8 @@ def _shell_depends_on(rule: PermissionRule, grant) -> bool:
     """Whether revoking this rule withdraws what let this Shell command start."""
     if rule.tool_name != "execute_command":
         return False
+    if rule.kind == "sandbox_network":
+        return bool(grant.network_enabled)
     if rule.kind == "command":
         programs = command_segments(grant.command or "") or ()
         return PurePosixPath(rule.argv[0]).name in {PurePosixPath(argv[0]).name for argv in programs}

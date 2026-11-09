@@ -15,7 +15,7 @@ def list_grants(session: Any, permissions: PermissionService, sandbox: dict | No
     for rule in (*snapshot.rules, *snapshot.settings.allow):
         target = rule.display_target(str(snapshot.scope.origin))
         rows.append({"id": record_id(rule.to_persistent()), "lifetime": rule.lifetime, "source": rule.lifetime,
-                     "resource_kind": rule.kind, "target": target, "operations": list(rule.operations or (("shell",) if rule.kind in {"shell", "command"} else ("network_read",) if rule.kind == "network" else ())),
+                     "resource_kind": rule.kind, "target": target, "operations": list(rule.operations or (("shell",) if rule.kind in {"shell", "command"} else ("network_read", "network_write") if rule.kind in {"network", "sandbox_network"} else ())),
                      "recursive": rule.recursive, "tool": rule.tool_name, "cwd": rule.cwd,
                      "project_id": rule.project_id, "description": rule.describe(), "version": snapshot.version,
                      "resource": rule.to_persistent(), "http_methods": list(rule.methods), "protocol": rule.scheme, "host": rule.host, "port": rule.port})

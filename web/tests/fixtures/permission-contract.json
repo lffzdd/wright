@@ -130,8 +130,23 @@
             "file_write"
           ],
           "resource": {
-            "path": "/external",
-            "recursive": true
+            "kind": "directory",
+            "tool_name": "*",
+            "root": "/external",
+            "pattern": "",
+            "operations": [
+              "file_read",
+              "file_write"
+            ],
+            "id": "",
+            "lifetime": "session",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": true,
+            "exact": false,
+            "cwd": "",
+            "sandbox_key": ""
           }
         },
         {
@@ -146,8 +161,23 @@
             "file_write"
           ],
           "resource": {
-            "path": "/external",
-            "recursive": true
+            "kind": "directory",
+            "tool_name": "*",
+            "root": "/external",
+            "pattern": "",
+            "operations": [
+              "file_read",
+              "file_write"
+            ],
+            "id": "",
+            "lifetime": "project",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": true,
+            "exact": false,
+            "cwd": "",
+            "sandbox_key": ""
           }
         },
         {
@@ -162,8 +192,23 @@
             "file_write"
           ],
           "resource": {
-            "path": "/external",
-            "recursive": true
+            "kind": "directory",
+            "tool_name": "*",
+            "root": "/external",
+            "pattern": "",
+            "operations": [
+              "file_read",
+              "file_write"
+            ],
+            "id": "",
+            "lifetime": "user",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": true,
+            "exact": false,
+            "cwd": "",
+            "sandbox_key": ""
           }
         },
         {
@@ -243,7 +288,7 @@
             "recursive": false,
             "exact": true,
             "cwd": "/project",
-            "sandbox_key": "4d82472f905839415d7a72245c4b0a89f9606aa3f149b564d28443b51b369e97",
+            "sandbox_key": "134aa5c1ea02a9e572eedd5ea9614f868db12a16f16377c73309d494a59e8a22",
             "execution_mode": "sandbox"
           }
         },
@@ -277,7 +322,7 @@
             "recursive": false,
             "exact": false,
             "cwd": "/project",
-            "sandbox_key": "4d82472f905839415d7a72245c4b0a89f9606aa3f149b564d28443b51b369e97",
+            "sandbox_key": "134aa5c1ea02a9e572eedd5ea9614f868db12a16f16377c73309d494a59e8a22",
             "execution_mode": "sandbox"
           }
         },
@@ -311,7 +356,7 @@
             "recursive": false,
             "exact": false,
             "cwd": "/project",
-            "sandbox_key": "4d82472f905839415d7a72245c4b0a89f9606aa3f149b564d28443b51b369e97",
+            "sandbox_key": "134aa5c1ea02a9e572eedd5ea9614f868db12a16f16377c73309d494a59e8a22",
             "execution_mode": "sandbox"
           }
         },
@@ -345,7 +390,97 @@
             "recursive": false,
             "exact": false,
             "cwd": "/project",
-            "sandbox_key": "4d82472f905839415d7a72245c4b0a89f9606aa3f149b564d28443b51b369e97",
+            "sandbox_key": "134aa5c1ea02a9e572eedd5ea9614f868db12a16f16377c73309d494a59e8a22",
+            "execution_mode": "sandbox"
+          }
+        },
+        {
+          "id": "allow_session_sandbox_network",
+          "label": "This conversation (including resume)",
+          "scope": "Sandbox commands may use the network; file isolation remains",
+          "persistence": "This conversation (including resume)",
+          "lifetime": "session",
+          "resource_kind": "sandbox_network",
+          "operations": [
+            "network_read",
+            "network_write"
+          ],
+          "resource": {
+            "kind": "sandbox_network",
+            "tool_name": "execute_command",
+            "operations": [
+              "network_read",
+              "network_write"
+            ],
+            "id": "",
+            "lifetime": "session",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": false,
+            "cwd": "",
+            "sandbox_key": "",
+            "execution_mode": "sandbox"
+          }
+        },
+        {
+          "id": "allow_project_sandbox_network",
+          "label": "This project",
+          "scope": "Sandbox commands may use the network; file isolation remains",
+          "persistence": "This project",
+          "lifetime": "project",
+          "resource_kind": "sandbox_network",
+          "operations": [
+            "network_read",
+            "network_write"
+          ],
+          "resource": {
+            "kind": "sandbox_network",
+            "tool_name": "execute_command",
+            "operations": [
+              "network_read",
+              "network_write"
+            ],
+            "id": "",
+            "lifetime": "project",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": false,
+            "cwd": "",
+            "sandbox_key": "",
+            "execution_mode": "sandbox"
+          }
+        },
+        {
+          "id": "allow_user_sandbox_network",
+          "label": "All projects",
+          "scope": "Sandbox commands may use the network; file isolation remains",
+          "persistence": "All projects",
+          "lifetime": "user",
+          "resource_kind": "sandbox_network",
+          "operations": [
+            "network_read",
+            "network_write"
+          ],
+          "resource": {
+            "kind": "sandbox_network",
+            "tool_name": "execute_command",
+            "operations": [
+              "network_read",
+              "network_write"
+            ],
+            "id": "",
+            "lifetime": "user",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": false,
+            "cwd": "",
+            "sandbox_key": "",
             "execution_mode": "sandbox"
           }
         },
@@ -440,7 +575,7 @@
             "recursive": false,
             "exact": true,
             "cwd": "/project",
-            "sandbox_key": "4d82472f905839415d7a72245c4b0a89f9606aa3f149b564d28443b51b369e97",
+            "sandbox_key": "134aa5c1ea02a9e572eedd5ea9614f868db12a16f16377c73309d494a59e8a22",
             "execution_mode": "sandbox"
           }
         },
@@ -474,7 +609,7 @@
             "recursive": false,
             "exact": false,
             "cwd": "/project",
-            "sandbox_key": "4d82472f905839415d7a72245c4b0a89f9606aa3f149b564d28443b51b369e97",
+            "sandbox_key": "134aa5c1ea02a9e572eedd5ea9614f868db12a16f16377c73309d494a59e8a22",
             "execution_mode": "sandbox"
           }
         },
@@ -508,7 +643,7 @@
             "recursive": false,
             "exact": false,
             "cwd": "/project",
-            "sandbox_key": "4d82472f905839415d7a72245c4b0a89f9606aa3f149b564d28443b51b369e97",
+            "sandbox_key": "134aa5c1ea02a9e572eedd5ea9614f868db12a16f16377c73309d494a59e8a22",
             "execution_mode": "sandbox"
           }
         },
@@ -542,7 +677,97 @@
             "recursive": false,
             "exact": false,
             "cwd": "/project",
-            "sandbox_key": "4d82472f905839415d7a72245c4b0a89f9606aa3f149b564d28443b51b369e97",
+            "sandbox_key": "134aa5c1ea02a9e572eedd5ea9614f868db12a16f16377c73309d494a59e8a22",
+            "execution_mode": "sandbox"
+          }
+        },
+        {
+          "id": "allow_session_sandbox_network",
+          "label": "This conversation (including resume)",
+          "scope": "Sandbox commands may use the network; file isolation remains",
+          "persistence": "This conversation (including resume)",
+          "lifetime": "session",
+          "resource_kind": "sandbox_network",
+          "operations": [
+            "network_read",
+            "network_write"
+          ],
+          "resource": {
+            "kind": "sandbox_network",
+            "tool_name": "execute_command",
+            "operations": [
+              "network_read",
+              "network_write"
+            ],
+            "id": "",
+            "lifetime": "session",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": false,
+            "cwd": "",
+            "sandbox_key": "",
+            "execution_mode": "sandbox"
+          }
+        },
+        {
+          "id": "allow_project_sandbox_network",
+          "label": "This project",
+          "scope": "Sandbox commands may use the network; file isolation remains",
+          "persistence": "This project",
+          "lifetime": "project",
+          "resource_kind": "sandbox_network",
+          "operations": [
+            "network_read",
+            "network_write"
+          ],
+          "resource": {
+            "kind": "sandbox_network",
+            "tool_name": "execute_command",
+            "operations": [
+              "network_read",
+              "network_write"
+            ],
+            "id": "",
+            "lifetime": "project",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": false,
+            "cwd": "",
+            "sandbox_key": "",
+            "execution_mode": "sandbox"
+          }
+        },
+        {
+          "id": "allow_user_sandbox_network",
+          "label": "All projects",
+          "scope": "Sandbox commands may use the network; file isolation remains",
+          "persistence": "All projects",
+          "lifetime": "user",
+          "resource_kind": "sandbox_network",
+          "operations": [
+            "network_read",
+            "network_write"
+          ],
+          "resource": {
+            "kind": "sandbox_network",
+            "tool_name": "execute_command",
+            "operations": [
+              "network_read",
+              "network_write"
+            ],
+            "id": "",
+            "lifetime": "user",
+            "project_id": "",
+            "source": "approval",
+            "root_kind": "absolute",
+            "recursive": false,
+            "exact": false,
+            "cwd": "",
+            "sandbox_key": "",
             "execution_mode": "sandbox"
           }
         },

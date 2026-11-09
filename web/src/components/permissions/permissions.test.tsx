@@ -4,7 +4,7 @@ import { ApiError, api } from "../../api";
 import { setLocale } from "../../i18n";
 import type { Grants, Interaction } from "../../types";
 import { InteractionCard } from "../cards/cards";
-import { PermissionGrants } from "./permissions";
+import { PermissionGrants, PermissionsPanel } from "./permissions";
 import { describeChoice, quickChoice } from "./approval";
 import { describeGrant } from "./permissions";
 
@@ -76,6 +76,29 @@ it("uses server option IDs for explicit directory expansion and shows global rul
   await waitFor(() => expect(respond).toHaveBeenCalledWith("r", "allow_project_directory_write"));
 });
 
+it("offers higher directories in one row and saves the picked level", async () => {
+  const respond = vi.fn().mockResolvedValue(true);
+  const level = (id: string, scope: string) => ({ id, label: "", scope, persistence: "", lifetime: "session", resource_kind: "directory", operations: ["file_read"] });
+  render(<InteractionCard sessionId="s" root="/project" interaction={{
+    request_id: "r", kind: "permission", tool_name: "read_file", operation: "file_read", targets: ["/srv/shared/lib/a.py"], risk_flags: ["path_outside_scope"],
+    choices: [
+      { id: "allow_once", label: "Once", scope: "", persistence: "", lifetime: "once" },
+      { id: "allow_session_rule", label: "", scope: "/srv/shared/lib/a.py", persistence: "", lifetime: "session", resource_kind: "file", operations: ["file_read"] },
+      level("allow_session_directory_read", "/srv/shared/lib"),
+      level("allow_session_directory_read_1", "/srv/shared"),
+      { id: "deny", label: "Deny", scope: "", persistence: "" },
+    ],
+  }} respond={respond} />);
+  fireEvent.click(screen.getByText("More options"));
+  expect(screen.getAllByRole("radio")).toHaveLength(2);
+  const picker = screen.getByRole("combobox", { name: "Directory to allow" }) as HTMLSelectElement;
+  expect(Array.from(picker.options).map((option) => option.textContent)).toEqual(["/srv/shared/lib/", "/srv/shared/"]);
+  fireEvent.change(picker, { target: { value: "allow_session_directory_read_1" } });
+  expect(screen.getByText(/everything in \/srv\/shared\//)).toBeTruthy();
+  fireEvent.click(screen.getByText("Save and allow"));
+  await waitFor(() => expect(respond).toHaveBeenCalledWith("r", "allow_session_directory_read_1"));
+});
+
 it("supports keyboard once approval and denial in Chinese", async () => {
   setLocale("zh-CN");
   const respond = vi.fn().mockResolvedValue(true);
@@ -114,6 +137,8 @@ const shellInteraction: Interaction = {
   choices: [
     { id: "allow_once", label: "Once", scope: "This invocation only", persistence: "", lifetime: "once" },
     { id: "allow_session_rule", label: "Session", scope: "echo hello · /project", persistence: "", lifetime: "session", resource_kind: "shell", operations: ["shell"] },
+    { id: "allow_session_sandbox_network", label: "Session", scope: "Sandbox network", persistence: "", lifetime: "session", resource_kind: "sandbox_network", operations: ["network_read", "network_write"] },
+    { id: "allow_project_sandbox_network", label: "Project", scope: "Sandbox network", persistence: "", lifetime: "project", resource_kind: "sandbox_network", operations: ["network_read", "network_write"] },
     { id: "allow_once_network", label: "With network", scope: "This command only", persistence: "" },
     { id: "deny", label: "Deny", scope: "", persistence: "" },
   ],
@@ -157,25 +182,31 @@ it("can deny a Shell request even when isolation is unavailable", async () => {
   await waitFor(() => expect(respond).toHaveBeenCalledWith("shell", "deny"));
 });
 
-it("network opt-in sends the server network choice and cannot silently save offline authority", async () => {
+it("network opt-in can remember sandbox network and cannot silently save offline authority", async () => {
   vi.spyOn(api, "grants").mockResolvedValue(readyGrants);
   const respond = vi.fn(() => new Promise<boolean>(() => undefined));
   render(<InteractionCard sessionId="s" interaction={shellInteraction} respond={respond} />);
   await waitFor(() => expect((screen.getByRole("button", { name: /Allow once/i }) as HTMLButtonElement).disabled).toBe(false));
   expect(screen.getByRole("button", { name: /Allow “echo hello” for this session/ })).toBeTruthy();
   fireEvent.click(screen.getByRole("checkbox"));
-  // With network on, nothing that would be remembered is offered directly.
-  expect(screen.queryByRole("button", { name: /for this session/ })).toBeNull();
+  expect(screen.getByRole("button", { name: /Allow sandbox network for this session/ })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /Allow “echo hello” for this session/ })).toBeNull();
   fireEvent.click(screen.getByText("More options"));
-  expect(screen.queryByText("Show options for all projects")).toBeNull();
+  expect(screen.getByText(/Offline command rules cannot be saved while network is selected/)).toBeTruthy();
   const save = screen.getByRole("button", { name: "Save and allow" }) as HTMLButtonElement;
-  expect(save.disabled).toBe(true);
-  expect(screen.getByText(/Network is for this invocation only/)).toBeTruthy();
-  fireEvent.click(save);
-  expect(respond).not.toHaveBeenCalled();
+  expect(save.disabled).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: /Allow once with network/i }));
   await waitFor(() => expect(respond).toHaveBeenCalledWith("shell", "allow_once_network"));
-  expect(screen.getByRole("button", { name: /Submitting/ })).toBeTruthy();
+});
+
+it("saves sandbox network from the session button while network is selected", async () => {
+  vi.spyOn(api, "grants").mockResolvedValue(readyGrants);
+  const respond = vi.fn().mockResolvedValue(true);
+  render(<InteractionCard sessionId="s" interaction={shellInteraction} respond={respond} />);
+  await waitFor(() => expect((screen.getByRole("button", { name: /Allow once/i }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(screen.getByRole("button", { name: /Allow sandbox network for this session/ }));
+  await waitFor(() => expect(respond).toHaveBeenCalledWith("shell", "allow_session_sandbox_network"));
 });
 
 it("shows only the facts that change the decision, localized", async () => {
@@ -285,4 +316,40 @@ it("localizes broad program, HTTP path and recursive directory scope in Chinese"
   render(<InteractionCard sessionId="s" interaction={{ request_id: "file", kind: "permission", choices }} respond={vi.fn()} />);
   fireEvent.click(screen.getByText("更多选项"));
   expect(screen.getByText("包括此目录和所有子目录中的全部文件。")).toBeTruthy();
+});
+
+it("toggles session sandbox network from the permissions glance", async () => {
+  const update = vi.fn();
+  const empty = { ...readyGrants, grants: [] };
+  vi.spyOn(api, "addGrant").mockResolvedValue({ ...empty, grants: [{ id: "net", source: "session", lifetime: "session", resource_kind: "sandbox_network", target: "sandbox network", operations: ["network_read", "network_write"], recursive: false }] });
+  render(<PermissionsPanel sessionId="s" grants={empty} update={update} interactionMode="agent" permissionMode="bypass" />);
+  expect(screen.getByRole("button", { name: /Network access/ }).textContent).toContain("Asks first");
+  fireEvent.click(screen.getByRole("button", { name: /Network access/ }));
+  await waitFor(() => expect(api.addGrant).toHaveBeenCalledWith("s", { kind: "sandbox_network" }, "session", empty.version));
+});
+
+it("offers sandbox network right under the mode when it is project auto", async () => {
+  const empty = { ...readyGrants, grants: [] };
+  vi.spyOn(api, "addGrant").mockResolvedValue(empty);
+  const { rerender } = render(<PermissionsPanel sessionId="s" grants={empty} update={vi.fn()} interactionMode="agent" permissionMode="bypass" />);
+  expect(screen.getByRole("radio", { name: /in-project edits and sandboxed commands/ }).textContent).toBe("Project auto");
+  fireEvent.click(screen.getByRole("button", { name: "Also allow sandbox network for this session" }));
+  await waitFor(() => expect(api.addGrant).toHaveBeenCalledWith("s", { kind: "sandbox_network" }, "session", empty.version));
+  rerender(<PermissionsPanel sessionId="s" grants={empty} update={vi.fn()} interactionMode="agent" permissionMode="default" />);
+  expect(screen.queryByRole("button", { name: "Also allow sandbox network for this session" })).toBeNull();
+});
+
+it("revokes a session sandbox network grant from the glance", async () => {
+  const update = vi.fn();
+  const granted: Grants = { ...readyGrants, grants: [{ id: "net", source: "session", lifetime: "session", resource_kind: "sandbox_network", target: "sandbox network", operations: ["network_read", "network_write"], recursive: false }] };
+  vi.spyOn(api, "revokeGrant").mockResolvedValue({ ...readyGrants, grants: [] });
+  render(<PermissionsPanel sessionId="s" grants={granted} update={update} interactionMode="agent" permissionMode="bypass" />);
+  expect(screen.getByText("Sandbox commands may use the network")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: /Network access/ }));
+  await waitFor(() => expect(api.revokeGrant).toHaveBeenCalledWith("s", "net", "session", granted.version));
+});
+
+it("describes a sandbox network grant", () => {
+  expect(describeGrant({ id: "net", source: "session", lifetime: "session", resource_kind: "sandbox_network", target: "sandbox network", operations: ["network_read", "network_write"], recursive: false })).toBe("Sandbox commands may use the network");
+  expect(describeChoice({ id: "allow_session_sandbox_network", label: "Session", scope: "Sandbox network", persistence: "", lifetime: "session", resource_kind: "sandbox_network" })).toContain("sandbox network for this session");
 });

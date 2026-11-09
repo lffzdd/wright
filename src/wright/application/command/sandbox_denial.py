@@ -27,15 +27,33 @@ def describe_sandbox_denial(output: str, grant) -> dict | None:
     writable = [path.value for path in grant.shell_writable]
     blocked = [path.value for path in grant.blocked_paths]
     path = _denied_path(output)
-    grant_directory = ""
-    if path:
+    grant_directory = grant_write_directory = ""
+    if path and not _inside(path, blocked):
         # A path the sandbox already allows failed for some other reason, such as file flags.
-        if _inside(path, writable) and not _inside(path, blocked):
+        if _inside(path, writable):
             return None
-        if not _inside(path, readable) and not _inside(path, blocked):
-            candidate = path if os.path.isdir(path) else os.path.dirname(path)
-            grant_directory = "" if candidate == os.path.dirname(candidate) else candidate
-    return {"path": path, "grant_directory": grant_directory, "readable": readable, "writable": writable}
+        candidate = path if os.path.isdir(path) else os.path.dirname(path)
+        if candidate != os.path.dirname(candidate):
+            # A readable path that still failed was a write.
+            if not _inside(path, readable):
+                grant_directory = candidate
+            if _writable_suggestion(candidate):
+                grant_write_directory = candidate
+    return {
+        "path": path,
+        "grant_directory": grant_directory,
+        "grant_write_directory": grant_write_directory,
+        "readable": readable,
+        "writable": writable,
+    }
+
+
+def _writable_suggestion(directory: str) -> bool:
+    """A one-click write grant never covers a top-level directory or the home directory."""
+    if len([part for part in directory.split(os.sep) if part]) < 2:
+        return False
+    home = os.path.realpath(os.path.expanduser("~"))
+    return not _inside(home, [directory])
 
 
 def sandbox_denial_message(denial: dict) -> str:

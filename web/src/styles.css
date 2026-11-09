@@ -1812,6 +1812,7 @@ html.dark .outline-tick.active i {
 .approval-more legend { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
 .approval-option { display: flex; align-items: flex-start; gap: 8px; padding: 4px 6px; border-radius: 4px; cursor: pointer; font-size: 12.5px; }
 .approval-option:hover { background: var(--bg-card-hover); }
+.approval-level { max-width: 100%; margin: 2px 0; font: inherit; font-size: 11.5px; }
 .approval-option.global span { color: var(--warning); }
 .approval-option input { margin-top: 3px; }
 .approval-more-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -1821,6 +1822,7 @@ html.dark .outline-tick.active i {
 .sandbox-denial p { margin: 0 0 4px; }
 .sandbox-denial { display: grid; gap: 4px; justify-items: start; padding: 8px; border-top: 1px solid var(--border-subtle); color: var(--text-primary); font-size: 11.5px; overflow-wrap: anywhere; }
 .sandbox-denial .mono { color: var(--text-muted); font-size: 10.5px; }
+.sandbox-denial-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .interaction-dock { max-height: none; overflow: visible; }
 
 /* Permissions tab */
@@ -1843,8 +1845,13 @@ html.dark .outline-tick.active i {
 .perm-segment.active { background: var(--bg-card); color: var(--text-primary); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06); }
 .perm-segment:disabled { opacity: .6; cursor: not-allowed; }
 .perm-mode-help { margin: 0; line-height: 1.4; }
+.perm-mode-network { display: grid; gap: 4px; justify-items: start; margin: 0 0 8px; }
 .glance { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--bg-card); }
 .glance-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, auto); gap: 8px 12px; padding: 7px 10px; font-size: 11.5px; align-items: start; }
+.glance-row.has-toggle { padding: 0; }
+.glance-toggle { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, auto); gap: 8px 12px; width: 100%; padding: 7px 10px; border: 0; background: transparent; color: inherit; font: inherit; text-align: inherit; cursor: pointer; }
+.glance-toggle:hover { background: var(--bg-hover, rgba(127, 127, 127, 0.08)); }
+.glance-toggle:disabled { cursor: default; }
 .glance-row + .glance-row { border-top: 1px solid var(--border-subtle); }
 .glance-label { color: var(--text-secondary); line-height: 1.35; }
 .glance-outcome { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; text-align: right; min-width: 0; }

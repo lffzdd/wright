@@ -497,7 +497,8 @@ def test_summary_agrees_with_real_resolver_scopes_and_protected_paths(
     protected = root / "permissions.json"
     monkeypatch.setenv("WRIGHT_PERMISSION_CONFIG", str(protected))
     backend = LocalExecutionBackend(root, lambda: root)
-    scope = AccessScope(root, (extra,), (protected,))
+    # `extra` stands for a read-write directory grant, so it is in scope for writes too.
+    scope = AccessScope(root, (extra,), (protected,), writable=(extra,))
     policy = PermissionPolicy(PermissionSettings(mode=mode))
     summary = next(
         item

@@ -13,7 +13,7 @@ from .approval import (
     ResolvedTarget,
 )
 from .limits import ASK_OPERATIONS, PLAN_OPERATIONS
-from .scope import AccessScope, PathClass, is_under
+from .scope import AccessScope, PathClass, is_under, path_module
 from .settings import (
     MatchContext,
     PermissionConfiguration,
@@ -37,12 +37,152 @@ from .types import (
     PermissionSubject,
 )
 
+_Outcome = tuple[PermissionDecision, str, str, str, dict[str, str]]
+_NETWORK = frozenset({"network_read", "network_write"})
+
+
+@dataclass(frozen=True)
+class _Call:
+    """One invocation as the policy stages see it."""
+
+    access: ToolAccess  # as the tool declared it
+    effective: ToolAccess  # after capability grants (sandbox network) are applied
+    tool_name: str
+    subject: str
+    in_scope: bool
+    context: MatchContext | None
+    session_rules: tuple[PermissionRule, ...]
+    settings: PermissionConfiguration | None
+    ceiling: str | None  # "ask" or "plan": operations above it are denied
+    mode: str | None  # fallback for calls no rule decides; None under a plan ceiling
+
+    @property
+    def execution_mode(self) -> str:
+        return self.context.execution_mode if self.context is not None else ""
+
+    @property
+    def requests_sandbox_network(self) -> bool:
+        operations = self.access.operations
+        return "shell" in operations and bool(operations & _NETWORK) and self.execution_mode == "sandbox"
+
+
+def _ceiling(call: _Call) -> _Outcome | None:
+    """Ask and Plan are hard ceilings; no later stage can widen them."""
+
+    if call.ceiling is None:
+        return None
+    limit = ASK_OPERATIONS if call.ceiling == "ask" else PLAN_OPERATIONS
+    operations = call.access.operations
+    if "unknown" not in operations and operations <= limit:
+        return None
+    if call.ceiling == "ask":
+        return "deny", "Ask mode blocks this operation", "mode", "permission.ask_denied", {}
+    return "deny", "Plan mode blocks this operation", "mode", "permission.plan_denied", {}
+
+
+def _restrictions(call: _Call) -> _Outcome | None:
+    """Configured deny, then ask, rules."""
+
+    settings = call.settings
+    if settings is None:
+        return None
+    params = {"tool_name": call.tool_name, "subject": call.subject}
+    if _matches(settings.deny, call.tool_name, call.subject, effect="deny", context=call.context):
+        return ("deny", f"Matched a deny rule: {call.tool_name}({call.subject})",
+                "rule_config", "permission.deny_rule", params)
+    if _matches(settings.ask, call.tool_name, call.subject, effect="ask", context=call.context):
+        return ("ask", f"Matched an ask rule and needs confirmation: {call.tool_name}({call.subject})",
+                "rule_config", "permission.ask_rule", params)
+    return None
+
+
+def _git_control(call: _Call) -> _Outcome | None:
+    # Git runs what these files name. Neither a rule nor a mode may write them
+    # silently, or a later git call becomes arbitrary code.
+    if "file_write" in call.access.operations and GIT_CONTROL_FLAG in call.access.risk_flags:
+        return "ask", "Writing Git configuration or hooks needs approval for this invocation", "policy", "permission.git_control", {}
+    return None
+
+
+def _sandbox_network(call: _Call) -> _Outcome | None:
+    # A remembered sandbox-network grant is applied when the call is built
+    # (see ``effective``); without one, network use needs this approval.
+    if call.requests_sandbox_network and call.effective.operations & _NETWORK:
+        return "ask", "This command requests network access", "policy", "permission.network_requested", {}
+    return None
+
+
+def _unknown_effects(call: _Call) -> _Outcome | None:
+    if call.effective.operations & {"external_unknown", "unknown"}:
+        return "ask", "Unknown or undeclared external effects need approval for this invocation", "policy", "permission.unknown_operation", {}
+    return None
+
+
+def _allow_rules(call: _Call) -> _Outcome | None:
+    """Remembered and configured grants; every lifetime is one rule set here."""
+
+    context = call.context
+    files = context.files if context is not None else ()
+    rules = tuple(
+        rule for rule in (*call.session_rules, *(call.settings.allow if call.settings else ()))
+        if rule.kind != "sandbox_network" and (call.in_scope or rule.kind != "tool" or not files)
+    )
+    contexts = tuple(replace(context, files=(file,)) for file in files) if files else (context,)
+    allowed = all(_matches(rules, call.tool_name, call.subject, effect="allow", context=item) for item in contexts)
+    if files and not call.effective.operations <= {operation for _, operation in files}:
+        # The call does more than touch these files; only a tool grant covers that.
+        tools = [rule for rule in rules if rule.kind == "tool"]
+        allowed = _matches(tools, call.tool_name, call.subject, effect="allow", context=context)
+    if not allowed:
+        return None
+    return ("allow", f"Matched an allow rule: {call.tool_name}({call.subject})",
+            "rule_config", "permission.allow_rule", {"tool_name": call.tool_name, "subject": call.subject})
+
+
+# What each mode allows inside the session scope when no rule decided:
+# (modes, operations the call must stay within, reason, display code).
+_MODE_FALLBACK = (
+    (frozenset({"acceptEdits", "bypass"}), frozenset({"file_read", "file_write"}),
+     "Workspace editing is enabled", "permission.accept_edits"),
+    # Durable writes (schedules, long-term memory) outlive this boundary, so
+    # persistent_write is absent.
+    (frozenset({"bypass"}), frozenset({"shell", "internal_read", "execution_control", "plan_update", "user_interaction"}),
+     "Sandbox command approval is disabled", "permission.bypass_allow"),
+)
+
+
+def _mode_fallback(call: _Call) -> _Outcome | None:
+    if call.mode is None or not call.in_scope:
+        return None
+    # Modes remove confirmations inside a boundary; a host Shell has none.
+    if "shell" in call.effective.operations and call.execution_mode == "host":
+        return None
+    for modes, operations, reason, code in _MODE_FALLBACK:
+        if call.mode in modes and call.effective.operations <= operations:
+            return "allow", reason, "mode", code, {}
+    return None
+
+
+_DEFAULT_ALLOW = frozenset({"file_read", "internal_read", "plan_update"})
+
+
+def _default(call: _Call) -> _Outcome:
+    operations = call.effective.operations
+    if not call.in_scope and operations & {"file_read", "file_write"}:
+        return "ask", "The target is outside this session's access scope", "scope", "permission.outside_scope", {}
+    if call.in_scope and operations <= _DEFAULT_ALLOW:
+        return "allow", "The default policy allows in-scope reads and internal queries", "default", "permission.default_allow", {}
+    return "ask", "This operation needs approval", "policy", "permission.needs_approval", {}
+
+
+# Stages that only narrow come first, so nothing after them can widen a deny
+# or an ask; the first stage with an answer decides.
+_STAGES = (_ceiling, _restrictions, _git_control, _sandbox_network, _unknown_effects,
+           _allow_rules, _mode_fallback)
+
 
 class PermissionPolicy:
     """Hard policy layer; tool names and arguments remain outside this class."""
-
-    _AUTO_DEFAULT = frozenset({"file_read", "internal_read", "plan_update"})
-    _EDIT_OPERATIONS = frozenset({"file_read", "file_write"})
 
     def __init__(self, settings: PermissionSettings | None = None):
         self.settings = PermissionConfiguration.from_settings(settings) if isinstance(settings, PermissionSettings) else settings
@@ -58,108 +198,28 @@ class PermissionPolicy:
         session_rules: tuple[PermissionRule, ...] = (),
         interaction_mode: str = "agent",
         permission_mode: str | None = None,
-    ) -> tuple[PermissionDecision, str, str, str, dict[str, str]]:
+    ) -> _Outcome:
         """Return decision, English reason, source, display code, and display params."""
 
+        call = self._call(access, tool_name=tool_name, subject=subject, in_scope=in_scope, context=context,
+                          session_rules=session_rules, interaction_mode=interaction_mode, permission_mode=permission_mode)
+        for stage in _STAGES:
+            outcome = stage(call)
+            if outcome is not None:
+                return outcome
+        return _default(call)
+
+    def _call(self, access, *, tool_name, subject, in_scope, context, session_rules, interaction_mode, permission_mode) -> _Call:
         settings = self.settings
         mode = permission_mode or (settings.mode if settings is not None else "default")
-        if interaction_mode == "ask" and (
-            "unknown" in access.operations
-            or any(operation not in ASK_OPERATIONS for operation in access.operations)
-        ):
-            return (
-                "deny",
-                "Ask mode blocks this operation",
-                "mode",
-                "permission.ask_denied",
-                {},
-            )
-        if interaction_mode == "plan":
-            # Plan is a ceiling. Bypass and allow rules cannot widen it.
-            mode = "plan"
-
-        # Hard mode restrictions precede configurable rules.  In particular,
-        # bypass and an allow rule cannot turn a plan-mode write/MCP/control
-        # operation into an executable call.
-        if mode == "plan" and (
-            "unknown" in access.operations
-            or any(operation not in PLAN_OPERATIONS for operation in access.operations)
-        ):
-            return "deny", "Plan mode blocks this operation", "mode", "permission.plan_denied", {}
-
-        if settings is not None and _matches(settings.deny, tool_name, subject, effect="deny", context=context):
-            return (
-                "deny",
-                f"Matched a deny rule: {tool_name}({subject})",
-                "rule_config",
-                "permission.deny_rule",
-                {"tool_name": tool_name, "subject": subject},
-            )
-        if settings is not None and _matches(settings.ask, tool_name, subject, effect="ask", context=context):
-            return (
-                "ask",
-                f"Matched an ask rule and needs confirmation: {tool_name}({subject})",
-                "rule_config",
-                "permission.ask_rule",
-                {"tool_name": tool_name, "subject": subject},
-            )
-
-        if "shell" in access.operations and access.operations & {"network_read", "network_write"}:
-            return "ask", "This command requests network access", "policy", "permission.network_requested", {}
-        if access.operations & {"external_unknown", "unknown"}:
-            return "ask", "Unknown or undeclared external effects need approval for this invocation", "policy", "permission.unknown_operation", {}
-
-        allow_rules = tuple(rule for rule in (*session_rules, *(settings.allow if settings else ()))
-                            if in_scope or rule.kind != "tool" or not (context and context.files))
-        contexts = tuple(replace(context, files=(file,)) for file in context.files) if context and context.files else (context,)
-        allowed = all(_matches(allow_rules, tool_name, subject, effect="allow", context=item) for item in contexts)
-        if context and context.files and not access.operations <= {operation for _, operation in context.files}:
-            allowed = _matches([rule for rule in allow_rules if rule.kind == "tool"], tool_name, subject, effect="allow", context=context)
-        if allowed:
-            return (
-                "allow",
-                f"Matched an allow rule: {tool_name}({subject})",
-                "rule_config",
-                "permission.allow_rule",
-                {"tool_name": tool_name, "subject": subject},
-            )
-
-        if mode in {"bypass", "acceptEdits"} and in_scope and access.operations <= self._EDIT_OPERATIONS:
-            return "allow", "Workspace editing is enabled", "mode", "permission.accept_edits", {}
-        # Bypass removes confirmations inside a boundary; host Shell has none.
-        host_shell = "shell" in access.operations and context is not None and context.execution_mode == "host"
-        if mode == "bypass" and in_scope and not host_shell and access.operations <= {"shell", "internal_read", "execution_control", "persistent_write", "plan_update", "user_interaction"}:
-            return "allow", "Sandbox command approval is disabled", "mode", "permission.bypass_allow", {}
-
-        if "unknown" in access.operations:
-            return (
-                "ask",
-                "An undeclared tool operation needs explicit approval",
-                "policy",
-                "permission.unknown_operation",
-                {},
-            )
-        if not in_scope and any(
-            operation in {"file_read", "file_write"}
-            for operation in access.operations
-        ):
-            return (
-                "ask",
-                "The target is outside this session's access scope",
-                "scope",
-                "permission.outside_scope",
-                {},
-            )
-
-        if access.operations <= self._AUTO_DEFAULT and in_scope:
-            return (
-                "allow",
-                "The default policy allows in-scope reads and internal queries",
-                "default",
-                "permission.default_allow",
-                {},
-            )
-        return "ask", "This operation needs approval", "policy", "permission.needs_approval", {}
+        ceiling = "ask" if interaction_mode == "ask" else "plan" if "plan" in {interaction_mode, mode} else None
+        call = _Call(access, access, tool_name, subject, in_scope, context, session_rules, settings, ceiling,
+                     None if "plan" in {interaction_mode, mode} else mode)
+        if call.requests_sandbox_network and sandbox_network_granted(session_rules, settings, execution_mode="sandbox"):
+            # The grant covers the network part only; the command itself is
+            # still judged as an offline Shell call.
+            call = replace(call, effective=replace(access, operations=access.operations - _NETWORK))
+        return call
 
     def apply(
         self,
@@ -279,19 +339,25 @@ class PermissionResolver:
                 source="protected_path",
             )
 
+        # Reading needs any approved root; writing needs a writable one. A
+        # read-only grant therefore never removes write access found elsewhere.
         in_scope = all(
             item.classification in {None, PathClass.IN_ORIGIN, PathClass.IN_GRANTED}
+            and (item.path is None or item.declaration.operation != "file_write" or scope.can_write(item.path.value))
             for item in resolved
         )
         effective_access = access
+        if any(item.path is not None and item.declaration.operation == "file_write" and is_git_control(item.path.value)
+               for item in resolved) and GIT_CONTROL_FLAG not in access.risk_flags:
+            effective_access = replace(effective_access, risk_flags=(*effective_access.risk_flags, GIT_CONTROL_FLAG))
         if not in_scope and "path_outside_scope" not in access.risk_flags:
             effective_access = replace(
-                access, risk_flags=(*access.risk_flags, "path_outside_scope")
+                effective_access, risk_flags=(*effective_access.risk_flags, "path_outside_scope")
             )
         access_subject = access.subject or _subject_from_arguments(arguments)
         if effective_access.subject != access_subject:
             effective_access = replace(effective_access, subject=access_subject)
-        sandbox_key = hashlib.sha256(json.dumps([self.execution_mode, *[str(path) for path in (*scope.roots, *scope.read_only, *scope.protected)]]).encode()).hexdigest()
+        sandbox_key = hashlib.sha256(json.dumps([self.execution_mode, *[str(path) for path in (*scope.roots, "writable", *scope.writable_roots, *scope.protected)]]).encode()).hexdigest()
         argv = direct_command_argv(access_subject, dialect=command_dialect(fixed_cwd.value)) if "shell" in access.operations else None
         resolve_executable = getattr(backend, "resolve_executable", None)
         executable = resolve_executable(argv[0], cwd=fixed_cwd) if argv and callable(resolve_executable) else None
@@ -325,13 +391,6 @@ class PermissionResolver:
             missing_command_rules = tuple({item[0]: PermissionRule(
                 subject.name, kind="command", argv=(item[0],), command_match="executable", cwd=fixed_cwd.value, sandbox_key=sandbox_key,
                 execution_mode=self.execution_mode, operations=("shell",), executable_target=item[1]) for item in missing}.values())
-        for rule in all_rules:
-            root = rule.resource_root(str(scope.origin))
-            if rule.kind == "directory" and "file_write" not in rule.operations and any(
-                item.path is not None and item.declaration.operation == "file_write" and is_under(item.path.value, root)
-                for item in resolved
-            ):
-                return self._deny(arguments, "This directory is read-only; a read-only authorization covers everything under it", source="scope", reason_code="permission.read_only_directory")
         decision, reason, source, reason_code, reason_params = self.policy.apply(
             effective_access,
             tool_name=subject.name,
@@ -416,13 +475,11 @@ class PermissionResolver:
             access.subject if "shell" in access.operations else None,
             _blocked_paths(backend, cwd, scope.protected),
             tuple(backend.resolve_path(str(root), cwd=cwd) for root in scope.roots) if backend else (),
-            tuple(backend.resolve_path(str(root), cwd=cwd) for root in scope.roots
-                  if not any(is_under(str(root), str(readonly)) for readonly in scope.read_only)) if backend else (),
+            tuple(backend.resolve_path(str(root), cwd=cwd) for root in scope.writable_roots) if backend else (),
             network_enabled,
             execution_mode=self.execution_mode,
             command_argv=command_argv,
             executable_target=executable_target,
-            shell_readonly=tuple(ExecutionPath(cwd.environment_id, str(path)) for path in scope.read_only),
             network_targets=tuple(NetworkTarget(str(item.declaration.value), item.declaration.http_method or "GET", item.declaration.operation) for item in targets if item.declaration.kind == "url"),
             denied_rules=tuple(rule for rule in (self.policy.settings.deny if self.policy.settings else ())
                                if rule.kind in {"file", "directory"} and rule.tool_name in {"*", tool_name}),
@@ -458,6 +515,42 @@ class PermissionResolver:
         )
 
 
+def sandbox_network_granted(
+    session_rules: tuple[PermissionRule, ...] = (),
+    settings: PermissionSettings | PermissionConfiguration | None = None,
+    *,
+    execution_mode: str = "",
+) -> bool:
+    """True when a sandbox-network capability grant is on file for this execution mode."""
+    if execution_mode != "sandbox":
+        return False
+    allow = settings.allow if settings is not None else ()
+    return any(
+        rule.kind == "sandbox_network" and rule.execution_mode == "sandbox"
+        for rule in (*session_rules, *allow)
+    )
+
+
+GIT_CONTROL_FLAG = "writes_git_control"
+_GIT_CONTROL_NAMES = frozenset({"config", "config.worktree", "hooks"})
+
+
+def is_git_control(path: str) -> bool:
+    """Whether writing ``path`` changes what Git executes (config, hooks, gitdir link)."""
+    parts = [part.casefold() for part in path_module(path).normpath(path).replace("\\", "/").split("/")]
+    for index, part in enumerate(parts):
+        if part != ".git":
+            continue
+        rest = parts[index + 1:]
+        if not rest or rest[0] in _GIT_CONTROL_NAMES or "hooks" in rest or rest[-1] == "config.worktree":
+            return True
+        # Submodule gitdirs live under .git/modules/<name>/ (names may hold
+        # slashes); Git reads their config whenever it enters the submodule.
+        if rest[0] == "modules" and rest[-1] == "config":
+            return True
+    return False
+
+
 def _pairs(params: dict[str, str]) -> tuple[tuple[str, str], ...]:
     return tuple((key, str(value)) for key, value in params.items())
 
@@ -477,6 +570,29 @@ def _subject_from_arguments(arguments: dict) -> str:
     return json.dumps(arguments, ensure_ascii=False, sort_keys=True)
 
 
+_UNREMEMBERED_OPERATIONS = frozenset({
+    "shell",
+    "network_write",
+    "external_unknown",
+    "execution_control",
+    "persistent_write",
+})
+_UNREMEMBERED_FLAGS = frozenset({
+    GIT_CONTROL_FLAG,
+    "executes_shell",
+    "deletes_files",
+    "modifies_git_state",
+    "mutates_remote_state",
+    "network_fetch",
+    "package_manager",
+})
+
+
+def rememberable_access(access: ToolAccess) -> bool:
+    """Whether an approval of this access may be saved as a resource grant."""
+    return not (access.operations & _UNREMEMBERED_OPERATIONS or _UNREMEMBERED_FLAGS & set(access.risk_flags))
+
+
 def _rememberable_rule(
     tool_name: str,
     arguments: dict,
@@ -488,22 +604,7 @@ def _rememberable_rule(
 
     if tool_name in {"web_search", "knowledge_search"} and access.operations == frozenset({"network_read"}):
         return PermissionRule(tool_name, kind="tool", operations=("network_read",))
-    if access.operations & {
-        "shell",
-        "network_write",
-        "external_unknown",
-        "execution_control",
-        "persistent_write",
-    }:
-        return None
-    if {
-        "executes_shell",
-        "deletes_files",
-        "modifies_git_state",
-        "mutates_remote_state",
-        "network_fetch",
-        "package_manager",
-    } & set(access.risk_flags):
+    if not rememberable_access(access):
         return None
 
     file_targets = [

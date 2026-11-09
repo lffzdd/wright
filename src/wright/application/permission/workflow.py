@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from ...domain.gateway.execution import ExecutionPath, PathResolver
@@ -18,9 +19,12 @@ from ...domain.policy.permission.resolver import (
     PermissionResolver,
     _pairs,
     _permission_shape,
+    rememberable_access,
+    sandbox_network_granted,
 )
 from ...domain.policy.permission.scope import (
     AccessScope,
+    directory_grant_candidates,
     is_under,
     path_module,
 )
@@ -136,6 +140,7 @@ class AuthorizationWorkflow:
                 backend=backend,
                 scope=scope,
                 remember_rule=remember_rule,
+                session_rules=session_rules,
                 tool_name=subject.name,
                 command_argv=self._command_argv(access_subject, prepared.executable) if prepared.command_rule else (),
                 executable_target=prepared.executable_target if prepared.command_rule else "",
@@ -267,6 +272,7 @@ class AuthorizationWorkflow:
             backend=backend,
             scope=scope,
             remember_rule=remember_rule,
+            session_rules=session_rules,
             tool_name=subject.name,
             choice=response.choice,
             selected_rule=selected_rule,
@@ -328,7 +334,10 @@ class AuthorizationWorkflow:
                     candidates.append(("command_executable", command_rule, command_rule.describe()))
                     # A small explicit read-subcommand set gives useful prefixes;
                     # interpreter flags remain covered by the executable choice.
-                    if len(argv) > 1 and argv[0].split("/")[-1] == "git" and argv[1] in {"status", "diff", "log", "show", "rev-parse", "ls-files"}:
+                    # On the host, repository config and hooks decide what these
+                    # "read" subcommands run, so the prefix would not stay read-only.
+                    if (self.resolver.execution_mode == "sandbox" and len(argv) > 1 and argv[0].split("/")[-1] == "git"
+                            and argv[1] in {"status", "diff", "log", "show", "rev-parse", "ls-files"}):
                         prefix = replace(command_rule, argv=(executable, argv[1]), command_match="argv_prefix")
                         candidates.append(("command_prefix", prefix, prefix.describe()))
             if remember_rule.kind == "shell" and len(missing_command_rules) == 1:
@@ -346,18 +355,16 @@ class AuthorizationWorkflow:
                     record = replace(candidate, lifetime=lifetime)
                     choices.append(PermissionChoice(f"allow_{lifetime}_{suffix}", label, candidate_scope, label,
                                                     lifetime, record.kind, record.operations or operations, record.to_persistent()))
-            file_targets = [item for item in targets if item.path is not None]
-            unique = {item.path.value for item in file_targets}
-            if len(unique) == 1 and remember_rule.kind in {"file", "directory"}:
-                item = file_targets[0]
-                directory = item.path.parent if item.declaration.kind == "file" else item.path
-                for lifetime, label in (("session", "This conversation (including resume)"), ("project", "This project"), ("user", "All projects")):
-                    for access_kind, ops in (("read", ("file_read",)), ("write", ("file_read", "file_write"))):
-                        if "file_write" in access.operations and access_kind == "read":
-                            continue
-                        choices.append(PermissionChoice(f"allow_{lifetime}_directory_{access_kind}", label,
-                            directory.value, label, lifetime, "directory", ops, {"path": directory.value, "recursive": True}))
+        choices.extend(_directory_choices(access, targets, scope))
         if "shell" in access.operations and self.resolver.execution_mode == "sandbox":
+            network_ops = ("network_read", "network_write")
+            network_scope = "Sandbox commands may use the network; file isolation remains"
+            for lifetime, label in (("session", "This conversation (including resume)"), ("project", "This project"), ("user", "All projects")):
+                record = replace(PermissionRule.sandbox_network_grant(), lifetime=lifetime)
+                choices.append(PermissionChoice(
+                    f"allow_{lifetime}_sandbox_network", label, network_scope, label,
+                    lifetime, "sandbox_network", network_ops, record.to_persistent(),
+                ))
             choices.append(PermissionChoice("allow_once_network", "Allow this command with network", "This command only; filesystem isolation remains", "Not saved"))
         choices.append(PermissionChoice("deny", "Deny", "No execution", "Not saved"))
         choices = tuple(choices)
@@ -373,8 +380,7 @@ class AuthorizationWorkflow:
         shown_subject = http_target or subject
         sandboxed = bool(command) and self.resolver.execution_mode == "sandbox"
         sandbox_readable = tuple(str(root) for root in scope.roots) if sandboxed else ()
-        sandbox_writable = tuple(str(root) for root in scope.roots
-                                 if not any(is_under(str(root), str(path)) for path in scope.read_only)) if sandboxed else ()
+        sandbox_writable = tuple(str(root) for root in scope.writable_roots) if sandboxed else ()
         if sandboxed:
             shell_note += f" Readable directories: {', '.join(sandbox_readable)}, plus system runtime directories. Approval does not widen them."
         return PermissionPrompt(
@@ -421,6 +427,7 @@ class AuthorizationWorkflow:
         backend: PathResolver | None,
         scope: AccessScope,
         remember_rule: PermissionRule | None = None,
+        session_rules: tuple[PermissionRule, ...] = (),
         choice: str = "allow_once",
         reason_code: str = "",
         reason_params: dict[str, str] | None = None,
@@ -430,17 +437,13 @@ class AuthorizationWorkflow:
         executable_target: str = "",
         tool_name: str = "",
     ) -> PermissionResolution:
-        session_rules: list[PermissionRule] = []
+        added_session: list[PermissionRule] = []
         persistent_rules: list[PermissionRule] = []
         project_rules: list[PermissionRule] = []
-        if remember_rule is not None and choice.startswith("allow_") and choice not in {"allow_once", "allow_once_network"}:
+        persistable = selected_rule if selected_rule is not None else remember_rule
+        if persistable is not None and choice.startswith("allow_") and choice not in {"allow_once", "allow_once_network"}:
             lifetime = choice.split("_")[1]
-            rule = replace(selected_rule or remember_rule, lifetime=lifetime)
-            if "_directory_" in choice:
-                item = next(item for item in targets if item.path is not None)
-                directory = item.path.parent if item.declaration.kind == "file" else item.path
-                rule = PermissionRule("*", kind="directory", root=directory.value, recursive=True,
-                    operations=("file_read", "file_write") if choice.endswith("write") else ("file_read",), lifetime=lifetime)
+            rule = replace(persistable, lifetime=lifetime)
             if lifetime in {"session", "project"} and rule.kind in {"file", "directory"} and is_under(rule.root, str(scope.origin)):
                 pattern = relative_to_root(rule.root, str(scope.origin)) or ""
                 if rule.kind == "file":
@@ -448,13 +451,16 @@ class AuthorizationWorkflow:
                 rule = replace(rule, root="", root_kind="workspace", pattern=pattern)
             records = [replace(item, lifetime=lifetime) for item in selected_rules] or [rule]
             if lifetime == "session":
-                session_rules.extend(records)
+                added_session.extend(records)
             elif lifetime == "project":
                 project_rules.extend(records)
             elif lifetime == "user":
                 persistent_rules.extend(records)
+        network_enabled = _network_capability_enabled(
+            choice, access, selected_rule, session_rules, self.policy.settings, self.resolver.execution_mode,
+        )
         return self.resolver.issue(arguments, access, targets, cwd, identity, reason, source, backend=backend, scope=scope,
-            changes=AuthorizationChange(tuple(session_rules), tuple(persistent_rules), tuple(project_rules)), network_enabled=choice == "allow_once_network", tool_name=tool_name, command_argv=command_argv, executable_target=executable_target, reason_code=reason_code, reason_params=reason_params)
+            changes=AuthorizationChange(tuple(added_session), tuple(persistent_rules), tuple(project_rules)), network_enabled=network_enabled, tool_name=tool_name, command_argv=command_argv, executable_target=executable_target, reason_code=reason_code, reason_params=reason_params)
 
     @staticmethod
     def _command_argv(command: str, executable: str) -> tuple[str, ...]:
@@ -476,6 +482,40 @@ class AuthorizationWorkflow:
             reason_code=reason_code,
             reason_params=_pairs(reason_params or {}),
         )
+
+
+_LIFETIMES = (("session", "This conversation (including resume)"), ("project", "This project"), ("user", "All projects"))
+_FILE_OPERATIONS = frozenset({"file_read", "file_write"})
+
+
+def _directory_choices(access: ToolAccess, targets: tuple[ResolvedTarget, ...], scope: AccessScope) -> list[PermissionChoice]:
+    """Recursive directory grants covering every target, nearest directory first.
+
+    The nearest keeps the original ``allow_<lifetime>_directory_<access>`` id;
+    each higher level adds ``_<level>``. The chosen record travels in the
+    choice, so the grant is exactly the directory the user saw.
+    """
+    if not access.operations or not access.operations <= _FILE_OPERATIONS or not rememberable_access(access):
+        return []
+    located = [item for item in targets if item.path is not None]
+    if not located or any(item.declaration.kind not in {"file", "directory"} for item in located):
+        return []
+    directories = tuple(dict.fromkeys(
+        (item.path.parent if item.declaration.kind == "file" else item.path).value for item in located
+    ))
+    candidates = directory_grant_candidates(directories, scope, home=str(Path.home()))
+    writes = "file_write" in access.operations
+    choices: list[PermissionChoice] = []
+    for lifetime, label in _LIFETIMES:
+        for level, directory in enumerate(candidates):
+            suffix = f"_{level}" if level else ""
+            for access_kind, ops in (("read", ("file_read",)), ("write", ("file_read", "file_write"))):
+                if writes and access_kind == "read":
+                    continue
+                record = PermissionRule("*", kind="directory", root=directory, recursive=True, operations=ops, lifetime=lifetime)
+                choices.append(PermissionChoice(f"allow_{lifetime}_directory_{access_kind}{suffix}", label,
+                    directory, label, lifetime, "directory", ops, record.to_persistent()))
+    return choices
 
 
 def _display_details(details: dict, cwd: str) -> tuple[str, str, str, str, str, bool]:
@@ -509,5 +549,21 @@ def _bound_preview(text: str) -> str:
     if len(text) <= _PREVIEW_LIMIT:
         return text
     return text[:_PREVIEW_LIMIT]
+
+
+def _network_capability_enabled(
+    choice: str,
+    access: ToolAccess,
+    selected_rule: PermissionRule | None,
+    session_rules: tuple[PermissionRule, ...],
+    settings,
+    execution_mode: str,
+) -> bool:
+    if execution_mode != "sandbox":
+        return False
+    if choice == "allow_once_network" or (selected_rule is not None and selected_rule.kind == "sandbox_network"):
+        return True
+    requested = "shell" in access.operations and bool(access.operations & {"network_read", "network_write"})
+    return requested and sandbox_network_granted(session_rules, settings, execution_mode=execution_mode)
 
 

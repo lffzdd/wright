@@ -51,3 +51,32 @@ def test_other_failures_are_not_blamed_on_the_sandbox(tmp_path):
 def test_unparsed_denial_still_explains_without_a_suggestion(tmp_path):
     denial = describe_sandbox_denial("Operation not permitted", grant(tmp_path))
     assert denial["path"] == denial["grant_directory"] == ""
+
+
+def test_outside_path_also_offers_a_read_write_grant(tmp_path):
+    outside = tmp_path.parent / "outside-write"
+    outside.mkdir(exist_ok=True)
+    denial = describe_sandbox_denial(f"touch: {outside / 'new'}: Operation not permitted", grant(tmp_path))
+    assert denial["grant_directory"] == denial["grant_write_directory"] == str(outside.resolve())
+
+
+def test_write_into_a_read_only_directory_offers_only_read_write(tmp_path):
+    workspace = tmp_path / "work"
+    workspace.mkdir()
+    library = tmp_path / "library"
+    library.mkdir()
+    root = ExecutionPath("local", str(workspace.resolve()))
+    extra = ExecutionPath("local", str(library.resolve()))
+    read_only = InvocationGrant(InvocationIdentity("denial"), "local", root, frozenset({"shell"}),
+                                shell_readable=(root, extra), shell_writable=(root,), execution_mode="sandbox")
+    denial = describe_sandbox_denial(f"touch: {library / 'x'}: Read-only file system", read_only)
+    assert denial["grant_directory"] == ""
+    assert denial["grant_write_directory"] == str(library.resolve())
+
+
+def test_write_grant_is_never_suggested_for_home_or_top_level(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path.parent))
+    denial = describe_sandbox_denial(f"touch: {tmp_path.parent / 'x'}: Operation not permitted", grant(tmp_path))
+    assert denial["grant_directory"] == str(tmp_path.parent.resolve())
+    assert denial["grant_write_directory"] == ""
+    assert describe_sandbox_denial("touch: /zz-missing: Operation not permitted", grant(tmp_path))["grant_write_directory"] == ""

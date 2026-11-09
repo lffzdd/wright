@@ -181,26 +181,36 @@ function directoryEntryCount(result?: Record<string, unknown> | null, data?: unk
   return 0;
 }
 
-type SandboxDenial = { path: string; grant_directory: string; readable: string[]; writable: string[] };
+type SandboxDenial = { path: string; grant_directory: string; grant_write_directory?: string; readable: string[]; writable: string[] };
 
 function SandboxDenialHint({ denial, sessionId }: { denial: SandboxDenial; sessionId?: string }) {
   const tr = useT();
   const [state, setState] = useState<"idle" | "busy" | "granted" | "failed">("idle");
-  const directory = denial.grant_directory;
-  const grant = () => {
+  const [wrote, setWrote] = useState(false);
+  const readDirectory = denial.grant_directory;
+  const writeDirectory = denial.grant_write_directory ?? "";
+  const grant = (write: boolean) => {
     if (!sessionId) return;
+    const path = write ? writeDirectory : readDirectory;
     setState("busy");
+    setWrote(write);
     api.grants(sessionId)
-      .then((grants) => api.addGrant(sessionId, { kind: "directory", path: directory, operations: ["file_read"] }, "session", grants.version))
+      .then((grants) => api.addGrant(sessionId, { kind: "directory", path, operations: write ? ["file_read", "file_write"] : ["file_read"] }, "session", grants.version))
       .then(() => setState("granted"), () => setState("failed"));
   };
+  const offer = sessionId && state !== "granted";
   return <div className="sandbox-denial" role="status">
     <p>{tr(denial.path ? "web.sandbox.denied_path" : "web.sandbox.denied", { path: denial.path })}</p>
     <p className="mono">{tr("web.sandbox.scope_read", { paths: denial.readable.join(", ") })}</p>
-    {directory && sessionId && state !== "granted" && <button type="button" className="button" disabled={state === "busy"} onClick={grant}>
-      {tr(state === "busy" ? "web.submitting" : "web.sandbox.grant_read", { path: directory })}
-    </button>}
-    {state === "granted" && <p>{tr("web.sandbox.granted", { path: directory })}</p>}
+    {offer && (readDirectory || writeDirectory) && <div className="sandbox-denial-actions">
+      {readDirectory && <button type="button" className="button" disabled={state === "busy"} onClick={() => grant(false)}>
+        {tr(state === "busy" && !wrote ? "web.submitting" : "web.sandbox.grant_read", { path: readDirectory })}
+      </button>}
+      {writeDirectory && <button type="button" className="button" disabled={state === "busy"} onClick={() => grant(true)}>
+        {tr(state === "busy" && wrote ? "web.submitting" : "web.sandbox.grant_write", { path: writeDirectory })}
+      </button>}
+    </div>}
+    {state === "granted" && <p>{tr(wrote ? "web.sandbox.granted_write" : "web.sandbox.granted", { path: wrote ? writeDirectory : readDirectory })}</p>}
     {state === "failed" && <p className="form-error" role="alert">{tr("web.sandbox.grant_failed")}</p>}
     <p className="hint">{tr("web.sandbox.denied_host")}</p>
   </div>;

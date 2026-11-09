@@ -268,6 +268,10 @@ function decisionOf(grants: Grants | null, operation: "file_read" | "file_write"
   return value === "allow" || value === "ask" || value === "deny" ? value : null;
 }
 
+function sandboxNetworkGrants(grants: Grants | null) {
+  return (grants?.grants ?? []).filter((grant) => grant.resource_kind === "sandbox_network");
+}
+
 /**
  * The Permissions tab answers three questions in this order: what happens
  * without asking, which rules I saved, and what is always blocked. The full
@@ -298,12 +302,35 @@ export function PermissionsPanel({ sessionId, grants, update, interactionMode, p
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally { setSaving(""); }
   };
-  const rows: Array<{ key: string; decision: Decision | null; note?: string }> = [
+  const networkGrants = sandboxNetworkGrants(grants);
+  const sessionNetwork = networkGrants.find((grant) => grant.lifetime === "session");
+  const networkDecision: Decision | null = readOnly ? "deny" : execution === "host" ? "ask" : networkGrants.length ? "allow" : "ask";
+  const networkToggle = Boolean(grants) && !readOnly && execution === "sandbox" && (!networkGrants.length || Boolean(sessionNetwork));
+  const toggleNetwork = async () => {
+    if (!grants || !networkToggle || saving) return;
+    setSaving("network"); setError("");
+    try {
+      if (sessionNetwork) {
+        update(await api.revokeGrant(sessionId, sessionNetwork.id, sessionNetwork.source, grants.version));
+      } else {
+        update(await api.addGrant(sessionId, { kind: "sandbox_network" }, "session", grants.version));
+      }
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 409) {
+        setError(tr("web.permission_conflict"));
+        if (caught.latest) update(caught.latest);
+        else await api.grants(sessionId).then(update).catch(() => undefined);
+      } else {
+        setError(caught instanceof Error ? caught.message : String(caught));
+      }
+    } finally { setSaving(""); }
+  };
+  const rows: Array<{ key: string; decision: Decision | null; note?: string; toggle?: boolean }> = [
     { key: "read_inside", decision: decisionOf(grants, "file_read", "in_scope") },
     { key: "edit_inside", decision: readOnly ? "deny" : decisionOf(grants, "file_write", "in_scope") },
     { key: "shell_inside", decision: readOnly ? "deny" : decisionOf(grants, "shell", "in_scope"), note: tr(execution === "host" ? "web.execution.host" : "web.glance.sandboxed") },
     { key: "outside", decision: decisionOf(grants, "file_write", "outside_scope") ?? decisionOf(grants, "file_read", "outside_scope") },
-    { key: "network", decision: readOnly ? "deny" : "ask", note: execution === "host" ? tr("web.execution.host_network") : undefined },
+    { key: "network", decision: networkDecision, note: execution === "host" ? tr("web.execution.host_network") : networkGrants.length && !sessionNetwork ? tr("web.glance.network_saved") : undefined, toggle: networkToggle },
   ];
   const blocked = (grants?.effective_policy ?? []).flatMap((policy) => policy.rules
     .filter((rule) => rule.effect === "deny")
@@ -337,16 +364,33 @@ export function PermissionsPanel({ sessionId, grants, update, interactionMode, p
         </button>)}
       </div>
       <p className="hint perm-mode-help">{modeHelp}</p>
+      {mode === "bypass" && networkToggle && !networkGrants.length && <div className="perm-mode-network">
+        <button type="button" className="button" disabled={Boolean(saving)} onClick={() => void toggleNetwork()}>
+          {tr(saving === "network" ? "web.submitting" : "web.glance.network_enable")}
+        </button>
+        <small className="hint">{tr("web.glance.network_enable_hint")}</small>
+      </div>}
       {readOnly && <p className="hint">{tr("web.perm_locked", { mode: tr(`web.mode.${interactionMode}`) })}</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
       <ul className="glance">
-        {rows.map((row) => <li key={row.key} className={`glance-row ${row.decision ?? "unknown"}`}>
+        {rows.map((row) => {
+          const body = <>
           <span className="glance-label">{tr(`web.glance.${row.key}`)}</span>
           <span className="glance-outcome">
             <span className="glance-decision">{row.decision ? tr(`web.glance.decision.${row.decision}`) : tr("web.unknown")}</span>
             {row.note ? <small className="glance-note">{row.note}</small> : null}
           </span>
-        </li>)}
+          </>;
+          return <li key={row.key} className={`glance-row ${row.decision ?? "unknown"}${row.toggle ? " has-toggle" : ""}`}>
+            {row.toggle
+              ? <button type="button" className="glance-toggle" disabled={Boolean(saving)} onClick={() => void toggleNetwork()}
+                  title={tr(sessionNetwork ? "web.glance.network_toggle_off" : "web.glance.network_toggle_on")}
+                  aria-pressed={row.decision === "allow"}>
+                  {body}
+                </button>
+              : body}
+          </li>;
+        })}
       </ul>
     </section>
     {grants && <PermissionGrants sessionId={sessionId} grants={grants} update={update} includeManualAdd />}
@@ -377,6 +421,7 @@ export function describeGrant(grant: Grants["grants"][number]): string {
   if (grant.resource_kind === "file") return t(writes ? "web.grant_line.file_write" : "web.grant_line.file_read", { path: grant.target });
   if (grant.resource_kind === "shell") return t("web.grant_line.shell", { command: grant.target });
   if (grant.resource_kind === "command") return commandRuleLabel(grant.resource ?? grant, grant.target);
+  if (grant.resource_kind === "sandbox_network") return t("web.grant_line.sandbox_network");
   if (grant.resource_kind === "network") return networkRuleLabel(grant.resource ?? grant, grant.target, grant.http_methods);
   if (grant.resource_kind === "tool") return t("web.grant_line.tool", { tool: grant.tool || grant.target });
   return grant.target;

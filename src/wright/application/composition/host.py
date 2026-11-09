@@ -39,6 +39,16 @@ from ..scheduling.scheduler import JobScheduler
 from .job_runner import launch_job_run
 
 
+class ProjectHostBusyError(RuntimeError):
+    """Another process already runs this project's ApplicationHost."""
+
+    def __init__(self, workspace_dir: Path) -> None:
+        super().__init__(
+            f"another ApplicationHost already owns {workspace_dir}. "
+            "Close the other Wright process using this project, then try again."
+        )
+
+
 @dataclass(frozen=True)
 class ApplicationHostSnapshot:
     project_dir: str
@@ -232,9 +242,7 @@ class ApplicationHost:
         try:
             lock.acquire()
         except FileLockUnavailable as exc:
-            raise RuntimeError(
-                f"another ApplicationHost already owns {self.workspace_dir}"
-            ) from exc
+            raise ProjectHostBusyError(self.workspace_dir) from exc
         self._project_lock = lock
 
     def _release_project_lock(self) -> None:

@@ -1,12 +1,15 @@
+import argparse
 from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+from wright.application.composition.host import ProjectHostBusyError
+from wright.application.session.directory import SessionDirectory
 from wright.application.session_runtime.publisher import EventPublisher
 from wright.domain.model.tool import ArtifactRef
 from wright.interfaces.web.auth import COOKIE_NAME, BootstrapAuth
-from wright.interfaces.web.runtime_manager import RuntimeManagerError
+from wright.interfaces.web.runtime_manager import RuntimeManager, RuntimeManagerError
 from wright.interfaces.web.server import create_app
 
 
@@ -408,3 +411,31 @@ def test_session_owner_queries_reach_the_manager_without_using_ui_selection(tmp_
         ("list", False), ("list", True), ("preview", "saved", "owner"),
         ("label", "saved", "Renamed", "owner"), ("archive", "saved", "owner"),
     ]
+
+
+def test_project_owned_by_another_process_is_an_actionable_409(tmp_path, monkeypatch):
+    monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "home"))
+    project = tmp_path / "project"
+    project.mkdir()
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<main>Wright</main>")
+
+    def assemble(*_args, **_kwargs):
+        raise ProjectHostBusyError(project)
+
+    manager = RuntimeManager(
+        project,
+        base_args=argparse.Namespace(),
+        directory=SessionDirectory(project, assemble=assemble),
+    )
+    client = TestClient(create_app(manager, BootstrapAuth("bootstrap-secret"), static_dir=static))
+    headers = {"origin": "http://testserver"}
+    client.post("/api/v1/auth/exchange", json={"token": "bootstrap-secret"}, headers=headers)
+
+    response = client.post("/api/v1/sessions", json={}, headers=headers)
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert str(project) in detail
+    assert "Close the other Wright" in detail

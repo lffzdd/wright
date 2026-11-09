@@ -75,6 +75,9 @@ export function describeChoice(choice: Choice, root?: string): string {
     return t("web.approval.rule_shell", { command: command || choice.scope, lifetime });
   }
   if (kind === "command") return `${commandRuleLabel(choice.resource ?? {}, choice.scope)} · ${lifetime}`;
+  if (kind === "sandbox_network") {
+    return t("web.approval.rule_sandbox_network", { lifetime });
+  }
   if (kind === "network") {
     // Scope from older prompts includes the method; structured resources keep
     // that method separate from the URL so authority is readable at a glance.
@@ -89,8 +92,11 @@ export function describeChoice(choice: Choice, root?: string): string {
  * The one remembered rule worth a button of its own: session-scoped, and the
  * folder rather than the single file when the file is inside the project.
  */
-export function quickChoice(choices: Choice[], outsideScope: boolean): Choice | undefined {
+export function quickChoice(choices: Choice[], outsideScope: boolean, network = false): Choice | undefined {
   const session = choices.filter((choice) => choice.lifetime === "session");
+  if (network) {
+    return session.find((choice) => choice.resource_kind === "sandbox_network");
+  }
   const prefix = session.find((choice) => choice.resource_kind === "command" && choice.resource?.command_match === "argv_prefix");
   if (prefix) return prefix;
   const executable = session.find((choice) => choice.resource_kind === "command" && choice.resource?.command_match === "executable");
@@ -107,8 +113,23 @@ export function quickChoice(choices: Choice[], outsideScope: boolean): Choice | 
     ?? session[0];
 }
 
+function directoryGroup(choice: Choice): string {
+  if (choice.resource_kind !== "directory") return "";
+  return `${choice.lifetime || "session"}:${choice.operations?.includes("file_write") ? "write" : "read"}`;
+}
+
+/** Directory choices by lifetime and access, in the server's nearest-first order. */
+export function directoryLevels(choices: Choice[]): Record<string, Choice[]> {
+  const groups: Record<string, Choice[]> = {};
+  for (const choice of choices) {
+    const key = directoryGroup(choice);
+    if (key) (groups[key] ??= []).push(choice);
+  }
+  return groups;
+}
+
 const LIFETIME_ORDER: Record<string, number> = { session: 0, project: 1, user: 2 };
-const KIND_ORDER: Record<string, number> = { file: 0, directory: 1, shell: 2, command: 3, network: 4, tool: 5 };
+const KIND_ORDER: Record<string, number> = { file: 0, directory: 1, sandbox_network: 2, shell: 3, command: 4, network: 5, tool: 6 };
 
 /** Narrow and short-lived first: the list reads from least to most authority. */
 function rank(choice: Choice): number {
@@ -163,14 +184,22 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
     () => choices.filter((choice) => !["deny", "allow_once", "allow_once_network"].includes(choice.id)),
     [choices],
   );
-  const quick = quickChoice(remembered, outsideScope);
+  const quick = quickChoice(remembered, outsideScope, network);
+  // Each lifetime and access offers the target's directory and a few above it;
+  // they share one row and a picker, nearest first.
+  const levels = useMemo(() => directoryLevels(remembered), [remembered]);
+  const [levelPick, setLevelPick] = useState<Record<string, string>>({});
+  const shownLevel = (choice: Choice) => {
+    const key = directoryGroup(choice);
+    return !key || (levelPick[key] ?? levels[key]?.[0]?.id) === choice.id;
+  };
   const listed = remembered
-    .filter((choice) => showGlobal || choice.lifetime !== "user")
+    .filter((choice) => (showGlobal || choice.lifetime !== "user") && shownLevel(choice))
     .sort((a, b) => rank(a) - rank(b));
   const hasGlobal = remembered.some((choice) => choice.lifetime === "user");
   // Saving a project or all-project rule always requires selecting it.
   const defaultPick = quick;
-  const selected = remembered.find((choice) => choice.id === picked) ?? defaultPick;
+  const selected = remembered.find((choice) => choice.id === picked && !(network && choice.resource_kind !== "sandbox_network")) ?? defaultPick;
 
   const reasonCode = interaction.reason_code || "";
   // The "outside this project" badge already says what outside_scope would.
@@ -210,7 +239,7 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
     : quick?.resource_kind === "directory" ? tr("web.approval.directory_recursive") : "";
   const quickNote = quickDetails && tr("web.approval.quick_note", { details: quickDetails });
   const longRule = Boolean(quick) && describeChoice(quick as Choice, root).length > 56;
-  const sessionButton = quick && !network && <button type="button" className={`perm-choice session ${longRule ? "long" : ""}`} disabled={busy || shellBlocked} onClick={() => choose(quick.id)} title={describeChoice(quick, root)}>
+  const sessionButton = quick && (!network || quick.resource_kind === "sandbox_network") && <button type="button" className={`perm-choice session ${longRule ? "long" : ""}`} disabled={busy || shellBlocked} onClick={() => choose(quick.id)} title={describeChoice(quick, root)}>
     {label(quick.id, tr("web.approval.allow_quick", { rule: describeChoice(quick, root) }))}
   </button>;
 
@@ -289,24 +318,36 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
           {tr(more ? "web.approval.fewer_options" : "web.approval.more_options")}
         </button>}
         {longRule && sessionButton}
-        {quickNote && !network && <small className="approval-quick-note">{quickNote}</small>}
+        {quickNote && (!network || quick?.resource_kind === "sandbox_network") && <small className="approval-quick-note">{quickNote}</small>}
       </footer>
 
       {more && <div className="approval-more">
-        {network && <p className="hint" role="status">{tr("web.network_once_only")}</p>}
-        <fieldset disabled={busy || network}>
+        {network && <p className="hint" role="status">{tr("web.network_remember_sandbox")}</p>}
+        <fieldset disabled={busy}>
           <legend>{tr("web.approval.remember_legend")}</legend>
-          {listed.map((choice) => <label key={choice.id} className={`approval-option ${choice.lifetime === "user" ? "global" : ""}`}>
-            <input type="radio" name={`remember-${interaction.request_id}`} checked={selected?.id === choice.id} onChange={() => setPicked(choice.id)} />
+          {listed.map((choice) => {
+            const blocked = network && choice.resource_kind !== "sandbox_network";
+            return <label key={choice.id} className={`approval-option ${choice.lifetime === "user" ? "global" : ""}`}>
+            <input type="radio" name={`remember-${interaction.request_id}`} checked={selected?.id === choice.id} disabled={blocked} onChange={() => setPicked(choice.id)} />
             <span>{sentence(describeChoice(choice, root))}
+              {choice.resource_kind === "directory" && (levels[directoryGroup(choice)]?.length ?? 0) > 1 && <><br />
+                <select className="approval-level" aria-label={tr("web.approval.directory_level")} value={choice.id} onChange={(event) => {
+                  const key = directoryGroup(choice);
+                  setLevelPick((current) => ({ ...current, [key]: event.target.value }));
+                  setPicked(event.target.value);
+                }}>
+                  {levels[directoryGroup(choice)].map((level) => <option key={level.id} value={level.id}>{`${displayPath(level.scope, root)}/`}</option>)}
+                </select></>}
               {choice.resource_kind === "directory" && <><br /><small>{tr("web.approval.directory_recursive")}</small></>}
+              {choice.resource_kind === "sandbox_network" && <><br /><small>{tr("web.approval.sandbox_network_details")}</small></>}
               {(choice.resource_kind === "command" || choice.resource_kind === "shell") && <><br /><small>
                 {choice.resource_kind === "command" && `${commandRuleDetails(choice.resource ?? {})} `}
                 {tr(host ? "web.approval.host_command_boundary" : "web.approval.command_boundary")}
               </small></>}
               {choice.resource_kind === "tool" && <><br /><small>{tr("web.approval.tool_operations", { operations: (choice.operations ?? []).map((operation) => tr(`web.operation.${operation}`)).join(", ") })}</small></>}
             </span>
-          </label>)}
+          </label>;
+          })}
         </fieldset>
         <div className="approval-more-actions">
           {hasGlobal && <button type="button" className="text-button" onClick={() => {
@@ -314,7 +355,7 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
             setShowGlobal(!showGlobal);
           }}>{tr(showGlobal ? "web.approval.hide_global" : "web.approval.show_global")}</button>}
           {selected?.lifetime === "user" && <small className="approval-warn">{tr("web.cross_project")}</small>}
-          <button type="button" className="button primary" disabled={busy || shellBlocked || network || !selected} onClick={() => selected && choose(selected.id)}>
+          <button type="button" className="button primary" disabled={busy || shellBlocked || !selected || (network && selected.resource_kind !== "sandbox_network")} onClick={() => selected && choose(selected.id)}>
             {tr("web.remember_allow")}
           </button>
         </div>

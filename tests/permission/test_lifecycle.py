@@ -147,16 +147,20 @@ def test_once_has_no_reusable_authority(setup):
 
 @pytest.mark.parametrize("mode", ["default", "acceptEdits", "bypass", "plan"])
 @pytest.mark.parametrize("lifetime", ["session", "project", "user"])
-def test_external_read_only_is_hard_limit(setup, tmp_path, mode, lifetime):
+def test_external_read_only_grant_never_grants_writes(setup, tmp_path, mode, lifetime):
+    """A read grant adds reading only; writes there still need their own approval."""
     session, _, _ = setup
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "a.txt").write_text("readable")
     grant(setup, outside, kind="directory", lifetime=lifetime, write=False)
     session.authorization.set_modes(permission_mode=mode, interaction_mode=session.authorization.interaction_mode)
-    dispatch = executor(setup, lambda _: PermissionResponse("allow_once"))
+    asked = []
+    dispatch = executor(setup, lambda request: asked.append(request) or PermissionResponse("deny"))
     assert dispatch.execute([ToolCall("read_file", {"file": str(outside / "a.txt")}, "read")])[0].result.ok
     assert not write(dispatch, outside / "a.txt").ok
+    # Plan mode refuses before asking; every other mode asks instead of auto-allowing.
+    assert len(asked) == (0 if mode == "plan" else 1)
 
 
 def test_external_directory_read_write_is_reusable(setup, tmp_path):

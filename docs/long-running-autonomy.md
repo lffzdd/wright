@@ -150,5 +150,5 @@ provider 原始 call ID，不重写
 只取消这一次运行。`unknown` 表示无法确认，不是成功完成。
 
 创建或修改持久化调度会进入 permission `ask`，风险标识为
-`persistent_automation`。无人值守环境不会因此绕过既有工具权限：没有持久化 allow 规则
+`persistent_automation`；bypass 模式同样询问，因为调度会在会话结束后继续运行。无人值守环境不会因此绕过既有工具权限：没有持久化 allow 规则
 的写入、网络或外部工具仍然 fail-closed。

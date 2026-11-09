@@ -147,10 +147,13 @@ def test_execute_command_allow_list_accepts_command_and_bounded_shell_only():
         PermissionSettings.from_dict(
             {"version": 2, "permissions": {"allow": [loose_shell.to_persistent()]}}
         )
-    with pytest.raises(ValueError, match="command grants or exact session shell"):
+    with pytest.raises(ValueError, match="command grants, exact session shell grants, or sandbox network"):
         PermissionSettings.from_dict(
             {"version": 2, "permissions": {"allow": ["execute_command"]}}
         )
+    PermissionSettings.from_dict(
+        {"version": 2, "permissions": {"allow": [PermissionRule.sandbox_network_grant().to_persistent()]}}
+    )
 
 
 class Paths(FixturePaths):

@@ -127,7 +127,7 @@ describe("backend data in workspace panels", () => {
     const bypass = { ...state, session: { ...state.session, permission_mode: "bypass" } };
     rerender(inspector(bypass));
     await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.getByRole("radio", { name: /Auto-approve edits \+ commands/ }).getAttribute("aria-checked")).toBe("true"));
+    await waitFor(() => expect(screen.getByRole("radio", { name: /Auto-approve in-project edits and sandboxed commands/ }).getAttribute("aria-checked")).toBe("true"));
     rerender(inspector({ ...bypass, connection: "reconnecting" }));
     await waitFor(() => expect(request).toHaveBeenCalledTimes(3));
     rerender(inspector({ ...bypass, connection: "connected" }));

@@ -502,19 +502,25 @@ def relative_to_root(path: str, root: str) -> str | None:
 
 
 def component_match(pattern: str, relative: str) -> bool:
-    """Match one path segment per pattern segment. ``*`` is one segment."""
+    """Match one path segment per pattern segment.
+
+    ``*`` is exactly one segment; a whole ``**`` segment is zero or more. Any
+    other use of ``**`` inside a segment is not a pattern and never matches.
+    """
 
     pattern_parts = PurePosixPath(pattern).parts
     path_parts = PurePosixPath(relative).parts
     if any(part in {"..", ""} for part in (*pattern_parts, *path_parts)):
         return False
-    if "**" in pattern:
+    if any("**" in part and part != "**" for part in pattern_parts):
         return False
 
     def matches(left: tuple[str, ...], right: tuple[str, ...]) -> bool:
         if not left:
             return not right
         head, tail = left[0], left[1:]
+        if head == "**":
+            return any(matches(tail, right[index:]) for index in range(len(right) + 1))
         if head == "*":
             return bool(right) and matches(tail, right[1:])
         if not right or not fnmatch(right[0], head):
@@ -549,7 +555,7 @@ class PermissionRule:
 
     tool_name: str
     subject_glob: str | None = None
-    kind: Literal["tool", "file", "directory", "network", "shell", "command"] = "tool"
+    kind: Literal["tool", "file", "directory", "network", "shell", "command", "sandbox_network"] = "tool"
     root: str = ""
     pattern: str = ""
     operations: tuple[str, ...] = ()
@@ -591,7 +597,7 @@ class PermissionRule:
         if (
             self.unresolved
             or not self.tool_name
-            or self.kind not in {"tool", "file", "directory", "network", "shell", "command"}
+            or self.kind not in {"tool", "file", "directory", "network", "shell", "command", "sandbox_network"}
         ):
             raise ValueError("Session rules require a known, resolved resource")
         if self.execution_mode not in {"sandbox", "host"}:
@@ -613,6 +619,13 @@ class PermissionRule:
                 or (self.command_match == "argv_prefix" and len(self.argv) < 2)
                 or self.operations != ("shell",)) :
                 raise ValueError("Command grants require literal argv, cwd and sandbox capabilities")
+        if self.kind == "sandbox_network":
+            if (
+                self.tool_name != "execute_command"
+                or self.execution_mode != "sandbox"
+                or self.operations != ("network_read", "network_write")
+            ):
+                raise ValueError("Sandbox network grants apply to sandboxed execute_command only")
         if self.kind in {"file", "directory"}:
             if not self.operations or not set(self.operations) <= {
                 "file_read",
@@ -686,7 +699,7 @@ class PermissionRule:
         for key in ("recursive", "exact", "unresolved"):
             if key in data and not isinstance(data[key], bool):
                 raise ValueError(f"{key} must be a boolean")
-        if kind not in {"tool", "file", "directory", "network", "shell", "command"} or not tool_name:
+        if kind not in {"tool", "file", "directory", "network", "shell", "command", "sandbox_network"} or not tool_name:
             raise ValueError("a permission rule requires a known kind and a tool_name")
         lifetime = data.get("lifetime", "session")
         root_kind = data.get("root_kind", "absolute")
@@ -761,6 +774,15 @@ class PermissionRule:
             rule = cls(tool_name, kind="command", argv=tuple(argv), command_match=data.get("command_match", "executable"), dialect=data.get("dialect", "posix"), executable_target=data.get("executable_target", ""), operations=tuple(operations), **common)
             rule.validate_grant()
             return rule
+        if kind == "sandbox_network":
+            rule = cls(
+                tool_name,
+                kind="sandbox_network",
+                operations=tuple(str(item) for item in operations) or ("network_read", "network_write"),
+                **common,
+            )
+            rule.validate_grant()
+            return rule
         if kind == "shell":
             pattern = str(data.get("pattern", ""))
             if common["exact"] and (not pattern or not common["cwd"]):
@@ -806,6 +828,15 @@ class PermissionRule:
             methods=tuple(method.upper() for method in methods),
         )
 
+    @classmethod
+    def sandbox_network_grant(cls) -> PermissionRule:
+        return cls(
+            "execute_command",
+            kind="sandbox_network",
+            operations=("network_read", "network_write"),
+            execution_mode="sandbox",
+        )
+
     def to_persistent(self) -> dict[str, object]:
         payload: dict[str, object] = {"kind": self.kind, "tool_name": self.tool_name}
         if self.kind in {"file", "directory"}:
@@ -824,6 +855,8 @@ class PermissionRule:
             )
         elif self.kind == "command":
             payload.update(argv=list(self.argv), command_match=self.command_match, dialect=self.dialect, executable_target=self.executable_target, operations=list(self.operations))
+        elif self.kind == "sandbox_network":
+            payload.update(operations=list(self.operations))
         elif self.kind == "tool" and self.operations:
             payload.update(operations=list(self.operations))
         elif self.kind == "shell":
@@ -833,7 +866,7 @@ class PermissionRule:
             payload["legacy_text"] = self.legacy_text or self.tool_name
         payload.update(id=self.id, lifetime=self.lifetime, project_id=self.project_id, source=self.source, root_kind=self.root_kind,
                        recursive=self.recursive, exact=self.exact, cwd=self.cwd, sandbox_key=self.sandbox_key)
-        if self.kind in {"shell", "command"}:
+        if self.kind in {"shell", "command", "sandbox_network"}:
             payload["execution_mode"] = self.execution_mode
         return payload
 
@@ -851,6 +884,8 @@ class PermissionRule:
             return (f"{self.scheme}://{self.host}:{self.port}" + (self.path if self.path_match == "exact" else "")) if self.host else f"{self.scheme}://*"
         if self.kind == "command":
             return shlex.join(self.argv)
+        if self.kind == "sandbox_network":
+            return "sandbox network"
         if self.kind == "shell":
             return self.pattern
         return self.tool_name
@@ -874,6 +909,8 @@ class PermissionRule:
             )
         if self.kind == "shell" and self.subject_glob:
             return f"{self.tool_name} one simple command matching {self.subject_glob}"
+        if self.kind == "sandbox_network":
+            return "sandbox commands may use the network; file isolation remains"
         if self.kind == "tool":
             if self.operations:
                 return f"{self.tool_name} ({', '.join(self.operations)} only)"
@@ -900,6 +937,10 @@ class PermissionRule:
             # Ambiguous legacy allow must not grant anything. Ambiguous
             # deny/ask stays in force for this tool instead of being dropped.
             return effect != "allow"
+        if self.kind == "sandbox_network":
+            # Capability only: evaluate() checks this separately so a network
+            # grant cannot become a full-tool allow for every command.
+            return False
         if self.kind == "tool":
             return not self.operations or (context is not None and set(context.operations) <= set(self.operations))
         if self.kind == "command":
@@ -957,7 +998,10 @@ def _file_matches(
         ]
         return all(matches) if effect == "allow" else any(matches)
     pattern = rule.pattern or rule.subject_glob or ""
-    if not pattern or ".." in PurePosixPath(pattern).parts or "**" in pattern:
+    if not pattern or ".." in PurePosixPath(pattern).parts:
+        return effect != "allow"
+    if "**" in pattern and (effect == "allow" or any("**" in part and part != "**" for part in PurePosixPath(pattern).parts)):
+        # Allow stays bounded; a malformed recursive deny/ask stays closed.
         return effect != "allow"
     root = context.session_origin if context and rule.root_kind == "workspace" else rule.root
     if root:
@@ -1043,6 +1087,8 @@ def _load_rule(item: object, effect: str) -> PermissionRule:
         raise TypeError("permission rule must be a string or an object")
     if rule.unresolved:
         raise ValueError("Ambiguous permission syntax is unsupported; use a bounded resource record")
+    if effect == "allow" and rule.kind in {"file", "directory"} and "**" in rule.pattern:
+        raise ValueError("`**` is only supported in deny and ask rules; grant a directory instead")
     if effect == "allow" and rule.tool_name == "execute_command":
         if rule.kind == "command":
             pass
@@ -1051,9 +1097,11 @@ def _load_rule(item: object, effect: str) -> PermissionRule:
                 raise ValueError(
                     "Shell grants require an exact session command, cwd and sandbox capability"
                 )
+        elif rule.kind == "sandbox_network":
+            rule.validate_grant()
         else:
             raise ValueError(
-                "execute_command allow rules must be command grants or exact session shell grants"
+                "execute_command allow rules must be command grants, exact session shell grants, or sandbox network grants"
             )
     return rule
 

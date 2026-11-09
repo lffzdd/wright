@@ -16,6 +16,7 @@ from wright.domain.model.command import CommandRecord
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall
 from wright.domain.policy import PermissionPolicy, PermissionSettings
+from wright.domain.policy.permission.settings import PermissionRule
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
 from wright.infrastructure.tools.command import execute_command_tool
 
@@ -29,6 +30,9 @@ def _executor(session, services=None):
         identity=identity,
     )
     session.authorization.set_modes(permission_mode="bypass", interaction_mode="agent")
+    # Durable schedule changes are never a bypass default; grant them explicitly.
+    for tool_name in ("create_schedule", "pause_schedule", "resume_schedule", "cancel_schedule", "cancel_schedule_run"):
+        session.authorization.add_rule(PermissionRule(tool_name, id=f"allow-{tool_name}"))
     return ToolDispatchService(
         {
             tool.name: tool
@@ -41,7 +45,7 @@ def _executor(session, services=None):
             expose_scheduling=store is not None,
         ),
         session=session,
-        permission_policy=PermissionPolicy(PermissionSettings(mode="bypass")),
+        permission_policy=PermissionPolicy(PermissionSettings(mode="bypass", allow=[PermissionRule("create_schedule")])),
     )
 
 

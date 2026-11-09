@@ -64,11 +64,37 @@ def profile_paths(grant: InvocationGrant) -> tuple[list[Path], list[Path]]:
     return list(dict.fromkeys(readable)), list(dict.fromkeys(writable))
 
 
+_GIT_CONTROL_NAMES = ("config", "config.worktree", "hooks")
+
+
 def git_control_paths(grant: InvocationGrant) -> tuple[Path, ...]:
-    """Repository files whose content decides what Git runs."""
+    """Repository files whose content decides what Git runs.
+
+    Covers the repository gitdir and every submodule gitdir present at launch;
+    a submodule initialised by the command itself is not matched again.
+    """
     _, writable = profile_paths(grant)
-    return tuple(root / ".git" / name for root in writable if (root / ".git").is_dir()
-                 for name in ("config", "config.worktree", "hooks"))
+    gitdirs = [gitdir for root in writable for gitdir in _gitdirs(root / ".git")]
+    return tuple(dict.fromkeys(gitdir / name for gitdir in gitdirs for name in _GIT_CONTROL_NAMES))
+
+
+def _gitdirs(gitdir: Path) -> list[Path]:
+    if not gitdir.is_dir() or gitdir.is_symlink():
+        return []
+    found = [gitdir]
+    pending = [gitdir / "modules"]
+    while pending:
+        current = pending.pop()
+        if not current.is_dir() or current.is_symlink():
+            continue
+        if (current / "HEAD").is_file() and (current / "config").is_file():
+            # A submodule gitdir; its own submodules sit in its modules/.
+            found.append(current)
+            pending.append(current / "modules")
+            continue
+        # Submodule names may contain slashes, so walk intermediate directories.
+        pending.extend(child for child in current.iterdir() if child.is_dir())
+    return found
 
 
 def ancestors_within(path: Path, roots: list[Path]) -> tuple[Path, ...]:
