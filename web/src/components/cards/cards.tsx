@@ -109,11 +109,11 @@ export function toolFamily(name: string, kind?: string): "shell" | "edit" | "rea
   return kind === "edit" ? "edit" : kind === "shell" ? "shell" : "tool";
 }
 
-export function UserMessage({ text, userLabel, timestamp, tocId }: { text: string; userLabel?: string; timestamp?: string; tocId?: string }) {
+export function UserMessage({ text, userLabel, timestamp, tocId, enter }: { text: string; userLabel?: string; timestamp?: string; tocId?: string; enter?: boolean }) {
   const tr = useT();
   const parts = text.split(/(@(?:[\w.-]+\/)*[\w.-]+)/g);
   const initials = userLabel ? userLabel.split(/\s+/).map((part) => part[0]).join("").slice(0, 2) : "";
-  return <div className="msg-row user-msg" data-toc-id={tocId}>
+  return <div className={`msg-row user-msg${enter ? " enter" : ""}`} data-toc-id={tocId}>
     <div className="msg-card">
       <div className="msg-card-head">
         <span><strong>{userLabel || tr("web.you")}</strong> <span className="muted">{tr("web.user_instruction")}</span></span>
@@ -125,8 +125,8 @@ export function UserMessage({ text, userLabel, timestamp, tocId }: { text: strin
   </div>;
 }
 
-export function AssistantMessage({ text }: { text: string }) {
-  return <div className="msg-row assistant-msg">
+export function AssistantMessage({ text, enter }: { text: string; enter?: boolean }) {
+  return <div className={`msg-row assistant-msg${enter ? " enter" : ""}`}>
     <div className="avatar assistant" aria-hidden="true">W</div>
     <div className="msg-card">
       <div className="msg-body"><MarkdownContent content={text} /></div>
@@ -134,12 +134,12 @@ export function AssistantMessage({ text }: { text: string }) {
   </div>;
 }
 
-export function SummaryRow({ text, durationMs }: { text: string; durationMs?: number | null }) {
+export function SummaryRow({ text, durationMs, enter }: { text: string; durationMs?: number | null; enter?: boolean }) {
   const [open, setOpen] = useState(false);
   const tr = useT();
   const durationLabel = typeof durationMs === "number" ? formatDuration(durationMs) : "";
   const preview = text.replace(/\s+/g, " ").trim();
-  return <div className="tl-indent">
+  return <div className={`tl-indent${enter ? " enter" : ""}`}>
     <section className={`tool-card reasoning-card ${open ? "open" : ""}`}>
       <button
         type="button"
@@ -162,8 +162,8 @@ export function SummaryRow({ text, durationMs }: { text: string; durationMs?: nu
   </div>;
 }
 
-export function ReasoningRow({ text, durationMs }: { text: string; durationMs?: number | null }) {
-  return <SummaryRow text={text} durationMs={durationMs} />;
+export function ReasoningRow({ text, durationMs, enter }: { text: string; durationMs?: number | null; enter?: boolean }) {
+  return <SummaryRow text={text} durationMs={durationMs} enter={enter} />;
 }
 
 /** Number of entries a list_directory result reports, from its data. */
@@ -213,8 +213,9 @@ function SandboxDenialHint({ denial, sessionId }: { denial: SandboxDenial; sessi
 }
 
 export function ToolCard({
-  name, phase, args, result, data, duration, output, kind, sessionId,
+  name, phase, args, result, data, duration, output, kind, sessionId, enter,
 }: {
+  enter?: boolean;
   sessionId?: string;
   name: string;
   phase?: string;
@@ -247,7 +248,7 @@ export function ToolCard({
     : 0;
   const testFailed = family === "shell" && code !== null && code !== 0 && looksLikeTestFailure(body);
   const durationLabel = typeof duration === "number" ? formatDuration(duration) : "";
-  return <div className="tl-indent">
+  return <div className={`tl-indent${enter ? " enter" : ""}`}>
     <section className={`tool-card ${open ? "open" : ""}`}>
       <button type="button" className="tool-card-head" aria-expanded={open} onClick={() => setToggled(!open)}>
         <span className="tool-title">
@@ -285,7 +286,7 @@ function toolOutput(tool: ToolState): string {
   return [tool.err, body].filter(Boolean).join("\n");
 }
 
-export function toolCardFromTimeline(item: TimelineItem, sessionId?: string) {
+export function toolCardFromTimeline(item: TimelineItem, sessionId?: string, enter?: boolean) {
   const result = item.result;
   const envelope = result && ("ok" in result || "data" in result || "err" in result);
   const tool: ToolState = {
@@ -295,11 +296,11 @@ export function toolCardFromTimeline(item: TimelineItem, sessionId?: string) {
     err: envelope ? textOf(result.err) : undefined,
   };
   const data = tool.data && typeof tool.data === "object" ? tool.data as Record<string, unknown> : null;
-  return <ToolCard key={item.id} name={tool.name} phase={item.phase} args={tool.arguments} result={data} duration={item.duration_ms} output={toolOutput(tool)} kind={item.kind} sessionId={sessionId} />;
+  return <ToolCard key={item.id} name={tool.name} phase={item.phase} args={tool.arguments} result={data} duration={item.duration_ms} output={toolOutput(tool)} kind={item.kind} sessionId={sessionId} enter={enter} />;
 }
 
-export function toolCardFromState(tool: ToolState, sessionId?: string) {
-  return <ToolCard key={tool.call_id} name={tool.name} phase={tool.phase} args={tool.arguments} data={tool.data} output={toolOutput(tool)} sessionId={sessionId} />;
+export function toolCardFromState(tool: ToolState, sessionId?: string, enter?: boolean) {
+  return <ToolCard key={tool.call_id} name={tool.name} phase={tool.phase} args={tool.arguments} data={tool.data} output={toolOutput(tool)} sessionId={sessionId} enter={enter} />;
 }
 
 export function InteractionCard({ sessionId, interaction, respond, root }: {

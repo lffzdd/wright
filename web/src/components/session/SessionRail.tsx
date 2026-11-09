@@ -149,7 +149,7 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
                 {collapsed ? <CaretRight size={12} weight="bold" /> : <CaretDown size={12} weight="bold" />}
               </button>
               <button type="button" className="nav-row workspace-project-name" aria-current={workspace.selected ? "true" : undefined} onClick={() => onSelectWorkspace?.(workspace.project_id)}>
-                <Folder size={14} />{workspace.name}{workspace.selected && <span className="workspace-selected-dot" aria-hidden="true" />}
+                <Folder size={14} />{workspace.name}
               </button>
             </div>
             {<div className="workspace-sessions" id={`project-sessions-${workspace.project_id}`} hidden={collapsed}>

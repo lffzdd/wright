@@ -48,7 +48,7 @@ describe("web startup", () => {
     }));
     render(<App />);
     await screen.findByText("web/src/App.tsx");
-    expect(document.querySelector<HTMLElement>(".context-segment.history")?.style.width).toBe("25%");
+    expect(screen.getByRole("meter").getAttribute("aria-valuenow")).toBe("25");
     expect(screen.getByRole("heading", { name: "Real task" })).toBeTruthy();
     expect(snapshots).toBeGreaterThan(1);
   });

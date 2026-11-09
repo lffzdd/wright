@@ -28,6 +28,24 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); setLocale("en"); });
 
+describe("Inspector task tab", () => {
+  it("gives every empty section the same card and empty line", () => {
+    render(inspector(view()));
+    const cards = [...document.querySelectorAll("#inspector-panel-task .goal-card")];
+    expect(cards).toHaveLength(4);
+    for (const text of ["No goal set yet.", "No active plan for this turn.", "No files accessed in this session.", "No subagents"]) {
+      expect(screen.getByText(text).closest(".goal-card")).toBeTruthy();
+    }
+  });
+
+  it("shows the session goal when there is no plan objective", () => {
+    const state = view();
+    render(inspector({ ...state, session: { ...state.session, user_goal: "Ship the redesign" } }));
+    expect(screen.getByText("Ship the redesign").closest(".goal-card")).toBeTruthy();
+    expect(screen.queryByText("No goal set yet.")).toBeNull();
+  });
+});
+
 describe("Inspector request and content state", () => {
   it("keeps the selected patch request alive while changes refresh", async () => {
     const pending = deferred<Awaited<ReturnType<typeof api.patch>>>();

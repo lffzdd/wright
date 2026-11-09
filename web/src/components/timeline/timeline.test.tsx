@@ -96,6 +96,29 @@ describe("real timeline projection", () => {
     expect(screen.getAllByText("Inspecting the input").length).toBeGreaterThan(0);
   });
 
+  it("animates only items that arrive after the session loaded, once per item", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    let state = emit(fresh(), "turn.started", { prompt: "First" });
+    state = emit(state, "content.final", { content: "Loaded answer" });
+    state = emit(state, "turn.completed", {});
+    const { container, rerender } = render(transcript(state));
+    expect(container.querySelectorAll(".enter")).toHaveLength(0);
+
+    state = emit(state, "turn.started", { prompt: "Second" }, "turn-2");
+    state = emit(state, "tool.planned", { call_id: "c2", name: "list_directory", arguments: { path: "src" } }, "turn-2");
+    rerender(transcript(state));
+    const live = screen.getByText("list_directory").closest(".tl-indent")!;
+    expect(live.classList.contains("enter")).toBe(true);
+    expect(screen.getByText("Loaded answer").closest(".enter")).toBeNull();
+
+    // Long after it appeared, the same tool moving into the record must not replay.
+    now.mockReturnValue(5_000);
+    state = emit(state, "tool.completed", { call_id: "c2", name: "list_directory", result: { ok: true, data: { entries: [] } } }, "turn-2");
+    state = emit(state, "turn.completed", {}, "turn-2");
+    rerender(transcript(state));
+    expect(screen.getByText("list_directory").closest(".tl-indent")!.classList.contains("enter")).toBe(false);
+  });
+
   it("renders replies without a header and marks tool cards open only when expanded", () => {
     let state = emit(fresh(), "turn.started", { prompt: "List it" });
     state = emit(state, "tool.planned", { call_id: "c", name: "list_directory", arguments: { path: "src" } });

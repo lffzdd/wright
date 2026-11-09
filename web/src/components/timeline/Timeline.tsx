@@ -17,10 +17,34 @@ export function InteractionDock({ sessionId, pending, respond, root }: {
   </div>;
 }
 
-function TurnOutcome({ status, detail }: { status?: string; detail?: string }) {
+const ENTER_MS = 400;
+
+/**
+ * Says whether an item should play its entrance. Items are keyed by what they
+ * are (a tool call, a turn's reply), not by where they render, so a live item
+ * moving into the record keeps its first-seen time and does not replay.
+ * Everything present when a session first renders counts as already seen.
+ */
+function useEntrance(sessionId: string) {
+  const ref = useRef({ session: sessionId, ready: false, born: new Map<string, number>() });
+  if (ref.current.session !== sessionId) ref.current = { session: sessionId, ready: false, born: new Map() };
+  const tracker = ref.current;
+  useEffect(() => { tracker.ready = true; });
+  const now = Date.now();
+  return (key: string) => {
+    let born = tracker.born.get(key);
+    if (born === undefined) {
+      born = tracker.ready ? now : 0;
+      tracker.born.set(key, born);
+    }
+    return born > 0 && now - born < ENTER_MS;
+  };
+}
+
+function TurnOutcome({ status, detail, enter }: { status?: string; detail?: string; enter?: boolean }) {
   const tr = useT();
   const label = status === "cancelled" ? tr("web.turn_cancelled") : status === "interrupted" ? tr("web.turn_interrupted") : tr("web.turn_failed");
-  return <div className={`turn-outcome ${status === "cancelled" ? "cancelled" : "failed"}`} role="status">
+  return <div className={`turn-outcome ${status === "cancelled" ? "cancelled" : "failed"}${enter ? " enter" : ""}`} role="status">
     <strong>{label}</strong>
     {detail && <span className="turn-outcome-detail">{detail}</span>}
   </div>;
@@ -109,6 +133,8 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
     activeTurnId: state.active_turn?.turn_id,
     timelineLength: timeline.length,
   });
+  const entering = useEntrance(state.session.session_id);
+  const activeTurn = state.active_turn?.turn_id;
   const known = new Set(timeline.map((item) => item.id));
   const liveTools = (state.active_turn?.tools ?? []).filter((tool) => !known.has(tool.call_id));
   // The snapshot can be taken after the turn started but before the server
@@ -141,16 +167,16 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
     {!timeline.length && !state.history.length && !state.active_turn && <p className="empty-small">{tr("web.empty_timeline")}</p>}
     {timeline.length > 0 ? <>
       {timeline.map((item) => {
-        if (item.kind === "text" && item.role === "user") return <UserMessage key={item.id} text={item.text || ""} userLabel={userLabel} timestamp={timestamp} tocId={item.id} />;
-        if (item.kind === "reasoning") return <ReasoningRow key={item.id} text={item.text || ""} durationMs={item.duration_ms} />;
-        if (item.kind === "text") return <AssistantMessage key={item.id} text={item.text || ""} />;
+        if (item.kind === "text" && item.role === "user") return <UserMessage key={item.id} text={item.text || ""} userLabel={userLabel} timestamp={timestamp} tocId={item.id} enter={entering(item.turn_id !== undefined ? `user:${item.turn_id}` : item.id)} />;
+        if (item.kind === "reasoning") return <ReasoningRow key={item.id} text={item.text || ""} durationMs={item.duration_ms} enter={entering(item.id)} />;
+        if (item.kind === "text") return <AssistantMessage key={item.id} text={item.text || ""} enter={entering(item.turn_id !== undefined ? `reply:${item.turn_id}` : item.id)} />;
         if (item.kind === "approval") return null;
-        if (item.kind === "status") return <TurnOutcome key={item.id} status={item.status} detail={item.text} />;
-        return toolCardFromTimeline(item, state.session?.session_id);
+        if (item.kind === "status") return <TurnOutcome key={item.id} status={item.status} detail={item.text} enter={entering(item.id)} />;
+        return toolCardFromTimeline(item, state.session?.session_id, entering(`tool:${item.call_id || item.id}`));
       })}
-      {pendingPrompt && <UserMessage text={pendingPrompt} userLabel={userLabel} timestamp={timestamp} tocId={state.active_turn?.turn_id ? `${state.active_turn.turn_id}:user` : "pending-user"} />}
-      {liveTools.map((tool) => toolCardFromState(tool, state.session?.session_id))}
-      {liveText && <AssistantMessage text={liveText} />}
+      {pendingPrompt && <UserMessage text={pendingPrompt} userLabel={userLabel} timestamp={timestamp} tocId={activeTurn ? `${activeTurn}:user` : "pending-user"} enter={entering(activeTurn ? `user:${activeTurn}` : "pending-user")} />}
+      {liveTools.map((tool) => toolCardFromState(tool, state.session?.session_id, entering(`tool:${tool.call_id}`)))}
+      {liveText && <AssistantMessage text={liveText} enter={entering(activeTurn ? `reply:${activeTurn}` : "live-reply")} />}
       {state.active_turn && !liveText && !liveTools.length && !timeline.some((item) => item.turn_id !== undefined && item.turn_id === state.active_turn?.turn_id && item.role === "assistant") && <p className="empty-small working-indicator">{tr("web.working")}</p>}
     </> : <>
       {state.history.map((turn, index) => <div className="turn" key={turn.turn_id || index}>

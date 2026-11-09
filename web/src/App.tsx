@@ -11,6 +11,7 @@ import { Inspector } from "./components/inspector/Inspector";
 import { InspectorResizeHandle } from "./components/inspector/InspectorResizeHandle";
 import { MemoryDialog, RulesDialog, SchedulesDialog, SearchDialog, SettingsDialog } from "./components/panels/panels";
 import { clampInspectorWidth, defaultInspectorWidth, parseInspectorWidth } from "./inspectorWidth";
+import { ContextRing } from "./components/session/ContextRing";
 import { SessionRail } from "./components/session/SessionRail";
 import { sessionTitle, taskCode } from "./components/session/session";
 import { InteractionDock, Timeline } from "./components/timeline/Timeline";
@@ -36,9 +37,6 @@ type WorkspaceRow = { project_id: string; name: string; root: string; selected?:
 type CapabilityCounts = { memory: number | null; rules: number | null; schedules: number | null };
 type Panel = null | "search" | "memory" | "rules" | "schedules" | "settings";
 
-const compactTokens = (value: number | null | undefined) => typeof value === "number"
-  ? value >= 1_000 ? `${(value / 1_000).toFixed(value >= 100_000 ? 0 : 1)}k` : String(value)
-  : "unknown";
 
 export default function App() {
   const tr = useT();
@@ -738,7 +736,6 @@ export default function App() {
     : displayStatus ? tr(`web.status.${displayStatus}`) : tr(`web.connection.${connection}`);
   const capacity = typeof project?.capacity === "number" ? project.capacity as number : null;
   const breakdown = state?.context_breakdown;
-  const contextWidth = breakdown?.limit ? Math.min(100, Math.round(((breakdown.total ?? 0) / breakdown.limit) * 100)) : 0;
   return <div className="app-viewport">
     <header className="topbar">
       <div className="brand">
@@ -821,15 +818,7 @@ export default function App() {
               <h1>{sessionTitle(state.session, tr)}</h1>
             </div>
             <div className="task-status">
-              {typeof breakdown?.total === "number" && <div className="context-meter" title={tr("web.estimate")}>
-                <span className="figures"><span>{compactTokens(breakdown.total)} / {compactTokens(breakdown.limit)}</span><span className="muted">{contextWidth}% context</span></span>
-                <span className="meter slim context-meter-segments">
-                  {breakdown?.categories?.length ? breakdown.categories.map((category) => {
-                    const segment = category.id === "system_prompt" ? "prompt" : category.id === "history" ? "history" : "tools";
-                    return <i key={category.id} className={`context-segment ${segment}`} style={{ width: `${breakdown.limit ? Math.min(100, Math.max(0, category.tokens / breakdown.limit * 100)) : 0}%` }} />;
-                  }) : <i className="context-segment prompt" style={{ width: `${contextWidth}%` }} />}
-                </span>
-              </div>}
+              {typeof breakdown?.total === "number" && <ContextRing total={breakdown.total} limit={breakdown.limit} />}
               <div className="conversation-actions" ref={sessionActionsRef}>
                 <button type="button" className="icon-button" aria-label={tr("web.session_actions")} aria-expanded={sessionActionsOpen} onClick={() => setSessionActionsOpen((open) => !open)}><DotsThreeVertical size={14} weight="bold" /></button>
                 {sessionActionsOpen && <div className="session-menu conversation-menu" role="menu">

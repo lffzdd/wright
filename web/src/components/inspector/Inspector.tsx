@@ -235,21 +235,24 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
     {tab === "task" && <div className="inspector-body" role="tabpanel" id="inspector-panel-task" aria-labelledby="inspector-tab-task">
       <section className="goal-card">
         <div className="card-kicker"><span>{tr("web.goal")}</span>{steps.length ? <span className="goal-progress-copy">{tr("web.steps_completed", { done: completedSteps, total: steps.length })}</span> : null}</div>
-        <p>{state.plan.objective || state.session.user_goal || tr("web.no_plan")}</p>
+        {state.plan.objective || state.session.user_goal
+          ? <p>{state.plan.objective || state.session.user_goal}</p>
+          : <p className="empty-small">{tr("web.no_goal")}</p>}
         {steps.length ? <div className="progress"><i style={{ width: `${Math.round((completedSteps / steps.length) * 100)}%` }} /></div> : null}
       </section>
       {state.plan.wait_reason && <p className="hint plan-wait" role="status">{waitText(state.plan.wait_reason)}</p>}
-      <div className="inspector-plan">
-        <div className="section-label"><span>{tr("web.execution_plan")} {steps.length ? `(${completedSteps}/${steps.length})` : ""}</span>{currentStep >= 0 && <span>{tr("web.step_active", { step: currentStep + 1 })}</span>}</div>
+      <section className="goal-card inspector-plan">
+        <div className="card-kicker"><span>{tr("web.execution_plan")}</span>{steps.length ? <span>{currentStep >= 0 ? tr("web.step_active", { step: currentStep + 1 }) : `${completedSteps}/${steps.length}`}</span> : null}</div>
         <div className="step-list">{steps.map((step) => {
           const metadata = stepMeta(step.status, step.note);
           const timing = stepTiming(step);
           return <article key={step.id} className={`step-card ${step.status}`}>{step.status === "completed" ? <Check size={15} weight="bold" /> : ["in_progress", "running", "active"].includes(step.status) ? <span className="step-spinner" aria-hidden="true" /> : <Circle size={15} />}<div><strong title={step.title}>{step.title}</strong><small title={metadata}>{metadata}</small>{timing && <small>{timing}</small>}{typeof step.ended_at === "number" && <small>{tr("web.step_ended", { time: new Date(step.ended_at * 1000).toLocaleString() })}</small>}{step.wait_reason && <small className="plan-wait" role="status">{waitText(step.wait_reason)}</small>}</div>{["in_progress", "running", "active"].includes(step.status) && <span className="current-step">{tr("web.current_step")}</span>}</article>;
         })}</div>
-      </div>
-      {!state.plan.steps?.length && <p className="empty-small">{tr("web.no_plan")}</p>}
+        {!steps.length && <p className="empty-small">{tr("web.no_plan")}</p>}
+      </section>
       <section className="goal-card">
-        <div className="card-kicker"><span>{tr("web.accessed_files")}</span><span>{tr("web.files_count", { count: accessedFiles.length })}</span></div>
+        <div className="card-kicker"><span>{tr("web.accessed_files")}</span>{accessedFiles.length ? <span>{tr("web.files_count", { count: accessedFiles.length })}</span> : null}</div>
+        {!accessedFiles.length && <p className="empty-small">{tr("web.no_accessed_files")}</p>}
         {accessedFiles.slice(-3).map((file) => {
           const metadata = fileMeta(file.path);
           const access = file.access === "write" && metadata.additions !== undefined ? `+${metadata.additions} -${metadata.deletions ?? 0}` : file.access === "write" ? "MOD" : file.access === "read" ? "READ" : (file.access || "TOUCH").toUpperCase();
@@ -257,7 +260,7 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
         })}
       </section>
       <section className="goal-card">
-        <div className="card-kicker"><span>{tr("web.subagents")}</span><span>{(state.subagents ?? []).length ? tr("web.spawned_count", { count: (state.subagents ?? []).length }) : 0}</span></div>
+        <div className="card-kicker"><span>{tr("web.subagents")}</span>{(state.subagents ?? []).length ? <span>{tr("web.spawned_count", { count: (state.subagents ?? []).length })}</span> : null}</div>
         {(state.subagents ?? []).map((agent) => <div className="subagent-row" key={agent.task_id}><span className="status-dot" /><span>{agent.task || agent.task_id}</span><span>{(agent.status || "unknown").replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())}</span></div>)}
       {!(state.subagents ?? []).length && <p className="empty-small">{tr("web.no_subagents")}</p>}
     </section>
