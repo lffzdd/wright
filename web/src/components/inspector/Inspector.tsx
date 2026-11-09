@@ -10,6 +10,15 @@ import { ChangesPanel } from "./ChangesPanel";
 type InspectorTab = "task" | "files" | "changes" | "permissions" | "context";
 
 /** A path relative to the project, or null when it lies outside it. */
+/** Time of day for today, otherwise a short date and time; the full stamp stays in the tooltip. */
+export function shortTime(seconds: number, now = new Date()): string {
+  const date = new Date(seconds * 1000);
+  const sameDay = date.toDateString() === now.toDateString();
+  return sameDay
+    ? date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+    : date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 export function projectRelative(path: string, root?: string): string | null {
   const normalized = path.replace(/\\/g, "/");
   const absolute = normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized);
@@ -137,7 +146,7 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
     if (historyOnly) return;
     // Only files inside the project can be listed or diffed; asking about
     // /etc or another checkout just produces failed requests.
-    const accessed = (state.accessed_files ?? []).slice(-8)
+    const accessed = (state.accessed_files ?? []).filter((item) => item.access !== "list").slice(-8)
       .map((item) => ({ ...item, path: projectRelative(item.path, state.session.execution_root) }))
       .filter((item): item is typeof item & { path: string } => item.path !== null);
     const folders = [...new Set(accessed.map((item) => {
@@ -246,7 +255,7 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
         <div className="step-list">{steps.map((step) => {
           const metadata = stepMeta(step.status, step.note);
           const timing = stepTiming(step);
-          return <article key={step.id} className={`step-card ${step.status}`}>{step.status === "completed" ? <Check size={15} weight="bold" /> : ["in_progress", "running", "active"].includes(step.status) ? <span className="step-spinner" aria-hidden="true" /> : <Circle size={15} />}<div><strong title={step.title}>{step.title}</strong><small title={metadata}>{metadata}</small>{timing && <small>{timing}</small>}{typeof step.ended_at === "number" && <small>{tr("web.step_ended", { time: new Date(step.ended_at * 1000).toLocaleString() })}</small>}{step.wait_reason && <small className="plan-wait" role="status">{waitText(step.wait_reason)}</small>}</div>{["in_progress", "running", "active"].includes(step.status) && <span className="current-step">{tr("web.current_step")}</span>}</article>;
+          return <article key={step.id} className={`step-card ${step.status}`}>{step.status === "completed" ? <Check size={15} weight="bold" /> : ["in_progress", "running", "active"].includes(step.status) ? <span className="step-spinner" aria-hidden="true" /> : <Circle size={15} />}<div><strong title={step.title}>{step.title}</strong><small title={metadata}>{metadata}</small>{timing && <small>{timing}</small>}{typeof step.ended_at === "number" && <small title={new Date(step.ended_at * 1000).toLocaleString()}>{tr("web.step_ended", { time: shortTime(step.ended_at) })}</small>}{step.wait_reason && <small className="plan-wait" role="status">{waitText(step.wait_reason)}</small>}</div>{["in_progress", "running", "active"].includes(step.status) && <span className="current-step">{tr("web.current_step")}</span>}</article>;
         })}</div>
         {!steps.length && <p className="empty-small">{tr("web.no_plan")}</p>}
       </section>
@@ -281,7 +290,7 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
           const detail = file.access === "write" && (metadata.additions !== undefined || metadata.deletions !== undefined)
             ? `+${metadata.additions ?? 0} -${metadata.deletions ?? 0}`
             : typeof metadata.size === "number" ? `${(metadata.size / 1024).toFixed(1)} KB` : "";
-          return <button type="button" className="accessed-file" disabled={!canReadFiles} key={`${file.call_id}-${file.path}`} onClick={() => { setPanelError(""); setFilePath(file.path); }}>
+          return <button type="button" className="accessed-file" disabled={!canReadFiles || file.access === "list"} key={`${file.call_id}-${file.path}`} onClick={() => { setPanelError(""); setFilePath(file.path); }}>
             <span className={`accessed-kind ${file.access === "write" ? "modified" : file.access === "read" ? "read" : "touched"}`}>{label}</span><span className="accessed-path" title={file.path}>{file.path}</span><span className={`accessed-detail${file.access === "write" ? " modified" : ""}`}>{detail}</span>
           </button>;
         })}</div>

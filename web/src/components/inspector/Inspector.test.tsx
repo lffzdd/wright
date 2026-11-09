@@ -22,7 +22,7 @@ const patch = (text: string) => ({ path: "a.txt", patch: `--- a/a.txt\n+++ b/a.t
 
 beforeEach(() => {
   setLocale("en");
-  vi.spyOn(api, "changes").mockResolvedValue({ changes: [{ path: "a.txt", status: "M" }], baseline: "HEAD", local_warning: false });
+  vi.spyOn(api, "changes").mockImplementation(async (_id, scope) => ({ changes: scope === "staged" ? [] : [{ path: "a.txt", status: "M" }], baseline: "HEAD", local_warning: false }));
   vi.spyOn(api, "review").mockResolvedValue({ changes: [] });
   vi.spyOn(api, "tree").mockResolvedValue({ path: "", entries: [] });
 });
@@ -106,6 +106,17 @@ describe("Inspector request and content state", () => {
     fireEvent.click(screen.getByRole("button", { name: /READ\s*\/project\/src\/empty.ts/ }));
     expect(await screen.findByText("This file is empty.")).toBeTruthy();
     expect(file).toHaveBeenCalledWith("a", "src/empty.ts");
+  });
+
+  it("lists directories as LIST entries that do not open as files", () => {
+    const file = vi.spyOn(api, "file");
+    const state = view(); state.accessed_files = [{ path: "web/src", access: "list", tool: "list_directory" }];
+    render(inspector(state));
+    fireEvent.click(screen.getByRole("tab", { name: /Files\s*\(1\)/ }));
+    const entry = screen.getByRole("button", { name: /LIST\s*web\/src/ }) as HTMLButtonElement;
+    expect(entry.disabled).toBe(true);
+    fireEvent.click(entry);
+    expect(file).not.toHaveBeenCalled();
   });
 
   it("shows all accessed files once and counts changes as files", async () => {

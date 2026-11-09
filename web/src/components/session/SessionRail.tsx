@@ -90,11 +90,11 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
       return <div className="session-entry" key={session.session_id}>
         <button className={current ? "task-card" : "task-row"} onClick={() => onSelect(session)}>
           {current ? <>
-            <span className="task-card-top"><span><span className={`status-dot ${execution}`} /><span className="task-id">{taskCode(session.session_id)}</span></span><span className="task-step">{selectedProgress || tr(`web.status.${execution}`)}</span></span>
+            <span className="task-card-top"><span><span className={`status-dot ${execution}`} /><span className="task-id">{taskCode(session.session_id)}</span></span>{selectedProgress ? <span className="task-step">{selectedProgress}</span> : null}</span>
             <span className="task-title">{title}</span>
             <span className="task-meta"><span className={session.pending_interactions ? "waiting-copy" : ""}>{session.pending_interactions ? <><Warning size={11} weight="bold" />{tr("web.awaiting_permission")}</> : statusLabel(session)}</span><span>{when}</span></span>
           </> : <>
-            <span className={`status-dot ${execution}`} /><span className="task-id">{taskCode(session.session_id, true)}</span><span className="task-title">{title}</span><span className="task-meta">{statusLabel(session)}</span>
+            <span className={`status-dot ${execution}`} /><span className="task-id">{taskCode(session.session_id)}</span><span className="task-title">{title}</span><span className="task-meta">{statusLabel(session)}</span>
           </>}
         </button>
         {!current && <SessionMenu session={session} onRename={onRename} onArchive={onArchive} />}
@@ -162,6 +162,6 @@ export function SessionRail({ sessions, selected, onSelect, onCreate, open, chil
       </div>}
       {children}
     </div>
-    {footer && <div className="sidebar-foot"><span className="profile-avatar">W</span><span className="profile-copy"><strong>Wright</strong><small>{footer}</small></span><span className={`connection-latency${connectionLatency == null ? " offline" : ""}`} title={connectionLatency == null ? tr("web.connection.disconnected") : tr("web.connection.connected")} aria-label={connectionLatency == null ? tr("web.connection.disconnected") : `${connectionLatency} ms`}><i />{connectionLatency != null && <span>{connectionLatency}ms</span>}</span></div>}
+    {footer && <div className="sidebar-foot"><span className="profile-avatar">W</span><span className="profile-copy"><strong>Wright</strong></span><span className={`connection-latency${connectionLatency == null ? " offline" : ""}`} title={connectionLatency == null ? tr("web.connection.disconnected") : tr("web.connection.connected")} aria-label={connectionLatency == null ? tr("web.connection.disconnected") : `${connectionLatency} ms`}><i />{connectionLatency != null && <span>{connectionLatency}ms</span>}</span></div>}
   </aside>;
 }

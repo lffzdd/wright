@@ -184,6 +184,26 @@ describe("ToolCard states", () => {
     expect(screen.getByText("file body")).toBeTruthy();
   });
 
+  it("lists directory entries instead of tree-prefixing the raw JSON", () => {
+    const data = { directory: ".", truncated: false, entries: [
+      { name: "src", path: "src", type: "directory", size: null },
+      { name: "README.md", path: "README.md", type: "file", size: 2048 },
+    ] };
+    render(<ToolCard name="list_directory" phase="succeeded" data={data} output={JSON.stringify(data, null, 2)} />);
+    fireEvent.click(screen.getByRole("button"));
+    const body = document.querySelector(".term-body")?.textContent;
+    expect(body).toBe("├── src/\n└── README.md  2.0 KB");
+  });
+
+  it("shows what a search looked for and a quiet success for exit 0", () => {
+    render(<>
+      <ToolCard name="grep" phase="succeeded" args={{ pattern: "host_busy", path: "src/wright" }} output="hit" />
+      <ToolCard name="execute_command" phase="succeeded" args={{ command: "true" }} data={{ exit_code: 0 }} />
+    </>);
+    expect(screen.getByText("host_busy")).toBeTruthy();
+    expect(screen.getByText("Exit 0").className).toBe("read-success");
+  });
+
   it("hides line counts until an edit has been applied", () => {
     render(<ToolCard name="edit_file" phase="awaiting_approval" args={{ file: "a.py" }} />);
     expect(screen.queryByText("+0")).toBeNull();

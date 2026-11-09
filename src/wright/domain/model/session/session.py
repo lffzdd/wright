@@ -37,6 +37,9 @@ from .records import (
 )
 from .run import TERMINAL_RUN_STATUSES, RunRecord, RunStatus, new_run_id
 
+# Label every interactive session starts with until the user names it.
+INTERACTIVE_SESSION_LABEL = "(interactive session)"
+
 
 @dataclass
 class Session:
@@ -264,6 +267,20 @@ class Session:
             if root is not None:
                 return root.goal
         return run.goal if run is not None else self.session_label
+
+    def display_title(self) -> str:
+        """The name a person recognizes: their label, else the first request.
+
+        Unlike :meth:`current_goal`, follow-up turns ("ok", "?") never rename
+        the task.
+        """
+        label = self.session_label.strip()
+        if label and label != INTERACTIVE_SESSION_LABEL:
+            return label
+        for run in self.runs.values():
+            if run.source == "user_input" and run.goal:
+                return run.goal
+        return self.current_goal()
 
     def _next_message_id(self) -> MessageId:
         self.message_id_counter += 1

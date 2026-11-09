@@ -712,7 +712,7 @@ export default function App() {
   const launchProject = String(project?.project_id ?? "");
   const planSteps = state?.plan.steps ?? [];
   const currentStep = planSteps.findIndex((step) => ["in_progress", "running", "active"].includes(step.status));
-  const selectedProgress = planSteps.length
+  const selectedProgress = planSteps.length && planSteps.some((step) => step.status !== "completed")
     ? tr("web.step_of", { current: currentStep >= 0 ? currentStep + 1 : Math.min(planSteps.length, planSteps.filter((step) => step.status === "completed").length + 1), total: planSteps.length })
     : "";
 
@@ -753,7 +753,7 @@ export default function App() {
       </div>
       <div className="top-status">
         <span className={`top-agent-state ${statusClass}`}><span className={`dot ${statusPulse ? "pulse" : ""}`} />{statusText}</span>
-        <span className="active-count">{tr("web.active", { count: capacity === null ? `${activeCount}` : `${activeCount}/${capacity}` })}</span>
+        <span className="active-count" title={capacity === null ? undefined : tr("web.active_capacity", { capacity })}>{tr("web.active", { count: capacity === null ? `${activeCount}` : `${activeCount}/${capacity}` })}</span>
         <button type="button" className="icon-button" title={tr("web.theme")} onClick={() => savePreference({ theme: theme === "dark" ? "light" : "dark" }).catch((error) => setFatal(String(error)))}>{theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}</button>
         {state && selected ? <button type="button" className="icon-button" aria-label={tr((compactViewport ? inspectorOpen && narrowInspector : inspectorOpen) ? "web.close_inspector" : "web.open_inspector")} aria-expanded={compactViewport ? inspectorOpen && narrowInspector : inspectorOpen} aria-controls="workspace-inspector" onClick={toggleInspector}><SidebarSimple size={14} /></button> : null}
       </div>

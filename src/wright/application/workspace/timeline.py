@@ -12,6 +12,8 @@ from ..session_runtime.tool_projection import public_tool_result, tool_phase
 
 _SHELL = frozenset({"execute_command"})
 _EDIT = frozenset({"edit_file", "write_file"})
+# Directory-level tools: their target is a folder, not a file to preview.
+_LIST = frozenset({"list_directory", "glob"})
 
 
 def project_timeline(
@@ -223,7 +225,12 @@ def project_accessed_files(session: Any) -> list[dict[str, Any]]:
         # Incomplete or failed tools have not successfully touched workspace files.
         if tool_phase(getattr(execution, "status", "")) != "succeeded":
             continue
-        access = "write" if name in _EDIT else "read" if name in {"read_file", "grep", "glob"} else "touch"
+        access = (
+            "write" if name in _EDIT
+            else "read" if name in {"read_file", "grep"}
+            else "list" if name in _LIST
+            else "touch"
+        )
         for path in paths:
             current = found.get(path)
             if current is None or (current["access"] != "write" and access == "write"):
@@ -233,7 +240,7 @@ def project_accessed_files(session: Any) -> list[dict[str, Any]]:
 
 def _paths(arguments: dict[str, Any]) -> list[str]:
     values: list[str] = []
-    for key in ("file", "path", "target"):
+    for key in ("file", "path", "target", "directory"):
         value = arguments.get(key)
         if isinstance(value, str) and value:
             values.append(value)

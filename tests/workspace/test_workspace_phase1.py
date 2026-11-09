@@ -681,3 +681,13 @@ def test_accessed_files_only_lists_tools_that_succeeded(status, listed):
         tool_executions={"c2": SimpleNamespace(call=read, status=status)}
     )
     assert bool(project_accessed_files(read_session)) is listed
+
+
+def test_accessed_files_lists_directories_without_treating_them_as_files():
+    listing = SimpleNamespace(id="c3", name="list_directory", arguments={"directory": "web/src"})
+    session = SimpleNamespace(
+        tool_executions={"c3": SimpleNamespace(call=listing, status="succeeded")}
+    )
+    assert project_accessed_files(session) == [
+        {"path": "web/src", "access": "list", "tool": "list_directory", "call_id": "c3"}
+    ]

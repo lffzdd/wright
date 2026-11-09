@@ -14,7 +14,7 @@ from typing import Any
 
 from ....core.logger import get_logger
 from ....domain.gateway.session_repository import ISessionRepository
-from ....domain.model.session import Session
+from ....domain.model.session import INTERACTIVE_SESSION_LABEL, Session
 from ....domain.model.session.errors import CheckpointError as _CheckpointError
 from ...permission_transaction import (
     atomic_write,
@@ -35,17 +35,16 @@ from .codec import (
 
 logger = get_logger(__name__)
 
-_PLACEHOLDER_LABEL = "(interactive session)"
 
 
 def _checkpoint_title(session_info: dict[str, Any]) -> str:
-    """The name a person would recognize: their label, else the latest request.
+    """Mirror ``Session.display_title`` on raw checkpoint data.
 
-    Open sessions are titled by their current goal; a closed one must not fall
-    back to the placeholder label every interactive session starts with.
+    Their label, else the first request; a closed session must not fall back
+    to the placeholder label every interactive session starts with.
     """
     label = str(session_info.get("session_label") or "")
-    if label and label != _PLACEHOLDER_LABEL:
+    if label and label != INTERACTIVE_SESSION_LABEL:
         return label
     runs = session_info.get("runs")
     if isinstance(runs, dict):
@@ -55,7 +54,7 @@ def _checkpoint_title(session_info: dict[str, Any]) -> str:
             if isinstance(run, dict) and run.get("source") == "user_input" and run.get("goal")
         ]
         if goals:
-            return goals[-1]
+            return goals[0]
     return label
 
 

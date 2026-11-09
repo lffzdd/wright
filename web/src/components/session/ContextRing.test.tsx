@@ -10,7 +10,7 @@ describe("ContextRing", () => {
     const ring = screen.getByRole("meter");
     expect(ring.getAttribute("aria-valuenow")).toBe("19");
     expect(ring.getAttribute("aria-label")).toContain("24.4k / 128k");
-    expect(ring.textContent).toBe("19%");
+    expect(ring.textContent).toBe("Context 19%");
   });
 
   it("escalates its tone as the context fills", () => {

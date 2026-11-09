@@ -33,7 +33,7 @@ it("keeps keyboard focus inside an open drawer", () => {
 });
 
 it("keeps expanded diff focus inside its dialog and returns it on Escape", async () => {
-  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => ({ ok: true, json: async () => String(input).endsWith("/changes/a.txt") ? { path: "a.txt", binary: false, truncated: false, revision: "r1", patch: "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n" } : { changes: String(input).endsWith("/changes") ? [{ path: "a.txt", status: "M" }] : [] } })));
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => ({ ok: true, json: async () => String(input).split("?")[0].endsWith("/changes/a.txt") ? { path: "a.txt", binary: false, truncated: false, revision: "r1", patch: "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n" } : { changes: String(input).endsWith("/changes?scope=unstaged") ? [{ path: "a.txt", status: "M" }] : [] } })));
   render(<Inspector state={state} sessionId="s" open close={() => undefined} />);
   fireEvent.click(screen.getByRole("tab", { name: /Changes/ }));
   fireEvent.click(await screen.findByRole("button", { name: /M\s*a.txt/ }));

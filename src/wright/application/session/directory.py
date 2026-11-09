@@ -410,7 +410,7 @@ class SessionDirectory:
                 "execution": "idle",
                 "status": "closed",
                 "active": False,
-                "user_goal": saved.current_goal() if hasattr(saved, "current_goal") else saved.user_goal,
+                "user_goal": saved.display_title() if hasattr(saved, "display_title") else saved.user_goal,
                 "model": saved.model_name,
                 "interaction_mode": saved.authorization.interaction_mode,
                 "permission_mode": saved.authorization.permission_mode,

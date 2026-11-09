@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../../api";
 import { setLocale } from "../../i18n";
-import type { ChangePatch, ChangesSummary, ViewState } from "../../types";
+import type { ChangePatch, ChangesSummary, GitChange, ViewState } from "../../types";
 import { ChangesPanel } from "./ChangesPanel";
 
 const view = (sessionId = "a"): ViewState => ({
@@ -13,6 +13,9 @@ const view = (sessionId = "a"): ViewState => ({
     request_completion_tokens: null, request_total_tokens: null, context_tokens: null, context_limit: null },
 });
 const summary = (revision = "r1"): ChangesSummary => ({ git: true, revision, baseline: "HEAD", local_warning: false, changes: [{ path: "src/a.txt", status: "M", unstaged: true, additions: 2, deletions: 2, capabilities: { stage: true, unstage: false, discard: true, hunk: true } }] });
+// The panel reads the staged and unstaged scopes separately; unstaged is "r1", staged is "s1".
+const git = (unstaged: GitChange[], staged: GitChange[] = []) => vi.mocked(api.changes).mockImplementation(async (_id, scope) =>
+  scope === "staged" ? { ...summary("s1"), scope, changes: staged } : { ...summary(), scope, changes: unstaged });
 const patch = (revision = "r1"): ChangePatch => ({ path: "src/a.txt", revision, binary: false, truncated: false, patch: "--- a/src/a.txt\n+++ b/src/a.txt\n@@ -1 +1 @@\n-old\n+new\n@@ -20 +20 @@\n-later old\n+later new\n" });
 const deferred = <T,>() => {
   let resolve!: (value: T) => void;
@@ -26,6 +29,7 @@ const openFile = async () => fireEvent.click(await screen.findByRole("button", {
 beforeEach(() => {
   setLocale("en");
   vi.spyOn(api, "changes").mockResolvedValue(summary());
+  git(summary().changes);
   vi.spyOn(api, "patch").mockResolvedValue(patch());
   vi.spyOn(api, "review").mockResolvedValue({ changes: [], revision: "session-r1" });
   vi.spyOn(api, "reviewPatch").mockResolvedValue(patch("session-r1"));
@@ -36,8 +40,38 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("Changes user workflow", () => {
+  it("lists staged and unstaged changes as separate groups and marks a partially staged file in both", async () => {
+    git([
+      { path: "src/a.txt", status: "M", unstaged: true, additions: 1, deletions: 0 },
+      { path: "b.txt", status: "??", untracked: true, unstaged: true, additions: 1, deletions: 0 },
+    ], [{ path: "src/a.txt", status: "M", staged: true, additions: 2, deletions: 1 }]);
+    render(panel());
+    const staged = await screen.findByRole("region", { name: "Staged" });
+    const unstaged = screen.getByRole("region", { name: "Unstaged" });
+    expect(staged.querySelectorAll(".changes-file")).toHaveLength(1);
+    expect(unstaged.querySelectorAll(".changes-file")).toHaveLength(2);
+    expect(screen.getAllByText("Partially staged")).toHaveLength(2);
+    expect(screen.getByText("New")).toBeTruthy();
+    expect(screen.getByText("2 files")).toBeTruthy();
+    expect(staged.querySelector("strong")?.textContent).toBe("a.txt");
+    expect(staged.querySelector(".changes-file-dir")?.textContent).toBe("src/");
+  });
+
+  it("acts on the staged part of a file with the staged revision", async () => {
+    git([{ path: "src/a.txt", status: "M", unstaged: true }], [{ path: "src/a.txt", status: "M", staged: true }]);
+    vi.mocked(api.patch).mockResolvedValue(patch("s1"));
+    render(panel());
+    const staged = await screen.findByRole("region", { name: "Staged" });
+    fireEvent.click(staged.querySelector(".changes-file")!);
+    await screen.findByText("later new");
+    expect(api.patch).toHaveBeenCalledWith("a", "src/a.txt", "staged");
+    expect(screen.queryByRole("button", { name: "Stage" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Unstage" }));
+    await waitFor(() => expect(api.changeAction).toHaveBeenCalledWith("a", expect.objectContaining({ action: "unstage", scope: "staged", paths: ["src/a.txt"], expected_revision: "s1" })));
+  });
+
   it("shows only the selected scope and keeps old baseline files out of session edits", async () => {
-    vi.mocked(api.changes).mockResolvedValue({ ...summary(), changes: [] });
+    git([]);
     vi.mocked(api.review).mockResolvedValue({ revision: "session-r1", changes: [
       { path: "existing.txt", state: "preexisting", origin: "preexisting" },
       { path: "outside.txt", state: "external", origin: "external" },
@@ -61,21 +95,20 @@ describe("Changes user workflow", () => {
     expect(screen.queryByText("No uncommitted changes.")).toBeNull();
   });
 
-  it("keeps a late diff from a previous scope out of the selected scope", async () => {
+  it("keeps a late diff from the Git view out of the session view", async () => {
     const pending = deferred<ChangePatch>();
     vi.mocked(api.patch).mockReturnValueOnce(pending.promise);
     render(panel());
     await openFile();
-    scope("staged");
-    await screen.findByText("Commit message");
+    scope("session");
+    await screen.findByText("No recorded Agent edits in this session.");
     await act(async () => { pending.resolve(patch()); });
     expect(screen.queryByText("later new")).toBeNull();
-    expect(api.patch).toHaveBeenCalledWith("a", "src/a.txt", "working");
+    expect(api.patch).toHaveBeenCalledWith("a", "src/a.txt", "unstaged");
   });
 
   it("stages an exact server hunk with the displayed revision and scope", async () => {
     render(panel());
-    scope("unstaged");
     await openFile();
     const hunks = await screen.findAllByRole("button", { name: "Stage hunk" });
     fireEvent.click(hunks[1]);
@@ -89,7 +122,7 @@ describe("Changes user workflow", () => {
     await openFile();
     await screen.findByText("later new");
     fireEvent.click(screen.getByRole("button", { name: "Discard" }));
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("staging state will return to HEAD"));
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("Files will return to the staged version"));
     expect(api.changeAction).not.toHaveBeenCalled();
   });
 
@@ -139,15 +172,15 @@ describe("Changes user workflow", () => {
   });
 
   it("commits the displayed staged snapshot with a message and does not stage other files", async () => {
+    git([], summary().changes);
     render(panel());
-    scope("staged");
     await screen.findByText("Commit message");
     await screen.findByRole("button", { name: /src\/a.txt/ });
     const commit = screen.getByRole("button", { name: "Commit staged changes" }) as HTMLButtonElement;
     expect(commit.disabled).toBe(true);
     fireEvent.change(screen.getByLabelText("Commit message"), { target: { value: "Fix parser" } });
     fireEvent.click(commit);
-    await waitFor(() => expect(api.changeAction).toHaveBeenCalledWith("a", expect.objectContaining({ action: "commit", scope: "staged", message: "Fix parser", expected_revision: "r1", confirm: true })));
+    await waitFor(() => expect(api.changeAction).toHaveBeenCalledWith("a", expect.objectContaining({ action: "commit", scope: "staged", message: "Fix parser", expected_revision: "s1", confirm: true })));
     expect(vi.mocked(api.changeAction).mock.calls.every((call) => call[1].action === "commit")).toBe(true);
   });
 
@@ -172,7 +205,7 @@ describe("Changes user workflow", () => {
   it("does not silently skip unsupported files in a bulk discard", async () => {
     const result = summary();
     result.changes.push({ path: "linked.txt", status: "M", unstaged: true, capabilities: { stage: false, discard: false, hunk: false }, reason: "Linked file cannot be changed here" });
-    vi.mocked(api.changes).mockResolvedValue(result);
+    git(result.changes);
     render(panel());
     expect((await screen.findByRole("button", { name: "Discard all" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText("Some files do not support this operation. Inspect them individually; the bulk action is disabled.")).toBeTruthy();
@@ -181,8 +214,8 @@ describe("Changes user workflow", () => {
 
   it("requires the server's hunk capability before offering partial mutations", async () => {
     const result = summary(); result.changes[0].capabilities = undefined;
-    vi.mocked(api.changes).mockResolvedValue(result);
-    render(panel()); scope("unstaged");
+    git(result.changes);
+    render(panel());
     await openFile(); await screen.findByText("later new");
     expect(screen.queryByRole("button", { name: "Stage hunk" })).toBeNull();
   });

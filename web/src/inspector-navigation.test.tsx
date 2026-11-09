@@ -23,8 +23,8 @@ function boot(compact: boolean, permission = false, changedFile = false) {
       })()
       : path.includes("/workspaces") ? { selected_project_id: "p", projects: [{ project_id: "p", root: "/tmp/demo", name: "demo" }] }
         : path === "/api/v1/project" ? { project_id: "p", name: "demo" }
-          : changedFile && path.endsWith("/changes/a.txt") ? { path: "a.txt", binary: false, truncated: false, revision: "r1", patch: "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-before\n+after\n" }
-          : changedFile && path.endsWith("/changes") ? { changes: [{ path: "a.txt", status: "M", additions: 1, deletions: 1 }], revision: "r1", baseline: "HEAD", git: true }
+          : changedFile && path.split("?")[0].endsWith("/changes/a.txt") ? { path: "a.txt", binary: false, truncated: false, revision: "r1", patch: "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-before\n+after\n" }
+          : changedFile && /\/changes(\?scope=unstaged)?$/.test(path) ? { changes: [{ path: "a.txt", status: "M", additions: 1, deletions: 1 }], revision: "r1", baseline: "HEAD", git: true }
           : path.includes("/preview") ? { session, history: [], timeline: [], usage: {} }
             : path.endsWith("/snapshot") ? { stream_id: "s", last_seq: 0, session, history: [], timeline: [], active_turn: null, plan: {}, usage: {}, pending_interactions: [{ request_id: "approval", kind: "permission", choices: [{ id: "deny", label: "Deny" }] }] }
             : path.startsWith("/api/v1/sessions?") ? [session] : { changes: [], rules: [], entries: [] };

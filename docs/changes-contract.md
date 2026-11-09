@@ -6,15 +6,23 @@ anything as part of implementation or verification.
 
 ## User behavior
 
-- Default scope is `working`: all uncommitted tracked and untracked changes
-  relative to HEAD, including staged changes. `unstaged` compares disk to index;
-  `staged` compares index to HEAD. `session` compares recorded task writes to
-  their first before snapshot. These are separate views, never concatenated.
-- A file list, count, statistics, selected diff and actions share one scope.
+- The panel has two views. The default Git view lists uncommitted changes in
+  two groups: `staged` (index compared with HEAD) and `unstaged` (disk compared
+  with the index, plus untracked files). A partially staged file appears in
+  both groups, each showing and acting on its own part. The `session` view
+  compares recorded task writes to their first before snapshot and is never
+  mixed with Git changes.
+- Each group reads its scope separately and keeps that scope's revision. A
+  file's selected diff and actions use the group it was selected from: the
+  staged group unstages and commits; the unstaged group stages and discards
+  (back to the staged version). The `working` scope stays in the API for
+  callers that need one combined list, but the panel does not act on it.
+- The view's file count counts distinct paths, so a partially staged file
+  counts once.
 - New folders list individual files. Rename metadata preserves both paths.
 - Empty, failed, unsupported, binary and oversized states are distinct.
 - Keeping edits needs no Accept action. Git staging is explicitly named.
-- File/hunk stage, unstage and discard operate on the displayed Git scope.
+- File/hunk stage, unstage and discard operate on the selected group's Git scope.
   Session undo restores task-before bytes without changing the Git index/HEAD.
 - Mutations validate an expected revision, reject busy sessions, and do not
   silently overwrite external edits. Batch undo/discard preflight every path
@@ -85,37 +93,10 @@ Run scoped and relevant full tests/typecheck/build. Finally build and inspect th
 real application in the browser at normal and narrow widths. Mock component tests
 are useful but do not replace API/Git integration or rendered UI verification.
 
-## Verified delivery
-
-- Frontend: all 236 tests passed with `npm test -- --maxWorkers=2`;
-  TypeScript and the production Vite build passed. Build output is the normal
-  `src/wright/interfaces/web/static` bundle.
-- Backend: 220 tests passed across workspace, real HTTP/Git acceptance, Web
-  routes/runtime, file tools, session execution/coordination, locks and
-  architecture/import boundaries. Two additional Git summary tests passed for
-  nested new files, newline paths, renames and subdirectory workspace counts.
-  Ruff and `git diff --check` passed.
-- Independent acceptance covers 35 real HTTP/Git scenarios, including a
-  workspace below a repository root: hidden staged files block commit, and
-  outside unstaged files are preserved. Pure session renames expose both paths
-  and consistent statistics/patches.
-- Live verification used the normal FastAPI entry point and real SessionService
-  workers. A disposable repository verified the four scopes, actual hunk
-  staging, unchanged disk contents, expanded diff, line feedback appended to
-  the draft without submitting, and worker close/resume preserving snapshots.
-  Desktop and narrow inspector screenshots were inspected.
-- The original Wright project was reopened on port 52007, and the existing
-  `6fd7e46c65f2` conversation was restored. Its Git working changes and empty
-  session-owned edit history are shown separately. No original-project Git
-  mutation was used for acceptance, and implementation changes remain uncommitted.
+## Safety boundaries
 
 Safety boundaries are explicit in the UI: binary/oversized or missing snapshots,
 external changes, committed history, and legacy records without a verifiable
 Git baseline cannot use session undo. Git hunk actions require a supported text
 diff; file actions never approximate a failed hunk. Scope validation and version
 checks reject stale operations. No push or external publication is performed.
-
-The current local development server is a per-login launchd job named
-`local.wright.changes-web`, started with the normal `wright --ui web --no-open
---web-port 52007` command. It is not an installed login item. To stop it before
-starting the CLI server manually, run `launchctl remove local.wright.changes-web`.

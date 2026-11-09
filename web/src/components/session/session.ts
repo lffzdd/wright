@@ -1,9 +1,9 @@
 import { t } from "../../i18n";
 
-export function taskCode(id: string, compact = false): string {
+/** One short ID everywhere (header, selected card, compact rows). */
+export function taskCode(id: string): string {
   const match = /^task[-_]?(\d+)/i.exec(id);
-  if (match) return compact ? `#${match[1]}` : `TASK-${match[1]}`;
-  return compact ? `#${id.slice(0, 4)}` : id.slice(0, 8);
+  return `#${match ? match[1] : id.slice(0, 6)}`;
 }
 
 export function formatAgo(iso?: string): string {

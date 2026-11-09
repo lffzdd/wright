@@ -67,7 +67,31 @@ function describeRisk(flag: string): string {
   return label === key ? flag.replace(/_/g, " ") : label;
 }
 
+type DirectoryEntry = { name?: unknown; path?: unknown; type?: unknown; size?: unknown };
+
+function formatSize(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Renders list_directory's structured entries as a tree, one entry per line. */
+function directoryListing(source: Record<string, unknown> | null | undefined): string | null {
+  const entries = source && Array.isArray(source.entries) ? source.entries as DirectoryEntry[] : null;
+  if (!entries) return null;
+  if (!entries.length) return t("web.dir_empty");
+  const lines = entries.map((entry, index) => {
+    const name = String(entry.name ?? entry.path ?? "");
+    const branch = index === entries.length - 1 && source?.truncated !== true ? "└──" : "├──";
+    if (entry.type === "directory") return `${branch} ${name}/`;
+    return typeof entry.size === "number" ? `${branch} ${name}  ${formatSize(entry.size)}` : `${branch} ${name}`;
+  });
+  if (source?.truncated === true) lines.push("└── …");
+  return lines.join("\n");
+}
+
 function directoryTree(text: string): string {
+  if (text.startsWith("{") || text.startsWith("[")) return text;
   const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
   if (lines.length === 0) return text;
   if (lines.some((line) => line.startsWith("├") || line.startsWith("└") || line.startsWith("//"))) return text;
@@ -76,7 +100,12 @@ function directoryTree(text: string): string {
 
 function compactToolBody(name: string, body: string, result?: Record<string, unknown> | null): string {
   const trimmed = body.trim();
-  if (/directory/i.test(name)) return directoryTree(trimmed);
+  if (/directory/i.test(name)) {
+    const parsed = result ?? (() => {
+      try { return JSON.parse(trimmed) as Record<string, unknown>; } catch { return null; }
+    })();
+    return directoryListing(parsed) ?? directoryTree(trimmed);
+  }
   if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return body;
   const source = result && typeof result === "object" ? result : (() => {
     try { return JSON.parse(trimmed) as Record<string, unknown>; } catch { return null; }
@@ -150,7 +179,7 @@ export function SummaryRow({ text, durationMs, enter }: { text: string; duration
       >
         <span className="tool-title">
           <span className="tool-badge reasoning">REASON</span>
-          <span className="tool-name">{tr("web.reasoning")}{durationLabel ? ` · ${durationLabel}` : ""}</span>
+          {durationLabel && <span className="tool-name">{durationLabel}</span>}
           {!open && preview && <span className="reasoning-snippet">{preview}</span>}
         </span>
         <span className="tool-meta">
@@ -230,7 +259,8 @@ export function ToolCard({
   const family = toolFamily(name, kind);
   const [toggled, setToggled] = useState<boolean | null>(null);
   const command = arg(args, ["command", "cmd"]);
-  const path = arg(args, ["path", "file", "file_path", "target"]);
+  const path = arg(args, ["path", "file", "file_path", "target", "directory"]);
+  const pattern = family === "shell" || family === "edit" ? "" : arg(args, ["pattern", "query", "regex"]);
   const code = family === "shell" ? exitCode(result, data) : null;
   const raw = output || (result ? (typeof result.output === "string" ? result.output : JSON.stringify(result, null, 2)) : "");
   const metricSource = data && typeof data === "object" ? data as Record<string, unknown> : result;
@@ -238,7 +268,7 @@ export function ToolCard({
   // Derived until the person toggles it, so a live card and a reloaded one agree.
   const open = toggled ?? (!denied && (phase === "failed" || phase === "running" || family === "edit"));
   const hasDiff = family === "edit" && typeof metricSource?.diff === "string";
-  const body = hasDiff ? metricSource.diff as string : compactToolBody(name, raw, result);
+  const body = hasDiff ? metricSource.diff as string : compactToolBody(name, raw, result ?? (data && typeof data === "object" ? data as Record<string, unknown> : null));
   const badge = family === "shell" ? "SHELL" : family === "edit" ? "FILE EDIT" : family === "read" ? "TOOL" : "TOOL";
   const bodyLines = body.split("\n").filter(Boolean);
   const added = family === "edit" && typeof metricSource?.additions === "number" ? metricSource.additions : family === "edit" ? bodyLines.filter((line) => line.startsWith("+")).length : 0;
@@ -255,15 +285,17 @@ export function ToolCard({
           <span className={`tool-badge ${family}`}>{badge}</span>
           {family === "shell" ? <span className="mono command">{command ? `$ ${command}` : name}</span> : <>
             {family !== "edit" && <span className="tool-name">{name}</span>}
+            {pattern && <span className="mono tool-pattern" title={pattern}>{pattern}</span>}
             {path && <span className={`mono path ${family === "edit" ? "path-strong" : ""}`}>{path}</span>}
             {family === "edit" && phase !== "failed" && (phase === "succeeded" || added + deleted > 0) && <><span className="edit-add">+{added}</span><span className="edit-del">−{deleted}</span></>}
           </>}
         </span>
         <span className="tool-meta">
           {phase === "failed" && code === null && <span className={denied ? "denied-pill" : "fail-pill"}>{tr(denied ? "web.tool_denied" : "web.status.failed")}</span>}
-          {family === "read" && phase === "succeeded" && <span className="read-success"><Check size={12} weight="bold" />{directoryCount > 0 ? tr("web.n_files", { count: directoryCount }) : phase}{directoryCount > 0 && durationLabel ? ` (${durationLabel})` : ""}</span>}
+          {family === "read" && phase === "succeeded" && <span className="read-success"><Check size={12} weight="bold" />{directoryCount > 0 ? tr("web.n_files", { count: directoryCount }) : tr("web.status.succeeded")}{directoryCount > 0 && durationLabel ? ` (${durationLabel})` : ""}</span>}
           {family === "edit" && phase === "succeeded" && <span className="muted edit-summary">{t("web.applied")}</span>}
-          {code !== null && <span className={code === 0 ? "ok-pill" : "fail-pill"}>Exit {code}{testFailed ? ` (${tr("web.bug_confirmed")})` : ""}</span>}
+          {code === 0 && <span className="read-success"><Check size={12} weight="bold" />Exit 0</span>}
+          {code !== null && code !== 0 && <span className="fail-pill">Exit {code}{testFailed ? ` (${tr("web.bug_confirmed")})` : ""}</span>}
           {durationLabel && directoryCount === 0 && <span className="mono muted">{durationLabel}</span>}
           <CaretDown size={12} className={open ? "" : "collapsed"} />
         </span>

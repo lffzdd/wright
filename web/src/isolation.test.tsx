@@ -79,7 +79,7 @@ describe("session isolation", () => {
     const pendingA = new Promise<ReturnType<typeof jsonResponse>>((resolve) => { releaseA = resolve; });
     vi.stubGlobal("fetch", vi.fn((url: string) => {
       if (String(url).includes("session-a")) return pendingA;
-      return Promise.resolve(jsonResponse({ local_warning: false, baseline: "head", changes: [{ path: "b.txt", status: "M" }] }));
+      return Promise.resolve(jsonResponse({ local_warning: false, baseline: "head", changes: String(url).includes("scope=staged") ? [] : [{ path: "b.txt", status: "M" }] }));
     }));
     const { rerender } = render(<Inspector state={view("session-a")} sessionId="session-a" open close={() => undefined} />);
     rerender(<Inspector state={view("session-b")} sessionId="session-b" open close={() => undefined} />);

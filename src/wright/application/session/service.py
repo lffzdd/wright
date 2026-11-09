@@ -680,9 +680,9 @@ class SessionService:
             "queue_reason": queue_reason,
             "status": lifecycle if lifecycle != "open" else execution,
             "agent_status": agent_status,
-            # Legacy API field, projected from the Run owner rather than a
-            # second writable session-level task field.
-            "user_goal": state.current_goal() if hasattr(state, "current_goal") else state.user_goal,
+            # Legacy API field holding the task title (label, else the first
+            # request), projected from Runs rather than a writable field.
+            "user_goal": state.display_title() if hasattr(state, "display_title") else state.user_goal,
             "model": state.model_name,
             "interaction_mode": state.authorization.interaction_mode,
             "permission_mode": state.authorization.permission_mode,

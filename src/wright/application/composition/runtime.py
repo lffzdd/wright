@@ -29,7 +29,7 @@ from ...core.paths import (
     user_mcp_config_path,
     wright_home,
 )
-from ...domain.model.session import Session
+from ...domain.model.session import INTERACTIVE_SESSION_LABEL, Session
 from ...domain.model.session.errors import CheckpointError
 from ...domain.model.tool_definition import Tool
 from ...domain.model.workspace.project import ProjectContext
@@ -243,7 +243,7 @@ def _open_session(
     if config.continue_latest:
         return checkpoint_store.load_latest(), True
     return Session.create(
-        initial_goal="(interactive session)",
+        initial_goal=INTERACTIVE_SESSION_LABEL,
         workspace_dir=workspace_dir,
         session_id=session_id,
         project_root=project_root,

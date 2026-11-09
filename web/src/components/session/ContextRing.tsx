@@ -31,6 +31,6 @@ export function ContextRing({ total, limit }: { total: number; limit: number | n
         strokeDashoffset={CIRCUMFERENCE * (1 - percent / 100)}
       />
     </svg>
-    <span aria-hidden="true">{percent}%</span>
+    <span aria-hidden="true">{tr("web.context_short")} {percent}%</span>
   </div>;
 }

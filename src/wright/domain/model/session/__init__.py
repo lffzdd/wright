@@ -23,9 +23,10 @@ from .records import (
     VerificationRecord,
 )
 from .run import TERMINAL_RUN_STATUSES, RunRecord, RunStatus, new_run_id
-from .session import Session
+from .session import INTERACTIVE_SESSION_LABEL, Session
 
 __all__ = [
+    "INTERACTIVE_SESSION_LABEL",
     "TERMINAL_RUN_STATUSES",
     "CallId",
     "ConversationMessage",
