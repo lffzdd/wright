@@ -21,3 +21,6 @@ web/*.tsbuildinfo
 .import_linter_cache/
 web/test-results/
 web/qa/
+
+# 本地日志
+log/
