@@ -15,7 +15,6 @@ from .change_lock import ChangeBusyError, change_operation
 from .documents import DocumentError
 from .grants import list_grants
 from .journal import ChangeJournalError, SessionChangeJournal
-from .memory_view import bound_project
 
 
 def require_idle(service: Any) -> None:
@@ -89,15 +88,6 @@ def review_action(service: Any, action: str, paths: list[str], *, confirm: bool,
     raise SessionServiceError("review action must be accept or revert")
 
 
-def memory_binding(service: Any) -> tuple[Any, str]:
-    agent = getattr(service.runtime, "agent", None)
-    memory = getattr(agent, "memory", None)
-    found = getattr(memory, "service", None)
-    if found is None:
-        raise SessionServiceError("memory service is unavailable")
-    return found, bound_project(service.runtime.session_state)
-
-
 def store_session_document(service: Any, filename: str, data: bytes) -> dict[str, Any]:
     try:
         return service.add_document(service.session_id, filename, data)
@@ -107,7 +97,6 @@ def store_session_document(service: Any, filename: str, data: bytes) -> dict[str
 
 __all__ = [
     "add_grant",
-    "memory_binding",
     "require_idle",
     "review_action",
     "revoke_grant",

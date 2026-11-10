@@ -70,6 +70,21 @@ def assemble_memory_manager(
     return manager
 
 
+def assemble_memory_service(directory: Path | None = None) -> MemoryService:
+    """Stores only, for reading and editing a project's memory without a session.
+
+    There is no selector or evidence source, so recall and extraction are not
+    available; listing, core edits, and semantic/episode CRUD are.
+    """
+    root = (directory or memory_dir()).expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return MemoryService(
+        semantic_store=SemanticMemoryStore(root),
+        episode_store=EpisodeStore(root),
+        core_memory_store=FileCoreMemoryStore(root),
+    )
+
+
 def memory_tools(manager: MemoryManager):
     """Tools that reach storage only through the manager's MemoryService."""
     return [

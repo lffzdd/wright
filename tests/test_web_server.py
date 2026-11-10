@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from wright.application.composition.host import ProjectHostBusyError
 from wright.application.session.directory import SessionDirectory
 from wright.application.session_runtime.publisher import EventPublisher
+from wright.application.workspace.catalog import WorkspaceCatalogError
 from wright.domain.model.tool import ArtifactRef
 from wright.interfaces.web.auth import COOKIE_NAME, BootstrapAuth
 from wright.interfaces.web.runtime_manager import RuntimeManager, RuntimeManagerError
@@ -451,3 +452,67 @@ def test_folders_route_lists_directories_and_requires_auth(tmp_path):
 
     assert client.get("/api/v1/folders", params={"path": "relative"}).status_code == 400
     assert TestClient(client.app).get("/api/v1/folders").status_code == 401
+
+
+class WorkspaceManager(FakeManager):
+    """A manager with one registered workspace and no running sessions."""
+
+    def __init__(self, root):
+        super().__init__()
+        self.root = root
+
+    def _catalog(self):
+        root = self.root
+
+        class Catalog:
+            def get(self, registered_id):
+                if registered_id != "ws":
+                    raise WorkspaceCatalogError("unknown workspace")
+                return {"root": str(root)}
+
+        return Catalog()
+
+
+def _workspace_client(tmp_path):
+    root = tmp_path / "project"
+    root.mkdir()
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<main>Wright</main>")
+    client = TestClient(create_app(WorkspaceManager(root), BootstrapAuth("bootstrap-secret"), static_dir=static))
+    client.headers["origin"] = "http://testserver"
+    client.post("/api/v1/auth/exchange", json={"token": "bootstrap-secret"})
+    return client
+
+
+def test_workspace_memory_is_editable_without_a_running_session(tmp_path):
+    client = _workspace_client(tmp_path)
+
+    saved = client.put("/api/v1/workspaces/ws/memory/core", json={"section": "human_profile", "content": "Prefers uv.", "mode": "replace"})
+    assert saved.status_code == 200, saved.text
+    created = client.post("/api/v1/workspaces/ws/memory/semantic", json={"name": "No global pip", "content": "Use uv only.", "type": "feedback", "scope": "project"})
+    assert created.status_code == 200, created.text
+
+    listed = client.get("/api/v1/workspaces/ws/memory").json()
+    assert listed["core"]["human_profile"] == "Prefers uv."
+    assert [item["name"] for item in listed["semantic"]] == ["No global pip"]
+
+    memory_id = created.json()["id"]
+    removed = client.request("DELETE", f"/api/v1/workspaces/ws/memory/semantic/{memory_id}", json={"confirm": True})
+    assert removed.status_code == 200
+    assert client.get("/api/v1/workspaces/ws/memory").json()["semantic"] == []
+    assert client.get("/api/v1/workspaces/missing/memory").status_code == 404
+    assert TestClient(client.app).get("/api/v1/workspaces/ws/memory").status_code == 401
+
+
+def test_workspace_rules_are_managed_without_a_running_session(tmp_path):
+    client = _workspace_client(tmp_path)
+
+    saved = client.put("/api/v1/workspaces/ws/rules/use-uv", json={"scope": "project", "description": "Use uv", "body": "Always run Python through uv.", "confirm": True})
+    assert saved.status_code == 200, saved.text
+    rules = client.get("/api/v1/workspaces/ws/rules").json()["rules"]
+    assert [(rule["id"], rule["scope"]) for rule in rules] == [("use-uv", "project")]
+
+    removed = client.request("DELETE", "/api/v1/workspaces/ws/rules/use-uv", json={"scope": "project", "confirm": True})
+    assert removed.status_code == 200, removed.text
+    assert client.get("/api/v1/workspaces/ws/rules").json()["rules"] == []

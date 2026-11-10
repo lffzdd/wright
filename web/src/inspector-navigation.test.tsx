@@ -50,16 +50,31 @@ it("opens a compact inspector with the first shortcut and closes its backdrop on
   expect(document.activeElement).toBe(opener);
 });
 
-it.each(["settings", "search"])("closes %s with Escape without denying the background permission", async (panel) => {
+it("closes search with Escape without denying the background permission", async () => {
   const send = vi.fn();
   vi.stubGlobal("WebSocket", class { static OPEN = 1; readyState = 1; send = send; close() {} });
   boot(false, true);
   await screen.findByRole("heading", { name: "Review task" });
-  if (panel === "settings") fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-  else fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
   const dialog = await screen.findByRole("dialog");
   fireEvent.keyDown(dialog, { key: "Escape" });
   expect(screen.queryByRole("dialog")).toBeNull();
+  expect(send).not.toHaveBeenCalled();
+  fireEvent.keyDown(window, { key: "Escape" });
+  expect(send).toHaveBeenCalledOnce();
+  expect(JSON.parse(send.mock.calls[0][0])).toMatchObject({ type: "interaction.respond", request_id: "approval", answer: "deny" });
+});
+
+it("leaves the settings page with Escape without denying the background permission", async () => {
+  const send = vi.fn();
+  vi.stubGlobal("WebSocket", class { static OPEN = 1; readyState = 1; send = send; close() {} });
+  boot(false, true);
+  await screen.findByRole("heading", { name: "Review task" });
+  fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+  expect(await screen.findByRole("heading", { level: 1, name: "Settings" })).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "Review task" })).toBeNull();
+  fireEvent.keyDown(window, { key: "Escape" });
+  expect(await screen.findByRole("heading", { name: "Review task" })).toBeTruthy();
   expect(send).not.toHaveBeenCalled();
   fireEvent.keyDown(window, { key: "Escape" });
   expect(send).toHaveBeenCalledOnce();
@@ -125,4 +140,17 @@ it("resizes the desktop inspector and persists width", async () => {
   await waitFor(() => expect(calls.some((call) => call.init?.method === "PUT" && JSON.parse(String(call.init?.body)).inspector_width === 420)).toBe(true));
   fireEvent.doubleClick(handle);
   await waitFor(() => expect(grid.style.getPropertyValue("--inspector-width")).toBe("380px"));
+});
+
+it("opens memory for a history task's workspace and returns to the task from the sidebar", async () => {
+  const calls = boot(false);
+  await screen.findByRole("heading", { name: "Review task" });
+  fireEvent.click(screen.getByRole("button", { name: "Memory" }));
+  expect(await screen.findByRole("heading", { level: 1, name: "Memory" })).toBeTruthy();
+  await waitFor(() => expect(calls.some((call) => call.path === "/api/v1/workspaces/p/memory")).toBe(true));
+  expect(calls.some((call) => /\/sessions\/[^/]+\/memory/.test(call.path))).toBe(false);
+  expect(screen.queryByRole("button", { name: /Open inspector|Close inspector/ })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: /Review task/ }));
+  expect(await screen.findByRole("heading", { name: "Review task" })).toBeTruthy();
+  expect(screen.queryByRole("heading", { level: 1, name: "Memory" })).toBeNull();
 });

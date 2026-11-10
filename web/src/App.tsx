@@ -9,7 +9,7 @@ import { Composer, EnvironmentChoice } from "./components/composer/Composer";
 import { emptyDraft, type Draft } from "./components/composer/draft";
 import { Inspector } from "./components/inspector/Inspector";
 import { InspectorResizeHandle } from "./components/inspector/InspectorResizeHandle";
-import { MemoryDialog, RulesDialog, SchedulesDialog, SearchDialog, SettingsDialog } from "./components/panels/panels";
+import { MemoryPage, RulesPage, SchedulesPage, SearchDialog, SettingsPage } from "./components/panels/panels";
 import { clampInspectorWidth, defaultInspectorWidth, parseInspectorWidth } from "./inspectorWidth";
 import { ContextRing } from "./components/session/ContextRing";
 import { SessionRail } from "./components/session/SessionRail";
@@ -39,7 +39,9 @@ const initialView = (snapshot: Snapshot): ViewState => ({
 
 type WorkspaceRow = { project_id: string; name: string; root: string; selected?: boolean; exists?: boolean };
 type CapabilityCounts = { memory: number | null; rules: number | null; schedules: number | null };
-type Panel = null | "search" | "memory" | "rules" | "schedules" | "settings";
+type Panel = null | "search";
+/** A capability screen that replaces the conversation in the main area. */
+type Page = null | "memory" | "rules" | "schedules" | "settings";
 
 
 export default function App() {
@@ -68,6 +70,9 @@ export default function App() {
   const [panel, setPanel] = useState<Panel>(null);
   const panelRef = useRef(panel);
   panelRef.current = panel;
+  const [page, setPage] = useState<Page>(null);
+  const pageRef = useRef(page);
+  pageRef.current = page;
   const [renaming, setRenaming] = useState<string | null>(null);
   const [addingWorkspace, setAddingWorkspace] = useState(false);
   const [fileFocus, setFileFocus] = useState<{ sessionId: string; path: string; request: number } | null>(null);
@@ -156,19 +161,18 @@ export default function App() {
 
   const selectedProjectId = String(workspaceId.current || project?.project_id || "");
   useEffect(() => {
-    if (!selected || panel !== null) {
-      if (!selected) {
-        setCapabilityCounts({ memory: null, rules: null, schedules: null });
-      }
+    // Counts belong to the workspace, so they show even with no task open.
+    if (page !== null) return;
+    if (!selectedProjectId) {
+      setCapabilityCounts({ memory: null, rules: null, schedules: null });
       return;
     }
     let current = true;
-    setCapabilityCounts({ memory: null, rules: null, schedules: null });
     const loadCounts = async () => {
       const [memoryResult, rulesResult, schedulesResult] = await Promise.allSettled([
-        browsing === "live" ? api.memory(selected) : Promise.reject(new Error("Session is not live")),
-        browsing === "live" ? api.rules(selected) : Promise.reject(new Error("Session is not live")),
-        selectedProjectId ? api.projectSchedules(selectedProjectId) : Promise.reject(new Error("No selected project")),
+        api.memory(selectedProjectId),
+        api.rules(selectedProjectId),
+        api.projectSchedules(selectedProjectId),
       ]);
       if (!current) return;
       const memory = memoryResult.status === "fulfilled" ? memoryResult.value : null;
@@ -177,7 +181,7 @@ export default function App() {
       const episodes = Array.isArray(memory?.episodes) ? memory.episodes : [];
       setCapabilityCounts({
         memory: memoryResult.status === "fulfilled"
-          ? [core.persona, core.human_profile, core.project_anchor].filter((value) => typeof value === "string" && value.trim().length > 0).length + semantic.length + episodes.length
+          ? [core.human_profile, core.project_anchor].filter((value) => typeof value === "string" && value.trim().length > 0).length + semantic.length + episodes.length
           : null,
         rules: rulesResult.status === "fulfilled"
           ? (rulesResult.value.rules ?? []).filter((rule) => typeof rule.id === "string" && rule.id.length > 0).length
@@ -187,7 +191,7 @@ export default function App() {
     };
     void loadCounts();
     return () => { current = false; };
-  }, [selected, selectedProjectId, panel, browsing]);
+  }, [selectedProjectId, page]);
 
   const applyTheme = (next: "dark" | "light") => {
     setTheme(next);
@@ -237,6 +241,7 @@ export default function App() {
         || ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n")
       ) {
         event.preventDefault();
+        setPage(null);
         setBrowsing("draft");
         setSelected(null);
         setState(null);
@@ -258,6 +263,11 @@ export default function App() {
         if (panelRef.current !== null) {
           event.preventDefault();
           setPanel(null);
+          return;
+        }
+        if (pageRef.current !== null) {
+          event.preventDefault();
+          setPage(null);
           return;
         }
         if (inspectorVisibility.current.compact && inspectorVisibility.current.narrow) {
@@ -653,6 +663,7 @@ export default function App() {
       setWorkspaces((items) => items.map((item) => ({ ...item, selected: item.project_id === owner })));
       persistWorkspaceSelection(owner);
     }
+    setPage(null);
     remember(session.session_id);
     if (session.active) setBrowsing("live");
     else setBrowsing("preview");
@@ -750,19 +761,19 @@ export default function App() {
       <div className="top-status">
         {statusVisible && <span className={`top-agent-state ${statusClass}`} role="status"><span className={`dot ${statusPulse ? "pulse" : ""}`} />{statusText}</span>}
         <button type="button" className="icon-button" title={tr("web.theme")} onClick={() => savePreference({ theme: theme === "dark" ? "light" : "dark" }).catch((error) => setFatal(String(error)))}>{theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}</button>
-        {state && selected ? <button type="button" className="icon-button" aria-label={tr((compactViewport ? inspectorOpen && narrowInspector : inspectorOpen) ? "web.close_inspector" : "web.open_inspector")} aria-expanded={compactViewport ? inspectorOpen && narrowInspector : inspectorOpen} aria-controls="workspace-inspector" onClick={toggleInspector}><SidebarSimple size={14} /></button> : null}
+        {!page && state && selected ? <button type="button" className="icon-button" aria-label={tr((compactViewport ? inspectorOpen && narrowInspector : inspectorOpen) ? "web.close_inspector" : "web.open_inspector")} aria-expanded={compactViewport ? inspectorOpen && narrowInspector : inspectorOpen} aria-controls="workspace-inspector" onClick={toggleInspector}><SidebarSimple size={14} /></button> : null}
       </div>
     </header>
     <div
       className="workspace-grid"
-      data-inspector={state && selected && inspectorOpen ? "open" : "closed"}
+      data-inspector={!page && state && selected && inspectorOpen ? "open" : "closed"}
       style={{ "--inspector-width": `${inspectorWidth}px` } as CSSProperties}
     >
       <SessionRail
         sessions={sessions}
-        selected={selected}
+        selected={page ? null : selected}
         onSelect={(session) => selectSession(session).catch((error) => setFatal(String(error)))}
-        onCreate={() => { setBrowsing("draft"); setSelected(null); setState(null); remember(null); }}
+        onCreate={() => { setPage(null); setBrowsing("draft"); setSelected(null); setState(null); remember(null); }}
         open={railOpen}
         selectedProgress={selectedProgress}
         footer={state?.session.model ?? String(project?.default_model ?? "")}
@@ -795,13 +806,18 @@ export default function App() {
         {!workspaces.length && <p className="empty-small">{tr("web.launch_project")}</p>}
         <div>
           <div className="section-label"><span>{tr("web.capabilities")}</span></div>
-          <button type="button" className="nav-row" onClick={() => setPanel("memory")}><Brain size={14} />{tr("web.memory")}{capabilityCounts.memory !== null && capabilityCounts.memory > 0 && <span className="nav-count">{capabilityCounts.memory}</span>}</button>
-          <button type="button" className="nav-row" onClick={() => setPanel("rules")}><Scroll size={14} />{tr("web.rules")}{capabilityCounts.rules !== null && capabilityCounts.rules > 0 && <span className="nav-count">{capabilityCounts.rules}</span>}</button>
-          <button type="button" className="nav-row" onClick={() => setPanel("schedules")}><Clock size={14} />{tr("web.schedules")}{capabilityCounts.schedules !== null && capabilityCounts.schedules > 0 && <span className="nav-count">{capabilityCounts.schedules}</span>}</button>
-          <button type="button" className="nav-row" onClick={() => setPanel("settings")}><Gear size={14} />{tr("web.settings")}</button>
+          <button type="button" className={`nav-row${page === "memory" ? " selected" : ""}`} aria-current={page === "memory" ? "page" : undefined} onClick={() => { setPage("memory"); setRailOpen(false); }}><Brain size={14} />{tr("web.memory")}{capabilityCounts.memory !== null && capabilityCounts.memory > 0 && <span className="nav-count">{capabilityCounts.memory}</span>}</button>
+          <button type="button" className={`nav-row${page === "rules" ? " selected" : ""}`} aria-current={page === "rules" ? "page" : undefined} onClick={() => { setPage("rules"); setRailOpen(false); }}><Scroll size={14} />{tr("web.rules")}{capabilityCounts.rules !== null && capabilityCounts.rules > 0 && <span className="nav-count">{capabilityCounts.rules}</span>}</button>
+          <button type="button" className={`nav-row${page === "schedules" ? " selected" : ""}`} aria-current={page === "schedules" ? "page" : undefined} onClick={() => { setPage("schedules"); setRailOpen(false); }}><Clock size={14} />{tr("web.schedules")}{capabilityCounts.schedules !== null && capabilityCounts.schedules > 0 && <span className="nav-count">{capabilityCounts.schedules}</span>}</button>
+          <button type="button" className={`nav-row${page === "settings" ? " selected" : ""}`} aria-current={page === "settings" ? "page" : undefined} onClick={() => { setPage("settings"); setRailOpen(false); }}><Gear size={14} />{tr("web.settings")}</button>
         </div>
       </SessionRail>
-      <main className="conversation">
+      {page ? <main className="conversation capability-main">
+        {page === "memory" && <MemoryPage projectId={selectedProjectId || null} />}
+        {page === "rules" && <RulesPage projectId={selectedProjectId || null} />}
+        {page === "schedules" && <SchedulesPage sessionId={selected} projectId={selectedProjectId || null} />}
+        {page === "settings" && <SettingsPage theme={theme} inspectorOpen={inspectorOpen} save={savePreference} />}
+      </main> : <main className="conversation">
         {state ? <>
           <div className="conversation-head">
             <div className="task-heading">
@@ -931,11 +947,11 @@ export default function App() {
           </div>
           </div>
         </>}
-      </main>
-      {state && selected && inspectorOpen && !compactViewport ? (
+      </main>}
+      {!page && state && selected && inspectorOpen && !compactViewport ? (
         <InspectorResizeHandle width={inspectorWidth} onWidthChange={setInspectorWidth} onCommit={commitInspectorWidth} />
       ) : null}
-      {state && selected ? <Inspector key={selected} state={state} sessionId={selected} open={compactViewport ? inspectorOpen && narrowInspector : inspectorOpen} narrow={compactViewport && narrowInspector} focusPath={fileFocus?.sessionId === selected ? fileFocus.path : null} focusRequest={fileFocus?.request} close={closeInspector} onResume={resumeSelected} onFeedback={(feedback) => {
+      {!page && state && selected ? <Inspector key={selected} state={state} sessionId={selected} open={compactViewport ? inspectorOpen && narrowInspector : inspectorOpen} narrow={compactViewport && narrowInspector} focusPath={fileFocus?.sessionId === selected ? fileFocus.path : null} focusRequest={fileFocus?.request} close={closeInspector} onResume={resumeSelected} onFeedback={(feedback) => {
         const owner = selected;
         updateDraft(owner, (current) => ({ ...current, prompt: `${current.prompt.trimEnd()}${current.prompt.trim() ? "\n\n" : ""}${feedback}` }));
         if (compactViewport) closeInspector();
@@ -954,9 +970,6 @@ export default function App() {
       if (!session) { setFatal("This task is no longer available."); return; }
       await selectSession(session); setPanel(null);
     }} />}
-    {panel === "memory" && <MemoryDialog sessionId={browsing === "live" ? selected : null} close={() => setPanel(null)} />}
-    {panel === "rules" && <RulesDialog sessionId={browsing === "live" ? selected : null} close={() => setPanel(null)} />}
-    {panel === "schedules" && <SchedulesDialog sessionId={selected} projectId={workspaceId.current || launchProject || null} close={() => setPanel(null)} />}
     {addingWorkspace && <AddWorkspaceDialog close={() => setAddingWorkspace(false)} register={async (path) => {
       await api.registerWorkspace(path);
       const registry = await api.workspaces();
@@ -964,6 +977,5 @@ export default function App() {
       await refreshSessions();
     }} />}
     <DialogHost />
-    {panel === "settings" && <SettingsDialog theme={theme} inspectorOpen={inspectorOpen} close={() => setPanel(null)} save={savePreference} />}
   </div>;
 }

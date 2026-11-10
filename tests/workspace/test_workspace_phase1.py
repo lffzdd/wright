@@ -29,7 +29,9 @@ from wright.application.workspace.files import (
 from wright.application.workspace.grants import list_grants
 from wright.application.workspace.journal import SessionChangeJournal
 from wright.application.workspace.memory_view import (
+    MemoryViewError,
     create_semantic,
+    delete_episode,
     delete_semantic,
     project_memory,
 )
@@ -691,3 +693,21 @@ def test_accessed_files_lists_directories_without_treating_them_as_files():
     assert project_accessed_files(session) == [
         {"path": "web/src", "access": "list", "tool": "list_directory", "call_id": "c3"}
     ]
+
+
+def test_episode_delete_is_scoped_to_the_bound_project():
+    deleted: list[str] = []
+
+    class Episodes:
+        def get_episode(self, episode_id):
+            return SimpleNamespace(id=episode_id, project_id="other"), None
+
+        def delete_episode(self, episode_id):
+            deleted.append(episode_id)
+            return SimpleNamespace(id=episode_id), None
+
+    with pytest.raises(MemoryViewError, match="another project"):
+        delete_episode(Episodes(), "ep-1", bound_project_id="mine", confirm=True)
+    assert deleted == []
+    assert delete_episode(Episodes(), "ep-1", bound_project_id="other", confirm=True)["deleted"]
+    assert deleted == ["ep-1"]

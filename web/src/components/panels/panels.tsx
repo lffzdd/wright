@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { confirmDialog, promptDialog } from "../ui/dialogs";
+import { Brain, Clock, Plus, Scroll } from "@phosphor-icons/react";
+import { confirmDialog } from "../ui/dialogs";
+import { shortTime } from "../inspector/Inspector";
+import { CapabilityPage, EmptyState, Row, Segmented, Switch, Tabs, Tag } from "./capability";
+import { INTERVAL_UNITS, describeInterval, splitInterval, toSeconds, type IntervalUnit } from "./interval";
 import { api } from "../../api";
 import { getLocale, useT } from "../../i18n";
 
@@ -112,140 +116,242 @@ export function SearchDialog({
   </Panel>;
 }
 
-export function MemoryDialog({ sessionId, close }: { sessionId: string | null; close: () => void }) {
+function PageNotice({ notice }: { notice: Notice }) {
+  if (!notice.text) return null;
+  return <div className={`cap-notice ${notice.tone}`}><PanelNotice notice={notice} /></div>;
+}
+
+function statusLabel(tr: ReturnType<typeof useT>, status: string): string {
+  const key = `web.status.${status}`;
+  const label = tr(key);
+  return label === key ? status : label;
+}
+
+function preview(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function stamp(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+type MemoryTab = "core" | "semantic" | "episodes";
+type CoreSection = "human_profile" | "project_anchor";
+const CORE_SECTIONS: CoreSection[] = ["human_profile", "project_anchor"];
+
+export function MemoryPage({ projectId }: { projectId: string | null }) {
   const tr = useT();
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [notice, setNotice] = useState<Notice>({ tone: "idle", text: "" });
-  const [section, setSection] = useState("human_profile");
+  const [tab, setTab] = useState<MemoryTab>("core");
+  const [editingCore, setEditingCore] = useState<CoreSection | null>(null);
   const [content, setContent] = useState("");
+  const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [memory, setMemory] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
   const load = async () => {
-    if (!sessionId) return;
+    if (!projectId) return;
     setNotice({ tone: "busy", text: tr("web.panel.loading") });
     try {
-      setData(await api.memory(sessionId));
+      setData(await api.memory(projectId));
       setNotice({ tone: "idle", text: "" });
     } catch (error) { setNotice(noteOf(error)); }
   };
-  useEffect(() => { load().catch(() => undefined); }, [sessionId]);
+  useEffect(() => { setData(null); setEditingCore(null); setEditingId(null); setCreating(false); load().catch(() => undefined); }, [projectId]);
   const core = (data?.core ?? null) as Record<string, unknown> | null;
   const semantic = (data?.semantic as Array<Record<string, unknown>> | undefined) ?? [];
   const episodes = (data?.episodes as Array<Record<string, unknown>> | undefined) ?? [];
-  return <Panel id="memory-title" title={tr("web.panel.memory")} close={close}>
-    {!sessionId && <p className="empty-small">{tr("web.panel.memory_needs_task")}</p>}
-    <PanelNotice notice={notice} />
-    {core && <div className="dialog-section">
-      <h3>{tr("web.panel.core")}</h3>
-      <p className="hint">{tr("web.panel.persona_read_only")}</p>
-      <pre className="tool-output">{String(core.persona ?? "")}</pre>
-      <Field label={tr("web.panel.section")}><select aria-label="Memory section" value={section} onChange={(event) => setSection(event.target.value)}><option value="human_profile">{tr("web.panel.human_profile")}</option><option value="project_anchor">{tr("web.panel.project_anchor")}</option></select></Field>
-      <Field label={tr("web.panel.content")}><textarea aria-label="Core memory" value={content} onChange={(event) => setContent(event.target.value)} rows={3} /></Field>
-      <div className="dialog-actions"><button type="button" className="button primary" onClick={async () => {
-        if (!sessionId || !content.trim()) { setNotice({ tone: "error", text: tr("web.panel.content_required") }); return; }
-        setNotice({ tone: "busy", text: tr("web.saving") });
-        try { await api.updateCore(sessionId, { section, content, mode: "replace" }); setContent(""); await load(); }
-        catch (error) { setNotice(noteOf(error)); }
-      }}>{tr("web.panel.save_core")}</button></div>
-    </div>}
-    <div className="dialog-section">
-      <h3>{tr("web.panel.semantic")}</h3>
-      {semantic.map((item) => <div className="queue-item" key={String(item.id)}><span>{String(item.name)} · rev {String(item.revision ?? "")}</span>
-        <button type="button" className="button" onClick={async () => {
-          if (!sessionId) return;
-          const next = await promptDialog({ title: tr("web.panel.replace_memory", { name: String(item.name) }), initial: String(item.content ?? ""), multiline: true });
-          if (next == null) return;
-          try { await api.updateSemantic(sessionId, String(item.id), { name: item.name, content: next, description: item.description ?? "", type: item.type ?? "project", scope: "project", expected_revision: item.revision }); await load(); }
-          catch (error) { setNotice(noteOf(error)); }
-        }}>{tr("web.panel.edit")}</button>
-        <button type="button" className="button" onClick={async () => {
-          if (!sessionId || !await confirmDialog({ title: tr("web.panel.delete_memory_confirm", { name: String(item.name) }), danger: true })) return;
-          try { await api.deleteSemantic(sessionId, String(item.id)); await load(); }
-          catch (error) { setNotice(noteOf(error)); }
-        }}>{tr("web.panel.delete")}</button>
-      </div>)}
-      {!semantic.length && <p className="empty-small">{tr("web.panel.no_semantic")}</p>}
-      <Field label={tr("web.panel.name")}><input aria-label="Semantic name" value={name} onChange={(event) => setName(event.target.value)} /></Field>
-      <Field label={tr("web.panel.content")}><textarea aria-label="Semantic content" value={memory} onChange={(event) => setMemory(event.target.value)} rows={3} /></Field>
-      <div className="dialog-actions"><button type="button" className="button primary" disabled={!sessionId} onClick={async () => {
-        if (!sessionId || !name.trim() || !memory.trim()) { setNotice({ tone: "error", text: tr("web.panel.name_content_required") }); return; }
-        setNotice({ tone: "busy", text: tr("web.saving") });
-        try { await api.createSemantic(sessionId, { name, content: memory, description: "", type: "project", scope: "project" }); setName(""); setMemory(""); await load(); }
-        catch (error) { setNotice(noteOf(error)); }
-      }}>{tr("web.panel.add_memory")}</button></div>
-    </div>
-    <div className="dialog-section">
-      <h3>{tr("web.panel.episodes")}</h3>
-      {episodes.map((item) => <div className="queue-item" key={String(item.id)}><span>{String(item.title || item.id)}</span>
-        <button type="button" className="button" onClick={async () => {
-          if (!sessionId || !await confirmDialog({ title: tr("web.panel.delete_episode_confirm", { name: String(item.title || item.id) }), danger: true })) return;
-          try { await api.deleteEpisode(sessionId, String(item.id)); await load(); }
-          catch (error) { setNotice(noteOf(error)); }
-        }}>{tr("web.panel.delete")}</button>
-      </div>)}
-      {!episodes.length && <p className="empty-small">{tr("web.panel.no_episodes")}</p>}
-    </div>
-  </Panel>;
+  const saveCore = async () => {
+    if (!projectId || !editingCore) return;
+    if (!content.trim()) { setNotice({ tone: "error", text: tr("web.panel.content_required") }); return; }
+    setNotice({ tone: "busy", text: tr("web.saving") });
+    // Replace mode: the editor starts from the section's current text, so this edits it in place.
+    try { await api.updateCore(projectId, { section: editingCore, content, mode: "replace" }); setEditingCore(null); await load(); }
+    catch (error) { setNotice(noteOf(error)); }
+  };
+  const addSemantic = async () => {
+    if (!projectId || !name.trim() || !memory.trim()) { setNotice({ tone: "error", text: tr("web.panel.name_content_required") }); return; }
+    setNotice({ tone: "busy", text: tr("web.saving") });
+    try { await api.createSemantic(projectId, { name, content: memory, description: "", type: "project", scope: "project" }); setName(""); setMemory(""); setCreating(false); await load(); }
+    catch (error) { setNotice(noteOf(error)); }
+  };
+  const saveSemantic = async (item: Record<string, unknown>) => {
+    if (!projectId) return;
+    if (!draft.trim()) { setNotice({ tone: "error", text: tr("web.panel.content_required") }); return; }
+    setNotice({ tone: "busy", text: tr("web.saving") });
+    try { await api.updateSemantic(projectId, String(item.id), { name: item.name, content: draft, description: item.description ?? "", type: item.type ?? "project", scope: "project", expected_revision: item.revision }); setEditingId(null); await load(); }
+    catch (error) { setNotice(noteOf(error)); }
+  };
+  const removeSemantic = async (item: Record<string, unknown>) => {
+    if (!projectId || !await confirmDialog({ title: tr("web.panel.delete_memory_confirm", { name: String(item.name) }), danger: true })) return;
+    try { await api.deleteSemantic(projectId, String(item.id)); await load(); }
+    catch (error) { setNotice(noteOf(error)); }
+  };
+  const removeEpisode = async (item: Record<string, unknown>, title: string) => {
+    if (!projectId || !await confirmDialog({ title: tr("web.panel.delete_episode_confirm", { name: title }), danger: true })) return;
+    try { await api.deleteEpisode(projectId, String(item.id)); await load(); }
+    catch (error) { setNotice(noteOf(error)); }
+  };
+  return <CapabilityPage id="memory-title" title={tr("web.panel.memory")} subtitle={tr("web.panel.memory_hint")} notice={<PageNotice notice={notice} />}>
+    {!projectId ? <EmptyState icon={<Brain size={22} />} title={tr("web.panel.no_project")}>{tr("web.panel.needs_workspace")}</EmptyState> : <>
+      <Tabs label={tr("web.panel.memory")} value={tab} onChange={setTab} tabs={[
+        { value: "core", label: tr("web.panel.core") },
+        { value: "semantic", label: tr("web.panel.semantic"), count: semantic.length },
+        { value: "episodes", label: tr("web.panel.episodes"), count: episodes.length },
+      ]} />
+      {tab === "core" && <div className="cap-stack" role="tabpanel">
+        {core ? <>
+          {CORE_SECTIONS.map((section) => {
+            const label = tr(`web.panel.${section}`);
+            const current = String(core[section] ?? "");
+            const editing = editingCore === section;
+            return <section key={section} className="memory-card" aria-label={label}>
+              <header className="memory-card-head">
+                <h3>{label}</h3>
+                {!editing && <button type="button" className="button" aria-label={tr("web.panel.edit_named", { name: label })} onClick={() => { setEditingCore(section); setContent(current); }}>{tr("web.panel.edit")}</button>}
+              </header>
+              {editing
+                ? <>
+                  <textarea aria-label={label} value={content} onChange={(event) => setContent(event.target.value)} rows={6} autoFocus />
+                  <div className="dialog-actions">
+                    <button type="button" className="button" onClick={() => setEditingCore(null)}>{tr("web.cancel")}</button>
+                    <button type="button" className="button primary" onClick={() => { saveCore().catch(() => undefined); }}>{tr("web.panel.save")}</button>
+                  </div>
+                </>
+                : current.trim() ? <p className="memory-card-body">{current}</p> : <p className="empty-small">{tr("web.panel.empty_section")}</p>}
+            </section>;
+          })}
+          <details className="memory-persona">
+            <summary>{tr("web.panel.persona")} <Tag>{tr("web.panel.read_only")}</Tag></summary>
+            <p className="memory-card-body">{String(core.persona ?? "")}</p>
+          </details>
+        </> : notice.tone !== "busy" && <EmptyState title={tr("web.panel.no_core")} />}
+      </div>}
+      {tab === "semantic" && <div className="cap-stack" role="tabpanel">
+        <div className="cap-toolbar">
+          <p className="hint">{tr("web.panel.semantic_hint")}</p>
+          {!creating && <button type="button" className="button primary" onClick={() => setCreating(true)}><Plus size={12} weight="bold" />{tr("web.panel.new_memory")}</button>}
+        </div>
+        {creating && <div className="cap-form">
+          <Field label={tr("web.panel.name")}><input aria-label="Semantic name" value={name} onChange={(event) => setName(event.target.value)} autoFocus /></Field>
+          <Field label={tr("web.panel.content")}><textarea aria-label="Semantic content" value={memory} onChange={(event) => setMemory(event.target.value)} rows={5} /></Field>
+          <div className="dialog-actions">
+            <button type="button" className="button" onClick={() => setCreating(false)}>{tr("web.cancel")}</button>
+            <button type="button" className="button primary" onClick={() => { addSemantic().catch(() => undefined); }}>{tr("web.panel.add_memory")}</button>
+          </div>
+        </div>}
+        {semantic.length ? <ul className="cap-list">{semantic.map((item) => {
+          const id = String(item.id);
+          const status = String(item.status ?? "");
+          return <Row key={id} title={String(item.name)} preview={editingId === id ? undefined : preview(item.content)}
+            meta={<>{Boolean(item.type) && <Tag>{String(item.type)}</Tag>}{item.revision != null && <Tag>{tr("web.panel.revision", { n: String(item.revision) })}</Tag>}{status && status !== "active" && <Tag tone="warning">{statusLabel(tr, status)}</Tag>}</>}
+            menu={[
+              { label: tr("web.panel.edit"), onSelect: () => { setEditingId(id); setDraft(String(item.content ?? "")); } },
+              "separator",
+              { label: tr("web.panel.delete"), danger: true, onSelect: () => { removeSemantic(item).catch(() => undefined); } },
+            ]}>
+            {editingId === id && <div className="cap-row-edit">
+              <textarea aria-label={tr("web.panel.replace_memory", { name: String(item.name) })} value={draft} onChange={(event) => setDraft(event.target.value)} rows={5} autoFocus />
+              <div className="dialog-actions">
+                <button type="button" className="button" onClick={() => setEditingId(null)}>{tr("web.cancel")}</button>
+                <button type="button" className="button primary" onClick={() => { saveSemantic(item).catch(() => undefined); }}>{tr("web.panel.save")}</button>
+              </div>
+            </div>}
+          </Row>;
+        })}</ul> : !creating && notice.tone !== "busy" && <EmptyState title={tr("web.panel.no_semantic")} />}
+      </div>}
+      {tab === "episodes" && <div className="cap-stack" role="tabpanel">
+        <p className="hint">{tr("web.panel.episodes_hint")}</p>
+        {episodes.length ? <ul className="cap-list">{episodes.map((item) => {
+          const title = String(item.goal || item.title || item.id);
+          const status = String(item.status ?? "");
+          const created = stamp(item.created_at);
+          return <Row key={String(item.id)} title={title} preview={preview(item.outcome)}
+            meta={<>{status && <Tag tone={status === "completed" || status === "succeeded" ? "ok" : status === "failed" ? "danger" : "neutral"}>{statusLabel(tr, status)}</Tag>}{created && <span className="cap-row-time">{shortTime(created)}</span>}</>}
+            menu={[{ label: tr("web.panel.delete"), danger: true, onSelect: () => { removeEpisode(item, title).catch(() => undefined); } }]} />;
+        })}</ul> : notice.tone !== "busy" && <EmptyState title={tr("web.panel.no_episodes")} />}
+      </div>}
+    </>}
+  </CapabilityPage>;
 }
 
-export function RulesDialog({ sessionId, close }: { sessionId: string | null; close: () => void }) {
+export function RulesPage({ projectId }: { projectId: string | null }) {
   const tr = useT();
   const [rules, setRules] = useState<Array<Record<string, unknown>>>([]);
   const [notice, setNotice] = useState<Notice>({ tone: "idle", text: "" });
+  const [creating, setCreating] = useState(false);
   const [skillId, setSkillId] = useState("");
   const [description, setDescription] = useState("");
   const [body, setBody] = useState("");
-  const [scope, setScope] = useState("project");
+  const [scope, setScope] = useState<"project" | "user">("project");
   const load = async () => {
-    if (!sessionId) return;
+    if (!projectId) return;
     setNotice({ tone: "busy", text: tr("web.panel.loading") });
     try {
-      const result = await api.rules(sessionId);
+      const result = await api.rules(projectId);
       setRules(result.rules);
       setNotice({ tone: "idle", text: "" });
     } catch (error) { setNotice(noteOf(error)); }
   };
-  useEffect(() => { load().catch(() => undefined); }, [sessionId]);
-  return <Panel id="rules-title" title={tr("web.panel.rules")} close={close}>
-    <p className="hint">{sessionId ? tr("web.panel.rules_hint") : tr("web.panel.rules_needs_task")}</p>
-    <PanelNotice notice={notice} />
-    {Boolean(sessionId) && <div className="dialog-section">
-      <h3>{tr("web.panel.saved_rules")}</h3>
-      {rules.map((rule) => <div className="queue-item" key={`${rule.scope}-${rule.id ?? rule.error}`}>
-        <span>{String(rule.id ?? rule.error)} · {String(rule.scope ?? "")}{rule.shadowed ? ` · ${tr("web.panel.shadowed")}` : ""}</span>
-        {Boolean(rule.id) && <button type="button" className="button" onClick={async () => {
-          if (!sessionId || !await confirmDialog({ title: tr("web.panel.delete_rule_confirm", { name: String(rule.id), scope: String(rule.scope ?? "project") }), danger: true })) return;
-          try { await api.deleteRule(sessionId, String(rule.id), String(rule.scope ?? "project")); await load(); }
-          catch (error) { setNotice(noteOf(error)); }
-        }}>{tr("web.panel.delete")}</button>}
-      </div>)}
-      {!rules.length && <p className="empty-small">{tr("web.panel.no_rules")}</p>}
+  useEffect(() => { setRules([]); setCreating(false); load().catch(() => undefined); }, [projectId]);
+  const save = async () => {
+    if (!projectId || !skillId.trim() || !body.trim()) { setNotice({ tone: "error", text: tr("web.panel.rule_required") }); return; }
+    if (!await confirmDialog({ title: tr("web.panel.save_rule_confirm", { name: skillId, scope }) })) return;
+    setNotice({ tone: "busy", text: tr("web.saving") });
+    try { await api.saveRule(projectId, skillId.trim(), { scope, description, body, confirm: true }); setSkillId(""); setDescription(""); setBody(""); setCreating(false); await load(); }
+    catch (error) { setNotice(noteOf(error)); }
+  };
+  const remove = async (rule: Record<string, unknown>) => {
+    if (!projectId || !await confirmDialog({ title: tr("web.panel.delete_rule_confirm", { name: String(rule.id), scope: String(rule.scope ?? "project") }), danger: true })) return;
+    try { await api.deleteRule(projectId, String(rule.id), String(rule.scope ?? "project")); await load(); }
+    catch (error) { setNotice(noteOf(error)); }
+  };
+  const newButton = <button type="button" className="button primary" onClick={() => setCreating(true)}><Plus size={12} weight="bold" />{tr("web.panel.new_rule")}</button>;
+  return <CapabilityPage id="rules-title" title={tr("web.panel.rules")} subtitle={projectId ? tr("web.panel.rules_hint") : undefined}
+    actions={projectId && !creating ? newButton : undefined} notice={<PageNotice notice={notice} />}>
+    {!projectId ? <EmptyState icon={<Scroll size={22} />} title={tr("web.panel.no_project")}>{tr("web.panel.needs_workspace")}</EmptyState> : <div className="cap-stack">
+      {creating && <div className="cap-form">
+        <h3>{tr("web.panel.add_rule")}</h3>
+        <Field label={tr("web.panel.rule_id")}><input aria-label="Rule id" value={skillId} onChange={(event) => setSkillId(event.target.value)} placeholder="e.g. use-uv" autoFocus /></Field>
+        <Field label={tr("web.panel.description")}><input aria-label="Rule description" value={description} onChange={(event) => setDescription(event.target.value)} /></Field>
+        <Field label={tr("web.panel.rule_body")}><textarea aria-label="Rule body" className="mono" value={body} onChange={(event) => setBody(event.target.value)} rows={8} /></Field>
+        <div className="dialog-field"><span>{tr("web.panel.scope")}</span><Segmented label={tr("web.panel.scope")} value={scope} onChange={setScope} options={[{ value: "project", label: tr("web.panel.scope_project") }, { value: "user", label: tr("web.panel.scope_user") }]} /></div>
+        <div className="dialog-actions">
+          <button type="button" className="button" onClick={() => setCreating(false)}>{tr("web.cancel")}</button>
+          <button type="button" className="button primary" onClick={() => { save().catch(() => undefined); }}>{tr("web.panel.save_rule")}</button>
+        </div>
+      </div>}
+      {rules.length ? <ul className="cap-list">{rules.map((rule) => {
+        const failed = !rule.id;
+        const ruleScope = String(rule.scope ?? "");
+        return <Row key={`${ruleScope}-${rule.id ?? rule.error}`} title={failed ? tr("web.panel.rule_error") : String(rule.id)}
+          preview={failed ? String(rule.error ?? "") : preview(rule.description)}
+          meta={<>{ruleScope && <Tag tone="accent">{tr(`web.panel.scope_tag_${ruleScope}`)}</Tag>}{Boolean(rule.shadowed) && <Tag tone="warning">{tr("web.panel.shadowed")}</Tag>}{failed && <Tag tone="danger">{tr("web.status.failed")}</Tag>}</>}
+          menu={failed ? undefined : [{ label: tr("web.panel.delete"), danger: true, onSelect: () => { remove(rule).catch(() => undefined); } }]} />;
+      })}</ul> : !creating && notice.tone !== "busy" && <EmptyState icon={<Scroll size={22} />} title={tr("web.panel.no_rules")} />}
     </div>}
-    <div className="dialog-section">
-      <h3>{tr("web.panel.add_rule")}</h3>
-      <Field label={tr("web.panel.rule_id")}><input aria-label="Rule id" value={skillId} onChange={(event) => setSkillId(event.target.value)} /></Field>
-      <Field label={tr("web.panel.description")}><input aria-label="Rule description" value={description} onChange={(event) => setDescription(event.target.value)} /></Field>
-      <Field label={tr("web.panel.rule_body")}><textarea aria-label="Rule body" value={body} onChange={(event) => setBody(event.target.value)} rows={4} /></Field>
-      <Field label={tr("web.panel.scope")}><select aria-label="Rule scope" value={scope} onChange={(event) => setScope(event.target.value)}><option value="project">{tr("web.panel.scope_project")}</option><option value="user">{tr("web.panel.scope_user")}</option></select></Field>
-      <div className="dialog-actions"><button type="button" className="button primary" disabled={!sessionId} onClick={async () => {
-        if (!sessionId || !skillId.trim() || !body.trim()) { setNotice({ tone: "error", text: tr("web.panel.rule_required") }); return; }
-        if (!await confirmDialog({ title: tr("web.panel.save_rule_confirm", { name: skillId, scope }) })) return;
-        setNotice({ tone: "busy", text: tr("web.saving") });
-        try { await api.saveRule(sessionId, skillId.trim(), { scope, description, body, confirm: true }); setSkillId(""); setDescription(""); setBody(""); await load(); }
-        catch (error) { setNotice(noteOf(error)); }
-      }}>{tr("web.panel.save_rule")}</button></div>
-    </div>
-  </Panel>;
+  </CapabilityPage>;
 }
 
-export function SchedulesDialog({ sessionId, projectId, close }: { sessionId: string | null; projectId: string | null; close: () => void }) {
+function runTone(status: string): "ok" | "danger" | "accent" | "neutral" {
+  if (status === "completed") return "ok";
+  if (status === "failed") return "danger";
+  if (status === "running" || status === "dispatched" || status === "queued" || status === "waiting_retry") return "accent";
+  return "neutral";
+}
+
+export function SchedulesPage({ sessionId, projectId }: { sessionId: string | null; projectId: string | null }) {
   const tr = useT();
   const [rows, setRows] = useState<Array<Record<string, unknown>>>([]);
-  const [runs, setRuns] = useState<Array<Record<string, unknown>>>([]);
+  const [history, setHistory] = useState<{ id: string; runs: Array<Record<string, unknown>> } | null>(null);
   const [notice, setNotice] = useState<Notice>({ tone: "idle", text: "" });
+  const [formOpen, setFormOpen] = useState(false);
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [every, setEvery] = useState("3600");
+  const [count, setCount] = useState("1");
+  const [unit, setUnit] = useState<IntervalUnit>("hours");
   const [editing, setEditing] = useState<string | null>(null);
   const load = async () => {
     if (!projectId) return;
@@ -253,7 +359,7 @@ export function SchedulesDialog({ sessionId, projectId, close }: { sessionId: st
     try { setRows(await api.projectSchedules(projectId)); setNotice({ tone: "idle", text: "" }); }
     catch (error) { setNotice(noteOf(error)); }
   };
-  useEffect(() => { load().catch(() => undefined); }, [projectId]);
+  useEffect(() => { setRows([]); setHistory(null); setFormOpen(false); load().catch(() => undefined); }, [projectId]);
   const act = async (id: string, action: string) => {
     if (!projectId) return;
     if (action === "delete" && !await confirmDialog({ title: tr("web.panel.delete_schedule_confirm", { name: id }), danger: true })) return;
@@ -261,56 +367,97 @@ export function SchedulesDialog({ sessionId, projectId, close }: { sessionId: st
     try { await api.scheduleAction(projectId, id, action, action === "delete" ? { confirm: true } : {}); await load(); }
     catch (error) { setNotice(noteOf(error)); }
   };
-  return <Panel id="schedule-title" title={tr("web.panel.schedules")} close={close}>
-    {!projectId && <p className="empty-small">{tr("web.panel.no_project")}</p>}
-    <PanelNotice notice={notice} />
-    <div className="dialog-section">
-      {rows.map((row) => <div className="queue-item" key={String(row.id)}>
-        <span>{String(row.name ?? row.id)} · {String(row.status ?? "")}</span>
-        <button type="button" className="button" onClick={() => { setEditing(String(row.id)); setName(String(row.name ?? "")); setPrompt(String(row.prompt ?? "")); const trigger = row.trigger as { every_seconds?: number } | undefined; if (trigger?.every_seconds) setEvery(String(trigger.every_seconds)); }}>{tr("web.panel.edit")}</button>
-        <button type="button" className="button" onClick={() => act(String(row.id), "pause")}>{tr("web.panel.pause")}</button>
-        <button type="button" className="button" onClick={() => act(String(row.id), "resume")}>{tr("web.panel.resume")}</button>
-        <button type="button" className="button" onClick={async () => {
-          if (!sessionId) { setNotice({ tone: "error", text: tr("web.panel.history_needs_task") }); return; }
-          try { setRuns(await api.scheduleRuns(sessionId, String(row.id))); }
-          catch (error) { setNotice(noteOf(error)); }
-        }}>{tr("web.panel.history")}</button>
-        <button type="button" className="button" onClick={() => act(String(row.id), "delete")}>{tr("web.panel.delete")}</button>
-      </div>)}
-      {!rows.length && <p className="empty-small">{tr("web.panel.no_schedules")}</p>}
-      {runs.map((run) => <p key={String(run.id ?? run.run_id)} className="hint">{String(run.status ?? "")} {String(run.id ?? run.run_id ?? "")}</p>)}
-    </div>
-    <div className="dialog-section">
-      <h3>{tr(editing ? "web.panel.edit_schedule" : "web.panel.add_schedule")}</h3>
-      <Field label={tr("web.panel.name")}><input aria-label="Schedule name" value={name} onChange={(event) => setName(event.target.value)} /></Field>
-      <Field label={tr("web.panel.prompt")}><textarea aria-label="Schedule prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={3} /></Field>
-      <Field label={tr("web.panel.interval")}><input aria-label="Interval seconds" type="number" min={1} value={every} onChange={(event) => setEvery(event.target.value)} /></Field>
-      <div className="dialog-actions"><button type="button" className="button primary" onClick={async () => {
-        const seconds = Number(every);
-        if (!name.trim() || !prompt.trim() || !Number.isFinite(seconds) || seconds <= 0) { setNotice({ tone: "error", text: tr("web.panel.schedule_required") }); return; }
-        setNotice({ tone: "busy", text: tr("web.saving") });
-        try {
-          if (editing) {
-            if (!projectId) return;
-            await api.scheduleAction(projectId, editing, "update", { name, prompt, trigger: { type: "interval", every_seconds: seconds } });
-            setEditing(null);
-          } else {
-            if (!sessionId) { setNotice({ tone: "error", text: tr("web.panel.schedule_needs_task") }); return; }
-            await api.createSchedule(sessionId, { name, prompt, trigger: { type: "interval", every_seconds: seconds }, recovery_policy: "manual" });
-          }
-          setName(""); setPrompt(""); await load();
-        } catch (error) { setNotice(noteOf(error)); }
-      }}>{tr(editing ? "web.panel.save_schedule" : "web.panel.create_schedule")}</button></div>
-    </div>
-  </Panel>;
+  const openForm = (row?: Record<string, unknown>) => {
+    const trigger = row?.trigger as { every_seconds?: number } | undefined;
+    const split = splitInterval(trigger?.every_seconds ?? 3600);
+    setEditing(row ? String(row.id) : null);
+    setName(row ? String(row.name ?? "") : "");
+    setPrompt(row ? String(row.prompt ?? "") : "");
+    setCount(String(split.count)); setUnit(split.unit);
+    setFormOpen(true);
+  };
+  const showHistory = async (id: string) => {
+    if (history?.id === id) { setHistory(null); return; }
+    if (!sessionId) { setNotice({ tone: "error", text: tr("web.panel.history_needs_task") }); return; }
+    try { setHistory({ id, runs: await api.scheduleRuns(sessionId, id) }); }
+    catch (error) { setNotice(noteOf(error)); }
+  };
+  const save = async () => {
+    const amount = Number(count);
+    if (!name.trim() || !prompt.trim() || !Number.isFinite(amount) || amount <= 0) { setNotice({ tone: "error", text: tr("web.panel.schedule_required") }); return; }
+    const trigger = { type: "interval", every_seconds: toSeconds(amount, unit) };
+    setNotice({ tone: "busy", text: tr("web.saving") });
+    try {
+      if (editing) {
+        if (!projectId) return;
+        await api.scheduleAction(projectId, editing, "update", { name, prompt, trigger });
+      } else {
+        if (!sessionId) { setNotice({ tone: "error", text: tr("web.panel.schedule_needs_task") }); return; }
+        await api.createSchedule(sessionId, { name, prompt, trigger, recovery_policy: "manual" });
+      }
+      setEditing(null); setFormOpen(false); setName(""); setPrompt(""); await load();
+    } catch (error) { setNotice(noteOf(error)); }
+  };
+  return <CapabilityPage id="schedule-title" title={tr("web.panel.schedules")}
+    subtitle={projectId && !sessionId ? tr("web.panel.schedule_needs_task") : undefined}
+    actions={projectId && !formOpen ? <button type="button" className="button primary" disabled={!sessionId} onClick={() => openForm()}><Plus size={12} weight="bold" />{tr("web.panel.new_schedule")}</button> : undefined}
+    notice={<PageNotice notice={notice} />}>
+    {!projectId ? <EmptyState icon={<Clock size={22} />} title={tr("web.panel.no_project")} /> : <div className="cap-stack">
+      {formOpen && <div className="cap-form">
+        <h3>{tr(editing ? "web.panel.edit_schedule" : "web.panel.add_schedule")}</h3>
+        <Field label={tr("web.panel.name")}><input aria-label="Schedule name" value={name} onChange={(event) => setName(event.target.value)} autoFocus /></Field>
+        <Field label={tr("web.panel.prompt")}><textarea aria-label="Schedule prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={4} /></Field>
+        <div className="dialog-field"><span>{tr("web.panel.run_every")}</span>
+          <div className="interval-field">
+            <input aria-label={tr("web.panel.run_every")} type="number" min={1} value={count} onChange={(event) => setCount(event.target.value)} />
+            <select aria-label={tr("web.panel.interval_unit")} value={unit} onChange={(event) => setUnit(event.target.value as IntervalUnit)}>
+              {INTERVAL_UNITS.map((value) => <option key={value} value={value}>{tr(`web.panel.unit.${value}`)}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="dialog-actions">
+          <button type="button" className="button" onClick={() => { setFormOpen(false); setEditing(null); }}>{tr("web.cancel")}</button>
+          <button type="button" className="button primary" onClick={() => { save().catch(() => undefined); }}>{tr(editing ? "web.panel.save_schedule" : "web.panel.create_schedule")}</button>
+        </div>
+      </div>}
+      {rows.length ? <ul className="cap-list">{rows.map((row) => {
+        const id = String(row.id);
+        const title = String(row.name ?? row.id);
+        const status = String(row.status ?? "");
+        const trigger = row.trigger as { type?: string; every_seconds?: number } | undefined;
+        const next = stamp(row.next_run_at);
+        const toggleable = status === "active" || status === "paused";
+        return <Row key={id} title={title} preview={preview(row.prompt)}
+          meta={<>
+            <Tag>{trigger?.every_seconds ? describeInterval(trigger.every_seconds, tr) : tr("web.panel.trigger_other", { type: String(trigger?.type ?? "?") })}</Tag>
+            {status && <Tag tone={status === "active" ? "ok" : status === "paused" ? "warning" : "neutral"}>{tr(`web.panel.schedule_status.${status}`)}</Tag>}
+            {next && status === "active" && <span className="cap-row-time">{tr("web.panel.next_run", { time: shortTime(next) })}</span>}
+          </>}
+          side={<Switch label={tr("web.panel.toggle_schedule", { name: title })} checked={status === "active"} disabled={!toggleable} onChange={(on) => { act(id, on ? "resume" : "pause").catch(() => undefined); }} />}
+          menu={[
+            { label: tr("web.panel.edit"), onSelect: () => openForm(row) },
+            { label: tr(history?.id === id ? "web.panel.hide_history" : "web.panel.history"), onSelect: () => { showHistory(id).catch(() => undefined); } },
+            "separator",
+            { label: tr("web.panel.delete"), danger: true, onSelect: () => { act(id, "delete").catch(() => undefined); } },
+          ]}>
+          {history?.id === id && <ul className="run-list" aria-label={tr("web.panel.history")}>
+            {history.runs.length ? history.runs.map((run) => {
+              const runStatus = String(run.status ?? "");
+              const at = stamp(run.started_at) ?? stamp(run.created_at);
+              return <li key={String(run.id ?? run.run_id)}><Tag tone={runTone(runStatus)}>{statusLabel(tr, runStatus)}</Tag>{at && <span className="cap-row-time">{shortTime(at)}</span>}</li>;
+            }) : <li className="empty-small">{tr("web.panel.no_runs")}</li>}
+          </ul>}
+        </Row>;
+      })}</ul> : !formOpen && notice.tone !== "busy" && <EmptyState icon={<Clock size={22} />} title={tr("web.panel.no_schedules")}>{tr("web.panel.schedules_hint")}</EmptyState>}
+    </div>}
+  </CapabilityPage>;
 }
 
-export function SettingsDialog({
-  theme, inspectorOpen, close, save,
+export function SettingsPage({
+  theme, inspectorOpen, save,
 }: {
   theme: "dark" | "light";
   inspectorOpen: boolean;
-  close: () => void;
   save: (patch: { theme?: "dark" | "light"; inspector_open?: boolean; interface_language?: string }) => Promise<void>;
 }) {
   const tr = useT();
@@ -320,13 +467,24 @@ export function SettingsDialog({
     try { await save(patch); setNotice({ tone: "ok", text: tr("web.saved") }); }
     catch (error) { setNotice(noteOf(error)); }
   };
-  return <Panel id="settings-title" title={tr("web.settings")} close={close}>
-    <PanelNotice notice={notice} />
-    <div className="dialog-section">
-      <Field label={tr("web.theme")}><select aria-label={tr("web.theme")} value={theme} onChange={(event) => apply({ theme: event.target.value as "dark" | "light" })}><option value="dark">{tr("web.theme.dark")}</option><option value="light">{tr("web.theme.light")}</option></select></Field>
-      <Field label={tr("web.language_label")}><select aria-label={tr("web.language_label")} title={tr("web.language_note")} value={getLocale()} onChange={(event) => apply({ interface_language: event.target.value })}><option value="en">EN</option><option value="zh-CN">中文</option></select></Field>
-      <label className="dialog-check"><input type="checkbox" checked={inspectorOpen} onChange={(event) => apply({ inspector_open: event.target.checked })} /><span>{tr("web.inspector_open")}</span></label>
-      <p className="hint">{tr("web.settings_hint")}</p>
-    </div>
-  </Panel>;
+  return <CapabilityPage id="settings-title" title={tr("web.settings")} subtitle={tr("web.settings_hint")} notice={<PageNotice notice={notice} />}>
+    <section className="settings-group">
+      <h3>{tr("web.panel.appearance")}</h3>
+      <div className="settings-row">
+        <span className="settings-label">{tr("web.theme")}</span>
+        <Segmented label={tr("web.theme")} value={theme} onChange={(value) => { apply({ theme: value }).catch(() => undefined); }} options={[{ value: "light", label: tr("web.theme.light") }, { value: "dark", label: tr("web.theme.dark") }]} />
+      </div>
+      <div className="settings-row">
+        <div><span className="settings-label">{tr("web.language_label")}</span><p className="hint">{tr("web.language_note")}</p></div>
+        <Segmented label={tr("web.language_label")} value={getLocale()} onChange={(value) => { apply({ interface_language: value }).catch(() => undefined); }} options={[{ value: "en", label: "English" }, { value: "zh-CN", label: "中文" }]} />
+      </div>
+    </section>
+    <section className="settings-group">
+      <h3>{tr("web.panel.layout")}</h3>
+      <div className="settings-row">
+        <span className="settings-label">{tr("web.inspector_open")}</span>
+        <Switch label={tr("web.inspector_open")} checked={inspectorOpen} onChange={(next) => { apply({ inspector_open: next }).catch(() => undefined); }} />
+      </div>
+    </section>
+  </CapabilityPage>;
 }

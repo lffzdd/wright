@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Inspector } from "../inspector/Inspector";
 import type { ViewState } from "../../types";
-import { RulesDialog, SearchDialog } from "./panels";
+import { MemoryPage, RulesPage, SchedulesPage, SearchDialog, SettingsPage } from "./panels";
 
 afterEach(() => {
   cleanup();
@@ -94,11 +94,116 @@ describe("workspace panels", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it("shows the current core memory section so saving does not silently replace it", async () => {
+    const puts: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") puts.push(JSON.parse(String(init.body)));
+      return { ok: true, statusText: "OK", json: async () => ({
+        core: { persona: "Persona", human_profile: "Prefers Chinese replies.", project_anchor: "Wright is a coding agent.", persona_editable: false },
+        semantic: [], episodes: [],
+      }) };
+    }));
+    render(<MemoryPage projectId="ws" />);
+    expect(await screen.findByText("Prefers Chinese replies.")).toBeTruthy();
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe("/api/v1/workspaces/ws/memory");
+    expect(screen.getByText("Wright is a coding agent.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Edit Project anchor" }));
+    const editor = screen.getByRole("textbox", { name: "Project anchor" }) as HTMLTextAreaElement;
+    expect(editor.value).toBe("Wright is a coding agent.");
+    fireEvent.change(editor, { target: { value: "Wright is a coding agent. Uses DDD layers." } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(puts).toHaveLength(1));
+    expect(puts[0]).toMatchObject({ section: "project_anchor", content: "Wright is a coding agent. Uses DDD layers.", mode: "replace" });
+  });
+
+  it("explains that memory needs a workspace instead of showing an unusable form", () => {
+    render(<MemoryPage projectId={null} />);
+    expect(screen.getByText("No project is selected.")).toBeTruthy();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("tablist")).toBeNull();
+  });
+
+  it("lists semantic memories under their tab and edits one in place", async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") patches.push(JSON.parse(String(init.body)));
+      return { ok: true, statusText: "OK", json: async () => ({
+        core: null,
+        semantic: [{ id: "m1", name: "No global pip", content: "Use uv, never pip install globally.", type: "feedback", revision: 2, status: "active" }],
+        episodes: [],
+      }) };
+    }));
+    render(<MemoryPage projectId="ws" />);
+    fireEvent.click(await screen.findByRole("tab", { name: /Semantic\s*1/ }));
+    expect(screen.getByText("Use uv, never pip install globally.")).toBeTruthy();
+    expect(screen.getByText("rev 2")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for No global pip" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Edit" }));
+    const editor = screen.getByLabelText("Replace No global pip") as HTMLTextAreaElement;
+    expect(editor.value).toBe("Use uv, never pip install globally.");
+    fireEvent.change(editor, { target: { value: "Use uv only." } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(patches).toHaveLength(1));
+    expect(patches[0]).toMatchObject({ content: "Use uv only.", expected_revision: 2 });
+  });
+
   it("requires a rule id and body before saving", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, statusText: "OK", json: async () => ({ rules: [] }) })));
-    render(<RulesDialog sessionId="s" close={() => undefined} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Save rule" }));
+    render(<RulesPage projectId="ws" />);
+    expect(await screen.findByText("No rules.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "New rule" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save rule" }));
     expect((await screen.findByRole("alert")).textContent).toContain("Rule id and body are required.");
+  });
+
+  it("hides the rule form until a workspace is selected", () => {
+    render(<RulesPage projectId={null} />);
+    expect(screen.getByText("No project is selected.")).toBeTruthy();
+    expect(screen.queryByLabelText("Rule id")).toBeNull();
+    expect(screen.queryByRole("button", { name: "New rule" })).toBeNull();
+  });
+
+  it("describes schedule intervals in words and pauses with the switch", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      return { ok: true, statusText: "OK", json: async () => (init?.method === "POST" ? {} : [
+        { id: "j1", name: "Nightly check", prompt: "Run the test suite", status: "active", trigger: { type: "interval", every_seconds: 7200 } },
+      ]) };
+    }));
+    render(<SchedulesPage sessionId="s" projectId="p" />);
+    expect(await screen.findByText("Every 2 hours")).toBeTruthy();
+    const toggle = screen.getByRole("switch", { name: "Run Nightly check" });
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(toggle);
+    await vi.waitFor(() => expect(calls.some((call) => call.startsWith("POST") && call.endsWith("/schedules/j1/pause"))).toBe(true));
+  });
+
+  it("creates a schedule with an interval in hours", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST") bodies.push(JSON.parse(String(init.body)));
+      return { ok: true, statusText: "OK", json: async () => (init?.method === "POST" ? {} : []) };
+    }));
+    render(<SchedulesPage sessionId="s" projectId="p" />);
+    fireEvent.click(await screen.findByRole("button", { name: "New schedule" }));
+    fireEvent.change(screen.getByLabelText("Schedule name"), { target: { value: "Digest" } });
+    fireEvent.change(screen.getByLabelText("Schedule prompt"), { target: { value: "Summarize changes" } });
+    fireEvent.change(screen.getByLabelText("Run every"), { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText("Interval unit"), { target: { value: "hours" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create schedule" }));
+    await vi.waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]).toMatchObject({ name: "Digest", trigger: { type: "interval", every_seconds: 10800 } });
+  });
+
+  it("saves settings from segmented controls", async () => {
+    const save = vi.fn(async () => undefined);
+    render(<SettingsPage theme="light" inspectorOpen save={save} />);
+    fireEvent.click(screen.getByRole("radio", { name: "Dark" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Inspector open" }));
+    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+    expect(save).toHaveBeenNthCalledWith(1, { theme: "dark" });
+    expect(save).toHaveBeenNthCalledWith(2, { inspector_open: false });
   });
 
   it("shows a server revert conflict and does not send a second overwrite", async () => {

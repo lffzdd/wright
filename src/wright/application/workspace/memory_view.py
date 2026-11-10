@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...core.paths import project_id
-
 
 class MemoryViewError(ValueError):
     pass
@@ -101,21 +99,19 @@ def delete_semantic(service: Any, memory_id: str, *, bound_project_id: str, conf
     return {"id": memory_id, "deleted": True, "project_id": bound_project_id}
 
 
-def delete_episode(service: Any, episode_id: str, *, confirm: bool) -> dict[str, Any]:
+def delete_episode(service: Any, episode_id: str, *, bound_project_id: str, confirm: bool) -> dict[str, Any]:
     if not confirm:
         raise MemoryViewError("confirmation is required")
     _require_service(service)
+    existing, error = service.get_episode(episode_id)
+    if error:
+        raise MemoryViewError(error)
+    if existing is not None and getattr(existing, "project_id", "") != bound_project_id:
+        raise MemoryViewError("episode belongs to another project")
     record, error = service.delete_episode(episode_id)
     if error:
         raise MemoryViewError(error)
     return {"id": episode_id, "deleted": record is not None}
-
-
-def bound_project(session: Any) -> str:
-    root = getattr(session, "project_root", None) or getattr(session, "workspace_dir", None)
-    if root is None:
-        raise MemoryViewError("session has no project root")
-    return project_id(root)
 
 
 def _require_service(service: Any) -> None:
@@ -152,7 +148,6 @@ def _episode_dict(record: Any) -> dict[str, Any]:
 
 __all__ = [
     "MemoryViewError",
-    "bound_project",
     "create_semantic",
     "delete_episode",
     "delete_semantic",

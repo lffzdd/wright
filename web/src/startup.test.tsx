@@ -177,6 +177,7 @@ describe("web startup", () => {
     expect(calls).toContain("/api/v1/sessions?all_projects=true");
     expect(screen.queryByText("api-gateway")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    expect(await screen.findByRole("dialog")).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Settings" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Settings" }).getAttribute("aria-current")).toBe("page");
   });
 });

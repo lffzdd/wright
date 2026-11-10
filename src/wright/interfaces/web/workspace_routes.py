@@ -12,6 +12,7 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
+from ...application.composition.memory_assembly import assemble_memory_service
 from ...application.composition.stores import open_autonomy_store, skill_store
 from ...application.permission.service import PermissionConflict
 from ...application.session.dispatch import SLASH_COMMANDS
@@ -24,7 +25,6 @@ from ...application.workspace.git_status import summarize_git
 from ...application.workspace.journal import ChangeJournalError, SessionChangeJournal
 from ...application.workspace.memory_view import (
     MemoryViewError,
-    bound_project,
     create_semantic,
     delete_episode,
     delete_semantic,
@@ -58,7 +58,6 @@ from ...application.workspace.search import (
 )
 from ...application.workspace.session_commands import (
     add_grant,
-    memory_binding,
     review_action,
     sandbox_action,
     session_grants,
@@ -424,38 +423,44 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
         require(request)
         return _review_action(manager, session_id, body, "revert")
 
-    @router.get("/sessions/{session_id}/memory")
-    def memory(session_id: str, request: Request) -> dict[str, Any]:
+    # Memory and rules belong to the project, not to a session: a history task
+    # or a workspace with no tasks can still be inspected and edited.
+    memory_holder: dict[str, Any] = {}
+
+    def project_memory_service() -> Any:
+        if "service" not in memory_holder:
+            memory_holder["service"] = assemble_memory_service()
+        return memory_holder["service"]
+
+    def memory_scope(registered_id: str) -> tuple[Any, str]:
+        return project_memory_service(), project_id(_project_root(manager, registered_id))
+
+    @router.get("/workspaces/{registered_id}/memory")
+    def memory(registered_id: str, request: Request) -> dict[str, Any]:
         require(request)
-        handle = _handle(manager, session_id)
+        service, bound = memory_scope(registered_id)
         try:
-            return project_memory(_memory(handle), bound_project_id=bound_project(handle.runtime.session_state))
+            return project_memory(service, bound_project_id=bound)
         except MemoryViewError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    @router.put("/sessions/{session_id}/memory/core")
-    def put_core(session_id: str, body: CoreBody, request: Request) -> dict[str, Any]:
+    @router.put("/workspaces/{registered_id}/memory/core")
+    def put_core(registered_id: str, body: CoreBody, request: Request) -> dict[str, Any]:
         require(request)
-        handle = _handle(manager, session_id)
+        service, bound = memory_scope(registered_id)
         try:
-            return update_core(
-                _memory(handle),
-                bound_project_id=bound_project(handle.runtime.session_state),
-                section=body.section,
-                content=body.content,
-                mode=body.mode,
-            )
+            return update_core(service, bound_project_id=bound, section=body.section, content=body.content, mode=body.mode)
         except MemoryViewError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @router.post("/sessions/{session_id}/memory/semantic")
-    def post_semantic(session_id: str, body: SemanticBody, request: Request) -> dict[str, Any]:
+    @router.post("/workspaces/{registered_id}/memory/semantic")
+    def post_semantic(registered_id: str, body: SemanticBody, request: Request) -> dict[str, Any]:
         require(request)
-        handle = _handle(manager, session_id)
+        service, bound = memory_scope(registered_id)
         try:
             return create_semantic(
-                _memory(handle),
-                bound_project_id=bound_project(handle.runtime.session_state),
+                service,
+                bound_project_id=bound,
                 name=body.name,
                 content=body.content,
                 description=body.description,
@@ -465,12 +470,12 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
         except MemoryViewError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @router.patch("/sessions/{session_id}/memory/semantic/{memory_id}")
-    def patch_semantic(session_id: str, memory_id: str, body: SemanticBody, request: Request) -> dict[str, Any]:
+    @router.patch("/workspaces/{registered_id}/memory/semantic/{memory_id}")
+    def patch_semantic(registered_id: str, memory_id: str, body: SemanticBody, request: Request) -> dict[str, Any]:
         require(request)
         if body.expected_revision is None:
             raise HTTPException(status_code=400, detail="expected_revision is required")
-        handle = _handle(manager, session_id)
+        service, bound = memory_scope(registered_id)
         fields = {
             "name": body.name,
             "content": body.content,
@@ -479,59 +484,54 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
         }
         try:
             return update_semantic(
-                _memory(handle),
+                service,
                 memory_id,
-                bound_project_id=bound_project(handle.runtime.session_state),
+                bound_project_id=bound,
                 expected_revision=body.expected_revision,
                 fields=fields,
             )
         except MemoryViewError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @router.delete("/sessions/{session_id}/memory/semantic/{memory_id}")
-    def remove_semantic(session_id: str, memory_id: str, body: ConfirmBody, request: Request) -> dict[str, Any]:
+    @router.delete("/workspaces/{registered_id}/memory/semantic/{memory_id}")
+    def remove_semantic(registered_id: str, memory_id: str, body: ConfirmBody, request: Request) -> dict[str, Any]:
         require(request)
-        handle = _handle(manager, session_id)
+        service, bound = memory_scope(registered_id)
         try:
-            return delete_semantic(
-                _memory(handle),
-                memory_id,
-                bound_project_id=bound_project(handle.runtime.session_state),
-                confirm=body.confirm,
-            )
+            return delete_semantic(service, memory_id, bound_project_id=bound, confirm=body.confirm)
         except MemoryViewError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @router.delete("/sessions/{session_id}/memory/episodes/{episode_id}")
-    def remove_episode(session_id: str, episode_id: str, body: ConfirmBody, request: Request) -> dict[str, Any]:
+    @router.delete("/workspaces/{registered_id}/memory/episodes/{episode_id}")
+    def remove_episode(registered_id: str, episode_id: str, body: ConfirmBody, request: Request) -> dict[str, Any]:
         require(request)
-        handle = _handle(manager, session_id)
+        service, bound = memory_scope(registered_id)
         try:
-            return delete_episode(_memory(handle), episode_id, confirm=body.confirm)
+            return delete_episode(service, episode_id, bound_project_id=bound, confirm=body.confirm)
         except MemoryViewError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @router.get("/sessions/{session_id}/rules")
-    def rules(session_id: str, request: Request) -> dict[str, Any]:
+    @router.get("/workspaces/{registered_id}/rules")
+    def rules(registered_id: str, request: Request) -> dict[str, Any]:
         require(request)
-        return list_rules(_project_of(manager, session_id), skill_store())
+        return list_rules(_project_root(manager, registered_id), skill_store())
 
-    @router.get("/sessions/{session_id}/rules/{skill_id}")
-    def rule(session_id: str, skill_id: str, request: Request) -> dict[str, Any]:
+    @router.get("/workspaces/{registered_id}/rules/{skill_id}")
+    def rule(registered_id: str, skill_id: str, request: Request) -> dict[str, Any]:
         require(request)
         try:
-            return get_rule(_project_of(manager, session_id), skill_store(), skill_id)
+            return get_rule(_project_root(manager, registered_id), skill_store(), skill_id)
         except RuleError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    @router.put("/sessions/{session_id}/rules/{skill_id}")
-    def put_rule(session_id: str, skill_id: str, body: SkillBody, request: Request) -> dict[str, Any]:
+    @router.put("/workspaces/{registered_id}/rules/{skill_id}")
+    def put_rule(registered_id: str, skill_id: str, body: SkillBody, request: Request) -> dict[str, Any]:
         require(request)
         if body.scope not in {"project", "user"}:
             raise HTTPException(status_code=400, detail="scope must be project or user")
         try:
             return save_rule(
-                _project_of(manager, session_id),
+                _project_root(manager, registered_id),
                 skill_store(),
                 skill_id,
                 scope=body.scope,  # type: ignore[arg-type]
@@ -543,16 +543,16 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
         except RuleError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @router.delete("/sessions/{session_id}/rules/{skill_id}")
+    @router.delete("/workspaces/{registered_id}/rules/{skill_id}")
     def remove_rule(
-        session_id: str, skill_id: str, body: SkillBody, request: Request,
+        registered_id: str, skill_id: str, body: SkillBody, request: Request,
     ) -> dict[str, Any]:
         require(request)
         if body.scope not in {"project", "user"}:
             raise HTTPException(status_code=400, detail="scope must be project or user")
         try:
             return delete_rule(
-                _project_of(manager, session_id),
+                _project_root(manager, registered_id),
                 skill_store(),
                 skill_id,
                 scope=body.scope,  # type: ignore[arg-type]
@@ -660,11 +660,6 @@ def _execution_root(manager: RuntimeManager, session_id: str) -> Path:
     return Path(_handle(manager, session_id).runtime.session_state.workspace_dir)
 
 
-def _project_of(manager: RuntimeManager, session_id: str) -> Path:
-    state = _handle(manager, session_id).runtime.session_state
-    return Path(state.project_root or state.workspace_dir)
-
-
 def _project_root(manager: RuntimeManager, registered_id: str) -> Path:
     try:
         record = manager._catalog().get(registered_id)
@@ -709,14 +704,6 @@ def _review_action(manager: RuntimeManager, session_id: str, body: ReviewBody, a
         )
     except SessionServiceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-def _memory(handle: Any):
-    try:
-        service, _project = memory_binding(handle.service)
-    except SessionServiceError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return service
 
 
 def _schedule_call(manager: RuntimeManager, session_id: str, call) -> dict[str, Any]:
