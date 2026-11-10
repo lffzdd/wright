@@ -292,7 +292,7 @@ def test_one_executor_refreshes_scope_for_shell_and_child(tmp_path):
     permission_service = PermissionService(FilePermissionRepository(workspace), execution_factory=AuthorizedExecution)
 
     def approve(request):
-        if request.tool_call.name == "write_file":
+        if request.tool_call.name == "write":
             return PermissionResponse("allow_session_directory_write")
         return PermissionResponse("allow_once")
 
@@ -376,7 +376,7 @@ def test_agent_child_persistent_directory_uses_child_checkpoint(tmp_path, monkey
             self.script = [
                 response(content=None, calls=[
                     {
-                        "name": "write_file",
+                        "name": "write",
                         "arguments": {
                             "file": str(extra / "child.txt"), "content": "child",
                         },
@@ -389,7 +389,7 @@ def test_agent_child_persistent_directory_uses_child_checkpoint(tmp_path, monkey
             yield event(self.script.pop(0))
 
     def approve(request):
-        if request.tool_call.name == "write_file":
+        if request.tool_call.name == "write":
             return PermissionResponse("allow_project_directory_write")
         return PermissionResponse("allow_once")
 

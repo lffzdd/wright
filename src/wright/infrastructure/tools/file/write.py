@@ -1,4 +1,4 @@
-"""write_file tool implementation."""
+"""write tool implementation."""
 
 from __future__ import annotations
 
@@ -63,11 +63,11 @@ def write_file(
 
 
 write_file_tool = Tool(
-    name="write_file",
+    name="write",
     approval_details=lambda args, cwd: {"preview": str(args.get("content", ""))},
     description=(
         "Create or overwrite a workspace file. Creates parent directories. "
-        "Overwriting an existing file requires a complete read_file first."
+        "Overwriting an existing file requires a complete read first."
     ),
     parameters={
         "type": "object",

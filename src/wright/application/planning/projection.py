@@ -107,7 +107,7 @@ def bind_plan_events(
             event.type == "tool.finished"
             and root_event
             and event.payload.get("name")
-            in {"create_plan", "update_plan", "replan", "get_plan"}
+            in {"update_plan", "create_plan", "replan"}
         )
         if (
             event.type in {"interaction.requested", "interaction.resolved"}

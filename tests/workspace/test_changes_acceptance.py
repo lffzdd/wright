@@ -119,7 +119,7 @@ def note(env, name: str, text: str):
     path.write_text(text, encoding="utf-8")
     env.journal.note_text(
         path, before=before, after=text, existed=before is not None,
-        call_id=f"write-{name}", tool_name="edit_file",
+        call_id=f"write-{name}", tool_name="edit",
     )
 
 
@@ -483,7 +483,7 @@ def test_session_staged_rename_undo_restores_pair_but_preserves_current_index(en
     (env.root / "b.txt").write_text("unrelated user edit\n", encoding="utf-8")
     before = env.journal.capture()
     git(env.root, "mv", "a.txt", "renamed.txt")
-    env.journal.commit_capture(before, call_id="rename-call", tool_name="execute_command")
+    env.journal.commit_capture(before, call_id="rename-call", tool_name="shell")
     current = review(env)
     task_paths = {row["path"] for row in current["changes"] if row.get("origin") == "task"}
     assert task_paths == {"a.txt", "renamed.txt"}

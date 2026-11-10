@@ -34,7 +34,7 @@ describe("backend data in workspace panels", () => {
     const state = applyEvent({ ...view(), timeline: [] }, {
       version: 2, stream_id: "stream", event_id: "finished", seq: 1, emitted_at: "now",
       project_id: "p", session_id: "session", type: "tool.finished",
-      payload: { call_id: "c", name: "edit_file", arguments: { file: "file.txt" }, ok: true, data },
+      payload: { call_id: "c", name: "edit", arguments: { file: "file.txt" }, ok: true, data },
     });
     const liveTool = state.timeline!.find((item) => item.call_id === "c")!;
     expect(liveTool.result).toEqual({ ok: true, data });
@@ -45,7 +45,7 @@ describe("backend data in workspace panels", () => {
     expect(container.querySelectorAll(".diff-add")).toHaveLength(2);
     expect(screen.getByRole("status").textContent).toContain("64 KiB");
     const liveText = container.textContent;
-    rerender(toolCardFromTimeline({ id: "c", kind: "edit", name: "edit_file", phase: "succeeded", arguments: { file: "file.txt" }, result: { ok: true, data } }, undefined, undefined, true));
+    rerender(toolCardFromTimeline({ id: "c", kind: "edit", name: "edit", phase: "succeeded", arguments: { file: "file.txt" }, result: { ok: true, data } }, undefined, undefined, true));
     expect(container.textContent).toBe(liveText);
   });
 
@@ -58,7 +58,7 @@ describe("backend data in workspace panels", () => {
   });
 
   it("renders explicit zero-change diffs and approval audit text", () => {
-    render(toolCardFromState({ call_id: "c", name: "edit_file", phase: "succeeded", data: { diff: "", additions: 0, deletions: 0, diff_truncated: false } }, undefined, undefined, true));
+    render(toolCardFromState({ call_id: "c", name: "edit", phase: "succeeded", data: { diff: "", additions: 0, deletions: 0, diff_truncated: false } }, undefined, undefined, true));
     expect(screen.getByText("No textual diff.")).toBeTruthy();
     render(<InteractionCard sessionId="s" interaction={{ request_id: "permission", kind: "permission", choices: [{ id: "deny", label: "Deny", scope: "invocation", persistence: "none" }] }} respond={async () => true} />);
     expect(screen.getByText(/Permission requests and decisions are recorded/)).toBeTruthy();
@@ -107,7 +107,7 @@ describe("backend data in workspace panels", () => {
 
   it("shows policy defaults, conditional overrides and refreshes on policy and reconnect changes", async () => {
     const base = (decision: "allow" | "ask" | "deny") => ({ decision, source: "default", reason_code: "", reason_params: {} });
-    const policy: EffectivePolicy = { operation: "file_write", defaults: { in_scope: base("ask"), outside_scope: base("ask") }, directories: ["/project"], read_only: ["/external-ro"], rules: [{ effect: "deny", scope: "project", rule: { tool_name: "edit_file", pattern: "secrets/*" }, target: "/project/secrets/*", resource_kind: "file", operations: ["file_write"], tool: "edit_file", description: "edit_file secrets/*", conditional: true }], constraints: ["protected_permission_files"], precedence: [] };
+    const policy: EffectivePolicy = { operation: "file_write", defaults: { in_scope: base("ask"), outside_scope: base("ask") }, directories: ["/project"], read_only: ["/external-ro"], rules: [{ effect: "deny", scope: "project", rule: { tool_name: "edit", pattern: "secrets/*" }, target: "/project/secrets/*", resource_kind: "file", operations: ["file_write"], tool: "edit", description: "edit secrets/*", conditional: true }], constraints: ["protected_permission_files"], precedence: [] };
     const grants: Grants = { version: "test", grants: [], permission_mode: "default", effective_policy: [policy] };
     const request = vi.spyOn(api, "grants").mockResolvedValue(grants);
     const state = view();
@@ -121,7 +121,7 @@ describe("backend data in workspace panels", () => {
     expect(conditional.length).toBeGreaterThan(0);
     expect(conditional.some((node) => node.textContent?.includes("This project long term"))).toBe(true);
     expect(screen.getByText(/Read-only directory: \/external-ro/)).toBeTruthy();
-    expect(screen.getByText("Only through edit_file")).toBeTruthy();
+    expect(screen.getByText("Only through edit")).toBeTruthy();
     expect(screen.getByText("Protected permission files remain blocked.")).toBeTruthy();
     expect(screen.queryByText(/unrestricted/i)).toBeNull();
     request.mockResolvedValue({ ...grants, permission_mode: "bypass", effective_policy: [{ ...policy, defaults: { in_scope: base("allow"), outside_scope: base("allow") } }] });

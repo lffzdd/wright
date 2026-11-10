@@ -33,29 +33,29 @@ def build_system_prompt(
 
     if baseline:
         paragraphs.append("Always available: " + ", ".join(baseline) + ".")
-    if {"edit_file", "write_file"} <= names:
+    if {"edit", "write"} <= names:
         edit_advice = (
-            "Prefer edit_file for unique in-place replacements; set replace_all to "
-            "replace every occurrence. Use write_file to create a file or rewrite it whole."
+            "Prefer edit for unique in-place replacements; set replace_all to "
+            "replace every occurrence. Use write to create a file or rewrite it whole."
         )
-        if "read_file" in names:
+        if "read" in names:
             edit_advice = (
-                "Prefer edit_file for unique in-place replacements; set replace_all to "
-                "replace every occurrence. Read the file with read_file before edit_file "
-                "or before overwriting it with write_file. read_file prefixes each line "
-                "with N|; do not copy those prefixes into edit_file old_text. Use "
-                "write_file to create a file or rewrite it whole."
+                "Prefer edit for unique in-place replacements; set replace_all to "
+                "replace every occurrence. Read the file with read before edit "
+                "or before overwriting it with write. read prefixes each line "
+                "with N|; do not copy those prefixes into edit old_text. Use "
+                "write to create a file or rewrite it whole."
             )
         paragraphs.append(edit_advice)
-    if "execute_command" in names:
+    if "shell" in names:
         shell = (
-            "execute_command keeps a working directory across calls and returns cwd "
+            "shell keeps a working directory across calls and returns cwd "
             "in every result. Do not cd into the directory you are already in."
         )
-        if "get_command" in names:
+        if "shell_output" in names:
             shell += (
-                " Background commands return command_id. Use get_command, "
-                "wait_command, list_commands, or terminate_command for that execution."
+                " Background commands return command_id. Use shell_output to read "
+                "or wait for that execution and shell_kill to stop it."
             )
         paragraphs.append(shell)
     if deferred:

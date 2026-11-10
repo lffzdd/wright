@@ -422,11 +422,11 @@ def test_stream_usage_event_can_live_on_choice_chunk():
 
 def test_session_records_tool_turn_and_execution():
     session = _make_session("inspect file")
-    call = ToolCall("read_file", {"file": "a.py"}, "call_1")
+    call = ToolCall("read", {"file": "a.py"}, "call_1")
 
     turn = session.record_assistant_turn(
         assistant_raw="Inspecting file",
-        parsed={"tool_calls": [{"name": "read_file"}], "final_answer": None},
+        parsed={"tool_calls": [{"name": "read"}], "final_answer": None},
         route="tool_calls",
         tool_calls=[call],
     )
@@ -449,8 +449,8 @@ def test_session_records_tool_turn_and_execution():
 def test_session_rejects_duplicate_tool_ids_without_partial_state():
     session = _make_session("duplicate calls")
     calls = [
-        ToolCall("read_file", {"file": "a.py"}, "call_dup"),
-        ToolCall("read_file", {"file": "b.py"}, "call_dup"),
+        ToolCall("read", {"file": "a.py"}, "call_dup"),
+        ToolCall("read", {"file": "b.py"}, "call_dup"),
     ]
 
     try:

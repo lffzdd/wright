@@ -19,14 +19,9 @@ def _plan_failure(exc: Exception) -> ToolResult:
 def _describe_plan_update(arguments: dict) -> ToolAccess:
     return ToolAccess(
         frozenset({"plan_update"}),
-        subject=str(arguments.get("step_id") or arguments.get("objective") or ""),
+        subject=str(arguments.get("objective") or ""),
         reason="update the current session plan",
     )
-
-
-def _describe_plan_read(arguments: dict) -> ToolAccess:
-    del arguments
-    return ToolAccess.internal_read(reason="read the current session plan")
 
 
 def _manager(runtime: ToolRuntime | None):
@@ -36,166 +31,61 @@ def _manager(runtime: ToolRuntime | None):
     return manager
 
 
-def create_plan(
-    objective: str,
-    steps: list[str],
-    replace: bool = False,
-    runtime: ToolRuntime | None = None,
-) -> ToolResult:
-    try:
-        return ToolResult.success(
-            _manager(runtime).create_plan(objective, steps, replace=replace)
-        )
-    except Exception as e:
-        return _plan_failure(e)
-
-
 def update_plan(
-    step_id: str,
-    status: str,
-    note: str | None = None,
+    steps: list[dict],
+    objective: str | None = None,
     runtime: ToolRuntime | None = None,
 ) -> ToolResult:
     try:
-        return ToolResult.success(
-            _manager(runtime).update_step(step_id, status, note=note)
-        )
+        return ToolResult.success(_manager(runtime).apply_steps(steps, objective=objective))
     except Exception as e:
         return _plan_failure(e)
 
 
-def get_plan(runtime: ToolRuntime | None = None) -> ToolResult:
-    try:
-        return ToolResult.success(_manager(runtime).snapshot())
-    except Exception as e:
-        return _plan_failure(e)
-
-
-def replan(
-    steps: list[str],
-    reason: str,
-    runtime: ToolRuntime | None = None,
-) -> ToolResult:
-    try:
-        return ToolResult.success(_manager(runtime).replan(steps, reason=reason))
-    except Exception as e:
-        return _plan_failure(e)
-
-
-create_plan_tool = Tool(
-    name="create_plan",
+update_plan_tool = Tool(
+    name="update_plan",
     description=(
-        "Create a concise, executable step plan for the current complex task. Use it when "
-        "the work has several independent steps, multiple tools, or needs progress tracking. "
-        "Skip it for a one-step question. An unfinished plan is not replaced unless replace=true."
+        "Write the task plan as the whole list of steps with their status. Use it when "
+        "the work has several steps, multiple tools, or needs progress tracking; skip "
+        "it for a one-step question. Send the full list every time: mark a step "
+        "in_progress when you start it and completed as soon as it is done. At most "
+        "one step is in_progress, and steps finish in order. Change the route by "
+        "editing the list: steps you drop are kept as skipped history, finished "
+        "steps cannot be reopened. objective is required to start a new plan."
     ),
     parameters={
         "type": "object",
         "properties": {
             "objective": {
                 "type": "string",
-                "description": "The clear goal this plan should achieve",
+                "description": "The goal of the plan; required when starting one",
             },
             "steps": {
                 "type": "array",
-                "items": {"type": "string"},
                 "minItems": 1,
                 "maxItems": 12,
-                "description": "Short step titles in execution order",
-            },
-            "replace": {
-                "type": "boolean",
-                "default": False,
-                "description": "Whether to replace the current unfinished plan",
-            },
-        },
-        "required": ["objective", "steps"],
-    },
-    call=lambda args, runtime: create_plan(**args, runtime=runtime),
-    access_descriptor=_describe_plan_update,
-    required_capabilities=frozenset({"plan"}),
-)
-
-update_plan_tool = Tool(
-    name="update_plan",
-    description=(
-        "Update one plan step. Mark it in_progress when you start, completed as soon as it "
-        "is done, or blocked with a note if it cannot continue. At most one step may be "
-        "in_progress at a time."
-    ),
-    parameters={
-        "type": "object",
-        "properties": {
-            "step_id": {
-                "type": "string",
-                "description": "Step id from create_plan/get_plan, e.g. step_1",
-            },
-            "status": {
-                "type": "string",
-                "enum": [
-                    "pending",
-                    "in_progress",
-                    "completed",
-                    "blocked",
-                    "skipped",
-                ],
-                "description": "New step status",
-            },
-            "note": {
-                "type": "string",
-                "description": "Optional progress, result, or blocker",
+                "description": "All steps in execution order",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "Short step title"},
+                        "status": {
+                            "type": "string",
+                            "enum": ["pending", "in_progress", "completed", "blocked", "skipped"],
+                            "default": "pending",
+                        },
+                        "note": {"type": "string", "description": "Optional progress, result, or blocker"},
+                    },
+                    "required": ["title", "status"],
+                },
             },
         },
-        "required": ["step_id", "status"],
+        "required": ["steps"],
     },
     call=lambda args, runtime: update_plan(**args, runtime=runtime),
     access_descriptor=_describe_plan_update,
     required_capabilities=frozenset({"plan"}),
 )
 
-get_plan_tool = Tool(
-    name="get_plan",
-    description="Read the current task plan: overall status, revision, and all steps.",
-    parameters={"type": "object", "properties": {}, "required": []},
-    call=lambda args, runtime: get_plan(runtime=runtime),
-    access_descriptor=_describe_plan_read,
-    required_capabilities=frozenset({"plan"}),
-    is_concurrency_safe=lambda args: True,
-)
 
-replan_tool = Tool(
-    name="replan",
-    description=(
-        "Replan when new facts, constraints, or results make the current route "
-        "obsolete. Completed and skipped steps are kept as history, remaining "
-        "unfinished steps are marked skipped, and the new steps are appended."
-    ),
-    parameters={
-        "type": "object",
-        "properties": {
-            "steps": {
-                "type": "array",
-                "items": {"type": "string"},
-                "minItems": 1,
-                "maxItems": 12,
-                "description": "The new steps to execute from here on.",
-            },
-            "reason": {
-                "type": "string",
-                "description": "Why the current route needs to change.",
-            },
-        },
-        "required": ["steps", "reason"],
-    },
-    call=lambda args, runtime: replan(**args, runtime=runtime),
-    access_descriptor=_describe_plan_update,
-    required_capabilities=frozenset({"plan"}),
-)
-
-
-plan_tools: list[Tool] = [
-    create_plan_tool,
-    update_plan_tool,
-    get_plan_tool,
-    replan_tool,
-]
+plan_tools: list[Tool] = [update_plan_tool]

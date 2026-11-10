@@ -157,7 +157,7 @@ def grep_files(
 
 
 list_directory_tool = Tool(
-    name="list_directory",
+    name="ls",
     description="List the immediate children of a known directory. Use glob to find paths recursively and grep to search file contents.",
     parameters={
         "type": "object",
@@ -178,7 +178,7 @@ list_directory_tool = Tool(
 
 glob_tool = Tool(
     name="glob",
-    description="Find files or directories by a workspace-relative glob pattern. Use list_directory for one known directory and grep for content.",
+    description="Find files or directories by a workspace-relative glob pattern. Use ls for one known directory and grep for content.",
     parameters={
         "type": "object",
         "properties": {

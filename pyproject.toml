@@ -24,6 +24,7 @@ dependencies = [
     "Pillow>=10.0",
     "pyyaml>=6",
     "portalocker>=3.2,<4",
+    "pypdf>=5",
 ]
 
 [project.optional-dependencies]

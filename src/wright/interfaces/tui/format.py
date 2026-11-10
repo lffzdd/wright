@@ -81,7 +81,7 @@ def _tool_arg_summary(name: str, args: Any) -> str:
     if "command" in args and isinstance(args["command"], str):
         cmd = args["command"].strip().replace("\n", " ")
         return f"$ {cmd[:36]}…" if len(cmd) > 36 else f"$ {cmd}"
-    if name == "edit_file" and isinstance(args.get("file"), str):
+    if name == "edit" and isinstance(args.get("file"), str):
         return args["file"]
     for key in ("path", "file_path", "file", "TargetFile", "AbsolutePath", "SearchDirectory"):
         if key in args and isinstance(args[key], str):
@@ -134,16 +134,20 @@ def _tool_body(tool: ToolView) -> Any:
     if args:
         if isinstance(args, dict) and "command" in args and isinstance(args["command"], str):
             parts.append(Text(f"$ {args['command']}", style="bold cyan"))
-        elif isinstance(args, dict) and tool.name == "edit_file":
-            old_text = str(args.get("old_text") or "")
-            new_text = str(args.get("new_text") or "")
-            diff = "\n".join(
-                [
-                    *(f"-{line}" for line in old_text.splitlines() or [""]),
-                    *(f"+{line}" for line in new_text.splitlines() or [""]),
-                ]
+        elif isinstance(args, dict) and tool.name == "edit":
+            pairs = (
+                [item for item in args["edits"] if isinstance(item, dict)]
+                if isinstance(args.get("edits"), list) else [args]
             )
-            if old_text or new_text:
+            rows: list[str] = []
+            for item in pairs:
+                old_text = str(item.get("old_text") or "")
+                new_text = str(item.get("new_text") or "")
+                if old_text or new_text:
+                    rows.extend(f"-{line}" for line in old_text.splitlines() or [""])
+                    rows.extend(f"+{line}" for line in new_text.splitlines() or [""])
+            diff = "\n".join(rows)
+            if rows:
                 parts.append(_format_diff(diff))
             else:
                 parts.append(Text("(no changes)", style="dim italic"))

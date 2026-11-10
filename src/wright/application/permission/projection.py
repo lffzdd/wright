@@ -17,9 +17,9 @@ def summarize_policy(
     mode = permission_mode or (settings.mode if settings else "default")
     baseline = PermissionPolicy(PermissionSettings(mode=mode))
     categories = (
-        ("file_read", ("read_file", "list_directory", "glob", "grep", "write_file", "edit_file")),
-        ("file_write", ("write_file", "edit_file")),
-        ("shell", ("execute_command",)),
+        ("file_read", ("read", "ls", "glob", "grep", "write", "edit")),
+        ("file_write", ("write", "edit")),
+        ("shell", ("shell",)),
     )
     groups = [
         (effect, tuple(getattr(settings, effect, ()) or ()))

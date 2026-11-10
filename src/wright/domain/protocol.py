@@ -6,6 +6,7 @@ import re
 from collections.abc import Sequence
 
 from .model.tool import ModelVisibleTool, ToolCall, ToolResult
+from .model.tool_names import LEGACY_TOOL_NAMES
 
 
 def build_tool_results_messages(
@@ -49,4 +50,10 @@ def encode_tools(
             schema["parameters"] = {"type": "object", "properties": {}}
         # Provider adapters own the Chat/Responses-specific function wrapper.
         schemas.append(schema)
+    # Input-only: resumed histories still contain legacy names the model may
+    # repeat. They are never advertised, so they cannot collide in ``tools``.
+    exposed = set(names.values())
+    for legacy, canonical in LEGACY_TOOL_NAMES.items():
+        if canonical in exposed and legacy not in names:
+            names[legacy] = canonical
     return schemas, names

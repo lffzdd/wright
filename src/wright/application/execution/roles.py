@@ -22,9 +22,8 @@ CHILD_EXCLUDED_TOOLS = frozenset({
     "wait_agent",
     "cancel_agent",
     "get_agent_tree",
-    "get_command",
-    "wait_command",
-    "terminate_command",
+    "shell_output",
+    "shell_kill",
     "list_commands",
     "create_schedule",
     "get_schedule",
@@ -66,7 +65,7 @@ def tools_for_role(tools: Sequence[Tool], role: ExecutionRole) -> list[Tool]:
     for tool in tools:
         if tool.name in denied:
             continue
-        if tool.name == "execute_command" and role != "root":
+        if tool.name == "shell" and role != "root":
             selected.append(_foreground_command(tool))
             continue
         selected.append(tool)

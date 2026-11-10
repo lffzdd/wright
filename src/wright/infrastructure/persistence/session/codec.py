@@ -29,6 +29,7 @@ from ....domain.model.session import (
 from ....domain.model.session.errors import CheckpointError
 from ....domain.model.session.run import RunRecord
 from ....domain.model.tool import ArtifactRef, ToolCall, ToolResult
+from ....domain.model.tool_names import canonical_tool_name
 from ...storage.attachments import AttachmentError, AttachmentRecord
 from .links import validate_session_links
 from .recovery import recover_interrupted_tool_calls
@@ -529,7 +530,8 @@ def _deserialize_executions(value: Any) -> dict[str, ToolExecutionRecord]:
         )
         executions[call_id] = ToolExecutionRecord(
             call=ToolCall(
-                name=_string(raw_call.get("name"), "tool call name"),
+                # Older checkpoints carry legacy tool names; readers see one vocabulary.
+                name=canonical_tool_name(_string(raw_call.get("name"), "tool call name")),
                 arguments=arguments,
                 id=stored_id,
             ),

@@ -283,6 +283,7 @@ def build_memory_tools(
         call=bind(get_memory),
         access_descriptor=_describe_memory_read,
         is_concurrency_safe=lambda args: True,
+        defer_to_model=True,
     )
     update_tool = Tool(
         name="update_memory",
@@ -314,6 +315,7 @@ def build_memory_tools(
         },
         call=bind(update_memory),
         access_descriptor=_describe_memory_write,
+        defer_to_model=True,
     )
     delete_tool = Tool(
         name="delete_memory",
@@ -333,6 +335,7 @@ def build_memory_tools(
         },
         call=bind(delete_memory),
         access_descriptor=_describe_memory_write,
+        defer_to_model=True,
     )
     search_tool = Tool(
         name="search_memory",

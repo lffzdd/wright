@@ -2,7 +2,7 @@
 from tests.responses import event, response
 from wright.application.composition.agent_factory import create_agent
 from wright.domain.model.session import Session
-from wright.infrastructure.tools.plan_tools import create_plan_tool
+from wright.infrastructure.tools.plan_tools import update_plan_tool
 
 
 class PlanningLLM:
@@ -18,10 +18,14 @@ class PlanningLLM:
         if self.calls == 1:
             content = response(content=None, calls=[
                         {
-                            "name": "create_plan",
+                            "name": "update_plan",
                             "arguments": {
                                 "objective": "完成复杂任务",
-                                "steps": ["检查", "实现", "验证"],
+                                "steps": [
+                                    {"title": "检查", "status": "pending"},
+                                    {"title": "实现", "status": "pending"},
+                                    {"title": "验证", "status": "pending"},
+                                ],
                             },
                         }
                     ])
@@ -35,7 +39,7 @@ def test_agent_injects_latest_plan_as_ephemeral_reminder(tmp_path):
     session = Session.create("task", tmp_path)
     agent = create_agent(
         llm,
-        [create_plan_tool],
+        [update_plan_tool],
         session,
     )
 

@@ -53,7 +53,7 @@ def edit(journal, root, path="a.txt", text="task\n", call="edit"):
     before = target.read_text() if existed else None
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text)
-    journal.note_text(target, before=before, after=text, existed=existed, call_id=call, tool_name="edit_file")
+    journal.note_text(target, before=before, after=text, existed=existed, call_id=call, tool_name="edit")
 
 
 def service(session):
@@ -112,7 +112,7 @@ def test_shell_capture_of_modified_and_committed_file_is_history(workspace):
     (root / "a.txt").write_text("command task\n")
     git(root, "add", ".")
     git(root, "commit", "-m", "command commit")
-    journal.commit_capture(before, call_id="command", tool_name="execute_command")
+    journal.commit_capture(before, call_id="command", tool_name="shell")
     row = journal.projection()["changes"][0]
     assert row["state"] == "task" and row["committed"] and not row["can_revert"]
     assert "+command task" in journal.patch("a.txt")["patch"]
@@ -174,7 +174,7 @@ def test_new_folder_has_file_patch_and_can_be_undone(workspace):
     before = journal.capture()
     (root / "new" / "deeper").mkdir(parents=True)
     (root / "new" / "deeper" / "created.txt").write_text("created\n")
-    journal.commit_capture(before, call_id="mkdir", tool_name="execute_command")
+    journal.commit_capture(before, call_id="mkdir", tool_name="shell")
     assert [row["path"] for row in journal.projection()["changes"]] == ["new/deeper/created.txt"]
     assert "+created" in journal.patch("new/deeper/created.txt")["patch"]
     assert journal.revert(["new/deeper/created.txt"], confirm=True)["applied"]
@@ -186,7 +186,7 @@ def test_staged_rename_requires_pair_and_preserves_index(workspace):
     before = journal.capture()
     git(root, "mv", "a.txt", "renamed.txt")
     index = git(root, "ls-files", "--stage")
-    journal.commit_capture(before, call_id="mv", tool_name="execute_command")
+    journal.commit_capture(before, call_id="mv", tool_name="shell")
     rows = {row["path"]: row for row in journal.projection()["changes"]}
     assert rows["a.txt"]["rename_with"] == "renamed.txt"
     assert not journal.revert(["a.txt"], confirm=True)["applied"]
@@ -200,7 +200,7 @@ def test_binary_and_large_are_explicit_and_undo_is_disabled(workspace, payload, 
     root, _, journal = workspace
     before = journal.capture()
     (root / "new.bin").write_bytes(payload)
-    journal.commit_capture(before, call_id="binary", tool_name="execute_command")
+    journal.commit_capture(before, call_id="binary", tool_name="shell")
     row = journal.patch("new.bin")
     assert row[expected] and not row["patch"] and not row["can_revert"]
     assert not journal.revert(["new.bin"], confirm=True)["applied"]
@@ -236,7 +236,7 @@ def test_mode_only_task_change_is_visible_and_reverted(workspace):
     root, _, journal = workspace
     before = journal.capture()
     (root / "a.txt").chmod(0o755)
-    journal.commit_capture(before, call_id="chmod", tool_name="execute_command")
+    journal.commit_capture(before, call_id="chmod", tool_name="shell")
     row = journal.patch("a.txt")
     assert "old mode 100644" in row["patch"] and "new mode 100755" in row["patch"]
     assert row["can_revert"] and journal.revert(["a.txt"], confirm=True)["applied"]
@@ -521,7 +521,7 @@ def test_workspace_root_alias_records_real_task_snapshots(workspace, tmp_path, s
     target = alias / "a.txt"
     before = target.read_text()
     target.write_text("task through workspace alias\n")
-    journal.note_text(target, before=before, after="task through workspace alias\n", existed=True, call_id="alias-edit", tool_name="edit_file")
+    journal.note_text(target, before=before, after="task through workspace alias\n", existed=True, call_id="alias-edit", tool_name="edit")
     row = journal.projection()["changes"][0]
     assert row["path"] == "a.txt" and row["can_revert"]
     assert "+task through workspace alias" in journal.patch("a.txt")["patch"]
@@ -538,7 +538,7 @@ def test_parent_symlink_inside_workspace_is_not_hidden_by_alias_resolution(works
     (root / "linked").symlink_to(destination, target_is_directory=True)
     target = root / "linked" / "file.txt"
     target.write_text("after\n")
-    journal.note_text(target, before="before\n", after="after\n", existed=True, call_id="symlink-parent", tool_name="edit_file")
+    journal.note_text(target, before="before\n", after="after\n", existed=True, call_id="symlink-parent", tool_name="edit")
     assert journal.projection()["changes"] == []
     assert (destination / "file.txt").read_text() == "after\n"
 
@@ -548,7 +548,7 @@ def test_internal_symlink_back_to_workspace_root_is_not_an_alias_root(workspace)
     (root / "loop").symlink_to(root, target_is_directory=True)
     target = root / "loop" / "a.txt"
     target.write_text("task through internal loop\n")
-    journal.note_text(target, before="base\n", after="task through internal loop\n", existed=True, call_id="loop-edit", tool_name="edit_file")
+    journal.note_text(target, before="base\n", after="task through internal loop\n", existed=True, call_id="loop-edit", tool_name="edit")
     assert journal.projection()["changes"] == []
 
 
@@ -557,7 +557,7 @@ def test_leaf_symlink_is_not_resolved_to_claim_target_as_task_write(workspace):
     (root / "leaf.txt").symlink_to(root / "a.txt")
     target = root / "leaf.txt"
     target.write_text("task through leaf symlink\n")
-    journal.note_text(target, before="base\n", after="task through leaf symlink\n", existed=True, call_id="leaf-edit", tool_name="edit_file")
+    journal.note_text(target, before="base\n", after="task through leaf symlink\n", existed=True, call_id="leaf-edit", tool_name="edit")
     assert journal.projection()["changes"] == []
 
 
@@ -576,7 +576,7 @@ def test_subdirectory_workspace_committed_state_uses_workspace_relative_object_p
     else:
         before = journal.capture()
         (sub / "inside.txt").unlink()
-        journal.commit_capture(before, call_id="delete", tool_name="execute_command")
+        journal.commit_capture(before, call_id="delete", tool_name="shell")
     assert journal.projection()["changes"][0]["can_revert"]
     git(sub, "add", "inside.txt")
     git(sub, "commit", "-m", "commit subdirectory task")
@@ -596,7 +596,7 @@ def test_session_rename_is_one_logical_patch_with_zero_text_statistics(workspace
     index, head = git(root, "ls-files", "--stage"), git(root, "rev-parse", "HEAD")
     before = journal.capture()
     (root / "a.txt").rename(root / "renamed.txt")
-    journal.commit_capture(before, call_id="rename", tool_name="execute_command")
+    journal.commit_capture(before, call_id="rename", tool_name="shell")
     view = journal.projection()
     rows = {row["path"]: row for row in view["changes"]}
     destination = rows["renamed.txt"]
@@ -620,7 +620,7 @@ def test_session_rename_pair_shares_external_conflict_and_undo_eligibility(works
     root, _, journal = workspace
     before = journal.capture()
     (root / "a.txt").rename(root / "renamed.txt")
-    journal.commit_capture(before, call_id="rename", tool_name="execute_command")
+    journal.commit_capture(before, call_id="rename", tool_name="shell")
     (root / changed_path).write_text("external after rename\n")
     rows = journal.projection()["changes"]
     assert len(rows) == 2

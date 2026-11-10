@@ -91,7 +91,7 @@ describe("draft environment", () => {
 describe("InteractionCard", () => {
   it("shows a specific reason when the server gives one", () => {
     render(<InteractionCard sessionId="s" interaction={{
-      request_id: "r0", kind: "permission", tool_name: "execute_command", command: "pip install x",
+      request_id: "r0", kind: "permission", tool_name: "shell", command: "pip install x",
       reason_code: "permission.network_requested", reason: "network", choices: [],
     }} respond={() => true} />);
     expect(screen.getByText("This command requests network access")).toBeDefined();
@@ -100,7 +100,7 @@ describe("InteractionCard", () => {
   const interaction = {
     request_id: "r1",
     kind: "permission" as const,
-    tool_name: "write_file",
+    tool_name: "write",
     subject: "nested/a.txt",
     reason: "needs approval",
     operation: "file_write",
@@ -154,13 +154,13 @@ describe("InteractionCard", () => {
 
 describe("ToolCard", () => {
   it("marks a failed edit as failed and hides its empty line counts", () => {
-    render(<ToolCard name="edit_file" phase="failed" args={{ file: "src/calc.py" }} output="InputValidationError" />);
+    render(<ToolCard name="edit" phase="failed" args={{ file: "src/calc.py" }} output="InputValidationError" />);
     expect(screen.getByText("failed")).toBeTruthy();
     expect(screen.queryByText("+0")).toBeNull();
   });
 
   it("does not add a failed label beside a shell exit code", () => {
-    render(<ToolCard name="execute_command" phase="failed" args={{ command: "false" }} data={{ exit_code: 1 }} />);
+    render(<ToolCard name="shell" phase="failed" args={{ command: "false" }} data={{ exit_code: 1 }} />);
     expect(screen.getByText("Exit 1")).toBeTruthy();
     expect(screen.queryByText("failed")).toBeNull();
   });
@@ -168,14 +168,14 @@ describe("ToolCard", () => {
 
 describe("ToolCard states", () => {
   it("labels a denied call without expanding it", () => {
-    render(<ToolCard name="execute_command" phase="failed" args={{ command: "rm a" }} data={{ permission: { decision: "deny" } }} output="Permission denied" />);
+    render(<ToolCard name="shell" phase="failed" args={{ command: "rm a" }} data={{ permission: { decision: "deny" } }} output="Permission denied" />);
     expect(screen.getByText("Denied")).toBeTruthy();
     expect(screen.queryByText("failed")).toBeNull();
     expect(screen.queryByText("Permission denied")).toBeNull();
   });
 
   it("collapses a finished call like a reload would, unless the person toggled it", () => {
-    const card = (phase: string) => <ToolCard name="read_file" phase={phase} output="file body" />;
+    const card = (phase: string) => <ToolCard name="read" phase={phase} output="file body" />;
     const { rerender } = render(card("running"));
     expect(screen.getByText("file body")).toBeTruthy();
     rerender(card("succeeded"));
@@ -190,7 +190,7 @@ describe("ToolCard states", () => {
       { name: "src", path: "src", type: "directory", size: null },
       { name: "README.md", path: "README.md", type: "file", size: 2048 },
     ] };
-    render(<ToolCard name="list_directory" phase="succeeded" data={data} output={JSON.stringify(data, null, 2)} />);
+    render(<ToolCard name="ls" phase="succeeded" data={data} output={JSON.stringify(data, null, 2)} />);
     fireEvent.click(screen.getByRole("button"));
     const entries = [...document.querySelectorAll(".dir-entry")].map((entry) => entry.textContent);
     expect(entries).toEqual(["src/", "README.md2.0 KB"]);
@@ -211,21 +211,21 @@ describe("ToolCard states", () => {
   });
 
   it("shows read file content with a line-number gutter", () => {
-    render(<ToolCard name="read_file" phase="succeeded" args={{ path: "a.py" }} data={{ content: "10|def f():\n11|    return 1\n" }} />);
+    render(<ToolCard name="read" phase="succeeded" args={{ path: "a.py" }} data={{ content: "10|def f():\n11|    return 1\n" }} />);
     fireEvent.click(screen.getByRole("button"));
     expect([...document.querySelectorAll(".cv-num")].map((node) => node.textContent)).toEqual(["10", "11"]);
     expect(screen.getByText("def f():")).toBeTruthy();
   });
 
   it("puts the shell command above its output", () => {
-    render(<ToolCard name="execute_command" phase="running" args={{ command: "pytest -q" }} output="collecting" />);
+    render(<ToolCard name="shell" phase="running" args={{ command: "pytest -q" }} output="collecting" />);
     expect(document.querySelector(".tool-card-body .term-cmd")?.textContent).toBe("$ pytest -q");
   });
 
   it("shows what a search looked for and a quiet success for exit 0", () => {
     render(<>
       <ToolCard name="grep" phase="succeeded" args={{ pattern: "host_busy", path: "src/wright" }} output="hit" />
-      <ToolCard name="execute_command" phase="succeeded" args={{ command: "true" }} data={{ exit_code: 0 }} />
+      <ToolCard name="shell" phase="succeeded" args={{ command: "true" }} data={{ exit_code: 0 }} />
     </>);
     expect(screen.getByText("host_busy")).toBeTruthy();
     // Success is the default; only failures earn a label.
@@ -234,7 +234,7 @@ describe("ToolCard states", () => {
   });
 
   it("hides line counts until an edit has been applied", () => {
-    render(<ToolCard name="edit_file" phase="awaiting_approval" args={{ file: "a.py" }} />);
+    render(<ToolCard name="edit" phase="awaiting_approval" args={{ file: "a.py" }} />);
     expect(screen.queryByText("+0")).toBeNull();
   });
 });

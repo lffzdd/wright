@@ -225,6 +225,114 @@ class PlanManager:
             self.revision += 1
             return self._snapshot_unlocked()
 
+    def apply_steps(self, steps: list[dict], *, objective: str | None = None) -> dict:
+        """Apply a whole submitted step list atomically.
+
+        Submitted steps are matched to existing ones by title, in order, so
+        matched steps keep their ids and timestamps. A finished step cannot
+        change status. Unfinished steps left out of the list become skipped
+        and stay as history ahead of the submitted route. The ordering rule of
+        ``update_step`` holds over the result: nothing may be active, blocked or
+        completed while an earlier step is still open. With no plan, or a
+        completed one, the list starts a new plan and needs an objective.
+        """
+        items = self._clean_items(steps)
+        cleaned_objective = (
+            self._clean_text(objective, "objective", max_length=MAX_OBJECTIVE_LENGTH)
+            if objective is not None else None
+        )
+        with self._lock:
+            fresh = not self.steps or self._derive_status() == "completed"
+            if fresh and cleaned_objective is None:
+                raise PlanError("objective is required to start a plan", code="plan.field_required", field="objective")
+            existing = [] if fresh else [PlanStep(**step.to_dict()) for step in self.steps]
+            counter = 0 if fresh else self._step_counter
+            now = time.time()
+            unmatched = list(existing)
+            route: list[PlanStep] = []
+            for title, status, note in items:
+                step = next((item for item in unmatched if item.title == title), None)
+                if step is None:
+                    counter += 1
+                    step = PlanStep(id=f"step_{counter}", title=title)
+                else:
+                    unmatched.remove(step)
+                    if step.status in _TERMINAL_STATUSES and status != step.status:
+                        raise PlanError(
+                            f"{step.id} is already terminal ({step.status}) and cannot become {status}.",
+                            code="plan.terminal_step", step_id=step.id, status=step.status, next_status=status,
+                        )
+                self._transition(step, status, now)
+                if note is not None:
+                    step.note = note
+                route.append(step)
+            for step in unmatched:
+                if step.status not in _TERMINAL_STATUSES:
+                    self._transition(step, "skipped", now)
+                    step.note = (f"{step.note}; Removed from plan" if step.note else "Removed from plan")[:MAX_NOTE_LENGTH]
+            final = unmatched + route
+            if len(final) > MAX_TOTAL_PLAN_STEPS:
+                raise PlanError(
+                    f"Plan history plus new steps cannot exceed {MAX_TOTAL_PLAN_STEPS}. Create a new plan or shorten the route.",
+                    code="plan.too_long", limit=MAX_TOTAL_PLAN_STEPS,
+                )
+            open_step: PlanStep | None = None
+            for step in final:
+                if step.status in {"in_progress", "completed", "blocked"} and open_step is not None:
+                    raise PlanError(
+                        f"Predecessor {open_step.id} of {step.id} is not completed or skipped. Follow the plan order.",
+                        code="plan.predecessor", step_id=step.id, predecessor_id=open_step.id,
+                    )
+                if step.status not in _TERMINAL_STATUSES and open_step is None:
+                    open_step = step
+            before = self._snapshot_unlocked()
+            if cleaned_objective is not None:
+                self.objective = cleaned_objective
+            self.steps = final
+            self._step_counter = counter
+            if fresh or self._snapshot_unlocked() != before:
+                self.revision += 1
+            return self._snapshot_unlocked()
+
+    @staticmethod
+    def _transition(step: PlanStep, status: PlanStepStatus, now: float) -> None:
+        if step.status == status:
+            return
+        if status == "in_progress" and step.started_at is None:
+            step.started_at = now
+        if status in _TERMINAL_STATUSES:
+            step.ended_at = max(now, step.started_at or now)
+        step.status = status
+
+    @classmethod
+    def _clean_items(cls, values: object) -> list[tuple[str, PlanStepStatus, str | None]]:
+        if not isinstance(values, list):
+            raise PlanError("steps must be an array", code="plan.steps_type")
+        if not values:
+            raise PlanError("steps cannot be empty", code="plan.steps_empty")
+        if len(values) > MAX_PLAN_STEPS:
+            raise PlanError(f"steps cannot exceed {MAX_PLAN_STEPS} items", code="plan.steps_limit", limit=MAX_PLAN_STEPS)
+        items = []
+        for index, value in enumerate(values):
+            if not isinstance(value, dict):
+                raise PlanError("steps must be an array", code="plan.steps_type")
+            title = cls._clean_text(value.get("title"), f"steps[{index}].title", max_length=MAX_STEP_TITLE_LENGTH)
+            status = value.get("status", "pending")
+            if status not in _VALID_STEP_STATUSES:
+                raise PlanError(
+                    "Invalid step status. It must be pending, in_progress, completed, blocked, or skipped.",
+                    code="plan.bad_status",
+                )
+            note = cls._clean_note(value["note"]) if value.get("note") is not None else None
+            items.append((title, status, note))
+        active = [title for title, status, _note in items if status == "in_progress"]
+        if len(active) > 1:
+            raise PlanError(
+                f"{active[0]} is in progress. Finish, block, or pause it before starting {active[1]}.",
+                code="plan.step_busy", active_id=active[0], step_id=active[1],
+            )
+        return items
+
     def snapshot(self) -> dict:
         """返回可序列化快照，调用方不能借此修改内部状态。"""
         with self._lock:

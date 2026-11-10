@@ -168,7 +168,12 @@ function isNumbered(text: string): boolean {
   return lines.length > 0 && lines.every((line) => /^\d+\|/.test(line));
 }
 
-/** Renders list_directory's structured entries as a tree, one entry per line. */
+/** Directory-listing tools: `ls`, plus the legacy `list_directory` in older sessions. */
+function isDirectoryTool(name: string): boolean {
+  return name.toLowerCase() === "ls" || /directory/i.test(name);
+}
+
+/** Renders ls's structured entries as a tree, one entry per line. */
 function directoryListing(source: Record<string, unknown> | null | undefined): string | null {
   const entries = source && Array.isArray(source.entries) ? source.entries as DirectoryEntry[] : null;
   if (!entries) return null;
@@ -193,7 +198,7 @@ function directoryTree(text: string): string {
 
 function compactToolBody(name: string, body: string, result?: Record<string, unknown> | null): string {
   const trimmed = body.trim();
-  if (/directory/i.test(name)) {
+  if (isDirectoryTool(name)) {
     const parsed = result ?? (() => {
       try { return JSON.parse(trimmed) as Record<string, unknown>; } catch { return null; }
     })();
@@ -225,9 +230,9 @@ function exitCode(result: Record<string, unknown> | null | undefined, data: unkn
 export function toolFamily(name: string, kind?: string): "shell" | "edit" | "read" | "tool" {
   const normalized = name.toLowerCase();
   if (kind === "shell" || normalized === "execute_command" || normalized === "shell") return "shell";
-  if (kind === "edit" || ["write_file", "edit_file", "search_replace", "apply_patch", "strreplace"].includes(normalized)) return "edit";
-  if (kind === "tool" && (normalized.startsWith("read") || normalized.includes("directory") || normalized === "grep")) return "read";
-  if (normalized.startsWith("read") || normalized.includes("directory")) return "read";
+  if (kind === "edit" || ["write", "edit", "write_file", "edit_file", "search_replace", "apply_patch", "strreplace"].includes(normalized)) return "edit";
+  if (kind === "tool" && (normalized.startsWith("read") || isDirectoryTool(normalized) || normalized === "grep")) return "read";
+  if (normalized.startsWith("read") || isDirectoryTool(normalized)) return "read";
   return kind === "edit" ? "edit" : kind === "shell" ? "shell" : "tool";
 }
 
@@ -240,10 +245,12 @@ export function toolCategory(name: string, kind?: string): StepCategory {
   if (family === "edit") return "edits";
   const lowered = name.toLowerCase();
   if (lowered.startsWith("web_") || lowered.startsWith("http")) return "web";
+  // Follow-ups on a background command: shell_output, shell_kill, list_commands (and older names).
+  if (lowered.startsWith("shell_") || /_commands?$/.test(lowered)) return "commands";
   // Memory and knowledge lookups are recall, not code search, even when named "search_*".
   if (/memory|episode|knowledge/.test(lowered)) return "memory";
   if (lowered.includes("plan")) return "plans";
-  if (lowered.includes("directory")) return "directories";
+  if (isDirectoryTool(lowered)) return "directories";
   if (/grep|glob|search/.test(lowered)) return "searches";
   if (lowered.startsWith("read")) return "reads";
   return "tools";
@@ -321,7 +328,7 @@ export function ReasoningRow({ text, durationMs, enter }: { text: string; durati
   return <SummaryRow text={text} durationMs={durationMs} enter={enter} />;
 }
 
-/** Number of entries a list_directory result reports, from its data. */
+/** Number of entries an ls result reports, from its data. */
 function directoryEntryCount(result?: Record<string, unknown> | null, data?: unknown): number {
   const candidates = [data, result?.data, result];
   for (const candidate of candidates) {
@@ -452,7 +459,7 @@ export function ToolCard({
   const bodyLines = body.split("\n").filter(Boolean);
   const added = family === "edit" && typeof metricSource?.additions === "number" ? metricSource.additions : family === "edit" ? bodyLines.filter((line) => line.startsWith("+")).length : 0;
   const deleted = family === "edit" && typeof metricSource?.deletions === "number" ? metricSource.deletions : family === "edit" ? bodyLines.filter((line) => line.startsWith("-")).length : 0;
-  const directoryCount = family === "read" && /directory/i.test(name)
+  const directoryCount = family === "read" && isDirectoryTool(name)
     ? directoryEntryCount(result, data) || (typeof result?.output === "string" && !result.output.trim().startsWith("{") ? bodyLines.length : 0)
     : 0;
   const testFailed = family === "shell" && code !== null && code !== 0 && looksLikeTestFailure(body);

@@ -63,7 +63,7 @@ def executor(setup, handler=None):
 
 
 def write(dispatch, path, identity="call"):
-    return dispatch.execute([ToolCall("write_file", {"file": str(path), "content": "written"}, identity)])[0].result
+    return dispatch.execute([ToolCall("write", {"file": str(path), "content": "written"}, identity)])[0].result
 
 
 @pytest.mark.parametrize("lifetime", ["session", "project", "user"])
@@ -78,15 +78,15 @@ def test_remembered_file_is_shared_by_file_tools_but_never_siblings(setup, tmp_p
 
     dispatch = executor(setup, approve)
     assert write(dispatch, path).ok
-    assert dispatch.execute([ToolCall("read_file", {"file": str(path)}, "read")])[0].result.ok
-    assert dispatch.execute([ToolCall("edit_file", {"file": str(path), "old_text": "written", "new_text": "edited"}, "edit")])[0].result.ok
+    assert dispatch.execute([ToolCall("read", {"file": str(path)}, "read")])[0].result.ok
+    assert dispatch.execute([ToolCall("edit", {"file": str(path), "old_text": "written", "new_text": "edited"}, "edit")])[0].result.ok
     assert len(approvals) == 1
     row = list_grants(session, permissions)["grants"][0]
     assert row["tool"] == "*" and row["lifetime"] == lifetime
     assert not write(dispatch, path.with_name("b.txt"), "sibling").ok
     assert not path.with_name("b.txt").exists()
     permissions.revoke(session, row["id"], lifetime, list_grants(session, permissions)["version"])
-    assert not dispatch.execute([ToolCall("edit_file", {"file": str(path), "old_text": "edited", "new_text": "escaped"}, "revoked")])[0].result.ok
+    assert not dispatch.execute([ToolCall("edit", {"file": str(path), "old_text": "edited", "new_text": "escaped"}, "revoked")])[0].result.ok
     assert path.read_text() == "edited"
 
 
@@ -114,12 +114,12 @@ def test_configured_restrictions_report_user_and_project_scope(setup):
 
     session, service, _ = setup
     service.snapshot(session)
-    for path, tool in ((user_permission_settings_path(), "write_file"), (FilePermissionRepository(session.project_root).project_path, "edit_file")):
+    for path, tool in ((user_permission_settings_path(), "write"), (FilePermissionRepository(session.project_root).project_path, "edit")):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"version": 2, "permissions": {"deny": [tool]}}), encoding="utf-8")
     groups = {group["operation"]: group for group in list_grants(session, service)["effective_policy"]}
     scopes = {rule["tool"]: rule["scope"] for rule in groups["file_write"]["rules"] if rule["effect"] == "deny"}
-    assert scopes == {"write_file": "user", "edit_file": "project"}
+    assert scopes == {"write": "user", "edit": "project"}
 
 
 @pytest.mark.parametrize("lifetime", ["session", "project", "user"])
@@ -157,7 +157,7 @@ def test_external_read_only_grant_never_grants_writes(setup, tmp_path, mode, lif
     session.authorization.set_modes(permission_mode=mode, interaction_mode=session.authorization.interaction_mode)
     asked = []
     dispatch = executor(setup, lambda request: asked.append(request) or PermissionResponse("deny"))
-    assert dispatch.execute([ToolCall("read_file", {"file": str(outside / "a.txt")}, "read")])[0].result.ok
+    assert dispatch.execute([ToolCall("read", {"file": str(outside / "a.txt")}, "read")])[0].result.ok
     assert not write(dispatch, outside / "a.txt").ok
     # Plan mode refuses before asking; every other mode asks instead of auto-allowing.
     assert len(asked) == (0 if mode == "plan" else 1)
@@ -249,9 +249,9 @@ def test_legacy_permission_data_is_rejected(setup):
     from wright.domain.policy import PermissionSettings
     session, _, _ = setup
     with pytest.raises(ValueError, match="version"):
-        PermissionSettings.from_dict({"permissions": {"allow": ["write_file"]}})
+        PermissionSettings.from_dict({"permissions": {"allow": ["write"]}})
     data = serialize_session(session)
-    data["session"]["authorization"]["rules"] = ["write_file"]
+    data["session"]["authorization"]["rules"] = ["write"]
     with pytest.raises(CheckpointError):
         deserialize_session(data)
 
@@ -281,7 +281,7 @@ def test_reference_read_obeys_deny_and_protected_resources(setup):
     secret = session.workspace_dir / "secret"
     secret.write_text("hidden", encoding="utf-8")
     from wright.infrastructure.config.permission_store import _update_settings
-    _update_settings(lambda data: data["permissions"].update(deny=["read_file(secret)"]), None)
+    _update_settings(lambda data: data["permissions"].update(deny=["read(secret)"]), None)
     with pytest.raises(PermissionError):
         service.read_file(session, backend, secret, max_bytes=100)
 

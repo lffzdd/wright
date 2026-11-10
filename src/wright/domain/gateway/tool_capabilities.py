@@ -34,6 +34,13 @@ class CommandOperations:
 
 
 @dataclass(frozen=True)
+class ArtifactOperations:
+    """Store tool output bytes (images) so the next model request can show them."""
+
+    register: Callable[..., Any]
+
+
+@dataclass(frozen=True)
 class AgentOperations:
     get: Callable[..., Any]
     wait: Callable[..., Any]
@@ -93,6 +100,7 @@ class ToolCapabilities:
     scheduling: SchedulingOperations | None = None
     delegation: DelegationOperations | None = None
     loop_registry: LoopOperations | None = None
+    artifacts: ArtifactOperations | None = None
 
     def restricted(self, required: frozenset[str]) -> ToolCapabilities:
         """Return a call-local view containing only declared operations."""
@@ -105,11 +113,13 @@ class ToolCapabilities:
             scheduling=self.scheduling if "scheduling" in required else None,
             delegation=self.delegation if "delegation" in required else None,
             loop_registry=self.loop_registry if "loop" in required else None,
+            artifacts=self.artifacts if "artifacts" in required else None,
         )
 
 
 __all__ = [
     "AgentOperations",
+    "ArtifactOperations",
     "CommandOperations",
     "DelegationOperations",
     "RunScope",

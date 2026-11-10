@@ -18,21 +18,26 @@ def _commands(runtime: ToolRuntime | None):
     return runtime.capabilities.commands
 
 
-def get_command(command_id: str, offset: int = 0, limit: int = 8000, runtime: ToolRuntime | None = None) -> ToolResult:
+def shell_output(
+    command_id: str,
+    offset: int = 0,
+    limit: int = 8000,
+    timeout: float | None = None,
+    runtime: ToolRuntime | None = None,
+) -> ToolResult:
+    """Read one output page; with timeout, first wait up to that long for the end."""
     try:
-        view = _commands(runtime).get(command_id, offset=offset, limit=limit)
-    except (ExecutionNotFound, ExecutionKindMismatch, TypeError, ValueError) as exc:
-        return ToolResult.fail(str(exc))
-    return ToolResult.success(view)
-
-
-def wait_command(command_id: str, timeout: float = 60, runtime: ToolRuntime | None = None) -> ToolResult:
-    try:
-        view = _commands(runtime).wait(
-            command_id,
-            timeout=timeout,
-            cancellation_check=runtime.is_cancelled if runtime else None,
-        )
+        commands = _commands(runtime)
+        if timeout is not None:
+            view = commands.wait(
+                command_id,
+                timeout=timeout,
+                offset=offset,
+                limit=limit,
+                cancellation_check=runtime.is_cancelled if runtime else None,
+            )
+        else:
+            view = commands.get(command_id, offset=offset, limit=limit)
     except ExecutionWaitCancelled as exc:
         raise ToolCancelledError(str(exc)) from exc
     except (ExecutionNotFound, ExecutionKindMismatch, TypeError, ValueError) as exc:
@@ -40,7 +45,7 @@ def wait_command(command_id: str, timeout: float = 60, runtime: ToolRuntime | No
     return ToolResult.success(view)
 
 
-def terminate_command(
+def shell_kill(
     command_id: str,
     reason: str = "terminated by tool",
     runtime: ToolRuntime | None = None,
@@ -68,49 +73,38 @@ def list_commands(
     return ToolResult.success(page)
 
 
-get_command_tool = Tool(
-    name="get_command",
-    description="Read one page of a shell command's output and its current status.",
+shell_output_tool = Tool(
+    name="shell_output",
+    description=(
+        "Read one page of a background shell command's output and its status. "
+        "Set timeout (seconds) to wait for it to end first; a timeout does not "
+        "terminate it. Continue large output with offset=next_offset."
+    ),
     parameters={
         "type": "object",
         "properties": {
             "command_id": {"type": "string"},
             "offset": {"type": "integer", "default": 0, "minimum": 0},
             "limit": {"type": "integer", "default": 8000, "minimum": 1},
+            "timeout": {"type": "number", "minimum": 0, "description": "Seconds to wait for the command to end before reading; omit to read now"},
         },
         "required": ["command_id"],
     },
-    call=lambda args, runtime: get_command(**args, runtime=runtime),
-    required_capabilities=frozenset({"commands"}),
-    access_descriptor=lambda _: ToolAccess.internal_read(),
-)
-
-wait_command_tool = Tool(
-    name="wait_command",
-    description="Wait until a shell command ends, or until timeout. Timeout does not terminate it.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "command_id": {"type": "string"},
-            "timeout": {"type": "number", "default": 60, "minimum": 0},
-        },
-        "required": ["command_id"],
-    },
-    call=lambda args, runtime: wait_command(**args, runtime=runtime),
+    call=lambda args, runtime: shell_output(**args, runtime=runtime),
     required_capabilities=frozenset({"commands"}),
     access_descriptor=lambda _: ToolAccess.internal_read(),
     timeout_owner="tool",
 )
 
-terminate_command_tool = Tool(
-    name="terminate_command",
+shell_kill_tool = Tool(
+    name="shell_kill",
     description="Terminate a shell command and the process group this execution owns.",
     parameters={
         "type": "object",
         "properties": {"command_id": {"type": "string"}},
         "required": ["command_id"],
     },
-    call=lambda args, runtime: terminate_command(**args, runtime=runtime),
+    call=lambda args, runtime: shell_kill(**args, runtime=runtime),
     required_capabilities=frozenset({"commands"}),
     access_descriptor=lambda _: ToolAccess(frozenset({"execution_control"})),
 )
@@ -137,22 +131,21 @@ list_commands_tool = Tool(
     call=lambda args, runtime: list_commands(**args, runtime=runtime),
     required_capabilities=frozenset({"commands"}),
     access_descriptor=lambda _: ToolAccess.internal_read(),
+    defer_to_model=True,
 )
 
 command_tools = [
-    get_command_tool,
-    wait_command_tool,
-    terminate_command_tool,
+    shell_output_tool,
+    shell_kill_tool,
     list_commands_tool,
 ]
 
 __all__ = [
-    "get_command",
-    "get_command_tool",
+    "command_tools",
     "list_commands",
     "list_commands_tool",
-    "terminate_command",
-    "terminate_command_tool",
-    "wait_command",
-    "wait_command_tool",
+    "shell_kill",
+    "shell_kill_tool",
+    "shell_output",
+    "shell_output_tool",
 ]

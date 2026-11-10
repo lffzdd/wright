@@ -19,10 +19,10 @@ def test_content_and_multiple_calls_preserve_provider_ids_and_arguments():
         calls=[
             {
                 "id": "provider_a",
-                "name": "read_file",
+                "name": "read",
                 "arguments": {"file": "中文.txt"},
             },
-            {"id": "provider_b", "name": "read_file", "arguments": {"file": "b.txt"}},
+            {"id": "provider_b", "name": "read", "arguments": {"file": "b.txt"}},
         ],
     )
     turn = parse_turn(reply)
@@ -38,7 +38,7 @@ def test_content_and_multiple_calls_preserve_provider_ids_and_arguments():
     "arguments", ['{"file":"a"', '{"file":"a",}', "[]", "null", '"x"']
 )
 def test_invalid_arguments_are_never_repaired(arguments):
-    reply = response(calls=[{"name": "write_file"}])
+    reply = response(calls=[{"name": "write"}])
     reply.tool_calls[0]["function"]["arguments"] = arguments
     with pytest.raises(TurnAbort):
         parse_turn(reply)
@@ -46,7 +46,7 @@ def test_invalid_arguments_are_never_repaired(arguments):
 
 @pytest.mark.parametrize("finish", ["length", "content_filter", "incomplete"])
 def test_partial_tool_calls_cannot_execute(finish):
-    reply = response(calls=[{"name": "write_file"}])
+    reply = response(calls=[{"name": "write"}])
     reply.finish_reason = finish
     with pytest.raises(TurnAbort, match="did not complete"):
         parse_turn(reply)

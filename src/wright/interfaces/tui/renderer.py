@@ -160,7 +160,7 @@ class TUIRenderer(Renderer):
         with self._lock:
             running = [
                 block for block in self.tools
-                if block.status == "running" and block.name == "execute_command"
+                if block.status == "running" and block.name == "shell"
             ]
             if not running:
                 return

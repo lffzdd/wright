@@ -27,7 +27,7 @@ it("offers the narrowest useful session rule as a one-click choice", async () =>
     { id: "allow_session_directory_write", label: "Session", scope: "/project/src", persistence: "", lifetime: "session", resource_kind: "directory", operations: ["file_read", "file_write"] },
     ...(choices ?? []).slice(1),
   ];
-  render(<InteractionCard sessionId="s" root="/project" interaction={{ request_id: "r", kind: "permission", tool_name: "edit_file", operation: "file_write", targets: ["/project/src/a.ts"], choices: sessionChoices }} respond={respond} />);
+  render(<InteractionCard sessionId="s" root="/project" interaction={{ request_id: "r", kind: "permission", tool_name: "edit", operation: "file_write", targets: ["/project/src/a.ts"], choices: sessionChoices }} respond={respond} />);
   expect(screen.getByText("Wright wants to change a file")).toBeTruthy();
   expect(document.querySelector(".perm-target")?.textContent).toBe("src/a.ts");
   fireEvent.click(screen.getByRole("button", { name: /Allow edits to everything in src\/ for this session/ }));
@@ -37,7 +37,7 @@ it("offers the narrowest useful session rule as a one-click choice", async () =>
 it("keeps outside-project access narrow: the quick rule is the single file", async () => {
   const respond = vi.fn().mockResolvedValue(true);
   render(<InteractionCard sessionId="s" root="/project" interaction={{
-    request_id: "r", kind: "permission", tool_name: "read_file", operation: "file_read", targets: ["/etc/hosts"], risk_flags: ["reads_files", "path_outside_scope"],
+    request_id: "r", kind: "permission", tool_name: "read", operation: "file_read", targets: ["/etc/hosts"], risk_flags: ["reads_files", "path_outside_scope"],
     choices: [
       { id: "allow_once", label: "Once", scope: "", persistence: "", lifetime: "once" },
       { id: "allow_session_rule", label: "", scope: "/etc/hosts", persistence: "", lifetime: "session", resource_kind: "file", operations: ["file_read"] },
@@ -80,7 +80,7 @@ it("offers higher directories in one row and saves the picked level", async () =
   const respond = vi.fn().mockResolvedValue(true);
   const level = (id: string, scope: string) => ({ id, label: "", scope, persistence: "", lifetime: "session", resource_kind: "directory", operations: ["file_read"] });
   render(<InteractionCard sessionId="s" root="/project" interaction={{
-    request_id: "r", kind: "permission", tool_name: "read_file", operation: "file_read", targets: ["/srv/shared/lib/a.py"], risk_flags: ["path_outside_scope"],
+    request_id: "r", kind: "permission", tool_name: "read", operation: "file_read", targets: ["/srv/shared/lib/a.py"], risk_flags: ["path_outside_scope"],
     choices: [
       { id: "allow_once", label: "Once", scope: "", persistence: "", lifetime: "once" },
       { id: "allow_session_rule", label: "", scope: "/srv/shared/lib/a.py", persistence: "", lifetime: "session", resource_kind: "file", operations: ["file_read"] },
@@ -132,7 +132,7 @@ it("adds explicit resource access with project duration by default", async () =>
 });
 
 const shellInteraction: Interaction = {
-  request_id: "shell", kind: "permission", tool_name: "execute_command", command: "echo hello", operation: "shell",
+  request_id: "shell", kind: "permission", tool_name: "shell", command: "echo hello", operation: "shell",
   risk_level: "review", risk_flags: ["executes_shell"], cwd: "/project",
   choices: [
     { id: "allow_once", label: "Once", scope: "This invocation only", persistence: "", lifetime: "once" },
@@ -147,7 +147,7 @@ const readyGrants: Grants = { ...grants, sandbox: { available: true, state: "rea
 
 it("keeps file target and content separate, including long paths and a shortened preview", () => {
   const path = "/external/" + "long-directory/".repeat(20) + "result.txt";
-  const { container } = render(<InteractionCard sessionId="s" interaction={{ request_id: "file", kind: "permission", tool_name: "write_file", operation: "file_write", subject: path, targets: [path, path], preview: "new file content", preview_truncated: true, choices }} respond={vi.fn()} />);
+  const { container } = render(<InteractionCard sessionId="s" interaction={{ request_id: "file", kind: "permission", tool_name: "write", operation: "file_write", subject: path, targets: [path, path], preview: "new file content", preview_truncated: true, choices }} respond={vi.fn()} />);
   expect(container.querySelector(".perm-target")?.textContent).toBe(path);
   expect(container.querySelector(".permission-preview pre")?.textContent).toBe("new file content");
   expect(screen.getByText("Wright wants to change a file")).toBeTruthy();

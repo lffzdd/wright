@@ -149,7 +149,7 @@ class CommandExecution:
         while not live.done.is_set():
             if is_cancelled():
                 record.cancel_requested = True
-                record.cancel_reason = "execute_command cancelled"
+                record.cancel_reason = "shell cancelled"
                 process.terminate()
                 live.done.wait(timeout=2)
                 self._drop_unpublished(command_id, live)
@@ -176,8 +176,8 @@ class CommandExecution:
             data = self._background_payload(command_id, execution, timed_out=True)
             data["message"] = (
                 f"Command exceeded {timeout}s and is running in the background "
-                f"as command_id {command_id}. Use get_command, wait_command, "
-                "list_commands, or terminate_command."
+                f"as command_id {command_id}. Use shell_output (set timeout to wait) "
+                "or shell_kill."
             )
             data["output_so_far"] = data.pop("output")
             return CommandOutcome(True, data=data)
@@ -351,7 +351,7 @@ class CommandExecution:
         return {
             "type": "task_notification",
             "follow_up": (
-                "Use get_command, wait_command, list_commands, or terminate_command "
+                "Use shell_output (set timeout to wait) or shell_kill "
                 "with command_id."
             ),
             "task": body,
@@ -589,7 +589,7 @@ class CommandExecution:
             "timed_out": timed_out,
             "message": (
                 f"Command is running in the background as command_id {command_id}. "
-                "Use get_command, wait_command, list_commands, or terminate_command."
+                "Use shell_output (set timeout to wait) or shell_kill."
             ),
             **self._output_fields(page),
             **self._cwd_payload(execution),

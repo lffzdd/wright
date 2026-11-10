@@ -22,3 +22,5 @@ class RuntimeServices:
     durable_store: Any = None
     job_scheduler: JobScheduler | None = None
     loop_registry: SessionLoopRegistry | None = None
+    # Managed artifact store; tool output images are registered here.
+    artifact_store: Any = None

@@ -64,7 +64,7 @@ def _install(directory: Path, *, description: str, body: str) -> SkillRegistry:
         name="release-check",
         description=description,
         body=body,
-        allowed_tools=["execute_command"],
+        allowed_tools=["shell"],
     )
     return SkillRegistry(directory)
 
@@ -98,7 +98,7 @@ def test_production_loader_is_resident_and_first_request_can_load(tmp_path: Path
     assert "release-check" in _catalogs(llm.seen_messages[0])[0]
     assert "release deployment checks" in _catalogs(llm.seen_messages[0])[0]
     assert "load_skill" in _names(llm.seen_tools[0])
-    assert "execute_command" not in _names(llm.seen_tools[1])
+    assert "shell" not in _names(llm.seen_tools[1])
     assert "STEP-KEEP-RELEASE-GATE" in json.dumps(llm.seen_messages[1], ensure_ascii=False)
 
 

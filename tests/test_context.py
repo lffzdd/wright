@@ -240,7 +240,7 @@ def test_context_keeps_tool_call_result_order_when_folding(tmp_path: Path):
         "",
         {"tool_calls": []},
         "tool_calls",
-        [ToolCall("read_file", {"path": "a"}, "call_a")],
+        [ToolCall("read", {"path": "a"}, "call_a")],
     )
     session.record_tool_execution("call_a", ToolResult.success("x" * 8_000))
     for result in session.tool_executions.values():

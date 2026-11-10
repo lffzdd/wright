@@ -23,10 +23,10 @@ def test_a_model_error_ends_the_turn_not_the_session(stack, console):
 
 
 @pytest.mark.parametrize(("case", "reply"), [
-    ("empty_args", {"tool_calls": [tool_call("b1", "get_plan", "")]}),
-    ("repeat_id_name", {"tool_calls": [tool_call("c1", "list_directory", {})], "quirk": "repeat_id_name"}),
-    ("no_index", {"tool_calls": [tool_call("i1", "read_file", {"file": "hello.txt"}),
-                                 tool_call("i2", "list_directory", {})], "quirk": "no_index"}),
+    ("empty_args", {"tool_calls": [tool_call("b1", "ls", "")]}),
+    ("repeat_id_name", {"tool_calls": [tool_call("c1", "ls", {})], "quirk": "repeat_id_name"}),
+    ("no_index", {"tool_calls": [tool_call("i1", "read", {"file": "hello.txt"}),
+                                 tool_call("i2", "ls", {})], "quirk": "no_index"}),
 ])
 def test_openai_compatible_stream_variants(stack, console, case, reply):
     console.new_task()
@@ -40,8 +40,8 @@ def test_openai_compatible_stream_variants(stack, console, case, reply):
 def test_live_timeline_matches_history(stack, console):
     console.new_task()
     stack.script([
-        {"content": "Step one narration.", "tool_calls": [tool_call("m1", "list_directory", {})]},
-        {"content": "Step two narration.", "tool_calls": [tool_call("m2", "read_file", {"file": "hello.txt"})]},
+        {"content": "Step one narration.", "tool_calls": [tool_call("m1", "ls", {})]},
+        {"content": "Step two narration.", "tool_calls": [tool_call("m2", "read", {"file": "hello.txt"})]},
         {"content": "Final summary.", "finish_reason": "stop"},
     ])
     console.send("multi step", wait_ms=5000)
@@ -89,9 +89,9 @@ def test_finished_sessions_never_block_a_new_task(stack, console):
 def test_one_session_rule_covers_repeated_edits(stack, console):
     console.new_task()
     stack.script([
-        {"content": "Reading.", "tool_calls": [tool_call("e0", "read_file", {"file": "src/calc.py"})]},
-        {"content": "Editing.", "tool_calls": [tool_call("e1", "edit_file", {"file": "src/calc.py", "old_text": "a - b", "new_text": "a + b"})]},
-        {"content": "Again.", "tool_calls": [tool_call("e2", "edit_file", {"file": "src/calc.py", "old_text": "a + b", "new_text": "b + a"})]},
+        {"content": "Reading.", "tool_calls": [tool_call("e0", "read", {"file": "src/calc.py"})]},
+        {"content": "Editing.", "tool_calls": [tool_call("e1", "edit", {"file": "src/calc.py", "old_text": "a - b", "new_text": "a + b"})]},
+        {"content": "Again.", "tool_calls": [tool_call("e2", "edit", {"file": "src/calc.py", "old_text": "a + b", "new_text": "b + a"})]},
         {"content": "Both edits done.", "finish_reason": "stop"},
     ])
     console.send("edit twice", wait_ms=4000)
@@ -117,7 +117,7 @@ def test_reading_outside_the_project_makes_no_failing_requests(stack, console):
     try:
         console.new_task()
         stack.script([
-            {"tool_calls": [tool_call("o1", "read_file", {"file": "/etc/hostname"})]},
+            {"tool_calls": [tool_call("o1", "read", {"file": "/etc/hostname"})]},
             {"content": "read it", "finish_reason": "stop"},
         ])
         console.send("read a system file", wait_ms=3500)

@@ -371,9 +371,9 @@ class PermissionService:
             self.commit(change, session, expected_version=expected_version)
 
     def read_file(self, session, backend, path, *, max_bytes: int) -> bytes:
-        subject = PermissionSubject("read_file", False,
+        subject = PermissionSubject("read", False,
             lambda args: ToolAccess(frozenset({"file_read"}), (AccessTarget("file", args["file"], "file_read", kind="file"),)), lambda _: None)
-        invocation = self.authorize(session, ToolCall("read_file", {"file": str(path)}, "reference"), subject,
+        invocation = self.authorize(session, ToolCall("read", {"file": str(path)}, "reference"), subject,
             backend=backend, requires_execution=True)
         if invocation.execution is None:
             raise PermissionError(invocation.resolution.reason)
@@ -385,7 +385,7 @@ class PermissionService:
 
 def _shell_depends_on(rule: PermissionRule, grant) -> bool:
     """Whether revoking this rule withdraws what let this Shell command start."""
-    if rule.tool_name != "execute_command":
+    if rule.tool_name != "shell":
         return False
     if rule.kind == "sandbox_network":
         return bool(grant.network_enabled)

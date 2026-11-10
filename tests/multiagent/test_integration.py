@@ -204,7 +204,7 @@ def test_child_runtime_cannot_leave_background_processes(tmp_path):
     session = Session.create("child", tmp_path)
     runtime = tool_runtime_for_session(
         session,
-        tool_name="execute_command",
+        tool_name="shell",
         workspace_dir=tmp_path,
         cwd_provider=session.get_cwd,
         allow_background_tasks=False,

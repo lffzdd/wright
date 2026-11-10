@@ -81,7 +81,7 @@ def test_snapshot_uses_live_response_projection_after_event_ring_eviction(
     )
     runtime.publisher.publish("reasoning.delta", {"piece": "reasoning survives"})
     runtime.publisher.publish("content.delta", {"piece": "complete streamed response"})
-    runtime.publisher.publish("tool.planned", {"call_id": "call_1", "name": "read_file"})
+    runtime.publisher.publish("tool.planned", {"call_id": "call_1", "name": "read"})
     for number in range(3):
         runtime.publisher.publish("system.notice", {"text": str(number)})
 
@@ -97,7 +97,7 @@ def test_snapshot_uses_live_response_projection_after_event_ring_eviction(
     assert snapshot["active_turn"]["content"] == ""
     assert snapshot["active_turn"]["segment"] == 1
     assert snapshot["active_turn"]["tools"][0]["call_id"] == "call_1"
-    assert snapshot["active_turn"]["tools"][0]["name"] == "read_file"
+    assert snapshot["active_turn"]["tools"][0]["name"] == "read"
     assert runtime.publisher.replay(runtime.publisher.stream_id, 0) is None
     assert snapshot["last_seq"] == runtime.publisher.latest_seq
     handle.close()
@@ -445,7 +445,7 @@ def test_reasoning_snapshot_preserves_order_without_duplicating_committed_steps(
     session.begin_user_turn("repeat")
     session.append_user_message("repeat")
     publisher.publish("reasoning.delta", {"piece": "Before tool"})
-    call = ToolCall("read_file", {"path": "note.md"}, "call-1")
+    call = ToolCall("read", {"path": "note.md"}, "call-1")
     session.record_assistant_turn("", {}, "tool_calls", [call], assistant_message={
         "role": "assistant", "content": "", "reasoning": "Before tool",
         "tool_calls": [{"id": call.id}],

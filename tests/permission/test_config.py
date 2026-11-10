@@ -34,30 +34,30 @@ def _run(executor: ToolDispatchService, call: ToolCall):
 
 
 def test_rule_parsing_and_shell_composition_guard():
-    rule = PermissionRule.parse("execute_command(git status*)")
-    assert rule.matches("execute_command", "git status -s")
-    assert not rule.matches("execute_command", "git push origin")
-    scoped = PermissionRule.parse("execute_command(ls*)")
-    assert scoped.matches("execute_command", "ls -la")
-    assert not scoped.matches("execute_command", "ls && curl https://example.com")
-    assert not scoped.matches("execute_command", "ls > victim")
+    rule = PermissionRule.parse("shell(git status*)")
+    assert rule.matches("shell", "git status -s")
+    assert not rule.matches("shell", "git push origin")
+    scoped = PermissionRule.parse("shell(ls*)")
+    assert scoped.matches("shell", "ls -la")
+    assert not scoped.matches("shell", "ls && curl https://example.com")
+    assert not scoped.matches("shell", "ls > victim")
 
 
 def test_bare_and_subject_rules_match_only_the_declared_tool():
-    assert PermissionRule.parse("write_file").matches("write_file", "anything")
-    assert not PermissionRule.parse("write_file").matches("read_file", "anything")
-    rule = PermissionRule.parse("execute_command(git status*)")
-    assert rule.matches("execute_command", "git status --short")
-    assert not rule.matches("execute_command", "git push")
+    assert PermissionRule.parse("write").matches("write", "anything")
+    assert not PermissionRule.parse("write").matches("read", "anything")
+    rule = PermissionRule.parse("shell(git status*)")
+    assert rule.matches("shell", "git status --short")
+    assert not rule.matches("shell", "git push")
 
 
 def test_default_allow_rule_permits_write_file(tmp_path):
     settings = PermissionSettings.from_dict(
-        {"version": 2, "mode": "default", "permissions": {"allow": ["write_file"]}}
+        {"version": 2, "mode": "default", "permissions": {"allow": ["write"]}}
     )
     result = _run(
         _executor(write_file_tool, settings, tmp_path),
-        ToolCall("write_file", {"file": "a.txt", "content": "hello"}, "c1"),
+        ToolCall("write", {"file": "a.txt", "content": "hello"}, "c1"),
     )
     assert result.ok
     assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "hello"
@@ -67,7 +67,7 @@ def test_default_no_rule_fails_closed(tmp_path):
     settings = PermissionSettings.from_dict({"version": 2, "mode": "default", "permissions": {}})
     result = _run(
         _executor(write_file_tool, settings, tmp_path),
-        ToolCall("write_file", {"file": "a.txt", "content": "hello"}, "c1"),
+        ToolCall("write", {"file": "a.txt", "content": "hello"}, "c1"),
     )
     assert not result.ok
     assert result.data["permission"]["decision"] == "deny"
@@ -77,13 +77,13 @@ def test_global_deny_overrides_tool_allow(tmp_path):
     settings = PermissionSettings.from_dict(
         {"version": 2,
             "mode": "default",
-            "permissions": {"allow": ["read_file"], "deny": ["read_file(secrets/*)"]},
+            "permissions": {"allow": ["read"], "deny": ["read(secrets/*)"]},
         }
     )
     (tmp_path / "secrets").mkdir()
     result = _run(
         _executor(read_file_tool, settings, tmp_path),
-        ToolCall("read_file", {"file": "secrets/key"}, "c1"),
+        ToolCall("read", {"file": "secrets/key"}, "c1"),
     )
     assert not result.ok
     assert "deny rule" in result.data["permission"]["reason"]
@@ -91,11 +91,11 @@ def test_global_deny_overrides_tool_allow(tmp_path):
 
 def test_plan_mode_denies_side_effects_even_with_allow(tmp_path):
     settings = PermissionSettings.from_dict(
-        {"version": 2, "mode": "plan", "permissions": {"allow": ["write_file"]}}
+        {"version": 2, "mode": "plan", "permissions": {"allow": ["write"]}}
     )
     result = _run(
         _executor(write_file_tool, settings, tmp_path),
-        ToolCall("write_file", {"file": "a.txt", "content": "hello"}, "c1"),
+        ToolCall("write", {"file": "a.txt", "content": "hello"}, "c1"),
     )
     assert not result.ok
     assert "Plan mode" in result.data["permission"]["reason"]
@@ -103,11 +103,11 @@ def test_plan_mode_denies_side_effects_even_with_allow(tmp_path):
 
 def test_bypass_allows_shell_but_ask_rule_still_wins(tmp_path):
     settings = PermissionSettings.from_dict(
-        {"version": 2, "mode": "bypass", "permissions": {"ask": ["execute_command"]}}
+        {"version": 2, "mode": "bypass", "permissions": {"ask": ["shell"]}}
     )
     result = _run(
         _executor(execute_command_tool, settings, tmp_path),
-        ToolCall("execute_command", {"command": "printf ok"}, "c1"),
+        ToolCall("shell", {"command": "printf ok"}, "c1"),
     )
     assert not result.ok
     assert result.data["permission"]["decision"] == "deny"
@@ -117,7 +117,7 @@ def test_accept_edits_only_auto_allows_in_scope_file_edit(tmp_path):
     settings = PermissionSettings.from_dict({"version": 2, "mode": "acceptEdits", "permissions": {}})
     result = _run(
         _executor(write_file_tool, settings, tmp_path),
-        ToolCall("write_file", {"file": "a.txt", "content": "hello"}, "c1"),
+        ToolCall("write", {"file": "a.txt", "content": "hello"}, "c1"),
     )
     assert result.ok
 
@@ -125,7 +125,7 @@ def test_accept_edits_only_auto_allows_in_scope_file_edit(tmp_path):
 def test_bypass_allows_without_rules_and_deny_still_wins(tmp_path):
     assert PermissionPolicy(PermissionSettings(mode="bypass")).evaluate(
         ToolAccess(frozenset({"shell"}), subject="printf ok"),
-        tool_name="execute_command",
+        tool_name="shell",
         subject="printf ok",
         in_scope=True,
     )[0] == "allow"
@@ -135,11 +135,11 @@ def test_bypass_allows_without_rules_and_deny_still_wins(tmp_path):
             execute_command_tool,
             PermissionSettings.from_dict({"version": 2,
                 "mode": "bypass",
-                "permissions": {"deny": ["execute_command(rm *)"]},
+                "permissions": {"deny": ["shell(rm *)"]},
             }),
             tmp_path,
         ),
-        ToolCall("execute_command", {"command": "rm file"}, "c2"),
+        ToolCall("shell", {"command": "rm file"}, "c2"),
     )
     assert not blocked.ok
     assert "deny rule" in blocked.data["permission"]["reason"]
@@ -148,7 +148,7 @@ def test_bypass_allows_without_rules_and_deny_still_wins(tmp_path):
 def test_accept_edits_does_not_auto_allow_shell(tmp_path):
     result = _run(
         _executor(execute_command_tool, PermissionSettings(mode="acceptEdits"), tmp_path),
-        ToolCall("execute_command", {"command": "printf no"}, "c1"),
+        ToolCall("shell", {"command": "printf no"}, "c1"),
     )
     assert not result.ok
 
@@ -167,7 +167,7 @@ def test_cwd_outside_workspace_does_not_deny_an_origin_target(tmp_path):
             ),
         ),
         ToolCall(
-            "write_file",
+            "write",
             {"file": "workspace/a.txt", "content": "hello"},
             "c1",
         ),
@@ -206,30 +206,30 @@ def test_settings_round_trip_and_atomic_append(tmp_path):
         json.dumps({"version": 2, "mode": "acceptEdits", "permissions": {"deny": ["rm"]}}),
         encoding="utf-8",
     )
-    append_allow_rule("write_file", config)
+    append_allow_rule("write", config)
     settings = load_permission_settings(config)
     assert settings.mode == "acceptEdits"
-    assert [rule.tool_name for rule in settings.allow] == ["write_file"]
+    assert [rule.tool_name for rule in settings.allow] == ["write"]
     assert settings.deny[0].tool_name == "rm"
 
 
 def test_append_helpers_create_and_deduplicate_settings(tmp_path):
     config = tmp_path / "new-permissions.json"
-    append_allow_rule("write_file", config)
-    append_allow_rule("write_file", config)
+    append_allow_rule("write", config)
+    append_allow_rule("write", config)
     settings = load_permission_settings(config)
-    assert [rule.tool_name for rule in settings.allow] == ["write_file"]
+    assert [rule.tool_name for rule in settings.allow] == ["write"]
 
 
 def test_load_settings_from_explicit_file_and_user_path(tmp_path, monkeypatch):
     config = tmp_path / "explicit.json"
     config.write_text(
-        json.dumps({"version": 2, "mode": "acceptEdits", "permissions": {"allow": ["read_file"]}}),
+        json.dumps({"version": 2, "mode": "acceptEdits", "permissions": {"allow": ["read"]}}),
         encoding="utf-8",
     )
     loaded = load_permission_settings(config)
     assert loaded.mode == "acceptEdits"
-    assert loaded.allow[0].tool_name == "read_file"
+    assert loaded.allow[0].tool_name == "read"
 
     monkeypatch.delenv("WRIGHT_PERMISSION_CONFIG", raising=False)
     monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "home"))
@@ -247,24 +247,24 @@ def test_ask_and_deny_rules_have_the_required_precedence():
     settings = PermissionSettings.from_dict({"version": 2,
         "mode": "bypass",
         "permissions": {
-            "allow": ["write_file"],
-            "ask": ["write_file(secrets/*)"],
-            "deny": ["write_file(secrets/key)"],
+            "allow": ["write"],
+            "ask": ["write(secrets/*)"],
+            "deny": ["write(secrets/key)"],
         },
     })
     policy = PermissionPolicy(settings)
     assert policy.evaluate(
-        access, tool_name="write_file", subject="secrets/key", in_scope=True
+        access, tool_name="write", subject="secrets/key", in_scope=True
     )[0] == "deny"
     ask_settings = PermissionSettings.from_dict({"version": 2,
         "mode": "bypass",
         "permissions": {
-            "allow": ["write_file"],
-            "ask": ["write_file(secrets/*)"],
+            "allow": ["write"],
+            "ask": ["write(secrets/*)"],
         },
     })
     assert PermissionPolicy(ask_settings).evaluate(
-        access, tool_name="write_file", subject="secrets/key", in_scope=True
+        access, tool_name="write", subject="secrets/key", in_scope=True
     )[0] == "ask"
 
 

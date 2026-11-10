@@ -11,7 +11,7 @@ def test_runs_keep_goals_steps_tools_and_usage_separate(tmp_path: Path):
     run_a = session.active_run()
     assert run_a is not None
     turn_a = session.record_assistant_turn(
-        "", {"tool_calls": []}, "tool_calls", [ToolCall("read_file", {"path": "a"}, "call-a")]
+        "", {"tool_calls": []}, "tool_calls", [ToolCall("read", {"path": "a"}, "call-a")]
     )
     session.record_tool_execution("call-a", ToolResult.success("ok"))
     session.record_usage_for_turn(turn_a, UsageRecord(2, 3, 5))

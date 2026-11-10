@@ -50,7 +50,7 @@ def test_sandbox_network_grant_rejects_host_or_wrong_ops():
 
 def test_bypass_still_asks_for_network_without_grant():
     decision, _, _, code, _ = PermissionPolicy(PermissionSettings(mode="bypass")).evaluate(
-        _network_access(), tool_name="execute_command", subject="uv sync", in_scope=True, context=_context(),
+        _network_access(), tool_name="shell", subject="uv sync", in_scope=True, context=_context(),
     )
     assert decision == "ask"
     assert code == "permission.network_requested"
@@ -59,7 +59,7 @@ def test_bypass_still_asks_for_network_without_grant():
 def test_sandbox_network_grant_lets_bypass_allow_networked_shell():
     grant = PermissionRule.sandbox_network_grant()
     decision = PermissionPolicy(PermissionSettings(mode="bypass")).evaluate(
-        _network_access(), tool_name="execute_command", subject="uv sync", in_scope=True,
+        _network_access(), tool_name="shell", subject="uv sync", in_scope=True,
         context=_context(), session_rules=(grant,),
     )[0]
     assert decision == "allow"
@@ -68,7 +68,7 @@ def test_sandbox_network_grant_lets_bypass_allow_networked_shell():
 def test_sandbox_network_grant_does_not_skip_shell_approval_in_default_mode():
     grant = PermissionRule.sandbox_network_grant()
     decision, _, _, code, _ = PermissionPolicy(PermissionSettings(mode="default")).evaluate(
-        _network_access(), tool_name="execute_command", subject="uv sync", in_scope=True,
+        _network_access(), tool_name="shell", subject="uv sync", in_scope=True,
         context=_context(), session_rules=(grant,),
     )
     assert decision == "ask"
@@ -78,7 +78,7 @@ def test_sandbox_network_grant_does_not_skip_shell_approval_in_default_mode():
 def test_sandbox_network_grant_does_not_allow_host_shell():
     grant = PermissionRule.sandbox_network_grant()
     decision, _, _, code, _ = PermissionPolicy(PermissionSettings(mode="bypass")).evaluate(
-        _network_access(), tool_name="execute_command", subject="uv sync", in_scope=True,
+        _network_access(), tool_name="shell", subject="uv sync", in_scope=True,
         context=_context("host"), session_rules=(grant,),
     )
     assert decision == "ask"
@@ -90,11 +90,11 @@ def test_deny_still_wins_over_sandbox_network_grant():
     settings = PermissionSettings.from_dict({
         "version": 2,
         "mode": "bypass",
-        "permissions": {"deny": ["execute_command(rm *)"], "allow": [grant.to_persistent()]},
+        "permissions": {"deny": ["shell(rm *)"], "allow": [grant.to_persistent()]},
     })
     decision = PermissionPolicy(settings).evaluate(
         ToolAccess(frozenset({"shell", "network_write"}), subject="rm file"),
-        tool_name="execute_command", subject="rm file", in_scope=True, context=_context(),
+        tool_name="shell", subject="rm file", in_scope=True, context=_context(),
     )[0]
     assert decision == "deny"
 
@@ -114,7 +114,7 @@ def resolve(arguments, choice=None, *, rules=(), settings=None, execution_mode="
     return AuthorizationWorkflow(
         PermissionPolicy(settings), handler, execution_mode=execution_mode,
     ).resolve(
-        ToolCall("execute_command", arguments, "call"),
+        ToolCall("shell", arguments, "call"),
         execute_command_tool,
         backend=FixturePaths(),
         scope=AccessScope(Path("/project")),

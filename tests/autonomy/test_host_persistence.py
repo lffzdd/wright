@@ -65,7 +65,7 @@ def test_pending_interaction_is_explicitly_terminated_after_restart(tmp_path):
     _workspace, store = _store(tmp_path)
     store.record_interaction(
         "session:origin-session", "approval-1", kind="permission",
-        payload={"tool": "write_file"}, run_id="run-1", now=1,
+        payload={"tool": "write"}, run_id="run-1", now=1,
     )
     store.close()
     reopened = AutonomyStore(
@@ -89,7 +89,7 @@ def test_recovery_marks_started_tool_effect_unknown_without_replay(tmp_path):
     store.claim_next_run(owner_id="host-a", now=0)
     store.start_run(run_id, owner_id="host-a", now=0)
     store.record_tool_intent(
-        run_id=run_id, call_id="call-1", tool_name="write_file",
+        run_id=run_id, call_id="call-1", tool_name="write",
         arguments={"path": "out.txt", "content": "x"}, permission={"decision": "allow"},
         environment={"workspace_dir": "workspace"}, now=1,
     )
@@ -114,7 +114,7 @@ def test_recovery_does_not_retry_a_run_with_an_unconfirmed_effect(tmp_path):
     store.claim_next_run(owner_id="host-a", now=0)
     store.start_run(run_id, owner_id="host-a", now=0)
     store.record_tool_intent(
-        run_id=run_id, call_id="call-1", tool_name="write_file",
+        run_id=run_id, call_id="call-1", tool_name="write",
         arguments={"path": "out.txt"}, permission={"decision": "allow"},
         environment={"workspace_dir": "workspace"}, now=0,
     )
@@ -371,7 +371,7 @@ def test_run_with_uncommitted_effect_cannot_finish_or_retry(tmp_path, requested_
         store.claim_next_run(owner_id="host", now=0)
         store.start_run(run_id, owner_id="host", now=0)
         store.record_tool_intent(
-            run_id=run_id, call_id="effect", tool_name="write_file", arguments={},
+            run_id=run_id, call_id="effect", tool_name="write", arguments={},
             permission={}, environment={}, now=0,
         )
         store.mark_tool_started(run_id, "effect", now=0)
@@ -445,7 +445,7 @@ def test_old_retry_records_with_effects_are_not_claimed(tmp_path, queued_status)
         store.claim_next_run(owner_id="old-host", now=0)
         store.start_run(run_id, owner_id="old-host", now=0)
         store.record_tool_intent(
-            run_id=run_id, call_id="effect", tool_name="write_file", arguments={},
+            run_id=run_id, call_id="effect", tool_name="write", arguments={},
             permission={}, environment={}, now=0,
         )
         store.mark_tool_started(run_id, "effect", now=0)

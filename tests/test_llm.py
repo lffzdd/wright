@@ -311,7 +311,7 @@ def test_internal_tool_schema_is_encoded_by_the_selected_adapter(transport):
         request = ModelRequest(
             messages=({"role": "user", "content": "hello"},),
             tools=({
-                "name": "read_file", "description": "Read a file",
+                "name": "read", "description": "Read a file",
                 "parameters": {"type": "object", "properties": {}},
             },),
             transport=transport,
@@ -322,13 +322,13 @@ def test_internal_tool_schema_is_encoded_by_the_selected_adapter(transport):
             assert body["tools"] == [{
                 "type": "function",
                 "function": {
-                    "name": "read_file", "description": "Read a file",
+                    "name": "read", "description": "Read a file",
                     "parameters": {"type": "object", "properties": {}},
                 },
             }]
         else:
             assert body["tools"] == [{
-                "type": "function", "name": "read_file",
+                "type": "function", "name": "read",
                 "description": "Read a file",
                 "parameters": {"type": "object", "properties": {}},
                 "strict": False,

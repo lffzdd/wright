@@ -27,7 +27,7 @@ it("defaults to sandbox and chooses host independently of the worktree", () => {
 it("approves host Shell without sandbox setup or network toggle", async () => {
   const read = vi.spyOn(api, "grants").mockResolvedValue(grants);
   const respond = vi.fn().mockResolvedValue(true);
-  const interaction: Interaction = { request_id: "host", kind: "permission", tool_name: "execute_command", execution_mode: "host", command: "echo hello", choices: [
+  const interaction: Interaction = { request_id: "host", kind: "permission", tool_name: "shell", execution_mode: "host", command: "echo hello", choices: [
     { id: "allow_once", label: "Once", scope: "", persistence: "" },
     { id: "allow_once_network", label: "Network", scope: "", persistence: "" },
     { id: "deny", label: "Deny", scope: "", persistence: "" },

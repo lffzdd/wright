@@ -74,7 +74,7 @@ def test_structured_prompt_uses_fixed_choice_ids(tmp_path):
     renderer = _MockRenderer("allow_once")
     result = _run(
         _executor(session, renderer),
-        ToolCall("write_file", {"file": "a.txt", "content": "hello"}, "c1"),
+        ToolCall("write", {"file": "a.txt", "content": "hello"}, "c1"),
     )
     assert result.ok
     ids = {choice.id for choice in renderer.prompts[0].choices}
@@ -93,7 +93,7 @@ def test_outside_directory_choices_update_session_only_after_allow(tmp_path):
     written = _run(
         _executor(session, renderer),
         ToolCall(
-            "write_file",
+            "write",
             {"file": str(extra / "a.txt"), "content": "old line\n"},
             "c1",
         ),
@@ -104,7 +104,7 @@ def test_outside_directory_choices_update_session_only_after_allow(tmp_path):
     assert "allow_session_directory_write" in {choice.id for choice in renderer.prompts[0].choices}
     assert _run(
         _executor(session, _MockRenderer()),
-        ToolCall("read_file", {"file": str(extra / "a.txt")}, "c2"),
+        ToolCall("read", {"file": str(extra / "a.txt")}, "c2"),
     ).ok
 
 
@@ -112,7 +112,7 @@ def test_invalid_choice_is_fail_closed(tmp_path):
     session = Session.create("permission", tmp_path)
     result = _run(
         _executor(session, _MockRenderer("y")),
-        ToolCall("write_file", {"file": "a.txt", "content": "hello"}, "c1"),
+        ToolCall("write", {"file": "a.txt", "content": "hello"}, "c1"),
     )
     assert not result.ok
 
@@ -122,7 +122,7 @@ def test_approval_handler_cannot_persist_a_rule_or_change_tool_policy(tmp_path):
     renderer = _MockRenderer("allow_once")
     result = _run(
         _executor(session, renderer),
-        ToolCall("write_file", {"file": "a.txt", "content": "hello"}, "c1"),
+        ToolCall("write", {"file": "a.txt", "content": "hello"}, "c1"),
     )
     assert result.ok
     assert not hasattr(renderer, "on_remember")
@@ -136,7 +136,7 @@ def test_session_rule_choice_is_scoped_and_reused_by_the_same_resolver(tmp_path)
     first = _run(
         executor,
         ToolCall(
-            "write_file",
+            "write",
             {"file": "nested/a.txt", "content": "a"},
             "c1",
         ),
@@ -144,7 +144,7 @@ def test_session_rule_choice_is_scoped_and_reused_by_the_same_resolver(tmp_path)
     second = _run(
         executor,
         ToolCall(
-            "write_file",
+            "write",
             {"file": "nested/b.txt", "content": "b"},
             "c2",
         ),
@@ -177,7 +177,7 @@ def test_persistent_rule_choice_is_returned_to_the_commit_adapter(tmp_path):
     result = _run(
         executor,
         ToolCall(
-            "write_file",
+            "write",
             {"file": "nested/a.txt", "content": "a"},
             "c1",
         ),
@@ -197,7 +197,7 @@ def test_cancelled_permission_is_denied(tmp_path):
     session = Session.create("permission", tmp_path)
     result = _run(
         _executor(session, _MockRenderer("deny")),
-        ToolCall("edit_file", {"file": "a.txt", "old_text": "a", "new_text": "b"}, "c1"),
+        ToolCall("edit", {"file": "a.txt", "old_text": "a", "new_text": "b"}, "c1"),
     )
     assert not result.ok
 
@@ -207,6 +207,6 @@ def test_empty_or_legacy_permission_answers_fail_closed(tmp_path):
         session = Session.create("permission", tmp_path)
         result = _run(
             _executor(session, _MockRenderer(choice)),
-            ToolCall("write_file", {"file": "a.txt", "content": "x"}, choice or "c1"),
+            ToolCall("write", {"file": "a.txt", "content": "x"}, choice or "c1"),
         )
         assert not result.ok

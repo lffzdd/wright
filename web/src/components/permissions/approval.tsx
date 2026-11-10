@@ -30,10 +30,10 @@ const IMPLIED_FLAGS = new Set(["reads_files", "writes_files", "executes_shell", 
 function actionOf(interaction: Interaction): Action {
   const tool = interaction.tool_name || "";
   const operation = interaction.operation || "";
-  if (tool === "execute_command") return "shell";
+  if (tool === "shell" || tool === "execute_command") return "shell";
   if (interaction.http_target || tool === "http_request") return "http";
-  if (operation.includes("file_write") || ["write_file", "edit_file"].includes(tool)) return "file_write";
-  if (operation.includes("file_read") || ["read_file", "grep", "glob", "list_directory"].includes(tool)) return "file_read";
+  if (operation.includes("file_write") || ["write", "edit", "write_file", "edit_file"].includes(tool)) return "file_write";
+  if (operation.includes("file_read") || ["read", "grep", "glob", "ls", "read_file", "list_directory"].includes(tool)) return "file_read";
   return "tool";
 }
 

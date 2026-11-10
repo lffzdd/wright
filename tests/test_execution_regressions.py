@@ -17,8 +17,8 @@ from wright.application.command.execution import CommandExecution
 from wright.application.execution.identity import bind_identity
 from wright.application.session_runtime.live_resources import RuntimeResources
 from wright.application.tool_execution.command_control import (
-    get_command,
-    terminate_command,
+    shell_kill,
+    shell_output,
 )
 from wright.domain.model.scheduling import TriggerSpec
 from wright.domain.model.session import Session
@@ -80,9 +80,9 @@ def test_parent_exit_does_not_leave_owned_children(tmp_path):
     while not _host_pids_matching(marker) and time.monotonic() < deadline:
         time.sleep(0.02)
     assert _host_pids_matching(marker)
-    observed = get_command(command_id, runtime=runtime)
+    observed = shell_output(command_id, runtime=runtime)
     assert observed.data["status"] == "running"
-    terminated = terminate_command(command_id, runtime=runtime)
+    terminated = shell_kill(command_id, runtime=runtime)
     assert terminated.data["terminated"] is True
     deadline = time.monotonic() + 3
     while time.monotonic() < deadline and _host_pids_matching(marker):
@@ -103,7 +103,7 @@ def test_ignored_sigterm_is_escalated_on_the_owned_group(tmp_path):
     )
     command_id = launched.data["command_id"]
     time.sleep(0.2)
-    terminated = terminate_command(command_id, runtime=runtime)
+    terminated = shell_kill(command_id, runtime=runtime)
     assert terminated.data["terminated"] is True
     assert terminated.data["status"] == "cancelled"
 
@@ -130,10 +130,10 @@ def test_output_pages_keep_a_prefix_and_mark_truncation(tmp_path):
     assert large.data["storage_truncated"] is True
     assert "stored output truncated" in large.data["output"]
     command_id = large.data["command_id"]
-    first = get_command(command_id, offset=0, limit=10, runtime=runtime)
+    first = shell_output(command_id, offset=0, limit=10, runtime=runtime)
     assert first.data["output"] == "x" * 10
     assert first.data["next_offset"] == 10
-    rest = get_command(command_id, offset=first.data["next_offset"], limit=100, runtime=runtime)
+    rest = shell_output(command_id, offset=first.data["next_offset"], limit=100, runtime=runtime)
     assert rest.data["output"].startswith("x")
     assert "stored output truncated" in rest.data["output"]
     assert rest.data["next_offset"] is None

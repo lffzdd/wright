@@ -24,7 +24,7 @@ def _tool(name: str, description: str, *, deferred: bool = False) -> Tool:
 
 
 def test_tool_search_activates_specialized_schemas_only_after_search():
-    core = _tool("read_file", "Read a file")
+    core = _tool("read", "Read a file")
     schedule = _tool(
         "create_schedule", "Create a durable recurring scheduled task", deferred=True
     )
@@ -42,12 +42,12 @@ def test_tool_search_activates_specialized_schemas_only_after_search():
     )
 
     assert [item["name"] for item in before] == [
-        "read_file", "tool_search"
+        "read", "tool_search"
     ]
     assert result.ok
     assert result.data["activated"][0]["name"] == "create_schedule"
     assert [item["name"] for item in after] == [
-        "read_file", "create_schedule", "tool_search"
+        "read", "create_schedule", "tool_search"
     ]
 
 
@@ -110,7 +110,7 @@ def test_search_supports_common_chinese_capability_terms():
 
 def test_search_drops_stop_word_only_false_positives():
     tools = [
-        _tool("write_file", "Create or overwrite a file", deferred=True),
+        _tool("write", "Create or overwrite a file", deferred=True),
         _tool("replan", "Create a replacement plan", deferred=True),
         _tool("cancel_schedule", "Cancel a running schedule", deferred=True),
     ]
@@ -120,7 +120,7 @@ def test_search_drops_stop_word_only_false_positives():
     )
 
     assert [item["name"] for item in result.data["activated"]] == [
-        "write_file"
+        "write"
     ]
 
 
@@ -143,7 +143,7 @@ def test_active_catalog_is_bounded_and_reports_eviction():
 
 
 def test_search_reports_baseline_tools_instead_of_activating_lookalikes():
-    directory = _tool("list_directory", "List the immediate children of a directory")
+    directory = _tool("ls", "List the immediate children of a directory")
     schedules = _tool(
         "list_schedules", "List durable schedules", deferred=True
     )
@@ -151,7 +151,7 @@ def test_search_reports_baseline_tools_instead_of_activating_lookalikes():
         {"query": "list directory"}, ToolRuntime(tool_name="tool_search")
     )
 
-    assert result.data["already_available"] == ["list_directory"]
+    assert result.data["already_available"] == ["ls"]
     assert result.data["activated"] == []
 
 
@@ -178,18 +178,16 @@ def test_builtin_capabilities_use_hybrid_loading():
     assert built_in_tools
     by_name = {tool.name: tool for tool in built_in_tools}
     core = {
-        "list_directory",
+        "ls",
         "glob",
         "grep",
-        "read_file",
-        "write_file",
-        "edit_file",
-        "execute_command",
-        "create_plan",
+        "read",
+        "write",
+        "edit",
+        "shell",
         "update_plan",
-        "get_plan",
-        "replan",
         "web_search",
+        "web_fetch",
         "http_request",
     }
 
@@ -202,7 +200,7 @@ def test_builtin_capabilities_use_hybrid_loading():
     } == core
 
 
-def test_web_memory_and_spawn_are_baseline():
+def test_core_tools_are_baseline_and_follow_ups_are_deferred():
     from wright.application.agent import build_agent_tools
     from wright.infrastructure.tools.memory import build_memory_tools
 
@@ -224,21 +222,20 @@ def test_web_memory_and_spawn_are_baseline():
         "web_search",
         "http_request",
         "spawn_agent",
-        "get_agent_tree",
-        "get_agent",
         "wait_agent",
-        "cancel_agent",
-        "get_command",
-        "wait_command",
-        "terminate_command",
-        "list_commands",
+        "shell_output",
+        "shell_kill",
         "create_memory",
-        "get_memory",
-        "update_memory",
-        "delete_memory",
         "search_memory",
     }
     deferred = {
+        "get_agent_tree",
+        "get_agent",
+        "cancel_agent",
+        "list_commands",
+        "get_memory",
+        "update_memory",
+        "delete_memory",
         "create_schedule",
         "get_schedule",
         "list_schedules",

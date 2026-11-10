@@ -32,7 +32,7 @@ def test_incomplete_plan_blocks_final_and_returns_to_agent_loop(tmp_path):
     session.plan_manager.create_plan("deliver", ["implement"])
     llm = ScriptLLM([
         _final("done too early"),
-        _tool("update_plan", {"step_id": "step_1", "status": "completed"}),
+        _tool("update_plan", {"steps": [{"title": "implement", "status": "completed"}]}),
         _final("really done"),
     ])
     agent = create_agent(
@@ -70,7 +70,7 @@ def test_verifier_restats_successful_file_artifacts(tmp_path):
     session = Session.create("goal", tmp_path)
     session.begin_user_turn("write artifact")
     call = ToolCall(
-        "write_file", {"file": "missing.txt", "content": "data"}, "c1"
+        "write", {"file": "missing.txt", "content": "data"}, "c1"
     )
     session.record_assistant_turn(
         "tool call",
@@ -91,7 +91,7 @@ def test_verifier_and_stop_hook_retries_are_independent(tmp_path):
     session.plan_manager.create_plan("deliver", ["implement"])
     main_llm = ScriptLLM([
         _final("too early"),
-        _tool("update_plan", {"step_id": "step_1", "status": "completed"}),
+        _tool("update_plan", {"steps": [{"title": "implement", "status": "completed"}]}),
         _final("second"),
         _final("third"),
     ])

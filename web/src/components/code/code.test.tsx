@@ -26,7 +26,7 @@ it("shows each line number once and marks the focused line", () => {
 it("labels a read with its line range and opens the file at its first line", () => {
   const openFile = vi.fn();
   render(<OpenFileContext.Provider value={openFile}>
-    <ToolCard name="read_file" phase="succeeded" args={{ file: "src/a.py" }} data={{ content: "283|x = 1\n284|y = 2\n", start_line: 283, end_line: 284 }} />
+    <ToolCard name="read" phase="succeeded" args={{ file: "src/a.py" }} data={{ content: "283|x = 1\n284|y = 2\n", start_line: 283, end_line: 284 }} />
   </OpenFileContext.Provider>);
   expect(screen.getByText("L283–284")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { expanded: false }));

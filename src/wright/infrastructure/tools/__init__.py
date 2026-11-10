@@ -28,6 +28,7 @@ from .file import (
 )
 from .human_input import ask_user, ask_user_tool
 from .plan_tools import plan_tools
+from .web_fetch import web_fetch_tool
 from .web_tools import http_request_tool, web_search_tool
 
 # Product tools stay on every request. Schedules, skills, episodes, loops, and
@@ -42,6 +43,7 @@ tools = [
     execute_command_tool,
     *plan_tools,
     web_search_tool,
+    web_fetch_tool,
     http_request_tool,
 ]
 
@@ -69,6 +71,7 @@ __all__ = [
     "read_file_tool",
     "skill_tools",
     "tools",
+    "web_fetch_tool",
     "web_search_tool",
     "web_tools",
     "write_file_tool",

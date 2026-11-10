@@ -3,7 +3,7 @@
     "pre_tool_use": [
       {
         "name": "protect-production",
-        "matcher": "execute_command",
+        "matcher": "shell",
         "command": ["python3", "hooks/protect_production.py"],
         "timeout": 5
       }

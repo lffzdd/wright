@@ -18,7 +18,7 @@ def plan_prompt_block(manager: PlanManager) -> str:
         "<plan-state>",
         json.dumps(snapshot, ensure_ascii=False),
         "</plan-state>",
-        "Call update_plan as steps move. Call replan when the route changes.",
+        "Call update_plan with the full step list as steps move or the route changes.",
         "</system-reminder>",
     ])
 

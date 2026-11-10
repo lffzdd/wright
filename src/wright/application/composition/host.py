@@ -105,6 +105,7 @@ class ApplicationHost:
             agent_background=self.background,
             durable_store=store,
             job_scheduler=self.scheduler,
+            artifact_store=artifact_store,
         )
 
     def bind_coordinator(self, coordinator: DirectoryExecutionCoordinator) -> None:

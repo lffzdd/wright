@@ -114,7 +114,7 @@ def test_context_preview_counts_prompt_tools_and_reserve():
         SimpleNamespace(message={"role": "system", "content": "stored prompt"}, source=""),
         SimpleNamespace(message={"role": "user", "content": "hello"}, source=""),
     )
-    tools = [{"name": "read_file", "description": "Read a file", "parameters": {"type": "object"}}]
+    tools = [{"name": "read", "description": "Read a file", "parameters": {"type": "object"}}]
     report = estimate_context(records, tools=tools, system_prompt="projected prompt " * 20, context_limit=8000)
     by_id = {item["id"]: item["tokens"] for item in report["categories"]}
     assert report["preview"] is True
@@ -207,10 +207,10 @@ def test_change_attribution_conflict_and_batch_failure(tmp_path: Path, monkeypat
 
     created = root / "added.txt"
     created.write_text("task\n", encoding="utf-8", newline="")
-    journal.note_text(created, before=None, after="task\n", existed=False, call_id="c1", tool_name="write_file")
+    journal.note_text(created, before=None, after="task\n", existed=False, call_id="c1", tool_name="write")
     other = root / "other.txt"
     other.write_text("other\n", encoding="utf-8", newline="")
-    journal.note_text(other, before=None, after="other\n", existed=False, call_id="c2", tool_name="write_file")
+    journal.note_text(other, before=None, after="other\n", existed=False, call_id="c2", tool_name="write")
     created.write_text("external\n", encoding="utf-8", newline="")
     conflicted = journal.revert(["added.txt", "other.txt"], confirm=True)
     assert conflicted["applied"] is False
@@ -227,7 +227,7 @@ def test_change_attribution_conflict_and_batch_failure(tmp_path: Path, monkeypat
 
     fresh = root / "fresh.txt"
     fresh.write_text("fresh\n", encoding="utf-8", newline="")
-    journal.note_text(fresh, before=None, after="fresh\n", existed=False, call_id="c4", tool_name="write_file")
+    journal.note_text(fresh, before=None, after="fresh\n", existed=False, call_id="c4", tool_name="write")
     original_restore = journal._restore_before
 
     def fail_fresh(path: str) -> None:
@@ -247,7 +247,7 @@ def test_ask_ceiling_survives_bypass_and_grant_revoke_is_scoped(tmp_path: Path, 
     settings = PermissionSettings(mode="bypass")
     decision = PermissionPolicy(settings).evaluate(
         ToolAccess(frozenset({"file_write"})),
-        tool_name="write_file",
+        tool_name="write",
         subject="a.txt",
         in_scope=True,
         interaction_mode="ask",
@@ -264,7 +264,7 @@ def test_ask_ceiling_survives_bypass_and_grant_revoke_is_scoped(tmp_path: Path, 
         permission_mode="bypass",
     )
     assert plan[0] != "deny"
-    assert not tool_visible("write_file", SimpleNamespace(authorization=SessionAuthorization("visibility", interaction_mode="ask", permission_mode="bypass")))
+    assert not tool_visible("write", SimpleNamespace(authorization=SessionAuthorization("visibility", interaction_mode="ask", permission_mode="bypass")))
     assert tool_visible("update_plan", SimpleNamespace(authorization=SessionAuthorization("visibility", interaction_mode="plan", permission_mode="bypass")))
     from wright.domain.policy.permission.limits import ASK_OPERATIONS as domain_ask
     assert domain_ask == ASK_OPERATIONS
@@ -684,7 +684,7 @@ def test_rename_of_a_clean_file_reverts_without_touching_other_work(tmp_path: Pa
     journal = SessionChangeJournal(session)
     before = journal.capture()
     (root / "old.txt").rename(root / "new.txt")
-    journal.commit_capture(before, call_id="mv1", tool_name="execute_command")
+    journal.commit_capture(before, call_id="mv1", tool_name="shell")
     changes = {item["path"]: item for item in journal.projection()["changes"]}
     assert changes["old.txt"]["display_kind"] == "rename"
     assert changes["old.txt"]["rename_with"] == "new.txt"
@@ -705,10 +705,10 @@ def test_rename_of_a_clean_file_reverts_without_touching_other_work(tmp_path: Pa
     ("running", False),
 ])
 def test_accessed_files_only_lists_tools_that_succeeded(status, listed):
-    call = SimpleNamespace(id="c1", name="edit_file", arguments={"file": "src/a.py"})
+    call = SimpleNamespace(id="c1", name="edit", arguments={"file": "src/a.py"})
     session = SimpleNamespace(tool_executions={"c1": SimpleNamespace(call=call, status=status)})
     assert bool(project_accessed_files(session)) is listed
-    read = SimpleNamespace(id="c2", name="read_file", arguments={"file": "src/a.py"})
+    read = SimpleNamespace(id="c2", name="read", arguments={"file": "src/a.py"})
     read_session = SimpleNamespace(
         tool_executions={"c2": SimpleNamespace(call=read, status=status)}
     )
@@ -716,12 +716,12 @@ def test_accessed_files_only_lists_tools_that_succeeded(status, listed):
 
 
 def test_accessed_files_lists_directories_without_treating_them_as_files():
-    listing = SimpleNamespace(id="c3", name="list_directory", arguments={"directory": "web/src"})
+    listing = SimpleNamespace(id="c3", name="ls", arguments={"directory": "web/src"})
     session = SimpleNamespace(
         tool_executions={"c3": SimpleNamespace(call=listing, status="succeeded")}
     )
     assert project_accessed_files(session) == [
-        {"path": "web/src", "access": "list", "tool": "list_directory", "call_id": "c3"}
+        {"path": "web/src", "access": "list", "tool": "ls", "call_id": "c3"}
     ]
 
 

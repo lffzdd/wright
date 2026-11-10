@@ -109,11 +109,11 @@ def test_console_tool_result_labels_the_tool():
     renderer = ConsoleRenderer()
     output = StringIO()
     renderer._console = Console(file=output, width=200, color_system=None)
-    call = ToolCall("list_directory", {"directory": "."}, "c1")
+    call = ToolCall("ls", {"directory": "."}, "c1")
     renderer.on_tool_result(call, ToolResult.success({"entries": [{"name": "a.py"}]}))
     renderer.on_tool_result(call, ToolResult.fail("not found"))
     text = output.getvalue()
-    assert "list_directory" in text
+    assert "ls" in text
     assert "工具结果" not in text
     assert "not found" in text
 
@@ -134,12 +134,12 @@ def test_console_tool_card_settles_once():
     renderer = ConsoleRenderer()
     output = StringIO()
     renderer._console = Console(file=output, width=200, color_system=None)
-    call = ToolCall("list_directory", {"directory": "."}, "c1")
+    call = ToolCall("ls", {"directory": "."}, "c1")
     renderer.on_tool_call(call)
     assert output.getvalue() == ""
     renderer.on_tool_result(call, ToolResult.success({"entries": [{"name": "a.py"}]}))
     text = output.getvalue()
-    assert "list_directory" in text
+    assert "ls" in text
     assert "🔧" not in text
     assert "╭" in text
 
