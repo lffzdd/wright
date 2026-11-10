@@ -4,10 +4,10 @@ import { useT } from "../../i18n";
 import { ReasoningRow, formatDuration, toolCardFromState, toolCardFromTimeline } from "../cards/cards";
 import { summarizeSteps, summaryCategories, type Step } from "./steps";
 
-function StepRow({ step, sessionId, enter }: { step: Step; sessionId?: string; enter?: boolean }) {
+function StepRow({ step, sessionId, enter, live }: { step: Step; sessionId?: string; enter?: boolean; live?: boolean }) {
   if (step.kind === "reasoning") return <ReasoningRow text={step.item?.text || ""} durationMs={step.durationMs} enter={enter} />;
-  if (step.item) return toolCardFromTimeline(step.item, sessionId, enter);
-  return toolCardFromState(step.tool!, sessionId, enter);
+  if (step.item) return toolCardFromTimeline(step.item, sessionId, enter, live);
+  return toolCardFromState(step.tool!, sessionId, enter, live);
 }
 
 /**
@@ -23,7 +23,7 @@ export function StepGroup({ steps, live, sessionId, entering }: {
 }) {
   const tr = useT();
   const [toggled, setToggled] = useState<boolean | null>(null);
-  if (steps.length === 1) return <StepRow step={steps[0]} sessionId={sessionId} enter={entering(steps[0].key)} />;
+  if (steps.length === 1) return <StepRow step={steps[0]} sessionId={sessionId} enter={entering(steps[0].key)} live={live} />;
   const open = toggled ?? live;
   const summary = summarizeSteps(steps);
   const parts = summaryCategories(summary).map(([category, count]) => tr(`web.steps.${category}${count === 1 ? ".one" : ""}`, { count }));
@@ -43,7 +43,7 @@ export function StepGroup({ steps, live, sessionId, entering }: {
       {summary.durationMs > 0 && <span className="step-group-duration mono">{formatDuration(summary.durationMs)}</span>}
     </button>
     {open && <div className="step-group-body" onClick={() => { if (toggled === null) setToggled(true); }}>
-      {steps.map((step) => <StepRow key={step.key} step={step} sessionId={sessionId} enter={entering(step.key)} />)}
+      {steps.map((step) => <StepRow key={step.key} step={step} sessionId={sessionId} enter={entering(step.key)} live={live} />)}
     </div>}
   </section>;
 }

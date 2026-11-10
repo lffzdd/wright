@@ -287,3 +287,63 @@ def test_sandbox_prompt_lists_the_directories_approval_cannot_widen(tmp_path):
     assert payload["sandbox_readable"] == [str(tmp_path)]
     assert payload["sandbox_writable"] == [str(tmp_path)]
     assert "Approval does not widen" in prompts[0].shell_note
+
+
+def _policy_service(tmp_path, session):
+    service = SessionService.__new__(SessionService)
+    service._lock = threading.RLock()
+    service._queued = {}
+    service._active_command = None
+    idle = threading.Event()
+    idle.set()
+    service.runtime = SimpleNamespace(
+        session_state=session,
+        agent_idle=idle,
+        permissions=PermissionService(FilePermissionRepository(tmp_path / "config")),
+        agent=SimpleNamespace(executor=SimpleNamespace(backend=LocalExecutionBackend(tmp_path, lambda: tmp_path))),
+        runtime_resources=SimpleNamespace(commands=SimpleNamespace(has_live=lambda: False)),
+        directory_coordinator=None,
+        cancellation_event=threading.Event(),
+    )
+    service.runner = SimpleNamespace(state="idle")
+    service._require_accepting_input = lambda: None
+    service._interaction_snapshot = list
+    service.is_evictable = lambda: True
+    return service
+
+
+def _sandbox_network_rules(service):
+    permissions = service.runtime.permissions
+    return [rule for rule in permissions.snapshot(service.runtime.session_state).rules if rule.kind == "sandbox_network"]
+
+
+def test_entering_project_auto_in_sandbox_allows_session_network(tmp_path):
+    session = Session.create("goal", tmp_path)
+    service = _policy_service(tmp_path, session)
+    service.set_execution_policy(permission_mode="bypass")
+    rules = _sandbox_network_rules(service)
+    assert [(rule.lifetime, rule.execution_mode) for rule in rules] == [("session", "sandbox")]
+
+
+def test_project_auto_network_stays_off_once_revoked(tmp_path):
+    session = Session.create("goal", tmp_path)
+    service = _policy_service(tmp_path, session)
+    service.set_execution_policy(permission_mode="bypass")
+    permissions = service.runtime.permissions
+    rule = _sandbox_network_rules(service)[0]
+    snapshot = permissions.snapshot(session)
+    from wright.application.workspace.grants import list_grants
+    grant = next(item for item in list_grants(session, permissions, {})["grants"] if item["resource_kind"] == "sandbox_network")
+    permissions.revoke(session, grant["id"], grant["source"], snapshot.version)
+    assert rule and not _sandbox_network_rules(service)
+    # Saving the same mode again is not a fresh opt-in.
+    service.set_execution_policy(permission_mode="bypass")
+    assert not _sandbox_network_rules(service)
+
+
+@pytest.mark.parametrize("change", [{"permission_mode": "acceptEdits"}, {"permission_mode": "bypass", "execution_mode": "host"}])
+def test_other_modes_keep_sandbox_network_off(tmp_path, change):
+    session = Session.create("goal", tmp_path)
+    service = _policy_service(tmp_path, session)
+    service.set_execution_policy(**change)
+    assert not _sandbox_network_rules(service)

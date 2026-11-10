@@ -1,7 +1,8 @@
 import { Archive, Brain, Clock, Copy, DotsThree, Gear, GitBranch, MagnifyingGlass, Moon, PencilSimple, Scroll, SidebarSimple, Sun, Warning, X, XCircle } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { api, ApiError, bootstrap } from "./api";
-import { setLocale, useT } from "./i18n";
+import { browserLocale, setLocale, useT } from "./i18n";
+import { paintTheme, paintedTheme, systemTheme } from "./theme";
 import { parseEvent } from "./protocol";
 import { applyEvent } from "./reducer";
 import type { FileReference, SessionSummary, Snapshot, ViewState } from "./types";
@@ -19,6 +20,7 @@ import { confirmDialog, DialogHost } from "./components/ui/dialogs";
 import { InlineRename } from "./components/ui/InlineRename";
 import { MenuButton } from "./components/ui/Menu";
 import { InteractionDock, Timeline } from "./components/timeline/Timeline";
+import { OpenFileContext } from "./components/code/openFile";
 
 
 /** The server no longer has this session open; its checkpoint remains. */
@@ -63,7 +65,7 @@ export default function App() {
   const [compactViewport, setCompactViewport] = useState(() => window.matchMedia?.("(max-width: 1024px)").matches ?? false);
   const inspectorVisibility = useRef({ open: inspectorOpen, narrow: narrowInspector, compact: compactViewport });
   inspectorVisibility.current = { open: inspectorOpen, narrow: narrowInspector, compact: compactViewport };
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [theme, setTheme] = useState<"dark" | "light">(paintedTheme);
   const [serverLatency, setServerLatency] = useState<number | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceRow[]>([]);
   const [capabilityCounts, setCapabilityCounts] = useState<CapabilityCounts>({ memory: null, rules: null, schedules: null });
@@ -75,7 +77,7 @@ export default function App() {
   pageRef.current = page;
   const [renaming, setRenaming] = useState<string | null>(null);
   const [addingWorkspace, setAddingWorkspace] = useState(false);
-  const [fileFocus, setFileFocus] = useState<{ sessionId: string; path: string; request: number } | null>(null);
+  const [fileFocus, setFileFocus] = useState<{ sessionId: string; path: string; line?: number; request: number } | null>(null);
   const [booted, setBooted] = useState(false);
   const socket = useRef<WebSocket | null>(null);
   const commandWaiters = useRef(new Map<string, (outcome: "accepted" | "rejected" | "unknown") => void>());
@@ -193,10 +195,18 @@ export default function App() {
     return () => { current = false; };
   }, [selectedProjectId, page]);
 
+  const themeFollowsSystem = useRef(false);
+  useEffect(() => {
+    const media = window.matchMedia?.("(prefers-color-scheme: light)");
+    if (!media) return;
+    const changed = () => { if (themeFollowsSystem.current) applyTheme(systemTheme()); };
+    media.addEventListener?.("change", changed);
+    return () => media.removeEventListener?.("change", changed);
+  }, []);
+
   const applyTheme = (next: "dark" | "light") => {
     setTheme(next);
-    document.documentElement.classList.toggle("light", next === "light");
-    document.documentElement.classList.toggle("dark", next !== "light");
+    paintTheme(next);
   };
 
   useEffect(() => {
@@ -222,6 +232,11 @@ export default function App() {
     setRailOpen(false);
     api.setPreference({ inspector_open: true }).catch(() => undefined);
   }, []);
+  const openFileAt = useCallback((path: string, line?: number) => {
+    if (!selected) return;
+    setFileFocus((previous) => ({ sessionId: selected, path, line, request: (previous?.request ?? 0) + 1 }));
+    openInspector();
+  }, [selected, openInspector]);
   const toggleInspector = useCallback(() => {
     const current = inspectorVisibility.current;
     if (current.compact ? current.open && current.narrow : current.open) closeInspector();
@@ -311,8 +326,10 @@ export default function App() {
       ]);
       if (cancelled) return;
       if (prefs) {
-        setLocale(prefs.interface_language);
-        applyTheme(prefs.theme);
+        // Until a choice is saved, follow the browser's language and color scheme.
+        setLocale(prefs.interface_language_saved === false ? browserLocale() : prefs.interface_language);
+        themeFollowsSystem.current = prefs.theme_saved === false;
+        applyTheme(themeFollowsSystem.current ? systemTheme() : prefs.theme);
         setInspectorOpen(prefs.inspector_open);
         const stored = parseInspectorWidth(prefs.inspector_width);
         setInspectorWidth(stored ?? defaultInspectorWidth());
@@ -474,7 +491,7 @@ export default function App() {
     const owner = sessions.find((item) => item.session_id === sessionId)?.project_id || workspaceId.current || undefined;
     api.preview(sessionId, owner).then((preview) => {
       if (epoch.current !== generation) return;
-      const body = preview as unknown as { session: Snapshot["session"]; history?: Snapshot["history"]; timeline?: Snapshot["timeline"]; plan?: Snapshot["plan"]; subagents?: Snapshot["subagents"]; accessed_files?: Snapshot["accessed_files"] };
+      const body = preview as unknown as { session: Snapshot["session"]; history?: Snapshot["history"]; timeline?: Snapshot["timeline"]; plan?: Snapshot["plan"]; subagents?: Snapshot["subagents"]; accessed_files?: Snapshot["accessed_files"]; context_breakdown?: Snapshot["context_breakdown"] };
       setState({
         ...initialView({
           stream_id: "preview",
@@ -493,6 +510,7 @@ export default function App() {
             request_prompt_tokens: null, request_completion_tokens: null, request_total_tokens: null,
             context_tokens: null, context_limit: null,
           },
+          context_breakdown: body.context_breakdown ?? undefined,
           subagents: body.subagents,
           accessed_files: body.accessed_files,
         }),
@@ -677,7 +695,7 @@ export default function App() {
   };
   const savePreference = async (patch: { theme?: "dark" | "light"; inspector_open?: boolean; interface_language?: string; inspector_width?: number }) => {
     const saved = await api.setPreference(patch);
-    if (patch.theme) applyTheme(saved.theme);
+    if (patch.theme) { themeFollowsSystem.current = false; applyTheme(saved.theme); }
     if (patch.inspector_open !== undefined) setInspectorOpen(saved.inspector_open);
     if (patch.interface_language) setLocale(saved.interface_language);
     if (patch.inspector_width !== undefined) {
@@ -743,6 +761,9 @@ export default function App() {
     ? tr("web.permission_required")
     : displayStatus ? tr(`web.status.${displayStatus}`) : tr(`web.connection.${connection}`);
   const breakdown = state?.context_breakdown;
+  // The session list refreshes on its own, so a title named after the first turn shows up here too.
+  const listed = state ? sessions.find((item) => item.session_id === state.session.session_id) : undefined;
+  const headerTitle = state ? sessionTitle(listed?.user_goal ? { ...state.session, user_goal: listed.user_goal } : state.session, tr) : "";
   return <div className="app-viewport">
     <header className="topbar">
       <div className="brand">
@@ -820,8 +841,8 @@ export default function App() {
           <div className="conversation-head">
             <div className="task-heading">
               {renaming === state.session.session_id
-                ? <InlineRename className="heading-rename" value={sessionTitle(state.session, tr)} label={tr("web.rename_prompt")} onSubmit={(title) => renameSession(state.session, title).catch((error) => setFatal(String(error)))} onCancel={() => setRenaming(null)} />
-                : <h1 title={sessionTitle(state.session, tr)} onDoubleClick={() => setRenaming(state.session.session_id)}>{sessionTitle(state.session, tr)}</h1>}
+                ? <InlineRename className="heading-rename" value={headerTitle} label={tr("web.rename_prompt")} onSubmit={(title) => renameSession(state.session, title).catch((error) => setFatal(String(error)))} onCancel={() => setRenaming(null)} />
+                : <h1 title={headerTitle} onDoubleClick={() => setRenaming(state.session.session_id)}>{headerTitle}</h1>}
             </div>
             <div className="task-status">
               {typeof breakdown?.total === "number" && <ContextRing total={breakdown.total} limit={breakdown.limit} />}
@@ -832,7 +853,7 @@ export default function App() {
                 { label: tr("web.archive"), icon: <Archive size={13} />, onSelect: () => { archiveSession().catch((error) => setFatal(String(error))); } },
                 { label: tr("web.close_session"), icon: <XCircle size={13} />, danger: true, onSelect: () => {
                   const sessionId = state.session.session_id;
-                  confirmDialog({ title: tr("web.close_title", { label: sessionTitle(state.session, tr) }), message: tr("web.close_help"), confirmLabel: tr("web.close_session"), danger: true }).then((ok) => {
+                  confirmDialog({ title: tr("web.close_title", { label: headerTitle }), message: tr("web.close_help"), confirmLabel: tr("web.close_session"), danger: true }).then((ok) => {
                     if (!ok) return;
                     return api.close(sessionId).then(() => { setSelected(null); setState(null); refreshSessions(); });
                   }).catch((error) => setFatal(String(error)));
@@ -840,6 +861,7 @@ export default function App() {
               ]}><DotsThree size={16} weight="bold" /></MenuButton>
             </div>
           </div>
+          <OpenFileContext.Provider value={openFileAt}>
           <Timeline
             key={state.session.session_id}
             state={state}
@@ -909,6 +931,7 @@ export default function App() {
             />
           </div>
           </Timeline>
+          </OpenFileContext.Provider>
         </> : selected ? <p className="hint" role="status">{tr("web.loading_session")}</p> : <>
           <div className="conversation-head"><div className="task-heading"><h1>{tr("web.no_session")}</h1></div></div>
           <div className="conversation-body welcome-body">
@@ -947,7 +970,7 @@ export default function App() {
       {!page && state && selected && inspectorOpen && !compactViewport ? (
         <InspectorResizeHandle width={inspectorWidth} onWidthChange={setInspectorWidth} onCommit={commitInspectorWidth} />
       ) : null}
-      {!page && state && selected ? <Inspector key={selected} state={state} sessionId={selected} open={compactViewport ? inspectorOpen && narrowInspector : inspectorOpen} narrow={compactViewport && narrowInspector} focusPath={fileFocus?.sessionId === selected ? fileFocus.path : null} focusRequest={fileFocus?.request} close={closeInspector} onResume={resumeSelected} onFeedback={(feedback) => {
+      {!page && state && selected ? <Inspector key={selected} state={state} sessionId={selected} open={compactViewport ? inspectorOpen && narrowInspector : inspectorOpen} narrow={compactViewport && narrowInspector} focusPath={fileFocus?.sessionId === selected ? fileFocus.path : null} focusLine={fileFocus?.sessionId === selected ? fileFocus.line : undefined} focusRequest={fileFocus?.request} close={closeInspector} onResume={resumeSelected} onFeedback={(feedback) => {
         const owner = selected;
         updateDraft(owner, (current) => ({ ...current, prompt: `${current.prompt.trimEnd()}${current.prompt.trim() ? "\n\n" : ""}${feedback}` }));
         if (compactViewport) closeInspector();

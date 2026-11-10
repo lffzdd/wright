@@ -19,7 +19,10 @@ from wright.application.memory.memory_service import MemoryService
 from wright.application.permission.resources import resource_change
 from wright.application.permission.service import PermissionService
 from wright.application.workspace.catalog import WorkspaceCatalog
-from wright.application.workspace.context_usage import classify_context
+from wright.application.workspace.context_usage import (
+    classify_context,
+    estimate_context,
+)
 from wright.application.workspace.documents import render_documents, store_document
 from wright.application.workspace.files import (
     PathRejected,
@@ -104,6 +107,24 @@ def test_context_categories_are_exclusive_estimates():
     assert by_id["rules"] > 0
     assert by_id["memory"] > 0
     assert by_id["system_prompt"] > 0
+
+
+def test_context_preview_counts_prompt_tools_and_reserve():
+    records = (
+        SimpleNamespace(message={"role": "system", "content": "stored prompt"}, source=""),
+        SimpleNamespace(message={"role": "user", "content": "hello"}, source=""),
+    )
+    tools = [{"name": "read_file", "description": "Read a file", "parameters": {"type": "object"}}]
+    report = estimate_context(records, tools=tools, system_prompt="projected prompt " * 20, context_limit=8000)
+    by_id = {item["id"]: item["tokens"] for item in report["categories"]}
+    assert report["preview"] is True
+    assert report["limit"] == 8000
+    assert by_id["output_reserve"] == 1000
+    assert by_id["tool_schemas"] > 0
+    # The projected prompt replaces the stored one, as a real request would.
+    assert by_id["system_prompt"] > by_id["history"] > 0
+    assert sum(by_id.values()) == report["total"]
+    assert records[0].message["content"] == "stored prompt"
 
 
 def test_paths_reject_escape_and_symlink(tmp_path: Path):
@@ -531,6 +552,9 @@ def test_workspace_http_isolates_projects_and_preferences(tmp_path: Path, monkey
         )
         assert selected.status_code == 200
         assert manager.project_root == launch.resolve()
+        fresh = client.get("/api/v1/preferences").json()
+        assert fresh["interface_language_saved"] is False
+        assert fresh["theme_saved"] is False
         empty = client.put(
             "/api/v1/preferences",
             json={},
@@ -546,6 +570,8 @@ def test_workspace_http_isolates_projects_and_preferences(tmp_path: Path, monkey
         assert saved.json()["theme"] == "light"
         assert saved.json()["inspector_open"] is False
         assert saved.json()["interface_language"] == "zh-CN"
+        assert saved.json()["interface_language_saved"] is True
+        assert saved.json()["theme_saved"] is True
         sized = client.put(
             "/api/v1/preferences",
             json={"inspector_width": 420},
@@ -632,6 +658,10 @@ def test_switching_workspace_does_not_retarget_a_running_root(tmp_path: Path, mo
         snapshot = client.get(f"/api/v1/sessions/{session_id}/snapshot")
         body = snapshot.json()
         assert body["context_breakdown"]["kind"] == "tokenizer_estimate"
+        # No request yet: the Context tab still gets an estimate, not zeros.
+        assert body["context_breakdown"]["preview"] is True
+        preview = {item["id"]: item["tokens"] for item in body["context_breakdown"]["categories"]}
+        assert preview["tool_schemas"] > 0
         assert body["timeline"] == []
         assert "stream_id" in body
     finally:

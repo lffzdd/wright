@@ -1,4 +1,4 @@
-import { ArrowsClockwise, BookOpen, Brain, CaretDown, ChatCircleDots, File, FileText, FolderSimple, Globe, Lightbulb, ListChecks, MagnifyingGlass, PencilSimple, TerminalWindow, Wrench, X, type Icon as PhosphorIcon } from "@phosphor-icons/react";
+import { ArrowSquareOut, ArrowsClockwise, BookOpen, Brain, CaretDown, ChatCircleDots, Check, Circle, File, FileText, FolderSimple, Globe, Lightbulb, ListChecks, MagnifyingGlass, Minus, PaperPlaneRight, PencilSimple, TerminalWindow, Warning, Wrench, X, type Icon as PhosphorIcon } from "@phosphor-icons/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { MarkdownContent } from "../../Markdown";
 import { api } from "../../api";
@@ -6,6 +6,9 @@ import { parseDiff } from "../../diff";
 import { present, t, useT } from "../../i18n";
 import type { Interaction, TimelineItem, ToolState } from "../../types";
 import { PermissionApproval } from "../permissions/approval";
+import { CodeView } from "../code/CodeView";
+import { languageForPath } from "../code/highlight";
+import { useOpenFile } from "../code/openFile";
 
 function textOf(value: unknown): string {
   if (typeof value === "string") return value;
@@ -123,9 +126,10 @@ function Highlighted({ text, pattern }: { text: string; pattern: RegExp | null }
   return <>{parts}</>;
 }
 
-/** Search hits grouped by file, with the pattern marked in each line. */
+/** Search hits grouped by file, with the pattern marked in each line. A hit opens its file at that line. */
 function SearchResults({ matches, pattern, literal }: { matches: SearchMatch[]; pattern: string; literal: boolean }) {
   const tr = useT();
+  const openFile = useOpenFile();
   if (!matches.length) return <p className="empty-small">{tr("web.steps.no_matches")}</p>;
   const files = new Map<string, SearchMatch[]>();
   for (const match of matches) {
@@ -134,28 +138,29 @@ function SearchResults({ matches, pattern, literal }: { matches: SearchMatch[]; 
   }
   const regex = highlighter(pattern, literal);
   return <div className="search-results">
-    {[...files].map(([path, hits]) => <div className="search-file" key={path}>
-      <div className="search-path">{path}</div>
-      {hits.filter((hit) => typeof hit.line === "number").map((hit, index) => <div className="code-line" key={index}>
-        <span className="code-num">{String(hit.line)}</span>
-        <span className="code-text"><Highlighted text={textOf(hit.text)} pattern={regex} /></span>
-      </div>)}
-    </div>)}
-  </div>;
-}
-
-/** File content read with numbered lines ("12|text"), shown with a gutter. */
-function NumberedContent({ text }: { text: string }) {
-  const lines = text.replace(/\n$/, "").split("\n");
-  return <div className="code-view">
-    {lines.map((line, index) => {
-      const match = /^(\d+)\|(.*)$/.exec(line);
-      return <div className="code-line" key={index}>
-        <span className="code-num">{match ? match[1] : ""}</span>
-        <span className="code-text">{match ? match[2] || " " : line}</span>
+    {[...files].map(([path, hits]) => {
+      const lines = hits.filter((hit) => typeof hit.line === "number")
+        .map((hit) => ({ num: hit.line as number, text: textOf(hit.text), content: <Highlighted text={textOf(hit.text)} pattern={regex} /> }));
+      return <div className="search-file" key={path}>
+        <div className="search-path">
+          {openFile ? <button type="button" className="text-button mono" onClick={() => openFile(path)} title={tr("web.open_in_files")}>{path}</button> : <span className="mono">{path}</span>}
+          <span className="search-count">{hits.length}</span>
+        </div>
+        <CodeView lines={lines} label={path} onLine={openFile ? (line) => openFile(path, line) : undefined} />
       </div>;
     })}
   </div>;
+}
+
+/** File content read with numbered lines ("12|text"), shown with a gutter and syntax colors. */
+function NumberedContent({ text, path }: { text: string; path?: string }) {
+  const openFile = useOpenFile();
+  const lines = text.replace(/\n$/, "").split("\n").map((line) => {
+    const match = /^(\d+)\|(.*)$/.exec(line);
+    return match ? { num: Number(match[1]), text: match[2] } : { text: line };
+  });
+  return <CodeView lines={lines} lang={languageForPath(path)} label={path}
+    onLine={openFile && path ? (line) => openFile(path, line) : undefined} />;
 }
 
 function isNumbered(text: string): boolean {
@@ -362,10 +367,55 @@ function SandboxDenialHint({ denial, sessionId }: { denial: SandboxDenial; sessi
   </div>;
 }
 
+type PlanStep = { id: string; title: string; status: string; note?: string };
+type PlanView = { objective: string; steps: PlanStep[] };
+
+/** The plan a plan tool returned, or null when its result holds none. */
+function planOf(source: Record<string, unknown> | null | undefined): PlanView | null {
+  if (!source || !Array.isArray(source.steps)) return null;
+  const steps = (source.steps as Array<Record<string, unknown>>).filter((step) => step && typeof step === "object")
+    .map((step) => ({ id: textOf(step.id), title: textOf(step.title), status: textOf(step.status) || "pending", note: textOf(step.note) }));
+  return { objective: textOf(source.objective), steps };
+}
+
+function PlanMark({ status }: { status: string }) {
+  const tr = useT();
+  const label = tr(`web.plan.status.${status}`);
+  if (status === "completed") return <Check size={12} weight="bold" className="plan-mark completed" aria-label={label} />;
+  if (status === "in_progress") return <span className="plan-mark in_progress" role="img" aria-label={label} />;
+  if (status === "blocked") return <Warning size={12} weight="bold" className="plan-mark blocked" aria-label={label} />;
+  if (status === "skipped") return <Minus size={12} weight="bold" className="plan-mark skipped" aria-label={label} />;
+  return <Circle size={12} className="plan-mark pending" aria-label={label} />;
+}
+
+/** A plan as a checklist; the step this call changed stands out and shows its note. */
+function PlanChecklist({ plan, focusId }: { plan: PlanView; focusId?: string }) {
+  return <div className="plan-checklist">
+    {plan.objective && <p className="plan-objective">{plan.objective}</p>}
+    {plan.steps.length > 0 && <ol>
+      {plan.steps.map((step) => <li key={step.id || step.title} className={`${step.status}${focusId === step.id ? " focus" : ""}${focusId && focusId !== step.id ? " dim" : ""}`}>
+        <PlanMark status={step.status} />
+        <div><span>{step.title}</span>{step.note && (!focusId || focusId === step.id) && <small>{step.note}</small>}</div>
+      </li>)}
+    </ol>}
+  </div>;
+}
+
+function ReadToolbar({ path, line }: { path: string; line: number }) {
+  const tr = useT();
+  const openFile = useOpenFile();
+  if (!openFile) return null;
+  return <div className="tool-toolbar">
+    <button type="button" className="text-button" onClick={() => openFile(path, line)}><ArrowSquareOut size={12} />{tr("web.open_in_files")}</button>
+  </div>;
+}
+
 export function ToolCard({
-  name, phase, args, result, data, duration, output, kind, sessionId, enter,
+  name, phase, args, result, data, duration, output, kind, sessionId, enter, live,
 }: {
   enter?: boolean;
+  // The card's turn is still running; edits open while live and fold once it ends.
+  live?: boolean;
   sessionId?: string;
   name: string;
   phase?: string;
@@ -387,7 +437,7 @@ export function ToolCard({
   const metricSource = data && typeof data === "object" ? data as Record<string, unknown> : result;
   const denied = phase === "failed" && (metricSource?.permission as { decision?: unknown } | undefined)?.decision === "deny";
   // Derived until the person toggles it, so a live card and a reloaded one agree.
-  const open = toggled ?? (!denied && (phase === "failed" || phase === "running" || family === "edit"));
+  const open = toggled ?? (!denied && (phase === "failed" || phase === "running" || (family === "edit" && Boolean(live))));
   const hasDiff = family === "edit" && typeof metricSource?.diff === "string";
   const body = hasDiff ? metricSource.diff as string : compactToolBody(name, raw, result ?? (data && typeof data === "object" ? data as Record<string, unknown> : null));
   const lowered = name.toLowerCase();
@@ -407,6 +457,12 @@ export function ToolCard({
     : 0;
   const testFailed = family === "shell" && code !== null && code !== 0 && looksLikeTestFailure(body);
   const durationLabel = typeof duration === "number" ? formatDuration(duration) : "";
+  const readRange = category === "reads" && phase !== "failed" && metricSource?.unchanged !== true
+    && typeof metricSource?.start_line === "number" && typeof metricSource?.end_line === "number" && metricSource.end_line >= metricSource.start_line
+    ? { start: metricSource.start_line, end: metricSource.end_line } : null;
+  const plan = category === "plans" && phase !== "failed" ? planOf(metricSource) : null;
+  const planFocus = plan && typeof args?.step_id === "string" ? plan.steps.find((step) => step.id === args.step_id) : undefined;
+  const planHeadline = plan ? (planFocus?.title ?? plan.objective) : "";
   return <div className={`tl-indent${enter ? " enter" : ""}`}>
     <section className={`tool-card ${open ? "open" : ""}`}>
       <button type="button" className="tool-card-head" aria-expanded={open} onClick={() => setToggled(!open)}>
@@ -416,6 +472,8 @@ export function ToolCard({
             {family !== "edit" && <span className="tool-name">{name}</span>}
             {pattern && <span className="mono tool-pattern" title={pattern}>{pattern}</span>}
             {path && <span className={`mono path ${family === "edit" ? "path-strong" : ""}`}>{path}</span>}
+            {readRange && <span className="mono read-range">{readRange.start === readRange.end ? `L${readRange.start}` : `L${readRange.start}–${readRange.end}`}</span>}
+            {planHeadline && <span className="plan-headline">{planFocus && <PlanMark status={planFocus.status} />}<span>{planHeadline}</span></span>}
             {family === "edit" && phase !== "failed" && (phase === "succeeded" || added + deleted > 0) && <><span className="edit-add">+{added}</span><span className="edit-del">−{deleted}</span></>}
           </>}
         </span>
@@ -425,16 +483,19 @@ export function ToolCard({
           {matches && phase === "succeeded" && <span className="step-meta">{tr("web.steps.match_count", { count: matches.length, files: new Set(matches.map((match) => String(match.path ?? ""))).size })}</span>}
           {family === "edit" && phase === "succeeded" && <span className="muted edit-summary">{t("web.applied")}</span>}
           {code !== null && code !== 0 && <span className="fail-pill">Exit {code}{testFailed ? ` (${tr("web.bug_confirmed")})` : ""}</span>}
+          {plan && plan.steps.length > 0 && <span className="step-meta">{tr("web.plan.progress", { done: plan.steps.filter((step) => step.status === "completed").length, total: plan.steps.length })}</span>}
           {durationLabel && directoryCount === 0 && <span className="step-meta">{durationLabel}</span>}
           <CaretDown size={12} className={open ? "" : "collapsed"} />
         </span>
       </button>
       {open && <div className={`tool-card-body${failed && !denied ? " failed" : ""}`}>
         {family === "shell" && command && <div className="term-cmd">$ {command}</div>}
-        {directory ? <DirectoryTree source={directory} />
+        {readRange && path && <ReadToolbar path={path} line={readRange.start} />}
+        {plan ? <PlanChecklist plan={plan} focusId={planFocus?.id} />
+          : directory ? <DirectoryTree source={directory} />
           : matches && phase === "succeeded" ? <SearchResults matches={matches} pattern={pattern} literal={metricSource?.fixed_string === true || args?.fixed_string === true} />
-          : content !== null && isNumbered(content) ? <NumberedContent text={content} />
-          : body && (family === "edit" ? <DiffBody text={body} /> : testFailed ? <TestFailureOutput text={body} /> : isNumbered(body) ? <NumberedContent text={body} /> : <pre className={`term-body ${code !== null && code !== 0 ? "failed" : ""}`}>{body}</pre>)}
+          : content !== null && isNumbered(content) ? <NumberedContent text={content} path={path} />
+          : body && (family === "edit" ? <DiffBody text={body} /> : testFailed ? <TestFailureOutput text={body} /> : isNumbered(body) ? <NumberedContent text={body} path={path} /> : <pre className={`term-body ${code !== null && code !== 0 ? "failed" : ""}`}>{body}</pre>)}
         {Boolean(metricSource?.sandbox_denial) && <SandboxDenialHint denial={metricSource!.sandbox_denial as SandboxDenial} sessionId={sessionId} />}
         {hasDiff && !body && <p className="empty-small">{tr("web.no_diff")}</p>}
         {hasDiff && metricSource?.diff_truncated === true && <p className="hint" role="status">{tr("web.diff_truncated")}</p>}
@@ -453,7 +514,53 @@ function toolOutput(tool: ToolState): string {
   return [tool.err, body].filter(Boolean).join("\n");
 }
 
-export function toolCardFromTimeline(item: TimelineItem, sessionId?: string, enter?: boolean) {
+/**
+ * An answered (or abandoned) ask_user call, kept in the timeline as a decision:
+ * one line with the question and the answer, opening to every option offered.
+ * While the question is still open, the interaction dock shows it instead.
+ */
+export function QuestionRecord({ args, data, phase, enter }: {
+  args?: Record<string, unknown>;
+  data?: unknown;
+  phase?: string;
+  enter?: boolean;
+}) {
+  const tr = useT();
+  const [open, setOpen] = useState(false);
+  if (phase !== "succeeded" && phase !== "failed") return null;
+  const result = data && typeof data === "object" ? data as Record<string, unknown> : undefined;
+  const question = textOf(args?.question) || textOf(result?.question);
+  const context = textOf(args?.context);
+  const options = Array.isArray(args?.options) ? args.options.filter((option): option is string => typeof option === "string") : [];
+  const answer = phase === "succeeded" ? textOf(result?.answer) || textOf(args?.answer) : "";
+  const own = Boolean(answer) && !options.includes(answer);
+  return <div className={`tl-indent${enter ? " enter" : ""}`}>
+    <section className={`question-record${open ? " open" : ""}${answer ? "" : " unanswered"}`}>
+      <button type="button" className="question-record-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span className="step-icon question" aria-hidden="true"><ChatCircleDots size={13} weight="fill" /></span>
+        <span className="question-record-q">{question}</span>
+        <span className="question-record-arrow" aria-hidden="true">→</span>
+        <span className="question-record-a">{answer || tr("web.question.no_answer")}</span>
+        <CaretDown size={12} className={open ? "" : "collapsed"} aria-hidden="true" />
+      </button>
+      {open && <div className="question-record-body">
+        {context && <p className="question-record-context">{context}</p>}
+        {options.length > 0 && <ol className="question-record-options">
+          {options.map((option, index) => <li key={option} className={option === answer ? "chosen" : ""} aria-current={option === answer ? "true" : undefined}>
+            <kbd>{index + 1}</kbd><span>{option}</span>{option === answer && <Check size={13} weight="bold" aria-label={tr("web.question.chosen")} />}
+          </li>)}
+        </ol>}
+        {own && <div className="question-record-own">
+          <span>{tr(options.length ? "web.question.own_answer" : "web.question.answer")}</span>
+          <p>{answer}</p>
+        </div>}
+        {!answer && <p className="question-record-none">{tr("web.question.no_answer_detail")}</p>}
+      </div>}
+    </section>
+  </div>;
+}
+
+export function toolCardFromTimeline(item: TimelineItem, sessionId?: string, enter?: boolean, live?: boolean) {
   const result = item.result;
   const envelope = result && ("ok" in result || "data" in result || "err" in result);
   const tool: ToolState = {
@@ -462,12 +569,14 @@ export function toolCardFromTimeline(item: TimelineItem, sessionId?: string, ent
     data: envelope ? result.data : result,
     err: envelope ? textOf(result.err) : undefined,
   };
+  if (tool.name === "ask_user") return <QuestionRecord key={item.id} args={tool.arguments} data={tool.data} phase={item.phase} enter={enter} />;
   const data = tool.data && typeof tool.data === "object" ? tool.data as Record<string, unknown> : null;
-  return <ToolCard key={item.id} name={tool.name} phase={item.phase} args={tool.arguments} result={data} duration={item.duration_ms} output={toolOutput(tool)} kind={item.kind} sessionId={sessionId} enter={enter} />;
+  return <ToolCard key={item.id} name={tool.name} phase={item.phase} args={tool.arguments} result={data} duration={item.duration_ms} output={toolOutput(tool)} kind={item.kind} sessionId={sessionId} enter={enter} live={live} />;
 }
 
-export function toolCardFromState(tool: ToolState, sessionId?: string, enter?: boolean) {
-  return <ToolCard key={tool.call_id} name={tool.name} phase={tool.phase} args={tool.arguments} data={tool.data} output={toolOutput(tool)} sessionId={sessionId} enter={enter} />;
+export function toolCardFromState(tool: ToolState, sessionId?: string, enter?: boolean, live?: boolean) {
+  if (tool.name === "ask_user") return <QuestionRecord key={tool.call_id} args={tool.arguments} data={tool.data} phase={tool.phase} enter={enter} />;
+  return <ToolCard key={tool.call_id} name={tool.name} phase={tool.phase} args={tool.arguments} data={tool.data} output={toolOutput(tool)} sessionId={sessionId} enter={enter} live={live} />;
 }
 
 export function InteractionCard({ sessionId, interaction, respond, root }: {
@@ -488,24 +597,47 @@ function QuestionCard({ interaction, respond }: {
 }) {
   const [answer, setAnswer] = useState("");
   const [submitting, setSubmitting] = useState("");
+  const card = useRef<HTMLElement>(null);
   const tr = useT();
-  return <section className="interaction-card ask-card" role="alert">
-      <div className="perm-head"><strong>{tr("web.needs_input")}</strong></div>
-      <form className="perm-body ask-form" onSubmit={(event) => {
-        event.preventDefault();
-        if (!answer.trim() || submitting) return;
-        setSubmitting("answer");
-        Promise.resolve(respond(interaction.request_id, answer.trim())).then((accepted) => { if (accepted === false) setSubmitting(""); });
-      }}>
-        <p>{interaction.question}</p>
-        {interaction.context && <p className="hint">{interaction.context}</p>}
-        {interaction.options?.map((option) => <button type="button" className="option-button" key={option} disabled={Boolean(submitting)} onClick={() => {
-          if (submitting) return;
-          setSubmitting(option);
-          Promise.resolve(respond(interaction.request_id, option)).then((accepted) => { if (accepted === false) setSubmitting(""); });
-        }}>{option}</button>)}
-        <input aria-label={tr("web.answer")} value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder={tr("web.answer_placeholder")} />
-        <button className="button primary" aria-label={tr("web.submit_answer")} disabled={Boolean(submitting)}>{tr("web.submit_answer")}</button>
+  const options = interaction.options ?? [];
+  const headingId = `ask-${interaction.request_id}`;
+  useEffect(() => { card.current?.focus({ preventScroll: true }); }, [interaction.request_id]);
+  const send = (value: string) => {
+    if (!value || submitting) return;
+    setSubmitting(value);
+    Promise.resolve(respond(interaction.request_id, value)).then((accepted) => { if (accepted === false) setSubmitting(""); });
+  };
+  return <div className="tl-indent">
+    <section ref={card} className="ask-card" role="alert" aria-labelledby={headingId} tabIndex={-1} onKeyDown={(event) => {
+      if (event.target instanceof HTMLElement && event.target.closest("input,select,textarea")) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const index = Number(event.key) - 1;
+      if (Number.isInteger(index) && index >= 0 && index < Math.min(options.length, 9)) { event.preventDefault(); send(options[index]); }
+    }}>
+      <header className="ask-head">
+        <ChatCircleDots size={16} weight="fill" className="ask-icon" aria-hidden="true" />
+        <h3 id={headingId}>{interaction.question}</h3>
+        <span className="approval-waiting"><span className="dot pulse" />{tr("web.approval.waiting")}</span>
+      </header>
+      {interaction.context && <p className="ask-context">{interaction.context}</p>}
+      {options.length > 0 && <div className="ask-options">
+        {options.map((option, index) => <button type="button" className={`ask-option${submitting === option ? " chosen" : ""}`} key={option} disabled={Boolean(submitting)} onClick={() => send(option)}>
+          {index < 9 && <kbd>{index + 1}</kbd>}<span>{option}</span>
+        </button>)}
+      </div>}
+      <form className="ask-reply" onSubmit={(event) => { event.preventDefault(); send(answer.trim()); }}>
+        <textarea aria-label={tr("web.answer")} rows={1} value={answer} disabled={Boolean(submitting)}
+          placeholder={tr(options.length ? "web.answer_other" : "web.answer_placeholder")}
+          onChange={(event) => {
+            setAnswer(event.target.value);
+            event.target.style.height = "auto";
+            event.target.style.height = `${Math.min(event.target.scrollHeight, 160)}px`;
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(answer.trim()); }
+          }} />
+        <button className="ask-send" aria-label={tr("web.submit_answer")} title={tr("web.submit_answer")} disabled={Boolean(submitting) || !answer.trim()}><PaperPlaneRight size={14} weight="fill" /></button>
       </form>
-    </section>;
+    </section>
+  </div>;
 }

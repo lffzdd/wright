@@ -385,6 +385,9 @@ def _preference_view() -> dict[str, Any]:
         inspector_width = None
     return {
         "interface_language": get_locale(),
+        # Unsaved choices let the browser pick (language, color scheme).
+        "interface_language_saved": stored.get("interface_language") in SUPPORTED_LOCALES,
+        "theme_saved": stored.get("theme") in {"dark", "light"},
         "supported": [
             {"id": item, "label": LOCALE_LABELS[item]} for item in SUPPORTED_LOCALES
         ],

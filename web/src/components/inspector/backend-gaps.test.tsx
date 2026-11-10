@@ -38,13 +38,14 @@ describe("backend data in workspace panels", () => {
     });
     const liveTool = state.timeline!.find((item) => item.call_id === "c")!;
     expect(liveTool.result).toEqual({ ok: true, data });
-    const { container, rerender } = render(toolCardFromTimeline(liveTool));
+    // Edits open only while their turn is live; these tests read the diff body.
+    const { container, rerender } = render(toolCardFromTimeline(liveTool, undefined, undefined, true));
     expect(container.querySelector(".diff-del .diff-line-old")?.textContent).toBe("6");
     expect(container.querySelector(".diff-add .diff-line-new")?.textContent).toBe("8");
     expect(container.querySelectorAll(".diff-add")).toHaveLength(2);
     expect(screen.getByRole("status").textContent).toContain("64 KiB");
     const liveText = container.textContent;
-    rerender(toolCardFromTimeline({ id: "c", kind: "edit", name: "edit_file", phase: "succeeded", arguments: { file: "file.txt" }, result: { ok: true, data } }));
+    rerender(toolCardFromTimeline({ id: "c", kind: "edit", name: "edit_file", phase: "succeeded", arguments: { file: "file.txt" }, result: { ok: true, data } }, undefined, undefined, true));
     expect(container.textContent).toBe(liveText);
   });
 
@@ -57,7 +58,7 @@ describe("backend data in workspace panels", () => {
   });
 
   it("renders explicit zero-change diffs and approval audit text", () => {
-    render(toolCardFromState({ call_id: "c", name: "edit_file", phase: "succeeded", data: { diff: "", additions: 0, deletions: 0, diff_truncated: false } }));
+    render(toolCardFromState({ call_id: "c", name: "edit_file", phase: "succeeded", data: { diff: "", additions: 0, deletions: 0, diff_truncated: false } }, undefined, undefined, true));
     expect(screen.getByText("No textual diff.")).toBeTruthy();
     render(<InteractionCard sessionId="s" interaction={{ request_id: "permission", kind: "permission", choices: [{ id: "deny", label: "Deny", scope: "invocation", persistence: "none" }] }} respond={async () => true} />);
     expect(screen.getByText(/Permission requests and decisions are recorded/)).toBeTruthy();

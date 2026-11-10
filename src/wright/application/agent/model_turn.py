@@ -142,6 +142,32 @@ class ModelTurnRunner:
 
         return response, usage_record
 
+    def preview_context(self) -> dict:
+        """Side-effect-free estimate of the next request, for the Context tab."""
+        from ..workspace.context_usage import estimate_context
+
+        schemas, _ = encode_tools(
+            self._prompt_manager.visible_schema_tools(),
+            active_deferred=set(self._active_deferred_tools),
+        )
+        system_prompt = None
+        if self.memory is not None:
+            base_prompt = next(
+                (
+                    record.message["content"]
+                    for record in self.session_state.message_records
+                    if record.message.get("role") == "system"
+                ),
+                "",
+            )
+            system_prompt = self.memory.project_system_prompt(base_prompt)
+        return estimate_context(
+            self.session_state.message_records,
+            tools=schemas,
+            system_prompt=system_prompt,
+            context_limit=self.context_limit,
+        )
+
     def _build_turn_view(self, reminders: Sequence[dict]):
         """Project the transcript and this turn's reminders into one request view."""
         system_prompt = None

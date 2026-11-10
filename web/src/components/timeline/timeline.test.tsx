@@ -240,12 +240,22 @@ describe("real timeline projection", () => {
   });
 
   it("does not invent diff line numbers or file counts from output lines", () => {
-    const { container, rerender } = render(toolCardFromState({ call_id: "c", name: "edit_file", phase: "succeeded", data: "-old\n+new" }));
+    const { container, rerender } = render(toolCardFromState({ call_id: "c", name: "edit_file", phase: "succeeded", data: "-old\n+new" }, undefined, undefined, true));
     expect(container.querySelector(".diff-line")?.textContent).toBe("");
     rerender(toolCardFromState({ call_id: "read", name: "read_file", phase: "succeeded", data: "line one\nline two" }));
     expect(screen.queryByText("2 files")).toBeNull();
     fireEvent.click(screen.getByRole("button"));
     expect(screen.getByText(/line one/)).toBeTruthy();
+  });
+
+  it("opens an edit card only while its turn is live", () => {
+    const edit = { call_id: "e", name: "edit_file", phase: "succeeded", arguments: { file: "a.py" }, data: { diff: "-old\n+new", additions: 1, deletions: 1, diff_truncated: false } } as const;
+    const { container, rerender } = render(toolCardFromState(edit, undefined, false, true));
+    expect(container.querySelector(".tool-card")!.classList.contains("open")).toBe(true);
+    rerender(toolCardFromState(edit, undefined, false, false));
+    expect(container.querySelector(".tool-card")!.classList.contains("open")).toBe(false);
+    fireEvent.click(container.querySelector(".tool-card-head")!);
+    expect(container.querySelector(".tool-card")!.classList.contains("open")).toBe(true);
   });
 
   it("shows directory entry counts without inventing them for ordinary file reads", () => {

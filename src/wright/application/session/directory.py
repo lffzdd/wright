@@ -404,6 +404,7 @@ class SessionDirectory:
             "subagents": project_subagents(saved),
             "accessed_files": project_accessed_files(saved),
             "plan": plan,
+            "context_breakdown": dict(getattr(saved, "request_context_breakdown", None) or {}) or None,
             "session": {
                 "session_id": saved.session_id,
                 "lifecycle": "closed",

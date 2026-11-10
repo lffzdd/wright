@@ -19,9 +19,24 @@ const gitGroups: GitChangeScope[] = ["staged", "unstaged"];
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 const same = (a: Selection | null, b: Selection | null) => !!a && !!b && a.group === b.group && a.path === b.path;
 const splitPath = (path: string) => { const index = path.lastIndexOf("/"); return index < 0 ? ["", path] : [path.slice(0, index + 1), path.slice(index + 1)]; };
+// Build output that is regenerated rather than reviewed line by line.
+const generatedPatterns = [/(^|\/)static\/assets\//, /(^|\/)(dist|build)\//, /\.min\.(js|css)$/, /\.map$/];
+export const isGenerated = (path: string) => generatedPatterns.some((pattern) => pattern.test(path));
+/** Git reports untracked files as "??"; they read as additions. */
+const kindLetter = (status: string) => status[0] === "?" ? "A" : (status[0] || "M");
+const sumStats = (rows: Array<{ additions?: number | null; deletions?: number | null }>) => rows.reduce((sum, row) => ({ add: sum.add + (row.additions ?? 0), del: sum.del + (row.deletions ?? 0) }), { add: 0, del: 0 });
+/** Five-block additions/deletions bar, as code hosts show it. */
+export function DiffBar({ add, del }: { add: number; del: number }) {
+  const total = add + del;
+  const green = total ? Math.round((add / total) * 5) : 0;
+  const red = total ? Math.min(5 - green, Math.max(del ? 1 : 0, Math.round((del / total) * 5))) : 0;
+  return <span className="diff-bar" aria-hidden="true">{Array.from({ length: 5 }, (_, index) => <i key={index} className={index < green ? "add" : index < green + red ? "del" : ""} />)}</span>;
+}
 
-export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFeedback }: {
+export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFeedback, focus }: {
   sessionId: string;
+  /** A file to open once the listing has it; a new request reopens it. */
+  focus?: { path: string; request: number } | null;
   state: ViewState;
   onCount: (count: number) => void;
   onWorkingChanges?: (changes: ChangesSummary["changes"]) => void;
@@ -117,6 +132,15 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
   }, [wide]);
   useEffect(() => { if (!selected) setWide(false); }, [selected]);
 
+  const handledFocus = useRef(0);
+  useEffect(() => {
+    if (!focus || handledFocus.current === focus.request || !listing || listing.owner !== sessionId || listing.view !== "git") return;
+    const group = gitGroups.find((item) => listing.groups[item]?.rows.some((row) => row.path === focus.path));
+    if (!group) return;
+    handledFocus.current = focus.request;
+    setSelected({ group, path: focus.path });
+  }, [focus, listing, sessionId]);
+
   const owned = listing?.owner === sessionId && listing.view === view ? listing : null;
   const groupsShown: Group[] = view === "session" ? ["session"] : gitGroups;
   const rowsOf = (group: Group) => owned?.groups[group]?.rows ?? [];
@@ -130,7 +154,7 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
   const runtimeBusy = state.connection !== "connected" || ["running", "queued", "waiting_for_input", "cancelling"].includes(execution);
   const blocked = (group: Group) => actionPending || runtimeBusy || loading || !!error || !revisionOf(group);
   const fileBlocked = (group: Group) => blocked(group) || stalePatch || patchLoading || !!patchError || !patch;
-  const stats = useMemo(() => allRows.reduce((sum, row) => ({ add: sum.add + (row.additions ?? 0), del: sum.del + (row.deletions ?? 0) }), { add: 0, del: 0 }), [allRows]);
+  const stats = useMemo(() => sumStats(allRows), [allRows]);
   const canUndo = (row: Row) => row.review?.can_revert === true;
   const canStage = (row: Row) => row.capabilities?.stage ?? true;
   const canUnstage = (row: Row) => row.capabilities?.unstage ?? true;
@@ -226,13 +250,28 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
     : <>{bulkButton(group, "stage", tr("web.changes.stage_all"))}{bulkButton(group, "discard", tr("web.changes.discard_all"), true)}</>;
   const groupBlockedHint = (group: Group) => group === "staged" ? bulkBlocked(group, "unstage") : group === "unstaged" && (bulkBlocked(group, "stage") || bulkBlocked(group, "discard"));
 
+  // The diff opens under its row, so a long list never pushes it out of view.
+  const detailSection = selected && <section className="changes-detail" hidden={wide} aria-label={tr("web.changes.selected_file")}>
+    <div className="changes-expand"><button type="button" className="text-button" ref={expandRef} disabled={patchLoading || !!patchError || !patch} onClick={() => setWide(true)}><ArrowsOutSimple size={13} />{tr("web.expand_diff")}</button></div>{!wide && diffBody}
+  </section>;
+
   const fileRow = (group: Group, row: Row) => {
     const selection = { group, path: row.path };
     const badge = rowState(row);
     const [dir, name] = splitPath(row.path);
-    return <button type="button" className={`changes-file${same(selected, selection) ? " selected" : ""}`} key={`${group}:${row.path}`} aria-pressed={same(selected, selection)} onClick={() => setSelected(selection)}>
-      <span className={`changes-kind kind-${row.status[0]}`} title={row.status}>{row.status}</span><span className="changes-file-name" title={row.old_path ? `${row.old_path} → ${row.path}` : row.path}>{row.old_path && <small>{row.old_path} →</small>}<span className="changes-file-path"><span className="changes-file-dir">{dir}</span><strong>{name}</strong></span>{badge && <small className="changes-file-state">{badge}</small>}</span><span className="changes-file-stats">{row.binary ? "BIN" : row.truncated ? "…" : <><span className="stat-add">+{row.additions ?? 0}</span><span className="stat-del">−{row.deletions ?? 0}</span></>}</span>
-    </button>;
+    const letter = kindLetter(row.status);
+    const active = same(selected, selection);
+    return <div className="changes-file-item" key={`${group}:${row.path}`}>
+      <button type="button" className={`changes-file${active ? " selected" : ""}`} aria-pressed={active} aria-label={[`${letter} ${row.old_path ? `${row.old_path} → ` : ""}${row.path}`, badge, row.binary ? "BIN" : `+${row.additions ?? 0} −${row.deletions ?? 0}`].filter(Boolean).join(", ")} onClick={() => setSelected(active ? null : selection)}>
+        <span className={`changes-kind kind-${letter}`} title={row.status}>{letter}</span>
+        <span className="changes-file-name" title={row.old_path ? `${row.old_path} → ${row.path}` : row.path}>
+          <span className="changes-file-path"><strong>{name}</strong><span className="changes-file-dir">{dir}</span></span>
+          {(badge || row.old_path) && <span className="changes-file-meta">{row.old_path && <small>{row.old_path} →</small>}{badge && <small className="changes-file-state">{badge}</small>}</span>}
+        </span>
+        <span className="changes-file-stats">{row.binary ? "BIN" : row.truncated ? "…" : <><span className="stat-add">+{row.additions ?? 0}</span><span className="stat-del">−{row.deletions ?? 0}</span></>}</span>
+      </button>
+      {active && detailSection}
+    </div>;
   };
 
   const groupSection = (group: Group) => {
@@ -245,7 +284,20 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
       </div>
       {group === "session" && unavailableUndo > 0 && <p className="hint">{tr("web.changes.undo_unavailable", { count: unavailableUndo })}</p>}
       {groupBlockedHint(group) && <p className="hint">{tr("web.changes.bulk_unavailable")}</p>}
-      <div className="changes-file-list">{rows.map((row) => fileRow(group, row))}</div>
+      {(() => {
+        const generated = rows.filter((row) => isGenerated(row.path));
+        // A lone generated file is not worth a fold.
+        const folded = generated.length >= 2 ? generated : [];
+        const visible = rows.filter((row) => !folded.includes(row));
+        const generatedStats = sumStats(folded);
+        return <>
+          {visible.length > 0 && <div className="changes-file-list">{visible.map((row) => fileRow(group, row))}</div>}
+          {folded.length > 0 && <details className="changes-generated" open={folded.some((row) => same(selected, { group, path: row.path })) || undefined}>
+            <summary><span>{tr("web.changes.generated", { count: folded.length })}</span><span className="changes-file-stats"><span className="stat-add">+{generatedStats.add}</span><span className="stat-del">−{generatedStats.del}</span></span></summary>
+            <div className="changes-file-list">{folded.map((row) => fileRow(group, row))}</div>
+          </details>}
+        </>;
+      })()}
       {group === "staged" && <form className="changes-commit" onSubmit={(event) => { event.preventDefault(); void act("commit", "staged", rows); }}>
         <label htmlFor={`changes-commit-${sessionId}`}>{tr("web.changes.commit_message")}</label><textarea id={`changes-commit-${sessionId}`} value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} placeholder={tr("web.changes.commit_placeholder")} rows={3} disabled={actionPending} /><p className="hint">{tr("web.changes.commit_help")}</p><button type="submit" className="button" disabled={blocked("staged") || !commitMessage.trim()}>{tr("web.changes.commit")}</button>
       </form>}
@@ -255,7 +307,7 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
   return <div className="changes-panel">
     <div className="changes-toolbar"><label className="changes-scope"><span className="sr-only">{tr("web.changes.scope")}</span><select aria-label={tr("web.changes.scope")} value={view} disabled={actionPending} onChange={(event) => setView(event.target.value as ChangeView)}>{views.map((value) => <option key={value} value={value}>{tr(`web.changes.view.${value}`)}</option>)}</select></label><button type="button" className="icon-button" aria-label={tr("web.changes.refresh")} title={tr("web.changes.refresh")} disabled={loading || actionPending} onClick={() => setRefresh((value) => value + 1)}><ArrowClockwise size={15} /></button></div>
     <p className="changes-scope-help">{tr(`web.changes.help.${view}`)}</p>
-    {owned && !error && owned.git !== false && <div className="changes-summary"><span>{tr("web.changes.count", { count: fileCount })}</span><span className="diff-stats"><span className="stat-add">+{stats.add}</span><span className="stat-del">−{stats.del}</span></span></div>}
+    {owned && !error && owned.git !== false && <div className="changes-summary"><span>{tr("web.changes.count", { count: fileCount })}</span><span className="diff-stats"><span className="stat-add">+{stats.add}</span><span className="stat-del">−{stats.del}</span><DiffBar add={stats.add} del={stats.del} /></span></div>}
     {runtimeBusy && <p className="hint">{tr("web.changes.busy")}</p>}
     {loading && <p className="hint" role="status">{tr("web.inspector_loading")}</p>}
     {error && <p className="form-error" role="alert">{error}</p>}
@@ -264,9 +316,6 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
     {!loading && owned && !error && owned.git !== false && !allRows.length && <p className="empty-small">{tr(`web.changes.empty.${view === "git" ? "working" : "session"}`)}</p>}
     {owned?.git !== false && groupsShown.map(groupSection)}
     {!selected && allRows.length > 0 && <p className="hint">{tr("web.changes.select")}</p>}
-    {selected && <section className="changes-detail" hidden={wide} aria-label={tr("web.changes.selected_file")}>
-      <div className="changes-expand"><button type="button" className="text-button" ref={expandRef} disabled={patchLoading || !!patchError || !patch} onClick={() => setWide(true)}><ArrowsOutSimple size={13} />{tr("web.expand_diff")}</button></div>{!wide && diffBody}
-    </section>}
     {wide && selected && <div className="wide-diff changes-wide" ref={wideRef} role="dialog" aria-modal="true" aria-label={selected.path} onKeyDown={(event) => {
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setWide(false); }
       if (event.key !== "Tab") return;

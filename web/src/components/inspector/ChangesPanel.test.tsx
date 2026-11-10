@@ -57,6 +57,27 @@ describe("Changes user workflow", () => {
     expect(staged.querySelector(".changes-file-dir")?.textContent).toBe("src/");
   });
 
+  it("folds build output, shows untracked files as additions and opens the diff under its row", async () => {
+    git([
+      { path: "src/app.ts", status: "M", unstaged: true, additions: 3, deletions: 1 },
+      { path: "pkg/static/assets/index-1.js", status: "??", untracked: true, unstaged: true, additions: 1, deletions: 0 },
+      { path: "pkg/static/assets/index-2.css", status: "D", unstaged: true, additions: 0, deletions: 1 },
+    ]);
+    render(panel());
+    const unstaged = await screen.findByRole("region", { name: "Unstaged" });
+    const fold = unstaged.querySelector<HTMLDetailsElement>("details.changes-generated")!;
+    expect(fold.open).toBe(false);
+    expect(fold.querySelector("summary")?.textContent).toContain("Build output · 2 files");
+    expect(fold.querySelectorAll(".changes-file")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: /^A pkg\/static\/assets\/index-1.js/ })).toBeTruthy();
+    const row = screen.getByRole("button", { name: /M src\/app.ts/ });
+    fireEvent.click(row);
+    const detail = await screen.findByRole("region", { name: "Selected file" });
+    expect(row.parentElement?.contains(detail)).toBe(true);
+    fireEvent.click(row);
+    expect(screen.queryByRole("region", { name: "Selected file" })).toBeNull();
+  });
+
   it("acts on the staged part of a file with the staged revision", async () => {
     git([{ path: "src/a.txt", status: "M", unstaged: true }], [{ path: "src/a.txt", status: "M", staged: true }]);
     vi.mocked(api.patch).mockResolvedValue(patch("s1"));

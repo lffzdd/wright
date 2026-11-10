@@ -180,6 +180,8 @@ export type ContextBreakdown = {
   system_prompt_contains_core_memory?: boolean;
   categories?: ContextCategory[];
   note?: string;
+  /** Estimated before any request was assembled. */
+  preview?: boolean;
 };
 
 export type ReviewChange = {

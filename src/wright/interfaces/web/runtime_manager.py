@@ -31,6 +31,7 @@ from ...application.session.service import (
 from ...application.session_runtime.events import notice_display, notice_text
 from ...application.session_runtime.publisher import EventPublisher
 from ...application.session_runtime.tool_projection import tool_phase
+from ...core.logger import get_logger
 from ...core.paths import project_id
 from ...domain.model.attachment import AttachmentError, AttachmentRecord
 from ...domain.model.tool import ArtifactRef
@@ -63,6 +64,9 @@ def _tool_state(item: dict[str, Any]) -> dict[str, Any]:
                 for artifact in result["artifacts"]
             ]
     return tool
+
+
+logger = get_logger(__name__)
 
 
 class RuntimeManagerError(RuntimeError):
@@ -270,7 +274,9 @@ class SessionHandle:
 
             breakdown = getattr(state, "request_context_breakdown", None)
             if not isinstance(breakdown, dict) or not breakdown:
-                breakdown = empty_context(getattr(self.runtime.llm, "context_limit", None))
+                breakdown = self._preview_context() or empty_context(
+                    getattr(self.runtime.llm, "context_limit", None)
+                )
             queued_commands = [
                 {
                     "command_id": item["command_id"],
@@ -358,6 +364,32 @@ class SessionHandle:
             if isinstance(attachment_ids, list) and attachment_ids:
                 return self._attachment_summaries([str(item) for item in attachment_ids])
         return []
+
+    def _preview_context(self) -> dict[str, Any] | None:
+        """Estimate the next request until a real one has been assembled.
+
+        Snapshots are frequent; the estimate only changes with the transcript
+        and the visible tools, so it is cached on those.
+        """
+        agent = getattr(self.runtime, "agent", None)
+        preview = getattr(agent, "preview_context", None)
+        if not callable(preview):
+            return None
+        state = self.runtime.session_state
+        key = (
+            len(getattr(state, "message_records", ()) or ()),
+            tuple(getattr(state, "active_deferred_tools", ()) or ()),
+        )
+        cached = getattr(self, "_context_preview", None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        try:
+            result = preview()
+        except Exception:
+            logger.debug("context preview failed", exc_info=True)
+            return None
+        self._context_preview = (key, result)
+        return result
 
     def summary(self) -> dict[str, Any]:
         summary = self.service.summary()

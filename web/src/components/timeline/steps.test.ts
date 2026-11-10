@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TimelineItem } from "../../types";
-import { segmentTimeline, stepCategory, summarizeSteps, summaryCategories } from "./steps";
+import { segmentTimeline, stepCategory, stepFromItem, summarizeSteps, summaryCategories } from "./steps";
 
 const item = (id: string, kind: TimelineItem["kind"], extra: Partial<TimelineItem> = {}): TimelineItem => ({ id, kind, ...extra });
 
@@ -16,6 +16,18 @@ describe("segmentTimeline", () => {
     ]);
     expect(segments.map((segment) => segment.type === "item" ? segment.item.id : segment.steps.map((step) => step.key))).toEqual([
       "u", ["r", "tool:t1"], "m", ["tool:t2"],
+    ]);
+  });
+
+  it("keeps a question out of the surrounding steps", () => {
+    const segments = segmentTimeline([
+      item("r", "reasoning", { text: "think" }),
+      item("q", "tool", { name: "ask_user", call_id: "q" }),
+      item("t1", "tool", { name: "grep", call_id: "t1" }),
+      item("t2", "tool", { name: "read_file", call_id: "t2" }),
+    ]);
+    expect(segments.map((segment) => segment.type === "item" ? segment.item.id : segment.steps.map((step) => step.key))).toEqual([
+      ["r"], ["tool:q"], ["tool:t1", "tool:t2"],
     ]);
   });
 });
@@ -42,9 +54,8 @@ describe("summarizeSteps", () => {
 describe("stepCategory", () => {
   it("keeps web, memory and plan tools out of code search", () => {
     const names = ["grep", "glob", "web_search", "http_request", "search_memory", "search_episodes", "knowledge_search", "update_core_memory", "update_plan", "replan", "ask_user", "manage_loop", "mcp_tool"];
-    const [segment] = segmentTimeline(names.map((name) => item(name, "tool", { name })));
-    if (segment.type !== "steps") throw new Error("expected steps");
-    expect(segment.steps.map(stepCategory)).toEqual(["searches", "searches", "web", "web", "memory", "memory", "memory", "memory", "plans", "plans", "tools", "tools", "tools"]);
+    const steps = names.map((name) => stepFromItem(item(name, "tool", { name })));
+    expect(steps.map(stepCategory)).toEqual(["searches", "searches", "web", "web", "memory", "memory", "memory", "memory", "plans", "plans", "tools", "tools", "tools"]);
   });
 });
 

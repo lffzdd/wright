@@ -53,16 +53,17 @@ describe("session isolation", () => {
     }));
     render(<Inspector state={view("session-a")} sessionId="session-a" open close={() => undefined} />);
     fireEvent.click(screen.getByRole("tab", { name: "Files" }));
-    fireEvent.click(screen.getByRole("button", { name: "Browse workspace" }));
-    fireEvent.click(await screen.findByRole("button", { name: /DIR\s*web/ }));
-    fireEvent.click(await screen.findByRole("button", { name: /FILE\s*web\/example.html/ }));
+    const folder = await screen.findByRole("treeitem", { name: /web/ });
+    expect(folder.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(folder);
+    fireEvent.click(await screen.findByRole("treeitem", { name: /example.html/ }));
     expect(await screen.findByText("Reference design source")).toBeTruthy();
     expect(calls).toContain("/api/v1/sessions/session-a/tree?path=web");
     expect(calls.some((path) => path.includes("/file?path=web") && !path.includes("example.html"))).toBe(false);
-    expect(screen.queryByRole("button", { name: ".. / web" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Back to files" }));
-    fireEvent.click(screen.getByRole("button", { name: ".. / web" }));
-    expect(await screen.findByRole("button", { name: /DIR\s*web/ })).toBeTruthy();
+    // Going back keeps the folder open where it was.
+    expect(screen.getByRole("treeitem", { name: /web/ }).getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("treeitem", { name: /example.html/ })).toBeTruthy();
     expect(screen.queryByText("Reference design source")).toBeNull();
   });
 

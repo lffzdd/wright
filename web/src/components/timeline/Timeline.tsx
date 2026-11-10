@@ -5,7 +5,7 @@ import { present, useT } from "../../i18n";
 import type { ViewState } from "../../types";
 import { AssistantMessage, InteractionCard, ReasoningRow, UserMessage, toolCardFromState } from "../cards/cards";
 import { StepGroup } from "./StepGroup";
-import { segmentTimeline, stepFromTool, type Segment } from "./steps";
+import { appendStep, segmentTimeline, stepFromTool, type Segment } from "./steps";
 import { ConversationOutline, OUTLINE_DOCK_MIN_ITEMS, OUTLINE_TEXT_AT, TimelineTOC, useTimelineTOC } from "./toc";
 
 export function InteractionDock({ sessionId, pending, respond, root }: {
@@ -151,10 +151,9 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
   // the run they continue.
   const segments = segmentTimeline(timeline);
   const liveSteps = liveTools.map((tool) => stepFromTool(tool, activeTurn));
-  const tail = segments[segments.length - 1];
-  if (liveSteps.length && !pendingPrompt && tail?.type === "steps") tail.steps.push(...liveSteps);
-  const liveSegment: Segment | null = liveSteps.length && (pendingPrompt || tail?.type !== "steps")
-    ? { type: "steps", key: liveSteps[0].key, turnId: activeTurn, steps: liveSteps } : null;
+  // Before the prompt is recorded, live steps render after it instead.
+  const liveSegments: Segment[] = [];
+  for (const step of liveSteps) appendStep(pendingPrompt ? liveSegments : segments, step);
   // Groups after the latest prompt belong to the running turn.
   let lastPrompt = -1;
   segments.forEach((segment, index) => { if (segment.type === "item" && segment.item.kind === "text" && segment.item.role === "user") lastPrompt = index; });
@@ -182,15 +181,14 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
     {!timeline.length && !state.history.length && !state.active_turn && <p className="empty-small">{tr("web.empty_timeline")}</p>}
     {timeline.length > 0 ? <>
       {segments.map((segment, index) => {
-        if (segment.type === "steps") return <StepGroup key={segment.key} steps={segment.steps} live={turnRunning && (pendingPrompt ? false : index > lastPrompt)} sessionId={state.session?.session_id} entering={entering} />;
-        const item = segment.item;
+        if (segment.type === "steps") return <StepGroup key={segment.key} steps={segment.steps} live={turnRunning && (pendingPrompt ? false : index > lastPrompt)} sessionId={state.session?.session_id} entering={entering} />;        const item = segment.item;
         if (item.kind === "text" && item.role === "user") return <UserMessage key={item.id} text={item.text || ""} userLabel={userLabel} timestamp={timestamp} tocId={item.id} enter={entering(item.turn_id !== undefined ? `user:${item.turn_id}` : item.id)} />;
         if (item.kind === "text") return <AssistantMessage key={item.id} text={item.text || ""} enter={entering(item.turn_id !== undefined ? `reply:${item.turn_id}` : item.id)} />;
         if (item.kind === "status") return <TurnOutcome key={item.id} status={item.status} detail={item.text} enter={entering(item.id)} />;
         return null;
       })}
       {pendingPrompt && <UserMessage text={pendingPrompt} userLabel={userLabel} timestamp={timestamp} tocId={activeTurn ? `${activeTurn}:user` : "pending-user"} enter={entering(activeTurn ? `user:${activeTurn}` : "pending-user")} />}
-      {liveSegment?.type === "steps" && <StepGroup key={liveSegment.key} steps={liveSegment.steps} live={turnRunning} sessionId={state.session?.session_id} entering={entering} />}
+      {liveSegments.map((segment) => segment.type === "steps" && <StepGroup key={segment.key} steps={segment.steps} live={turnRunning} sessionId={state.session?.session_id} entering={entering} />)}
       {liveText && <AssistantMessage text={liveText} enter={entering(activeTurn ? `reply:${activeTurn}` : "live-reply")} />}
       {state.active_turn && !liveText && !liveTools.length && !timeline.some((item) => item.turn_id !== undefined && item.turn_id === state.active_turn?.turn_id && item.role === "assistant") && <p className="empty-small working-indicator">{tr("web.working")}</p>}
     </> : <>
@@ -203,7 +201,7 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
       </div>)}
       {state.active_turn && <div className="turn">
         {state.active_turn.prompt && <UserMessage text={state.active_turn.prompt} tocId={state.active_turn.turn_id ? `${state.active_turn.turn_id}:user` : "active-user"} />}
-        {state.active_turn.tools.map((tool) => toolCardFromState(tool, state.session?.session_id))}
+        {state.active_turn.tools.map((tool) => toolCardFromState(tool, state.session?.session_id, undefined, true))}
         {state.active_turn.reasoning && <ReasoningRow text={state.active_turn.reasoning} />}
         {state.active_turn.content ? <AssistantMessage text={state.active_turn.content} /> : <p className="empty-small">{tr("web.working")}</p>}
       </div>}

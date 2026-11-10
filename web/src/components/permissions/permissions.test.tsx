@@ -323,20 +323,23 @@ it("toggles session sandbox network from the permissions glance", async () => {
   const empty = { ...readyGrants, grants: [] };
   vi.spyOn(api, "addGrant").mockResolvedValue({ ...empty, grants: [{ id: "net", source: "session", lifetime: "session", resource_kind: "sandbox_network", target: "sandbox network", operations: ["network_read", "network_write"], recursive: false }] });
   render(<PermissionsPanel sessionId="s" grants={empty} update={update} interactionMode="agent" permissionMode="bypass" />);
-  expect(screen.getByRole("button", { name: /Network access/ }).textContent).toContain("Asks first");
-  fireEvent.click(screen.getByRole("button", { name: /Network access/ }));
+  const toggle = screen.getByRole("switch", { name: "Network access" });
+  expect(toggle.getAttribute("aria-checked")).toBe("false");
+  expect(toggle.closest("li")?.textContent).toContain("Asks first");
+  fireEvent.click(toggle);
   await waitFor(() => expect(api.addGrant).toHaveBeenCalledWith("s", { kind: "sandbox_network" }, "session", empty.version));
 });
 
-it("offers sandbox network right under the mode when it is project auto", async () => {
+it("explains the network switch inside the glance instead of a separate button", () => {
   const empty = { ...readyGrants, grants: [] };
-  vi.spyOn(api, "addGrant").mockResolvedValue(empty);
-  const { rerender } = render(<PermissionsPanel sessionId="s" grants={empty} update={vi.fn()} interactionMode="agent" permissionMode="bypass" />);
-  expect(screen.getByRole("radio", { name: /in-project edits and sandboxed commands/ }).textContent).toBe("Project auto");
-  fireEvent.click(screen.getByRole("button", { name: "Also allow sandbox network for this session" }));
-  await waitFor(() => expect(api.addGrant).toHaveBeenCalledWith("s", { kind: "sandbox_network" }, "session", empty.version));
-  rerender(<PermissionsPanel sessionId="s" grants={empty} update={vi.fn()} interactionMode="agent" permissionMode="default" />);
+  render(<PermissionsPanel sessionId="s" grants={empty} update={vi.fn()} interactionMode="agent" permissionMode="default" />);
+  expect(screen.getByRole("switch", { name: "Network access" }).closest("li")?.textContent).toContain("Needed for installing packages");
   expect(screen.queryByRole("button", { name: "Also allow sandbox network for this session" })).toBeNull();
+});
+
+it("has no network switch in host mode", () => {
+  render(<PermissionsPanel sessionId="s" grants={{ ...readyGrants, grants: [], execution_mode: "host" }} update={vi.fn()} interactionMode="agent" permissionMode="bypass" executionMode="host" />);
+  expect(screen.queryByRole("switch", { name: "Network access" })).toBeNull();
 });
 
 it("revokes a session sandbox network grant from the glance", async () => {
@@ -345,7 +348,8 @@ it("revokes a session sandbox network grant from the glance", async () => {
   vi.spyOn(api, "revokeGrant").mockResolvedValue({ ...readyGrants, grants: [] });
   render(<PermissionsPanel sessionId="s" grants={granted} update={update} interactionMode="agent" permissionMode="bypass" />);
   expect(screen.getByText("Sandbox commands may use the network")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: /Network access/ }));
+  expect(screen.getByRole("switch", { name: "Network access" }).getAttribute("aria-checked")).toBe("true");
+  fireEvent.click(screen.getByRole("switch", { name: "Network access" }));
   await waitFor(() => expect(api.revokeGrant).toHaveBeenCalledWith("s", "net", "session", granted.version));
 });
 

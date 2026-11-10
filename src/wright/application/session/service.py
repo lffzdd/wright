@@ -20,11 +20,25 @@ from ...core.logger import get_logger
 from ...domain.model.attachment import AttachmentError
 from ...domain.model.llm.model_adapters import available_models
 from ...domain.model.session.run import TERMINAL_RUN_STATUSES
+from ...domain.policy.permission.resolver import sandbox_network_granted
 from ..session_runtime.errors import SessionClosedError, SessionServiceError
 from ..session_runtime.events import session_status
 from .runner import RuntimeShutdown, SessionRunner
+from .title import first_user_request, generate_title, is_unlabeled
 
 logger = get_logger(__name__)
+
+
+def _last_assistant_text(session_state: Any) -> str:
+    """Text of the latest assistant message, for naming the session."""
+    try:
+        messages = session_state.wire_messages()
+    except (AttributeError, TypeError):
+        return ""
+    for message in reversed(messages):
+        if message.get("role") == "assistant" and isinstance(message.get("content"), str) and message["content"].strip():
+            return message["content"]
+    return ""
 
 
 def _plan_brief(session_state: Any) -> str:
@@ -119,6 +133,7 @@ class SessionService:
         self._active_command: str | None = None
         self._active_attachment_ids: set[str] = set()
         self._staged_references: list[dict[str, Any]] = []
+        self._title_attempted = False
         # A new process receives a unique consumer id.  SQLite is the arbiter;
         # this value only identifies the winner of a claim, never grants a
         # second right to execute work.
@@ -618,6 +633,7 @@ class SessionService:
                         "execution mode requires an idle conversation with no queued work, live commands or child tasks"
                     )
             permissions = self.runtime.permissions
+            previous_permission_mode = state.authorization.permission_mode
             try:
                 permissions.set_modes(
                     state,
@@ -627,6 +643,8 @@ class SessionService:
                 )
             except (ValueError, OSError, RuntimeError) as exc:
                 raise SessionServiceError(str(exc)) from exc
+            if permission_mode == "bypass" and previous_permission_mode != "bypass":
+                self._grant_project_auto_network(state)
             result = {
                 "session_id": state.session_id,
                 "interaction_mode": state.authorization.interaction_mode,
@@ -635,6 +653,31 @@ class SessionService:
                 "effective": "next permission resolution",
             }
             return result
+
+    def _grant_project_auto_network(self, state) -> None:
+        """Entering Project auto in the sandbox also opts this session into network.
+
+        It is an ordinary session grant: visible in the Permissions tab and
+        revocable there. Saving Project auto again does not restore it once
+        revoked; only switching into the mode does. Host mode has no network
+        isolation to relax, and a failed grant leaves network asking.
+        """
+        if state.execution_mode != "sandbox" or state.authorization.interaction_mode != "agent":
+            return
+        permissions = self.runtime.permissions
+        try:
+            snapshot = permissions.snapshot(state)
+            if sandbox_network_granted(snapshot.rules, snapshot.settings, execution_mode="sandbox"):
+                return
+            permissions.grant_resource(
+                state,
+                self.runtime.agent.executor.backend,
+                {"kind": "sandbox_network"},
+                "session",
+                snapshot.version,
+            )
+        except Exception:
+            logger.warning("could not grant sandbox network for Project auto", exc_info=True)
 
     def add_document(self, session_id: str, filename: str, data: bytes) -> dict[str, Any]:
         self._require_accepting_input()
@@ -935,6 +978,8 @@ class SessionService:
                         store.complete_command(self._command_scope, command_id, result, status=status)
                 except Exception:
                     logger.warning("could not persist command completion", exc_info=True)
+                if not stop:
+                    self._schedule_title()
             return stop
         except Exception as exc:
             if command_id:
@@ -953,6 +998,45 @@ class SessionService:
                     if self._active_command == command_id:
                         self._active_command = None
                         self._active_attachment_ids = set()
+
+    def _schedule_title(self) -> None:
+        """Name an unlabeled session once, off the worker thread."""
+        state = self.runtime.session_state
+        llm = getattr(self.runtime, "title_llm", None)
+        if self._title_attempted or llm is None or not callable(llm):
+            return
+        if getattr(state, "agent_task_id", None) is not None or not is_unlabeled(state):
+            return
+        request = first_user_request(state)
+        if not request:
+            return
+        self._title_attempted = True
+        reply = _last_assistant_text(state)
+        threading.Thread(
+            target=self._write_title,
+            args=(llm, request, reply),
+            name=f"session-title-{self.session_id}",
+            daemon=True,
+        ).start()
+
+    def _write_title(self, llm: Any, request: str, reply: str) -> None:
+        try:
+            title = generate_title(llm, request, reply)
+        except Exception:
+            logger.debug("session title generation failed", exc_info=True)
+            return
+        if not title:
+            return
+        state = self.runtime.session_state
+        with self._lock:
+            # A rename that landed while the model was answering wins.
+            if self.closed or not is_unlabeled(state):
+                return
+            state.session_label = title
+        try:
+            self._checkpoint()
+        except SessionServiceError:
+            logger.warning("could not persist generated session title", exc_info=True)
 
     @property
     def _event_processor(self) -> EventProcessor:

@@ -206,14 +206,14 @@ describe("ToolCard states", () => {
     render(<ToolCard name="grep" phase="succeeded" args={{ pattern: "Host[A-Z]\\w+" }} data={data} />);
     expect(screen.getByText("3 matches in 2 files")).toBeTruthy();
     fireEvent.click(screen.getByRole("button"));
-    expect([...document.querySelectorAll(".search-path")].map((node) => node.textContent)).toEqual(["a.py", "b.py"]);
+    expect([...document.querySelectorAll(".search-path > :first-child")].map((node) => node.textContent)).toEqual(["a.py", "b.py"]);
     expect([...document.querySelectorAll(".search-results mark")].map((node) => node.textContent)).toEqual(["HostBusy", "HostBusy", "HostBusy"]);
   });
 
   it("shows read file content with a line-number gutter", () => {
     render(<ToolCard name="read_file" phase="succeeded" args={{ path: "a.py" }} data={{ content: "10|def f():\n11|    return 1\n" }} />);
     fireEvent.click(screen.getByRole("button"));
-    expect([...document.querySelectorAll(".code-num")].map((node) => node.textContent)).toEqual(["10", "11"]);
+    expect([...document.querySelectorAll(".cv-num")].map((node) => node.textContent)).toEqual(["10", "11"]);
     expect(screen.getByText("def f():")).toBeTruthy();
   });
 

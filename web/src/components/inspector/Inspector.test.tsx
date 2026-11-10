@@ -88,14 +88,13 @@ describe("Inspector request and content state", () => {
     vi.mocked(api.tree).mockReturnValue(pending.promise);
     const { rerender } = render(inspector(view()));
     fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Browse workspace" }));
+    // The project tree loads as soon as the tab opens; no extra click.
     expect(screen.getByRole("status").textContent).toBe("Loading…");
     expect(screen.queryByText("This directory is empty.")).toBeNull();
     await act(async () => { pending.resolve({ path: "", entries: [] }); });
     expect(await screen.findByText("This directory is empty.")).toBeTruthy();
     vi.mocked(api.tree).mockRejectedValue(new Error("directory unavailable"));
     rerender(inspector(view("b")));
-    fireEvent.click(screen.getByRole("button", { name: "Browse workspace" }));
     expect((await screen.findByRole("alert")).textContent).toContain("directory unavailable");
     expect(screen.queryByText("This directory is empty.")).toBeNull();
   });
@@ -105,7 +104,7 @@ describe("Inspector request and content state", () => {
     const state = view(); state.accessed_files = [{ path: "/project/src/empty.ts", access: "read" }];
     render(inspector(state));
     fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
-    fireEvent.click(screen.getByRole("button", { name: /READ\s*\/project\/src\/empty.ts/ }));
+    fireEvent.click(screen.getByRole("button", { name: /READ\s*src\/empty.ts/ }));
     expect(await screen.findByText("This file is empty.")).toBeTruthy();
     expect(file).toHaveBeenCalledWith("a", "src/empty.ts");
   });
@@ -129,7 +128,7 @@ describe("Inspector request and content state", () => {
     render(inspector(state));
     fireEvent.click(screen.getByRole("tab", { name: /Files\s*\(10\)/ }));
     expect(screen.getAllByRole("button").filter((button) => button.classList.contains("accessed-file"))).toHaveLength(10);
-    expect(screen.getByRole("button", { name: /MOD\s*\/project\/f0.ts/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /MOD\s*f0.ts/ })).toBeTruthy();
     expect(await screen.findByRole("tab", { name: /Changes\s*\(1\)/ })).toBeTruthy();
   });
 
@@ -160,9 +159,7 @@ describe("Inspector historical sessions", () => {
     const grants = vi.spyOn(api, "grants");
     render(inspector(view("saved", false)));
     fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Browse workspace" }).hasAttribute("disabled")).toBe(false));
-    fireEvent.click(screen.getByRole("button", { name: "Browse workspace" }));
-    fireEvent.click(await screen.findByRole("button", { name: /FILE\s*a.txt/ }));
+    fireEvent.click(await screen.findByRole("treeitem", { name: /a.txt/ }));
     expect(await screen.findByText("current workspace bytes")).toBeTruthy();
     expect(tree).toHaveBeenCalledWith("project", ""); expect(file).toHaveBeenCalledWith("project", "a.txt");
     fireEvent.click(screen.getByRole("tab", { name: /Changes/ }));
@@ -181,10 +178,70 @@ describe("Inspector historical sessions", () => {
     render(inspector(state));
     fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
     await waitFor(() => expect(api.workspaces).toHaveBeenCalled());
-    expect(screen.getByRole("button", { name: "Browse workspace" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("searchbox", { name: "Filter files in this project" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByRole("tree")).toBeNull();
     expect(screen.getByText(/Resume this session to browse/)).toBeTruthy(); expect(file).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("tab", { name: /Context/ }));
     expect(screen.getByText("This saved session has no context usage statistics.")).toBeTruthy();
     expect(screen.queryByText(/unknown \/ unknown/)).toBeNull();
+  });
+});
+
+describe("Inspector files, context and visibility", () => {
+  it("filters project files by name and opens a match", async () => {
+    vi.spyOn(api, "search").mockResolvedValue({ kind: "file", results: [{ path: "src/deep/app.ts", name: "app.ts", kind: "file" }] });
+    vi.spyOn(api, "file").mockResolvedValue({ path: "src/deep/app.ts", content: "one\ntwo", binary: false });
+    render(inspector(view()));
+    fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Filter files in this project" }), { target: { value: "app" } });
+    fireEvent.click(await screen.findByRole("button", { name: /app.ts/ }));
+    await screen.findByText("two");
+    expect(api.search).toHaveBeenCalledWith("a", "app", "file");
+    expect(document.querySelectorAll(".cv-row")).toHaveLength(2);
+  });
+
+  it("jumps from a changed file preview to its diff", async () => {
+    vi.spyOn(api, "tree").mockResolvedValue({ path: "", entries: [{ path: "a.txt", name: "a.txt", kind: "file", size: 3 }] });
+    vi.spyOn(api, "file").mockResolvedValue({ path: "a.txt", content: "new", binary: false });
+    vi.spyOn(api, "patch").mockResolvedValue(patch("new"));
+    render(inspector(view()));
+    fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
+    fireEvent.click(await screen.findByRole("treeitem", { name: /a.txt/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "View diff" }));
+    expect(screen.getByRole("tab", { name: /Changes/ }).getAttribute("aria-selected")).toBe("true");
+    expect(await screen.findByRole("region", { name: "Selected file" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /M a.txt/ }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("shows a preview estimate as a gauge with only the non-empty categories", () => {
+    const state = view();
+    state.context_breakdown = { total: 24000, limit: 128000, preview: true, categories: [
+      { id: "system_prompt", tokens: 3000, share: 0.125 }, { id: "tool_schemas", tokens: 5000, share: 0.21 },
+      { id: "output_reserve", tokens: 16000, share: 0.67 }, { id: "plan", tokens: 0, share: 0 },
+    ] };
+    render(inspector(state));
+    fireEvent.click(screen.getByRole("tab", { name: /Context/ }));
+    expect(screen.getByRole("img", { name: "19% of the context window used" })).toBeTruthy();
+    expect(screen.getByText("Estimate before the next request")).toBeTruthy();
+    const labels = [...document.querySelectorAll(".ctx-legend-label")].map((item) => item.textContent);
+    expect(labels).toEqual(["Reserved Output", "Tool Definitions", "System Prompt", "Free"]);
+    expect(screen.getByText("Empty: Plan")).toBeTruthy();
+  });
+
+  it("warns near the context limit", () => {
+    const state = view();
+    state.context_breakdown = { total: 120000, limit: 128000, categories: [{ id: "history", tokens: 120000, share: 1 }] };
+    render(inspector(state));
+    fireEvent.click(screen.getByRole("tab", { name: /Context/ }));
+    expect(document.querySelector(".ctx-summary")?.classList.contains("danger")).toBe(true);
+    expect(screen.getByText(/Close to the limit/)).toBeTruthy();
+  });
+
+  it("stays in the DOM when closed but out of reach, so it can animate", () => {
+    render(<Inspector state={view()} sessionId="a" open={false} close={() => undefined} />);
+    const panel = document.getElementById("workspace-inspector")!;
+    expect(panel.classList.contains("is-closed")).toBe(true);
+    expect(panel.hasAttribute("inert")).toBe(true);
+    expect(screen.queryByRole("tab", { name: "Task" })).toBeNull();
   });
 });

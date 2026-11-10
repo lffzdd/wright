@@ -545,6 +545,10 @@ def test_history_resumes_same_conversation_and_only_executes_after_send(offline_
     preview = manager.preview(session_id)
     assert preview["session"]["active"] is False
     assert calls == ["model"]
+    # The saved request breakdown must reach the read-only preview, or the
+    # Context panel reports the session as having no statistics.
+    assert preview["context_breakdown"] == (original_state.request_context_breakdown or None)
+    assert preview["context_breakdown"]
 
     restored = manager.create(resume=session_id, client_request_id="resume-from-history")
     assert restored.session_id == session_id

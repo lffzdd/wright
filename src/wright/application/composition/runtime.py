@@ -115,6 +115,8 @@ class WrightRuntime:
     runtime_resources: RuntimeResources
     sandbox_control: Any = None
     interaction_broker: Any = None
+    # Side model that names a session after its first turn; None turns it off.
+    title_llm: Any = None
     # The ApplicationHost owns durable scheduling, SQLite and durable workers.
     # A session catalog may retain it after this Session closes.
     application_host: ApplicationHost | None = None
@@ -791,7 +793,12 @@ def assemble_runtime(
         application_host=constructed_application_host,
         directory_coordinator=coordinator,
         sandbox_control=LocalSandboxControl(),
+        title_llm=None if _auto_title_disabled() else selector_llm,
     )
+
+
+def _auto_title_disabled() -> bool:
+    return os.getenv("WRIGHT_AUTO_TITLE", "1").strip().lower() in {"0", "false", "no", "off"}
 
 
 def shutdown_runtime(rt: WrightRuntime) -> None:

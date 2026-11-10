@@ -18,7 +18,7 @@ export type { StepCategory };
 
 export type Segment =
   | { type: "item"; item: TimelineItem }
-  | { type: "steps"; key: string; turnId?: string; steps: Step[] };
+  | { type: "steps"; key: string; turnId?: string; steps: Step[]; standalone?: boolean };
 
 export type StepSummary = {
   counts: Partial<Record<StepCategory, number>>;
@@ -46,9 +46,23 @@ export function stepFromTool(tool: ToolState, turnId?: string): Step {
   return { key: `tool:${tool.call_id}`, kind: "tool", name: tool.name, phase: tool.phase, turnId, tool };
 }
 
+/** A question to the person is a decision, not process noise: it never folds into a group. */
+export function isQuestionStep(step: Step): boolean {
+  return step.kind === "tool" && step.name === "ask_user";
+}
+
+/** Adds a step to the run it continues, or starts a new run. */
+export function appendStep(segments: Segment[], step: Step): void {
+  const last = segments[segments.length - 1];
+  if (isQuestionStep(step)) segments.push({ type: "steps", key: step.key, turnId: step.turnId, steps: [step], standalone: true });
+  else if (last?.type === "steps" && !last.standalone) last.steps.push(step);
+  else segments.push({ type: "steps", key: step.key, turnId: step.turnId, steps: [step] });
+}
+
 /**
  * Splits a timeline into messages and runs of consecutive process steps.
- * Approval records render nothing, so they do not split a run.
+ * Approval records render nothing, so they do not split a run; questions
+ * stand on their own.
  */
 export function segmentTimeline(items: TimelineItem[]): Segment[] {
   const segments: Segment[] = [];
@@ -58,10 +72,7 @@ export function segmentTimeline(items: TimelineItem[]): Segment[] {
       segments.push({ type: "item", item });
       continue;
     }
-    const step = stepFromItem(item);
-    const last = segments[segments.length - 1];
-    if (last?.type === "steps") last.steps.push(step);
-    else segments.push({ type: "steps", key: step.key, turnId: step.turnId, steps: [step] });
+    appendStep(segments, stepFromItem(item));
   }
   return segments;
 }

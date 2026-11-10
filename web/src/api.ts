@@ -29,6 +29,8 @@ export const api = {
   health: () => json<{ ok: boolean }>("/api/v1/health", { cache: "no-store" }),
   preferences: () => json<{
     interface_language: string;
+    interface_language_saved?: boolean;
+    theme_saved?: boolean;
     supported: Array<{ id: string; label: string }>;
     note: string;
     theme: "dark" | "light";

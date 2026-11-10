@@ -6,9 +6,10 @@ not provider billing usage. A category owns each request message exactly once.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
-from ...utils.token_counter import estimate_message_tokens
+from ...utils.token_counter import estimate_message_tokens, estimate_tools_tokens
 
 _CATEGORIES = (
     "system_prompt",
@@ -59,6 +60,47 @@ def classify_context(view: Any) -> dict[str, Any]:
     }
 
 
+def estimate_context(
+    records: Any,
+    *,
+    tools: Any,
+    system_prompt: str | None,
+    context_limit: int | None,
+) -> dict[str, Any]:
+    """Estimate the next request before one has been assembled.
+
+    It reads the transcript, the current system prompt and the visible tool
+    schemas without running compaction or memory recall, so it has no side
+    effects. The real breakdown replaces it once a request is built.
+    """
+    entries = []
+    has_system = False
+    for record in records or ():
+        message = dict(getattr(record, "message", {}) or {})
+        if message.get("role") == "system":
+            has_system = True
+            if system_prompt is not None:
+                message["content"] = system_prompt
+        entries.append(SimpleNamespace(message=message, source=getattr(record, "source", "")))
+    if system_prompt is not None and not has_system:
+        entries.insert(0, SimpleNamespace(message={"role": "system", "content": system_prompt}, source="transient"))
+    reserve = max(256, context_limit // 8) if context_limit is not None else 0
+    view = SimpleNamespace(
+        entries=entries,
+        tool_schema_tokens=estimate_tools_tokens(list(tools or ())),
+        output_reserve_tokens=reserve,
+        context_limit=context_limit,
+    )
+    result = classify_context(view)
+    result["preview"] = True
+    result["note"] = (
+        "Estimated before the next request from the transcript, system prompt, "
+        "and tool schemas. Memory recall and compaction are applied when the "
+        "request is actually assembled. Provider billing usage is reported separately."
+    )
+    return result
+
+
 def empty_context(limit: int | None) -> dict[str, Any]:
     return {
         "kind": "tokenizer_estimate",
@@ -91,4 +133,4 @@ def _bucket(entry: Any) -> str:
     return "history"
 
 
-__all__ = ["classify_context", "empty_context"]
+__all__ = ["classify_context", "empty_context", "estimate_context"]
