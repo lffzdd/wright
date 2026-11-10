@@ -69,7 +69,7 @@ describe("real timeline projection", () => {
     }
     const { container } = render(transcript(state));
     expect(screen.getAllByText(/print\(42\)/)).toHaveLength(2);
-    expect(container.querySelectorAll(".avatar.assistant")).toHaveLength(2);
+    expect(container.querySelectorAll(".msg-row.assistant-msg")).toHaveLength(2);
     expect(container.querySelectorAll(".reasoning-card")).toHaveLength(0);
     expect(screen.queryByText("draft")).toBeNull();
   });
@@ -328,7 +328,7 @@ describe("real timeline projection", () => {
     expect(tagged.length).toBe(2);
     expect(tagged[0].classList.contains("msg-row")).toBe(true);
     expect(tagged[0].classList.contains("user-msg")).toBe(true);
-    expect(tagged[0].lastElementChild?.classList.contains("avatar")).toBe(true);
+    expect(tagged[0].querySelector(".avatar")).toBeNull();
     expect(tagged[0].getAttribute("data-toc-id")).toBe("turn-1:user");
     expect(tagged[1].getAttribute("data-toc-id")).toBe("turn-2:user");
     expect(container.querySelector(".markdown-body [data-toc-id]")).toBeNull();

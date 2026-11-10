@@ -747,8 +747,6 @@ export default function App() {
     <header className="topbar">
       <div className="brand">
         <button className="icon-button rail-toggle" onClick={() => { setNarrowInspector(false); setRailOpen(true); }} aria-label={tr("web.open_sessions")}><SidebarSimple size={14} /></button>
-        <span className="traffic-lights" aria-hidden="true"><i /><i /><i /></span>
-        <span className="chrome-divider" aria-hidden="true" />
         <span className="brand-mark">W</span>
         <strong>Wright</strong>
         <span className="sep">/</span>
@@ -921,9 +919,6 @@ export default function App() {
             <p className="hint">{tr("web.welcome_help")}</p>
             <EnvironmentChoice sessionId={draftKey} draft={draft} updateDraft={updateDraft} git={Boolean(project?.git)} workLabel={selectedWorkspace?.root ?? (typeof project?.project_root === "string" ? project.project_root : "")} />
           </div>
-          </div>
-          </div>
-          <div className="conversation-main conversation-main-foot">
           <div className="composer-wrap">
             <Composer
               key={draftKey}
@@ -943,6 +938,7 @@ export default function App() {
               submit={(commandId, prompt, attachmentIds, documentIds, references) => beginTurn(draftKey, commandId, prompt, attachmentIds, documentIds ?? [], references ?? [])}
               cancel={async () => undefined}
             />
+          </div>
           </div>
           </div>
           </div>

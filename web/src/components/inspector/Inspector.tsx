@@ -250,29 +250,27 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
         {steps.length ? <div className="progress"><i style={{ width: `${Math.round((completedSteps / steps.length) * 100)}%` }} /></div> : null}
       </section>
       {state.plan.wait_reason && <p className="hint plan-wait" role="status">{waitText(state.plan.wait_reason)}</p>}
-      <section className="goal-card inspector-plan">
+      {steps.length > 0 && <section className="goal-card inspector-plan">
         <div className="card-kicker"><span>{tr("web.execution_plan")}</span>{steps.length ? <span>{currentStep >= 0 ? tr("web.step_active", { step: currentStep + 1 }) : `${completedSteps}/${steps.length}`}</span> : null}</div>
         <div className="step-list">{steps.map((step) => {
           const metadata = stepMeta(step.status, step.note);
           const timing = stepTiming(step);
           return <article key={step.id} className={`step-card ${step.status}`}>{step.status === "completed" ? <Check size={15} weight="bold" /> : ["in_progress", "running", "active"].includes(step.status) ? <span className="step-spinner" aria-hidden="true" /> : <Circle size={15} />}<div><strong title={step.title}>{step.title}</strong><small title={metadata}>{metadata}</small>{timing && <small>{timing}</small>}{typeof step.ended_at === "number" && <small title={new Date(step.ended_at * 1000).toLocaleString()}>{tr("web.step_ended", { time: shortTime(step.ended_at) })}</small>}{step.wait_reason && <small className="plan-wait" role="status">{waitText(step.wait_reason)}</small>}</div>{["in_progress", "running", "active"].includes(step.status) && <span className="current-step">{tr("web.current_step")}</span>}</article>;
         })}</div>
-        {!steps.length && <p className="empty-small">{tr("web.no_plan")}</p>}
-      </section>
-      <section className="goal-card">
+      </section>}
+      {accessedFiles.length > 0 && <section className="goal-card">
         <div className="card-kicker"><span>{tr("web.accessed_files")}</span>{accessedFiles.length ? <span>{tr("web.files_count", { count: accessedFiles.length })}</span> : null}</div>
-        {!accessedFiles.length && <p className="empty-small">{tr("web.no_accessed_files")}</p>}
         {accessedFiles.slice(-3).map((file) => {
           const metadata = fileMeta(file.path);
           const access = file.access === "write" && metadata.additions !== undefined ? `+${metadata.additions} -${metadata.deletions ?? 0}` : file.access === "write" ? "MOD" : file.access === "read" ? "READ" : (file.access || "TOUCH").toUpperCase();
           return <div className={`file-stat${file.access === "write" ? " changed" : ""}`} key={`${file.call_id}-${file.path}`}><span>{file.path}</span><span>{access}</span></div>;
         })}
-      </section>
-      <section className="goal-card">
+      </section>}
+      {(state.subagents ?? []).length > 0 && <section className="goal-card">
         <div className="card-kicker"><span>{tr("web.subagents")}</span>{(state.subagents ?? []).length ? <span>{tr("web.spawned_count", { count: (state.subagents ?? []).length })}</span> : null}</div>
         {(state.subagents ?? []).map((agent) => <div className="subagent-row" key={agent.task_id}><span className="status-dot" /><span>{agent.task || agent.task_id}</span><span>{(agent.status || "unknown").replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())}</span></div>)}
-      {!(state.subagents ?? []).length && <p className="empty-small">{tr("web.no_subagents")}</p>}
-    </section>
+      </section>}
+      {!steps.length && !accessedFiles.length && !(state.subagents ?? []).length && <p className="hint inspector-task-empty">{tr("web.inspector_task_empty")}</p>}
     </div>}
     {tab === "files" && <div className="inspector-body" role="tabpanel" id="inspector-panel-files" aria-labelledby="inspector-tab-files">
       <div className="files-panel-head"><div className="section-label"><span>{tr("web.workspace_resources")}</span></div><button type="button" className="text-button" disabled={!canReadFiles} onClick={() => { if (filePath) { setFilePath(""); return; } setDirectory(""); setBrowseWorkspace((value) => !value); }}>{filePath ? tr("web.back_to_files") : browseWorkspace ? tr("web.recent_files") : tr("web.browse_workspace")}</button></div>

@@ -1,4 +1,4 @@
-import { ArrowsClockwise, BookOpen, Brain, CaretDown, ChatCircleDots, File, FileText, FolderSimple, Globe, Lightbulb, ListChecks, MagnifyingGlass, PencilSimple, TerminalWindow, User, Wrench, X, type Icon as PhosphorIcon } from "@phosphor-icons/react";
+import { ArrowsClockwise, BookOpen, Brain, CaretDown, ChatCircleDots, File, FileText, FolderSimple, Globe, Lightbulb, ListChecks, MagnifyingGlass, PencilSimple, TerminalWindow, Wrench, X, type Icon as PhosphorIcon } from "@phosphor-icons/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { MarkdownContent } from "../../Markdown";
 import { api } from "../../api";
@@ -265,7 +265,6 @@ function toolIcon(name: string, category: StepCategory): PhosphorIcon {
 export function UserMessage({ text, userLabel, timestamp, tocId, enter }: { text: string; userLabel?: string; timestamp?: string; tocId?: string; enter?: boolean }) {
   const tr = useT();
   const parts = text.split(/(@(?:[\w.-]+\/)*[\w.-]+)/g);
-  const initials = userLabel ? userLabel.split(/\s+/).map((part) => part[0]).join("").slice(0, 2) : "";
   return <div className={`msg-row user-msg${enter ? " enter" : ""}`} data-toc-id={tocId}>
     <div className="msg-card">
       <div className="msg-card-head">
@@ -274,13 +273,11 @@ export function UserMessage({ text, userLabel, timestamp, tocId, enter }: { text
       </div>
       <p className="msg-body">{parts.map((part, index) => part.startsWith("@") ? <span className="prompt-reference" key={`${part}-${index}`}>{part}</span> : part)}</p>
     </div>
-    <div className="avatar" aria-hidden="true">{initials || <User size={11} weight="bold" />}</div>
   </div>;
 }
 
 export function AssistantMessage({ text, enter }: { text: string; enter?: boolean }) {
   return <div className={`msg-row assistant-msg${enter ? " enter" : ""}`}>
-    <div className="avatar assistant" aria-hidden="true">W</div>
     <div className="msg-card">
       <div className="msg-body"><MarkdownContent content={text} /></div>
     </div>

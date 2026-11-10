@@ -29,12 +29,14 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); setLocale("en"); });
 
 describe("Inspector task tab", () => {
-  it("gives every empty section the same card and empty line", () => {
+  it("keeps only the goal card and one hint while nothing has happened", () => {
     render(inspector(view()));
     const cards = [...document.querySelectorAll("#inspector-panel-task .goal-card")];
-    expect(cards).toHaveLength(4);
-    for (const text of ["No goal set yet.", "No active plan for this turn.", "No files accessed in this session.", "No subagents"]) {
-      expect(screen.getByText(text).closest(".goal-card")).toBeTruthy();
+    expect(cards).toHaveLength(1);
+    expect(screen.getByText("No goal set yet.").closest(".goal-card")).toBeTruthy();
+    expect(document.querySelector("#inspector-panel-task .inspector-task-empty")).toBeTruthy();
+    for (const text of ["No active plan for this turn.", "No files accessed in this session.", "No subagents"]) {
+      expect(screen.queryByText(text)).toBeNull();
     }
   });
 

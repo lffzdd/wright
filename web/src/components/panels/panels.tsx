@@ -198,8 +198,8 @@ export function MemoryPage({ projectId }: { projectId: string | null }) {
     {!projectId ? <EmptyState icon={<Brain size={22} />} title={tr("web.panel.no_project")}>{tr("web.panel.needs_workspace")}</EmptyState> : <>
       <Tabs label={tr("web.panel.memory")} value={tab} onChange={setTab} tabs={[
         { value: "core", label: tr("web.panel.core") },
-        { value: "semantic", label: tr("web.panel.semantic"), count: semantic.length },
-        { value: "episodes", label: tr("web.panel.episodes"), count: episodes.length },
+        { value: "semantic", label: tr("web.panel.semantic"), count: data ? semantic.length : undefined },
+        { value: "episodes", label: tr("web.panel.episodes"), count: data ? episodes.length : undefined },
       ]} />
       {tab === "core" && <div className="cap-stack" role="tabpanel">
         {core ? <>
