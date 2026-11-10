@@ -77,6 +77,7 @@ export default function App() {
   pageRef.current = page;
   const [renaming, setRenaming] = useState<string | null>(null);
   const [addingWorkspace, setAddingWorkspace] = useState(false);
+  const [callFocus, setCallFocus] = useState<{ sessionId: string; callId: string; request: number } | null>(null);
   const [fileFocus, setFileFocus] = useState<{ sessionId: string; path: string; line?: number; request: number } | null>(null);
   const [booted, setBooted] = useState(false);
   const socket = useRef<WebSocket | null>(null);
@@ -217,7 +218,7 @@ export default function App() {
     return () => media.removeEventListener("change", changed);
   }, []);
 
-  useEffect(() => { setFileFocus(null); }, [selected]);
+  useEffect(() => { setFileFocus(null); setCallFocus(null); }, [selected]);
 
   const closeInspector = useCallback(() => {
     setNarrowInspector(false);
@@ -865,6 +866,7 @@ export default function App() {
           <Timeline
             key={state.session.session_id}
             state={state}
+            revealCall={callFocus?.sessionId === state.session.session_id ? callFocus : null}
             respond={(requestId, answer) => {
               return respondToInteraction(requestId, answer);
             }}
@@ -970,7 +972,11 @@ export default function App() {
       {!page && state && selected && inspectorOpen && !compactViewport ? (
         <InspectorResizeHandle width={inspectorWidth} onWidthChange={setInspectorWidth} onCommit={commitInspectorWidth} />
       ) : null}
-      {!page && state && selected ? <Inspector key={selected} state={state} sessionId={selected} open={compactViewport ? inspectorOpen && narrowInspector : inspectorOpen} narrow={compactViewport && narrowInspector} focusPath={fileFocus?.sessionId === selected ? fileFocus.path : null} focusLine={fileFocus?.sessionId === selected ? fileFocus.line : undefined} focusRequest={fileFocus?.request} close={closeInspector} onResume={resumeSelected} onFeedback={(feedback) => {
+      {!page && state && selected ? <Inspector key={selected} state={state} sessionId={selected} open={compactViewport ? inspectorOpen && narrowInspector : inspectorOpen} narrow={compactViewport && narrowInspector} focusPath={fileFocus?.sessionId === selected ? fileFocus.path : null} focusLine={fileFocus?.sessionId === selected ? fileFocus.line : undefined} focusRequest={fileFocus?.request} close={closeInspector} showCall={(callId) => {
+        setCallFocus((previous) => ({ sessionId: selected, callId, request: (previous?.request ?? 0) + 1 }));
+        // On narrow screens the inspector covers the conversation.
+        if (compactViewport) closeInspector();
+      }} onResume={resumeSelected} onFeedback={(feedback) => {
         const owner = selected;
         updateDraft(owner, (current) => ({ ...current, prompt: `${current.prompt.trimEnd()}${current.prompt.trim() ? "\n\n" : ""}${feedback}` }));
         if (compactViewport) closeInspector();

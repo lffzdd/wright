@@ -1,17 +1,17 @@
-import { ArrowClockwise, ArrowLeft, CaretDoubleUp, CaretRight, CopySimple, Crosshair, Eye, EyeSlash, File, Folder, FolderOpen, GitDiff, MagnifyingGlass, TextAlignLeft, X } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowLeft, CaretDoubleUp, CaretRight, ChatCircleDots, CopySimple, Crosshair, File, FileCode, FileImage, FileLock, FileText, Folder, FolderOpen, GitDiff, MagnifyingGlass, TextAlignLeft, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useT } from "../../i18n";
 import { CodeView } from "../code/CodeView";
 import { languageForPath, languageLabel } from "../code/highlight";
 
 export type TreeEntry = { name: string; path: string; kind: string; size?: number | null };
-export type AccessedFile = { path: string; access?: string; call_id?: string; tool?: string };
+export type AccessedFile = { path: string; access?: string; call_id?: string; tool?: string; tools?: Record<string, number>; last_calls?: Record<string, string> };
 type FileMeta = { size?: number; additions?: number; deletions?: number };
 type Branch = { status: "loading" } | { status: "error"; error: string } | { status: "ready"; entries: TreeEntry[] };
 type AccessFilter = "all" | "write" | "read";
 type RowExtra = {
-  label?: string; kind?: string; detail?: string; disabled?: boolean; ariaLabel?: string; className?: string;
-  count?: number; highlight?: string; isDir?: boolean; onActivate?: () => void;
+  label?: string; title?: string; displayName?: string; kind?: string; detail?: string; size?: string; disabled?: boolean; ariaLabel?: string; className?: string;
+  count?: number; highlight?: string; isDir?: boolean; used?: boolean; onActivate?: () => void;
 };
 
 const splitPath = (path: string) => {
@@ -20,8 +20,12 @@ const splitPath = (path: string) => {
 };
 const sortEntries = (entries: TreeEntry[]) => [...entries].sort((a, b) => (a.kind === "dir" ? 0 : 1) - (b.kind === "dir" ? 0 : 1) || a.name.localeCompare(b.name));
 const formatSize = (size: number) => size < 1024 ? `${size} B` : size < 1024 * 1024 ? `${(size / 1024).toFixed(1)} KB` : `${(size / 1024 / 1024).toFixed(1)} MB`;
+/** Width of a folder caret plus its gap, so file rows line up with folder rows. */
+const CARET_SLOT = 16;
 /** Lines past this are cut from the preview to keep the panel responsive. */
 const PREVIEW_LINES = 4000;
+/** Session rows shown before "Show all", so the project tree stays in view. */
+const SESSION_VISIBLE_ROWS = 8;
 
 /** Cache and tool folders that are hidden unless the user asks to see them. */
 const CACHE_NAMES = new Set([".mypy_cache", ".pytest_cache", ".ruff_cache", ".cache", ".parcel-cache", ".turbo", ".next", ".specstory", ".DS_Store"]);
@@ -42,10 +46,41 @@ const EXT_GROUPS: Record<string, string> = {
   json: "config", yaml: "config", yml: "config", toml: "config", ini: "config", lock: "config", env: "config", cfg: "config", xml: "config",
   png: "image", jpg: "image", jpeg: "image", gif: "image", svg: "image", webp: "image", ico: "image",
 };
-const ExtBadge = ({ name }: { name: string }) => {
+/** One fixed-width icon per file, tinted by kind, so names line up with folder rows. */
+const FileIcon = ({ name }: { name: string }) => {
   const ext = extOf(name);
-  return <span className={`files-ext ext-${EXT_GROUPS[ext] ?? "other"}`} aria-hidden="true">{ext.slice(0, 4) || "·"}</span>;
+  const group = EXT_GROUPS[ext] ?? "other";
+  const Icon = ext === "lock" ? FileLock : group === "doc" ? FileText : group === "image" ? FileImage : group === "other" ? File : FileCode;
+  return <Icon size={14} className={`files-icon ext-${group}`} aria-hidden="true" />;
 };
+const FolderIcon = ({ open }: { open?: boolean }) => open ? <FolderOpen size={14} className="files-icon dir" aria-hidden="true" /> : <Folder size={14} className="files-icon dir" aria-hidden="true" />;
+/**
+ * Session tag for an accessed path, from the strongest tool used on it:
+ * any edit or write is MOD, then READ, GREP, LIST. Older payloads without
+ * per-tool counts fall back to the last tool and the access kind.
+ */
+const ACCESS_TAGS: Array<{ label: string; kind: string; tools: string[] }> = [
+  { label: "MOD", kind: "modified", tools: ["edit_file", "write_file"] },
+  { label: "READ", kind: "read", tools: ["read_file"] },
+  { label: "GREP", kind: "search", tools: ["grep"] },
+  { label: "LIST", kind: "list", tools: ["list_directory", "glob"] },
+];
+const accessTag = (file: AccessedFile) => {
+  const used = file.tools && Object.keys(file.tools).length ? Object.keys(file.tools) : file.tool ? [file.tool] : [];
+  if (file.access === "write") return ACCESS_TAGS[0];
+  const byTool = ACCESS_TAGS.find((tag) => tag.tools.some((tool) => used.includes(tool)));
+  if (byTool) return byTool;
+  if (file.access === "read") return ACCESS_TAGS[1];
+  if (file.access === "list") return ACCESS_TAGS[3];
+  return { label: (file.access || "use").slice(0, 4).toUpperCase(), kind: "touched", tools: [] };
+};
+/** The call behind a row's tag: the latest call of the tag's tools (MOD → the latest edit, not a later read). */
+const tagCallId = (file: AccessedFile) => {
+  const tag = accessTag(file);
+  const latest = Object.entries(file.last_calls ?? {}).filter(([tool]) => tag.tools.includes(tool)).pop();
+  return latest?.[1] ?? file.call_id;
+};
+const toolSummary = (file: AccessedFile) => Object.entries(file.tools ?? {}).map(([tool, count]) => `${tool} ×${count}`).join(" · ");
 const statusLetter = (status: string) => status.trim().replace("??", "?").charAt(0).toUpperCase() || "?";
 const statusClass = (status: string) => {
   const letter = statusLetter(status);
@@ -64,7 +99,7 @@ const expandedBySession = new Map<string, string[]>();
 const readFlag = (key: string) => { try { return localStorage.getItem(key) === "1"; } catch { return false; } };
 const writeFlag = (key: string, value: boolean) => { try { localStorage.setItem(key, value ? "1" : "0"); } catch { /* storage unavailable */ } };
 
-export function FilesPanel({ sessionKey, canReadFiles, historyOnly, accessedFiles, accessCounts, fileMeta, readTree, readFile, searchFiles, filePath, focusLine, openFile, changes, openChanges, projectName }: {
+export function FilesPanel({ sessionKey, canReadFiles, historyOnly, accessedFiles, accessCounts, fileMeta, readTree, readFile, searchFiles, filePath, focusLine, openFile, changes, openChanges, projectName, showCall }: {
   sessionKey: string;
   canReadFiles: boolean;
   historyOnly: boolean;
@@ -83,6 +118,8 @@ export function FilesPanel({ sessionKey, canReadFiles, historyOnly, accessedFile
   changes: Array<{ path: string; status: string }>;
   openChanges: (path: string) => void;
   projectName: string;
+  /** Scrolls the conversation to a tool call. */
+  showCall?: (callId: string) => void;
 }) {
   const tr = useT();
   const [branches, setBranches] = useState<Record<string, Branch>>({});
@@ -98,6 +135,16 @@ export function FilesPanel({ sessionKey, canReadFiles, historyOnly, accessedFile
   const setShowCache = (next: boolean) => { setShowCacheState(next); writeFlag("wright.files.showCache", next); };
   const [accessFilter, setAccessFilter] = useState<AccessFilter>("all");
   const [revealPath, setRevealPath] = useState<string | null>(null);
+  // Long session lists start collapsed so the project tree stays visible; the user's choice is remembered.
+  const [sessionOpenPref, setSessionOpenPref] = useState<boolean | null>(() => {
+    try { const value = localStorage.getItem("wright.files.sessionOpen"); return value === null ? null : value === "1"; } catch { return null; }
+  });
+  const sessionOpen = sessionOpenPref ?? false;
+  const [sessionShowAll, setSessionShowAll] = useState(false);
+  const setSessionOpen = (open: boolean) => {
+    setSessionOpenPref(open);
+    writeFlag("wright.files.sessionOpen", open);
+  };
   const generation = useRef(0);
 
   const changeStatus = useMemo(() => new Map(changes.map((item) => [item.path, item.status])), [changes]);
@@ -125,6 +172,19 @@ export function FilesPanel({ sessionKey, canReadFiles, historyOnly, accessedFile
       if (generation.current === owner) setBranches((current) => ({ ...current, [path]: { status: "error", error: error instanceof Error ? error.message : String(error) } }));
     });
   }, [readTree]);
+
+  // Load each accessed file's parent folder (not expanded) so folder entries can be told apart from files.
+  useEffect(() => {
+    if (!canReadFiles) return;
+    const parents = new Set<string>();
+    for (const file of accessedFiles) {
+      if (file.access === "list") continue;
+      const index = file.path.lastIndexOf("/");
+      const parent = index < 0 ? "" : file.path.slice(0, index);
+      if (!branches[parent]) parents.add(parent);
+    }
+    for (const parent of [...parents].slice(0, 40)) load(parent);
+  }, [accessedFiles, branches, canReadFiles, load]);
 
   useEffect(() => {
     ++generation.current;
@@ -266,29 +326,31 @@ export function FilesPanel({ sessionKey, canReadFiles, historyOnly, accessedFile
 
   const fileRow = (path: string, depth?: number, extra?: RowExtra) => {
     const { dir, name } = splitPath(path);
-    const status = changeStatus.get(path);
+    // Session rows carry their own access tag, so git status letters stay in the tree.
+    const status = extra?.label ? undefined : changeStatus.get(path);
     return <button type="button" key={path} data-path={path} data-dir={extra?.isDir ? "true" : undefined}
-      className={`files-row${extra?.className ? ` ${extra.className}` : ""}${status ? " changed" : ""}`}
+      className={`files-row${extra?.className ? ` ${extra.className}` : ""}${status ? ` changed ${statusClass(status)}` : ""}`}
       disabled={extra?.disabled || !canReadFiles}
-      style={depth !== undefined ? { paddingLeft: 8 + depth * 14 + 16 } : undefined}
+      style={depth !== undefined ? { paddingLeft: 8 + depth * 14 + CARET_SLOT } : undefined}
       role={depth !== undefined ? "treeitem" : undefined} aria-level={depth !== undefined ? depth + 1 : undefined}
-      aria-label={extra?.ariaLabel} title={path}
+      aria-label={extra?.ariaLabel} title={extra?.title ?? path}
       onClick={() => (extra?.onActivate ? extra.onActivate() : openFile(path))}>
-      {extra?.label ? <span className={`accessed-kind ${extra.kind ?? ""}`}>{extra.label}</span> : <ExtBadge name={name} />}
-      <span className="files-name"><span>{extra?.highlight ? highlightName(name, extra.highlight) : name}</span>{depth === undefined && dir && <small>{dir}</small>}</span>
+      {extra?.label ? <span className={`access-tag ${extra.kind ?? ""}`}>{extra.label}</span> : extra?.isDir ? <FolderIcon /> : <FileIcon name={name} />}
+      <span className="files-name"><span>{extra?.displayName ?? (extra?.highlight ? highlightName(name, extra.highlight) : name)}{extra?.label && extra.isDir ? "/" : ""}</span>{depth === undefined && dir && <small>{dir}</small>}</span>
       {extra?.count ? <span className="files-count" title={tr("web.files.access_count", { count: extra.count })}>×{extra.count}</span> : null}
-      {status && !extra?.label && <span className={`files-status ${statusClass(status)}`} title={tr("web.files.changed")}>{statusLetter(status)}</span>}
-      {extra?.detail ? <span className={`files-detail${extra.kind === "modified" ? " modified" : ""}`}>{extra.detail}</span> : null}
+      {!status && extra?.used && <span className="files-used-dot" title={tr("web.files.used")} aria-hidden="true" />}
+      {extra?.detail ? <span className="files-detail">{extra.detail}</span> : null}
+      {extra?.size ? <span className="files-detail files-size">{extra.size}</span> : null}
+      {status && <span className={`files-status ${statusClass(status)}`} title={tr("web.files.changed")}>{statusLetter(status)}</span>}
     </button>;
   };
 
   const treeFileRow = (entry: TreeEntry, depth: number) => {
     const status = changeStatus.get(entry.path);
     const metadata = fileMeta(entry.path);
-    const detail = status && metadata.additions !== undefined
-      ? `+${metadata.additions ?? 0} −${metadata.deletions ?? 0}`
-      : typeof entry.size === "number" ? formatSize(entry.size) : undefined;
-    return fileRow(entry.path, depth, { detail, className: "files-tree-file" });
+    const detail = status && metadata.additions !== undefined ? `+${metadata.additions ?? 0} −${metadata.deletions ?? 0}` : undefined;
+    const size = !detail && typeof entry.size === "number" ? formatSize(entry.size) : undefined;
+    return fileRow(entry.path, depth, { detail, size, className: "files-tree-file", used: usedPaths.has(entry.path) });
   };
 
   const tree = (path: string, depth: number): ReactNode => {
@@ -303,18 +365,27 @@ export function FilesPanel({ sessionKey, canReadFiles, historyOnly, accessedFile
       return <div key={entry.path} role="none">
         <button type="button" className="files-row files-dir" role="treeitem" data-path={entry.path} data-dir="true" aria-level={depth + 1} aria-expanded={open} style={{ paddingLeft: 8 + depth * 14 }} onClick={() => toggle(entry.path)} title={entry.path}>
           <CaretRight size={10} weight="bold" className={`files-caret${open ? " open" : ""}`} />
-          {open ? <FolderOpen size={14} className="files-icon dir" /> : <Folder size={14} className="files-icon dir" />}
+          <FolderIcon open={open} />
           <span className="files-name"><span>{entry.name}</span></span>
+          {/* A collapsed folder hints at what is inside: changes first, then files used this session. */}
+          {!open && changedDirs.has(entry.path) ? <span className="files-dir-mark changed" title={tr("web.files.dir_changed")} />
+            : !open && usedDirs.has(entry.path) ? <span className="files-dir-mark used" title={tr("web.files.dir_used")} /> : null}
         </button>
         {open && <div role="group">{tree(entry.path, depth + 1)}</div>}
       </div>;
     });
   };
 
+  const usedPaths = new Set(accessedFiles.map((file) => file.path));
+  const ancestors = (paths: Iterable<string>) => { const dirs = new Set<string>(); for (const path of paths) for (const dir of chainOf(path, false)) dirs.add(dir); return dirs; };
+  const changedDirs = ancestors(changeStatus.keys());
+  const usedDirs = ancestors(usedPaths);
   const visibleAccessed = accessedFiles.filter((file) => showCache || !isCachePath(file.path));
-  const writeCount = visibleAccessed.filter((file) => file.access === "write").length;
-  const readCount = visibleAccessed.filter((file) => file.access === "read").length;
-  const sessionRows = [...visibleAccessed].reverse().filter((file) => accessFilter === "all" || file.access === accessFilter);
+  // "Modified" and "Read" follow the tags; GREP and LIST rows only show under "All".
+  const filterKind: Record<Exclude<AccessFilter, "all">, string> = { write: "modified", read: "read" };
+  const writeCount = visibleAccessed.filter((file) => accessTag(file).kind === "modified").length;
+  const readCount = visibleAccessed.filter((file) => accessTag(file).kind === "read").length;
+  const sessionRows = [...visibleAccessed].reverse().filter((file) => accessFilter === "all" || accessTag(file).kind === filterKind[accessFilter]);
   const filterChip = (value: AccessFilter, label: string, count: number) => <button type="button" className="files-chip" aria-pressed={accessFilter === value} onClick={() => setAccessFilter(value)}>
     {label}<small>{count}</small>
   </button>;
@@ -335,32 +406,48 @@ export function FilesPanel({ sessionKey, canReadFiles, historyOnly, accessedFile
         </div>)}</div>
         : <p className="empty-small">{tr("web.files.no_match")}</p>}
     </section> : <>
-      {accessedFiles.length > 0 && <details className="files-section files-session" open>
-        <summary className="section-label"><span>{tr("web.files.session")}</span><small>{accessedFiles.length}</small></summary>
+      {accessedFiles.length > 0 && <details className="files-section files-session" open={sessionOpen} onToggle={(event) => { if (event.currentTarget.open !== sessionOpen) setSessionOpen(event.currentTarget.open); }}>
+        <summary className="section-label"><span>{tr("web.files.session")}</span><CaretRight size={10} weight="bold" className="files-caret" aria-hidden="true" /><small>{accessedFiles.length}</small></summary>
         <div className="files-chips" role="group" aria-label={tr("web.files.session")}>
           {filterChip("all", tr("web.files.filter_all"), visibleAccessed.length)}
           {filterChip("write", tr("web.files.filter_changed"), writeCount)}
           {filterChip("read", tr("web.files.filter_read"), readCount)}
         </div>
-        <div className="files-list accessed-file-list">{sessionRows.map((file) => {
+        <div className="files-list accessed-file-list">{(sessionShowAll ? sessionRows : sessionRows.slice(0, SESSION_VISIBLE_ROWS)).map((file) => {
+          // Folders (listed, or known from a loaded tree) open in the tree instead of the preview.
           const isDir = file.access === "list" || dirPaths.has(file.path);
           const metadata = fileMeta(file.path);
-          const label = file.access === "list" ? "LIST" : isDir ? "DIR" : file.access === "write" ? "MOD" : file.access === "read" ? "READ" : (file.access || "TOUCH").toUpperCase();
-          const kind = file.access === "write" ? "modified" : file.access === "read" || isDir ? "read" : "touched";
+          const { label, kind } = accessTag(file);
+          const tools = toolSummary(file);
+          // The project root reads better as its name than as ".".
+          const isRoot = /^\.?\/?$/.test(file.path);
           const detail = file.access === "write" && (metadata.additions !== undefined || metadata.deletions !== undefined)
-            ? `+${metadata.additions ?? 0} −${metadata.deletions ?? 0}`
-            : typeof metadata.size === "number" && !isDir ? formatSize(metadata.size) : "";
-          return fileRow(file.path, undefined, {
-            label, kind, detail, disabled: file.access === "list", ariaLabel: `${label} ${file.path}`, className: "accessed-file",
+            ? `+${metadata.additions ?? 0} −${metadata.deletions ?? 0}` : "";
+          const size = !detail && typeof metadata.size === "number" && !isDir ? formatSize(metadata.size) : "";
+          const row = fileRow(file.path, undefined, {
+            label, kind, detail, size, displayName: isRoot ? projectName || undefined : undefined,
+            title: tools ? `${file.path}\n${tools}` : file.path,
+            disabled: file.access === "list", ariaLabel: `${label} ${file.path}`, className: `accessed-file ${kind}`,
             count: accessCounts[file.path] > 1 ? accessCounts[file.path] : undefined,
             isDir, onActivate: isDir ? () => reveal(file.path, true) : undefined,
           });
+          const callId = showCall ? tagCallId(file) : undefined;
+          // Folders already open in the tree on click; files get a separate "show in tree".
+          if (isDir && !callId) return row;
+          return <div key={file.path} className="files-result">
+            {row}
+            {callId && <button type="button" className="icon-button files-locate" onClick={() => showCall?.(callId)} aria-label={`${tr("web.files.show_call")}: ${file.path}`} title={tr("web.files.show_call")}><ChatCircleDots size={13} /></button>}
+            {!isDir && <button type="button" className="icon-button files-locate" onClick={() => reveal(file.path, false)} disabled={!canReadFiles} aria-label={`${tr("web.files.locate")}: ${file.path}`} title={tr("web.files.locate")}><Crosshair size={13} /></button>}
+          </div>;
         })}</div>
+        {sessionRows.length > SESSION_VISIBLE_ROWS && <button type="button" className="text-button files-more" onClick={() => setSessionShowAll(!sessionShowAll)} aria-expanded={sessionShowAll}>
+          {sessionShowAll ? tr("web.files.show_fewer") : tr("web.files.show_all", { count: sessionRows.length })}
+        </button>}
       </details>}
       <section className="files-section" aria-label={tr("web.files.project")}>
         <div className="section-label files-project-head"><span title={projectName}>{projectName || tr("web.files.project")}</span>
           <span className="files-head-actions">
-            <button type="button" className={`icon-button${showCache ? " on" : ""}`} onClick={() => setShowCache(!showCache)} aria-pressed={showCache} aria-label={tr(showCache ? "web.files.hide_cache" : "web.files.show_cache")} title={tr(showCache ? "web.files.hide_cache" : "web.files.show_cache")}>{showCache ? <Eye size={13} /> : <EyeSlash size={13} />}</button>
+            <button type="button" className={`files-cache-toggle${showCache ? " on" : ""}`} onClick={() => setShowCache(!showCache)} aria-pressed={showCache} aria-label={tr(showCache ? "web.files.hide_cache" : "web.files.show_cache")} title={tr(showCache ? "web.files.hide_cache" : "web.files.show_cache")}>{tr(showCache ? "web.files.hide_cache_short" : "web.files.show_cache_short")}</button>
             <button type="button" className="icon-button" onClick={collapseAll} disabled={!canReadFiles || expanded.size === 0} aria-label={tr("web.files.collapse_all")} title={tr("web.files.collapse_all")}><CaretDoubleUp size={13} /></button>
             <button type="button" className="icon-button" onClick={refresh} disabled={!canReadFiles} aria-label={tr("web.files.refresh")} title={tr("web.files.refresh")}><ArrowClockwise size={13} /></button>
           </span>

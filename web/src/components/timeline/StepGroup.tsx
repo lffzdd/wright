@@ -1,5 +1,5 @@
 import { CaretDown, Stack } from "@phosphor-icons/react";
-import { useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { ReasoningRow, formatDuration, toolCardFromState, toolCardFromTimeline } from "../cards/cards";
 import { summarizeSteps, summaryCategories, type Step } from "./steps";
@@ -9,6 +9,11 @@ function StepRow({ step, sessionId, enter, live }: { step: Step; sessionId?: str
   if (step.item) return toolCardFromTimeline(step.item, sessionId, enter, live);
   return toolCardFromState(step.tool!, sessionId, enter, live);
 }
+
+/** A tool call another view asked to show; `request` changes on every ask. */
+export type RevealCall = { callId: string; request: number };
+export const RevealCallContext = createContext<RevealCall | null>(null);
+const stepCallId = (step: Step) => step.item ? step.item.call_id || step.item.id : step.tool?.call_id;
 
 /**
  * A run of consecutive process steps. It stays open while its turn is live and
@@ -23,6 +28,17 @@ export function StepGroup({ steps, live, sessionId, entering }: {
 }) {
   const tr = useT();
   const [toggled, setToggled] = useState<boolean | null>(null);
+  const reveal = useContext(RevealCallContext);
+  // Opening for a reveal counts as the person opening it, so it stays open;
+  // each request opens it once, so the person can still fold it again.
+  const handled = useRef<number | null>(null);
+  useEffect(() => {
+    if (!reveal || handled.current === reveal.request) return;
+    if (steps.some((step) => stepCallId(step) === reveal.callId)) {
+      handled.current = reveal.request;
+      setToggled(true);
+    }
+  }, [reveal, steps]);
   if (steps.length === 1) return <StepRow step={steps[0]} sessionId={sessionId} enter={entering(steps[0].key)} live={live} />;
   const open = toggled ?? live;
   const summary = summarizeSteps(steps);

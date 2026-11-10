@@ -312,9 +312,21 @@ export function SummaryRow({ text, durationMs, enter }: { text: string; duration
           <CaretDown size={12} className={open ? "" : "collapsed"} aria-hidden="true" />
         </span>
       </button>
-      {open && preview && <div className="tool-card-body"><div className="reasoning-body">{text}</div></div>}
+      {open && preview && <ReasoningBody text={text} />}
     </section>
   </div>;
+}
+
+/** Scrollable reasoning text; the bottom fades only while more text is below. */
+function ReasoningBody({ text }: { text: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [fade, setFade] = useState(false);
+  const update = () => {
+    const el = ref.current;
+    if (el) setFade(el.scrollHeight - el.clientHeight - el.scrollTop > 2);
+  };
+  useEffect(update, [text]);
+  return <div className="tool-card-body"><div ref={ref} className={`reasoning-body${fade ? " fade-end" : ""}`} onScroll={update}>{text}</div></div>;
 }
 
 export function ReasoningRow({ text, durationMs, enter }: { text: string; durationMs?: number | null; enter?: boolean }) {
@@ -411,9 +423,11 @@ function ReadToolbar({ path, line }: { path: string; line: number }) {
 }
 
 export function ToolCard({
-  name, phase, args, result, data, duration, output, kind, sessionId, enter, live,
+  name, phase, args, result, data, duration, output, kind, sessionId, enter, live, callId,
 }: {
   enter?: boolean;
+  /** Anchors the card so other views can scroll to this call. */
+  callId?: string;
   // The card's turn is still running; edits open while live and fold once it ends.
   live?: boolean;
   sessionId?: string;
@@ -463,7 +477,7 @@ export function ToolCard({
   const plan = category === "plans" && phase !== "failed" ? planOf(metricSource) : null;
   const planFocus = plan && typeof args?.step_id === "string" ? plan.steps.find((step) => step.id === args.step_id) : undefined;
   const planHeadline = plan ? (planFocus?.title ?? plan.objective) : "";
-  return <div className={`tl-indent${enter ? " enter" : ""}`}>
+  return <div className={`tl-indent${enter ? " enter" : ""}`} data-call-id={callId || undefined}>
     <section className={`tool-card ${open ? "open" : ""}`}>
       <button type="button" className="tool-card-head" aria-expanded={open} onClick={() => setToggled(!open)}>
         <span className="tool-title">
@@ -571,12 +585,12 @@ export function toolCardFromTimeline(item: TimelineItem, sessionId?: string, ent
   };
   if (tool.name === "ask_user") return <QuestionRecord key={item.id} args={tool.arguments} data={tool.data} phase={item.phase} enter={enter} />;
   const data = tool.data && typeof tool.data === "object" ? tool.data as Record<string, unknown> : null;
-  return <ToolCard key={item.id} name={tool.name} phase={item.phase} args={tool.arguments} result={data} duration={item.duration_ms} output={toolOutput(tool)} kind={item.kind} sessionId={sessionId} enter={enter} live={live} />;
+  return <ToolCard key={item.id} callId={tool.call_id} name={tool.name} phase={item.phase} args={tool.arguments} result={data} duration={item.duration_ms} output={toolOutput(tool)} kind={item.kind} sessionId={sessionId} enter={enter} live={live} />;
 }
 
 export function toolCardFromState(tool: ToolState, sessionId?: string, enter?: boolean, live?: boolean) {
   if (tool.name === "ask_user") return <QuestionRecord key={tool.call_id} args={tool.arguments} data={tool.data} phase={tool.phase} enter={enter} />;
-  return <ToolCard key={tool.call_id} name={tool.name} phase={tool.phase} args={tool.arguments} data={tool.data} output={toolOutput(tool)} sessionId={sessionId} enter={enter} live={live} />;
+  return <ToolCard key={tool.call_id} callId={tool.call_id} name={tool.name} phase={tool.phase} args={tool.arguments} data={tool.data} output={toolOutput(tool)} sessionId={sessionId} enter={enter} live={live} />;
 }
 
 export function InteractionCard({ sessionId, interaction, respond, root }: {

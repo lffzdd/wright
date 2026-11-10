@@ -288,7 +288,7 @@ export type Snapshot = {
   queue_depth: number;
   timeline?: TimelineItem[];
   subagents?: Array<{ task_id?: string; parent_id?: string; status?: string; task?: string; ended_at?: string | null }>;
-  accessed_files?: Array<{ path: string; access?: string; tool?: string; call_id?: string }>;
+  accessed_files?: Array<{ path: string; access?: string; tool?: string; call_id?: string; count?: number; tools?: Record<string, number>; last_calls?: Record<string, string> }>;
   context_breakdown?: ContextBreakdown;
   usage: {
     prompt_tokens: number | null;

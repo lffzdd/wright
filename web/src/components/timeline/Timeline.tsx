@@ -4,7 +4,7 @@ import { MarkdownContent } from "../../Markdown";
 import { present, useT } from "../../i18n";
 import type { ViewState } from "../../types";
 import { AssistantMessage, InteractionCard, ReasoningRow, UserMessage, toolCardFromState } from "../cards/cards";
-import { StepGroup } from "./StepGroup";
+import { RevealCallContext, StepGroup, type RevealCall } from "./StepGroup";
 import { appendStep, segmentTimeline, stepFromTool, type Segment } from "./steps";
 import { ConversationOutline, OUTLINE_DOCK_MIN_ITEMS, OUTLINE_TEXT_AT, TimelineTOC, useTimelineTOC } from "./toc";
 
@@ -53,8 +53,14 @@ function TurnOutcome({ status, detail, enter }: { status?: string; detail?: stri
   </div>;
 }
 
-export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, children }: {
+/** How long a revealed tool card stays highlighted, and how long a miss notice stays up. */
+const REVEAL_FLASH_MS = 1600;
+const REVEAL_MISS_MS = 3000;
+
+export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, children, revealCall }: {
   state: ViewState;
+  /** A tool call to scroll to, open and highlight; a new `request` repeats it. */
+  revealCall?: RevealCall | null;
   respond: (requestId: string, answer: unknown) => boolean | Promise<boolean>;
   cancelQueued: (commandId: string) => void;
   userLabel?: string;
@@ -128,6 +134,36 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
     state.active_turn?.tools.length,
     state.timeline?.length,
   ]);
+  const [revealMissed, setRevealMissed] = useState(false);
+  useEffect(() => {
+    if (!revealCall) return;
+    let flashTimer: number | undefined;
+    let missTimer: number | undefined;
+    let frame = 0;
+    // A step group opened for this reveal renders its cards a frame or two later.
+    const attempt = (tries: number) => {
+      const node = scroller.current;
+      const target = node?.querySelector<HTMLElement>(`[data-call-id="${revealCall.callId.replace(/["\\]/g, "\\$&")}"]`);
+      if (!target && tries > 0) { frame = window.requestAnimationFrame(() => attempt(tries - 1)); return; }
+      if (!node || !target) {
+        setRevealMissed(true);
+        missTimer = window.setTimeout(() => setRevealMissed(false), REVEAL_MISS_MS);
+        return;
+      }
+      setRevealMissed(false);
+      // Same as an outline jump: leave the bottom so new output does not pull the view away.
+      node.dispatchEvent(new Event("tocjump"));
+      const top = target.getBoundingClientRect().top - node.getBoundingClientRect().top + node.scrollTop - node.clientHeight / 3;
+      if (typeof node.scrollTo === "function") node.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+      else node.scrollTop = Math.max(0, top);
+      target.classList.remove("reveal-flash");
+      void target.offsetWidth;
+      target.classList.add("reveal-flash");
+      flashTimer = window.setTimeout(() => target.classList.remove("reveal-flash"), REVEAL_FLASH_MS);
+    };
+    frame = window.requestAnimationFrame(() => attempt(3));
+    return () => { window.cancelAnimationFrame(frame); window.clearTimeout(flashTimer); window.clearTimeout(missTimer); };
+  }, [revealCall]);
   const timeline = state.timeline ?? [];
   const toc = useTimelineTOC(scroller, {
     sessionId: state.session.session_id,
@@ -168,7 +204,7 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
   useEffect(() => {
     if (outlineCompact) setLabelsOff(true);
   }, [outlineCompact]);
-  return <div className="conversation-stage" ref={stageRef} data-labels={labelsOff ? "off" : undefined} data-compact={outlineCompact ? "true" : undefined}>
+  return <RevealCallContext.Provider value={revealCall ?? null}><div className="conversation-stage" ref={stageRef} data-labels={labelsOff ? "off" : undefined} data-compact={outlineCompact ? "true" : undefined}>
     <div
       className="conversation-stream"
       data-outline={outlineCompact || labelsOff || narrow ? "ticks" : "dock"}
@@ -210,6 +246,7 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
     {(state.agents ?? []).map((agent) => <section className="agent-progress" key={agent.task_id}><strong>Subagent {agent.task_id} · {agent.status}</strong>{agent.content && <MarkdownContent content={agent.content} />}</section>)}
     {state.queued_commands.map((item) => <div className="queue-item" key={item.command_id}><span>{item.prompt}</span><button type="button" className="button" onClick={() => cancelQueued(item.command_id)}>{tr("web.remove_queued")}</button></div>)}
     {state.notices.filter((notice, index, all) => notice.code !== "notice.context_compact" || !all.slice(index + 1).some((item) => item.code === notice.code)).slice(-5).map((notice) => <div className="system-notice" role="status" key={notice.id}>{present(notice.code, notice.params, notice.text)}</div>)}
+    {revealMissed && <p className="hint reveal-missed" role="status">{tr("web.reveal_call_missing")}</p>}
     {!stuck && <button type="button" className="button jump" onClick={() => { stick.current = true; setStuck(true); scroller.current?.scrollTo?.({ top: scroller.current.scrollHeight }); }}><ArrowDown size={12} weight="bold" aria-hidden="true" />{tr("web.jump_bottom")}</button>}
     </div>
     </div>
@@ -228,5 +265,5 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
       onLabelsOn={() => setLabelsOff(false)}
     />
     </div>
-  </div>;
+  </div></RevealCallContext.Provider>;
 }

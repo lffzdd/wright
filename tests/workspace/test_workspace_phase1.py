@@ -721,7 +721,8 @@ def test_accessed_files_lists_directories_without_treating_them_as_files():
         tool_executions={"c3": SimpleNamespace(call=listing, status="succeeded")}
     )
     assert project_accessed_files(session) == [
-        {"path": "web/src", "access": "list", "tool": "list_directory", "call_id": "c3"}
+        {"path": "web/src", "access": "list", "tool": "list_directory", "call_id": "c3", "count": 1,
+         "tools": {"list_directory": 1}, "last_calls": {"list_directory": "c3"}}
     ]
 
 
@@ -741,3 +742,39 @@ def test_episode_delete_is_scoped_to_the_bound_project():
     assert deleted == []
     assert delete_episode(Episodes(), "ep-1", bound_project_id="other", confirm=True)["deleted"]
     assert deleted == ["ep-1"]
+
+
+def test_accessed_files_orders_by_last_access_and_keeps_write_access():
+    def run(name, call_id, path):
+        call = SimpleNamespace(id=call_id, name=name, arguments={"file": path})
+        return call_id, SimpleNamespace(call=call, status="succeeded")
+
+    session = SimpleNamespace(tool_executions=dict([
+        run("edit_file", "c1", "src/a.py"),
+        run("read_file", "c2", "src/b.py"),
+        run("read_file", "c3", "src/a.py"),
+    ]))
+    assert project_accessed_files(session) == [
+        {"path": "src/b.py", "access": "read", "tool": "read_file", "call_id": "c2", "count": 1,
+         "tools": {"read_file": 1}, "last_calls": {"read_file": "c2"}},
+        {"path": "src/a.py", "access": "write", "tool": "read_file", "call_id": "c3", "count": 2,
+         "tools": {"edit_file": 1, "read_file": 1}, "last_calls": {"edit_file": "c1", "read_file": "c3"}},
+    ]
+
+
+def test_accessed_files_counts_each_tool_per_path():
+    def run(name, call_id, arguments):
+        call = SimpleNamespace(id=call_id, name=name, arguments=arguments)
+        return call_id, SimpleNamespace(call=call, status="succeeded")
+
+    session = SimpleNamespace(tool_executions=dict([
+        run("read_file", "c1", {"file": "src/a.py"}),
+        run("grep", "c2", {"path": "src/a.py"}),
+        run("read_file", "c3", {"file": "src/a.py"}),
+        run("write_file", "c4", {"file": "src/a.py"}),
+    ]))
+    [entry] = project_accessed_files(session)
+    assert entry["access"] == "write"
+    assert entry["count"] == 4
+    assert entry["tools"] == {"read_file": 2, "grep": 1, "write_file": 1}
+    assert list(entry["last_calls"].items()) == [("grep", "c2"), ("read_file", "c3"), ("write_file", "c4")]

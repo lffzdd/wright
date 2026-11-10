@@ -394,3 +394,40 @@ describe("projectRelative", () => {
     expect(projectRelative("D:\\elsewhere\\a.ts", "C:\\work\\p")).toBeNull();
   });
 });
+
+describe("revealing a tool call", () => {
+  const folded = (): ViewState => ({
+    ...fresh(),
+    timeline: [
+      { id: "turn-1:user", kind: "text", role: "user", turn_id: "turn-1", text: "Check" },
+      { id: "c1", kind: "tool", call_id: "c1", name: "read_file", phase: "succeeded", arguments: { file: "a.py" } },
+      { id: "c2", kind: "tool", call_id: "c2", name: "edit_file", phase: "succeeded", arguments: { file: "a.py" } },
+      { id: "turn-1:reply", kind: "text", role: "assistant", turn_id: "turn-1", text: "Done" },
+    ],
+  });
+  const view = (state: ViewState, revealCall: { callId: string; request: number } | null) =>
+    <Timeline state={state} respond={async () => true} cancelQueued={() => undefined} revealCall={revealCall} />;
+
+  it("opens the folded group, scrolls to the call and highlights it once per request", async () => {
+    const state = folded();
+    const { container, rerender } = render(view(state, null));
+    expect(container.querySelector(".step-group")!.classList.contains("open")).toBe(false);
+    const scroller = container.querySelector(".conversation-scroll") as HTMLElement;
+    const scrollTo = vi.fn();
+    scroller.scrollTo = scrollTo;
+    rerender(view(state, { callId: "c2", request: 1 }));
+    await waitFor(() => expect(container.querySelector('[data-call-id="c2"]')?.classList.contains("reveal-flash")).toBe(true));
+    expect(container.querySelector(".step-group")!.classList.contains("open")).toBe(true);
+    expect(scrollTo).toHaveBeenCalled();
+    // The person can fold it again; the same request does not reopen it.
+    fireEvent.click(container.querySelector(".step-group-head")!);
+    rerender(view(state, { callId: "c2", request: 1 }));
+    expect(container.querySelector(".step-group")!.classList.contains("open")).toBe(false);
+  });
+
+  it("says so when the call is not in the conversation", async () => {
+    const { rerender } = render(view(folded(), null));
+    rerender(view(folded(), { callId: "elsewhere", request: 1 }));
+    expect(await screen.findByText("That tool call is not in this conversation view.")).toBeTruthy();
+  });
+});

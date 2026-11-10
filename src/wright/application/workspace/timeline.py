@@ -232,9 +232,25 @@ def project_accessed_files(session: Any) -> list[dict[str, Any]]:
             else "touch"
         )
         for path in paths:
-            current = found.get(path)
-            if current is None or (current["access"] != "write" and access == "write"):
-                found[path] = {"path": path, "access": access, "tool": name, "call_id": call.id}
+            # Re-accessing a path moves it to the end, so the list runs oldest to newest by last access.
+            previous = found.pop(path, None)
+            wrote = access == "write" or (previous is not None and previous["access"] == "write")
+            # Per-tool counts, in first-use order, so clients can show every kind of access.
+            tools = dict(previous["tools"]) if previous else {}
+            tools[name] = tools.get(name, 0) + 1
+            # The latest call per tool, most recent last, so a client can jump to the edit rather than a later read.
+            last_calls = dict(previous["last_calls"]) if previous else {}
+            last_calls.pop(name, None)
+            last_calls[name] = call.id
+            found[path] = {
+                "path": path,
+                "access": "write" if wrote else access,
+                "tool": name,
+                "call_id": call.id,
+                "count": (previous["count"] if previous else 0) + 1,
+                "tools": tools,
+                "last_calls": last_calls,
+            }
     return list(found.values())
 
 

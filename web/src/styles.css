@@ -653,8 +653,9 @@ code, pre, .mono { font-family: var(--font-mono); }
 .tool-card-body .term-body { padding: 8px 10px; line-height: 1.55; }
 .tool-card-body > .sandbox-denial, .tool-card-body > .hint, .tool-card-body > .empty-small { margin: 0; padding: 8px 10px; }
 .reasoning-card .tool-card-body { border: 0; border-left: 2px solid var(--border-strong); border-radius: 0; background: transparent; }
-/* Reasoning reads in its own voice: serif, quoted, at body size. */
-.reasoning-body { padding: 2px 14px; max-height: 280px; overflow: auto; color: var(--text-secondary); font: var(--text-md)/1.75 ui-serif, Georgia, "Songti SC", "Noto Serif SC", serif; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Reasoning is a quiet aside: smaller, muted, sans like the reply. Overflowing text fades out at the bottom until scrolled to the end. */
+.reasoning-body { padding: 2px 14px 6px; max-height: 280px; overflow: auto; color: var(--text-muted); font: var(--text-sm)/1.6 var(--font-sans); white-space: pre-wrap; overflow-wrap: anywhere; }
+.reasoning-body.fade-end { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent); }
 .term-cmd { padding: 6px 10px; background: var(--step-chrome); border-bottom: 1px solid var(--border-subtle); font: var(--text-xs)/1.4 var(--font-mono); color: var(--text-primary); white-space: pre-wrap; overflow-wrap: anywhere; }
 .dir-tree { padding: 6px 0; max-height: 260px; overflow: auto; font: var(--text-xs)/1.7 var(--font-mono); }
 .dir-entry { display: flex; align-items: center; gap: 6px; padding: 2px 10px; color: var(--text-secondary); }
@@ -2420,40 +2421,58 @@ html.dark .ctx-c-output_reserve { --ctx: #475569; }
 .files-section { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .files-section > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 6px; }
 .files-section > summary::-webkit-details-marker { display: none; }
-.files-section > summary::before { content: "▸"; font-size: 9px; transition: transform 140ms var(--ease-out); }
-.files-section[open] > summary::before { transform: rotate(90deg); }
+.files-section[open] > summary .files-caret { transform: rotate(90deg); }
 .files-section > summary { justify-content: flex-start; }
 .files-section > summary small { margin-left: auto; font: var(--text-2xs) var(--font-mono); color: var(--text-muted); }
 /* Paths truncate from the left with direction: rtl; a trailing LRM keeps the
    final slash where it belongs. */
 .files-name > small::after, .changes-file-dir::after, .files-preview-title small::after { content: "\200E"; }
+.files-panel .section-label { padding: 0 8px 2px; font-size: var(--text-xs); letter-spacing: 0; text-transform: none; color: var(--text-secondary); }
 .files-project-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .files-project-head > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .files-project-head .icon-button { width: 22px; height: 22px; }
 .files-list, .files-tree { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .files-row {
-  display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; padding: 4px 8px; border: 0; border-radius: var(--radius-sm);
-  background: transparent; color: var(--text-primary); text-align: left; font: var(--text-xs)/1.5 var(--font-mono);
+  display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; height: 26px; padding: 0 8px; border: 0; border-radius: var(--radius-sm);
+  background: transparent; color: var(--text-primary); text-align: left; font: var(--text-sm)/1.4 var(--font-sans);
 }
 .files-row:hover:not(:disabled) { background: var(--bg-card-hover); }
 .files-row:disabled { cursor: default; opacity: 0.75; }
 .files-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.files-icon { flex: 0 0 auto; color: var(--text-muted); }
-.files-icon.dir { color: var(--accent); }
+.files-icon { flex: 0 0 14px; color: var(--text-muted); }
+.files-icon.dir { color: color-mix(in srgb, var(--accent) 80%, var(--text-muted)); }
+.files-icon.ext-code { color: color-mix(in srgb, var(--info) 75%, var(--text-muted)); }
+.files-icon.ext-style { color: color-mix(in srgb, var(--ok) 75%, var(--text-muted)); }
+.files-icon.ext-config { color: color-mix(in srgb, var(--warning) 75%, var(--text-muted)); }
+.files-icon.ext-image { color: color-mix(in srgb, var(--danger) 70%, var(--text-muted)); }
+/* Session access tags: one width so names line up; weight drops from MOD to READ to folder listings. */
+.access-tag {
+  flex: 0 0 40px; height: 17px; display: inline-flex; align-items: center; justify-content: center; border-radius: 4px;
+  border: 1px solid transparent; font: 600 9.5px/1 var(--font-mono); letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--text-secondary); background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+}
+.access-tag.modified { color: var(--warning); background: color-mix(in srgb, var(--warning) 16%, transparent); }
+.access-tag.read { color: color-mix(in srgb, var(--info) 70%, var(--text-secondary)); background: color-mix(in srgb, var(--info) 9%, transparent); }
+.access-tag.search { color: color-mix(in srgb, var(--info) 55%, var(--text-muted)); background: color-mix(in srgb, var(--info) 5%, transparent); }
+.access-tag.list { color: var(--text-muted); background: transparent; border-color: var(--border-subtle); }
 .files-caret { flex: 0 0 10px; color: var(--text-muted); transition: transform 140ms var(--ease-out); }
 .files-caret.open { transform: rotate(90deg); }
 .files-name { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
 .files-name > span { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.files-name > small { flex: 1 1 0; min-width: 20px; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; color: var(--text-muted); font-size: var(--text-2xs); }
-.files-row.changed .files-name > span { color: var(--warning); }
-.files-detail { flex: 0 0 auto; color: var(--text-muted); font-size: var(--text-2xs); font-variant-numeric: tabular-nums; }
-.files-detail.modified { color: var(--ok); }
+.files-name > small { flex: 1 1 0; min-width: 20px; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; color: var(--text-secondary); font: var(--text-2xs) var(--font-mono); }
+/* A leading "." in an RTL run would jump to the end; an LRM anchors it on the left. */
+.files-name > small::before { content: "\200E"; }
+
+.files-detail { flex: 0 0 auto; color: var(--text-muted); font: var(--text-2xs) var(--font-mono); font-variant-numeric: tabular-nums; }
+/* Sizes are reference info: shown only for the row under the pointer or focus. */
+.files-size { opacity: 0; transition: opacity 120ms var(--ease-out); }
+.files-row:hover .files-size, .files-row:focus-visible .files-size { opacity: 1; }
+/* Changed files read like editor git decorations: tinted name plus a status letter. */
+.files-row.changed.mod .files-name > span { color: var(--warning); }
+.files-row.changed.add .files-name > span { color: var(--ok); }
+.files-row.changed.del .files-name > span { color: var(--danger); text-decoration: line-through; }
 .files-changed-dot { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--warning); }
 .files-tree-note { margin: 2px 0; font-size: var(--text-xs); }
-.accessed-kind { flex: 0 0 34px; font: 700 var(--text-2xs) var(--font-mono); letter-spacing: 0.02em; }
-.accessed-kind.modified { color: var(--ok); }
-.accessed-kind.read { color: var(--info); }
-.accessed-kind.touched { color: var(--text-muted); }
 .files-preview { display: flex; flex-direction: column; gap: 8px; min-width: 0; outline: none; }
 .files-preview-head { display: flex; align-items: center; gap: 6px; min-width: 0; position: sticky; top: -12px; z-index: 1; margin: -12px -12px 0; padding: 8px 12px; background: var(--bg-panel); border-bottom: 1px solid var(--border-subtle); }
 .files-preview-head .icon-button { flex: 0 0 auto; }
@@ -2538,16 +2557,38 @@ html.light .cv-tok { color: var(--shiki-light); font-style: var(--shiki-light-fo
 .files-result > .files-row { flex: 1; min-width: 0; }
 .files-locate { flex: 0 0 auto; width: 22px; height: 22px; opacity: 0.6; }
 .files-result:hover .files-locate, .files-locate:focus-visible { opacity: 1; }
+/* In the session list the locate button only appears on the row in use. */
+.accessed-file-list .files-locate { opacity: 0; }
+.accessed-file-list .files-result:hover .files-locate, .accessed-file-list .files-locate:focus-visible { opacity: 1; }
+.files-more { align-self: flex-start; margin: 2px 0 0 8px; font-size: var(--text-2xs); }
+.files-dir-mark { flex: 0 0 6px; width: 6px; height: 6px; margin-left: auto; border-radius: 50%; }
+.files-dir-mark.changed { background: var(--warning); }
+.files-dir-mark.used { background: color-mix(in srgb, var(--accent) 70%, transparent); }
+/* Section headers stay in view while their lists scroll (the inspector body pads 12px). */
+.files-session > summary, .files-project-head { position: sticky; top: -12px; z-index: 1; background: var(--bg-panel); padding-top: 4px; padding-bottom: 4px; }
 .files-hit { background: color-mix(in srgb, var(--accent) 22%, transparent); color: inherit; border-radius: 2px; }
-.files-ext { flex: 0 0 auto; min-width: 26px; padding: 0 3px; border-radius: 3px; font: var(--text-2xs) var(--font-mono); text-align: center; line-height: 16px; color: var(--text-muted); background: var(--bg-card-hover); }
-.files-ext.ext-code { color: var(--accent); }
-.files-ext.ext-style { color: var(--ok); }
-.files-ext.ext-doc { color: var(--text-primary); }
-.files-ext.ext-config { color: var(--warning); }
-.files-ext.ext-image { color: var(--danger); }
+/* Separate the session block from the project tree while it is open, and rule off its rows lightly. */
+.files-session[open] { padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--border-subtle); }
+.accessed-file-list > * { border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 60%, transparent); }
+.accessed-file-list > *:last-child { border-bottom: 0; }
 .files-count { flex: 0 0 auto; font: var(--text-2xs) var(--font-mono); color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.files-status { flex: 0 0 auto; min-width: 14px; text-align: center; font: var(--text-2xs) var(--font-mono); font-weight: 600; }
+.files-status { flex: 0 0 auto; min-width: 12px; text-align: center; font: var(--text-2xs) var(--font-mono); font-weight: 600; }
 .files-status.mod { color: var(--warning); }
 .files-status.add { color: var(--ok); }
 .files-status.del { color: var(--danger); }
 .files-preview-head .icon-button { flex: 0 0 auto; }
+
+.accessed-file.list .files-name > span { color: var(--text-secondary); }
+.files-used-dot { flex: 0 0 5px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+.files-cache-toggle { flex: 0 0 auto; height: 22px; padding: 0 7px; border: 1px solid var(--border-subtle); border-radius: 999px; background: transparent; color: var(--text-muted); font: inherit; font-size: var(--text-2xs); cursor: pointer; }
+.files-cache-toggle.on { border-color: color-mix(in srgb, var(--accent) 45%, transparent); color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.files-cache-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* A tool card the Files panel jumped to. */
+.tl-indent.reveal-flash > .tool-card { animation: reveal-flash 1.6s var(--ease-out); }
+@keyframes reveal-flash {
+  0%, 30% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .tl-indent.reveal-flash > .tool-card { animation: none; outline: 2px solid var(--accent); } }
+.reveal-missed { position: sticky; bottom: 8px; align-self: center; margin: 8px auto 0; padding: 4px 10px; border-radius: 999px; background: var(--bg-card); border: 1px solid var(--border-subtle); width: fit-content; }

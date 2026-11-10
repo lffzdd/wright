@@ -30,7 +30,7 @@ export function projectRelative(path: string, root?: string): string | null {
   return null;
 }
 
-export function Inspector({ state, sessionId, open, narrow = false, focusPath = null, focusLine, focusRequest = 0, close, onResume, onFeedback }: { state: ViewState; sessionId: string; open: boolean; narrow?: boolean; focusPath?: string | null; focusLine?: number; focusRequest?: number; close: () => void; onResume?: () => Promise<unknown>; onFeedback?: (feedback: string) => void }) {
+export function Inspector({ state, sessionId, open, narrow = false, focusPath = null, focusLine, focusRequest = 0, close, onResume, onFeedback, showCall }: { state: ViewState; sessionId: string; open: boolean; narrow?: boolean; focusPath?: string | null; focusLine?: number; focusRequest?: number; close: () => void; onResume?: () => Promise<unknown>; onFeedback?: (feedback: string) => void; showCall?: (callId: string) => void }) {
   const tr = useT();
   const panelRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -172,15 +172,24 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
   const breakdown = state.context_breakdown;
   const tabs: InspectorTab[] = ["task", "files", "changes", "permissions", "context"];
   const steps = state.plan.steps ?? [];
-  // Shown relative to the project when they are inside it; later accesses win.
-  const accessedFiles = [...new Map((state.accessed_files ?? []).map((file) => {
+  // Shown relative to the project when they are inside it. An absolute and a relative
+  // spelling of one file merge: the later access wins, but a write and tool counts carry over.
+  const accessedByPath = new Map<string, NonNullable<typeof state.accessed_files>[number]>();
+  for (const file of state.accessed_files ?? []) {
     const path = projectRelative(file.path, state.session.execution_root) ?? file.path;
-    return [path, { ...file, path }] as const;
-  })).values()];
+    const previous = accessedByPath.get(path);
+    const tools = { ...(previous?.tools ?? {}) };
+    for (const [name, count] of Object.entries(file.tools ?? {})) tools[name] = (tools[name] ?? 0) + count;
+    accessedByPath.delete(path);
+    const lastCalls = { ...(previous?.last_calls ?? {}) };
+    for (const [name, callId] of Object.entries(file.last_calls ?? {})) { delete lastCalls[name]; lastCalls[name] = callId; }
+    accessedByPath.set(path, { ...file, path, tools, last_calls: lastCalls, access: previous?.access === "write" ? "write" : file.access });
+  }
+  const accessedFiles = [...accessedByPath.values()];
   const accessCounts: Record<string, number> = {};
   for (const file of state.accessed_files ?? []) {
     const path = projectRelative(file.path, state.session.execution_root) ?? file.path;
-    accessCounts[path] = (accessCounts[path] ?? 0) + 1;
+    accessCounts[path] = (accessCounts[path] ?? 0) + (file.count ?? 1);
   }
   const projectName = (state.session.execution_root ?? "").replace(/\\/g, "/").replace(/\/+$/, "").split("/").pop() ?? "";
   const completedSteps = steps.filter((step) => step.status === "completed").length;
@@ -260,7 +269,7 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
       <FilesPanel sessionKey={`${sessionId}:${historyOnly}:${historyProjectId ?? ""}`} canReadFiles={canReadFiles} historyOnly={historyOnly}
         accessedFiles={accessedFiles} fileMeta={fileMeta} readTree={readTree} readFile={readFile} searchFiles={searchFiles}
         filePath={filePath} focusLine={focusPath && filePath === (projectRelative(focusPath, state.session.execution_root) ?? focusPath) ? focusLine : undefined} openFile={setFilePath} changes={changes ?? []} accessCounts={accessCounts} projectName={projectName}
-        openChanges={(path) => { setChangesFocus((current) => ({ path, request: (current?.request ?? 0) + 1 })); setTab("changes"); }} />
+        openChanges={(path) => { setChangesFocus((current) => ({ path, request: (current?.request ?? 0) + 1 })); setTab("changes"); }} showCall={showCall} />
     </div>}
     {tab === "changes" && <div className="inspector-body" role="tabpanel" id="inspector-panel-changes" aria-labelledby="inspector-tab-changes">
       {historyOnly ? resumeStatus ?? <p className="hint">{tr("web.inspector_history_changes")}</p> : <ChangesPanel sessionId={sessionId} state={state} onCount={setChangeCount} onWorkingChanges={setChanges} onFeedback={onFeedback} focus={changesFocus} />}

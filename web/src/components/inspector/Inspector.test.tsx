@@ -127,6 +127,7 @@ describe("Inspector request and content state", () => {
     ];
     render(inspector(state));
     fireEvent.click(screen.getByRole("tab", { name: /Files\s*\(10\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Show all (10)" }));
     expect(screen.getAllByRole("button").filter((button) => button.classList.contains("accessed-file"))).toHaveLength(10);
     expect(screen.getByRole("button", { name: /MOD\s*f0.ts/ })).toBeTruthy();
     expect(await screen.findByRole("tab", { name: /Changes\s*\(1\)/ })).toBeTruthy();
