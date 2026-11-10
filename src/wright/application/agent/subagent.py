@@ -431,6 +431,7 @@ get_agent_tree_tool = Tool(
     ),
     is_concurrency_safe=lambda args: True,
     required_capabilities=frozenset({"delegation"}),
+    defer_to_model=True,
 )
 
 

@@ -12,7 +12,7 @@ describe("segmentTimeline", () => {
       item("a", "approval"),
       item("t1", "tool", { name: "grep", call_id: "t1" }),
       item("m", "text", { role: "assistant", text: "so far" }),
-      item("t2", "shell", { name: "execute_command", call_id: "t2" }),
+      item("t2", "shell", { name: "shell", call_id: "t2" }),
     ]);
     expect(segments.map((segment) => segment.type === "item" ? segment.item.id : segment.steps.map((step) => step.key))).toEqual([
       "u", ["r", "tool:t1"], "m", ["tool:t2"],
@@ -24,7 +24,7 @@ describe("segmentTimeline", () => {
       item("r", "reasoning", { text: "think" }),
       item("q", "tool", { name: "ask_user", call_id: "q" }),
       item("t1", "tool", { name: "grep", call_id: "t1" }),
-      item("t2", "tool", { name: "read_file", call_id: "t2" }),
+      item("t2", "tool", { name: "read", call_id: "t2" }),
     ]);
     expect(segments.map((segment) => segment.type === "item" ? segment.item.id : segment.steps.map((step) => step.key))).toEqual([
       ["r"], ["tool:q"], ["tool:t1", "tool:t2"],
@@ -36,12 +36,12 @@ describe("summarizeSteps", () => {
   it("counts each kind of tool call, failures and time", () => {
     const [segment] = segmentTimeline([
       item("r", "reasoning", { duration_ms: 500 }),
-      item("d", "tool", { name: "list_directory", phase: "succeeded", duration_ms: 20 }),
-      item("f1", "tool", { name: "read_file", phase: "succeeded" }),
-      item("f2", "tool", { name: "read_file", phase: "succeeded" }),
+      item("d", "tool", { name: "ls", phase: "succeeded", duration_ms: 20 }),
+      item("f1", "tool", { name: "read", phase: "succeeded" }),
+      item("f2", "tool", { name: "read", phase: "succeeded" }),
       item("g", "tool", { name: "glob_files", phase: "succeeded" }),
-      item("s", "shell", { name: "execute_command", phase: "failed", duration_ms: 1000 }),
-      item("e", "edit", { name: "edit_file", phase: "running" }),
+      item("s", "shell", { name: "shell", phase: "failed", duration_ms: 1000 }),
+      item("e", "edit", { name: "edit", phase: "running" }),
       item("p", "tool", { name: "update_plan", phase: "succeeded" }),
     ]);
     if (segment.type !== "steps") throw new Error("expected steps");

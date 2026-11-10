@@ -39,6 +39,15 @@ git worktree add --detach ../wright-legacy-study legacy-json-react
 
 1. `protocol.encode_tools` 把模型可见工具放入 API `tools` 参数；
    过长或含特殊字符的 MCP 名称使用稳定别名，执行和权限仍使用原名。
+   内置文件和 Shell 工具名为 `read`、`write`、`edit`、`ls`、`shell`。旧名
+   （`read_file`、`write_file`、`edit_file`、`list_directory`、`execute_command`）
+   只在 `domain/model/tool_names.py` 一处映射：模型回放旧名、checkpoint 中的调用、
+   权限规则（含已保存的授权文件）、钩子 matcher 和 skill `allowed-tools`
+   读入时换成新名，只输出新名。旧规则按新名匹配，范围不变，不会因改名失效。
+   后台命令的 `get_command`、`wait_command` 合并为 `shell_output`（带 `timeout`
+   时先等待），`terminate_command` 改为 `shell_kill`，同样登记在这张表里。
+   计划工具 `create_plan`、`replan`、`get_plan` 已删除，`update_plan` 改为提交
+   完整步骤列表；参数形状不同，不做别名，模型调用旧工具会收到“不可用”错误后改用新工具。
 2. `llm.py` 接收 `assistant.tool_calls`，按索引拼接流式函数名和参数；
    保留供应商调用 ID、正文、可用的推理字段和结束原因。
 3. `protocol.parse_turn` 严格解码工具参数。有工具就执行；无工具的正文就是回答。

@@ -198,3 +198,46 @@ def test_replan_has_a_bounded_total_history():
 
     with pytest.raises(PlanError, match="cannot exceed 24"):
         manager.replan(["one more"], reason="another route")
+
+
+def test_apply_steps_matches_titles_and_is_atomic():
+    manager = PlanManager()
+    first = manager.apply_steps(
+        [{"title": "a", "status": "in_progress"}, {"title": "b", "status": "pending"}], objective="goal"
+    )
+    started_at = first["steps"][0]["started_at"]
+    assert first["revision"] == 1
+
+    unchanged = manager.apply_steps([{"title": "a", "status": "in_progress"}, {"title": "b", "status": "pending"}])
+    assert unchanged["revision"] == 1
+
+    with pytest.raises(PlanError):
+        manager.apply_steps([{"title": "a", "status": "in_progress"}, {"title": "b", "status": "in_progress"}])
+    with pytest.raises(PlanError):
+        manager.apply_steps([{"title": "a", "status": "pending"}, {"title": "b", "status": "completed"}])
+    assert manager.snapshot() == unchanged
+
+    done = manager.apply_steps([{"title": "a", "status": "completed"}, {"title": "b", "status": "completed"}])
+    assert done["status"] == "completed"
+    assert done["steps"][0]["started_at"] == started_at
+    assert done["steps"][0]["ended_at"] is not None
+
+    # A completed plan is replaced by the next list, which needs an objective.
+    with pytest.raises(PlanError):
+        manager.apply_steps([{"title": "c", "status": "pending"}])
+    fresh = manager.apply_steps([{"title": "c", "status": "pending"}], objective="next")
+    assert fresh["objective"] == "next"
+    assert [step["id"] for step in fresh["steps"]] == ["step_1"]
+
+
+def test_apply_steps_skips_dropped_open_steps_and_bounds_history():
+    manager = PlanManager()
+    manager.apply_steps([{"title": str(index), "status": "pending"} for index in range(12)], objective="goal")
+
+    routed = manager.apply_steps([{"title": "x", "status": "in_progress"}])
+
+    assert [step["status"] for step in routed["steps"][:12]] == ["skipped"] * 12
+    assert routed["steps"][0]["note"] == "Removed from plan"
+    assert routed["steps"][-1]["id"] == "step_13"
+    with pytest.raises(PlanError):
+        manager.apply_steps([{"title": f"y{index}", "status": "pending"} for index in range(12)])

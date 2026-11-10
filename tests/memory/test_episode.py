@@ -26,7 +26,7 @@ def _completed_session(tmp_path):
     session.plan_manager.update_step("step_1", "completed", note="tests pass")
 
     call = ToolCall(
-        "execute_command",
+        "shell",
         {"command": "pytest", "token": "secret-must-not-be-persisted"},
         "call_1",
     )
@@ -61,7 +61,7 @@ def test_episode_is_compact_sanitized_and_idempotent(tmp_path):
     assert len(store.list()) == 1
     assert first.tools == ({
         "step": 1,
-        "name": "execute_command",
+        "name": "shell",
         "status": "succeeded",
         "ok": True,
         "error": "",
@@ -211,7 +211,7 @@ def test_record_episode_skips_empty_turns_and_keeps_traces(tmp_path):
     failed = Session.create("placeholder", tmp_path)
     failed.begin_user_turn("修复登录测试")
     failed.append_message({"role": "user", "content": "修复登录测试"})
-    call = ToolCall("execute_command", {"command": "pytest"}, "call_1")
+    call = ToolCall("shell", {"command": "pytest"}, "call_1")
     failed.record_assistant_turn("tool call", {"tool_calls": []}, "tool_calls", [call])
     failed.record_tool_execution("call_1", ToolResult.fail("assertion failed"))
     failed.mark_failed()
@@ -224,7 +224,7 @@ def test_record_episode_skips_empty_turns_and_keeps_traces(tmp_path):
     cancelled = Session.create("placeholder", tmp_path)
     cancelled.begin_user_turn("修复登录测试")
     cancelled.append_message({"role": "user", "content": "修复登录测试"})
-    cancel_call = ToolCall("execute_command", {"command": "pytest"}, "call_1")
+    cancel_call = ToolCall("shell", {"command": "pytest"}, "call_1")
     cancelled.record_assistant_turn(
         "tool call", {"tool_calls": []}, "tool_calls", [cancel_call]
     )

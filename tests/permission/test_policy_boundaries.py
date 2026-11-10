@@ -61,7 +61,7 @@ def _dispatch(setup, handler):
 
 
 def _write(dispatch, path):
-    return dispatch.execute([ToolCall("write_file", {"file": str(path), "content": "written"}, "write")])[0].result
+    return dispatch.execute([ToolCall("write", {"file": str(path), "content": "written"}, "write")])[0].result
 
 
 def _recording(choice="deny"):
@@ -94,7 +94,7 @@ def test_read_only_grant_on_an_ancestor_keeps_the_workspace_writable(setup, tmp_
     assert _write(_dispatch(setup, handler), session.workspace_dir / "a.txt").ok
     assert asked == []
 
-    command = service.authorize(session, ToolCall("execute_command", {"command": "true"}, "shell"), execute_command_tool,
+    command = service.authorize(session, ToolCall("shell", {"command": "true"}, "shell"), execute_command_tool,
                                 backend=backend, workflow=AuthorizationWorkflow(approval_handler=lambda _: PermissionResponse("allow_once")))
     grant = command.resolution.grant
     assert str(session.workspace_dir) in {path.value for path in grant.shell_writable}
@@ -112,7 +112,7 @@ def test_read_only_grant_reads_freely_but_writes_still_need_approval(setup, tmp_
     _mode(session, mode)
     asked, handler = _recording()
     dispatch = _dispatch(setup, handler)
-    assert dispatch.execute([ToolCall("read_file", {"file": str(outside / "a.txt")}, "read")])[0].result.ok
+    assert dispatch.execute([ToolCall("read", {"file": str(outside / "a.txt")}, "read")])[0].result.ok
     assert asked == []
     assert not _write(dispatch, outside / "a.txt").ok
     assert len(asked) == 1
@@ -141,10 +141,10 @@ def test_read_write_grant_inside_a_read_only_grant_is_writable(setup, tmp_path):
     ("**/secrets/*.pem", {"secrets/k.pem": True, "a/b/secrets/k.pem": True, "a/secrets/sub/k.pem": False}),
 ])
 def test_deny_rules_match_recursive_patterns(pattern, expected):
-    rule = PermissionRule.parse(f"read_file({pattern})", effect="deny")
+    rule = PermissionRule.parse(f"read({pattern})", effect="deny")
     for relative, denied in expected.items():
         context = MatchContext(session_origin="/w", files=((f"/w/{relative}", "file_read"),))
-        assert rule.matches("read_file", relative, effect="deny", context=context) is denied, relative
+        assert rule.matches("read", relative, effect="deny", context=context) is denied, relative
 
 
 def test_allow_rules_reject_recursive_patterns():
@@ -189,7 +189,7 @@ class _Paths(FixturePaths):
 @pytest.mark.parametrize("execution_mode,offered", [("sandbox", True), ("host", False)])
 def test_git_read_prefix_is_only_offered_inside_the_sandbox(execution_mode, offered):
     result = AuthorizationWorkflow(PermissionPolicy(), execution_mode=execution_mode).resolve(
-        ToolCall("execute_command", {"command": "git status --short"}, "git"), execute_command_tool,
+        ToolCall("shell", {"command": "git status --short"}, "git"), execute_command_tool,
         backend=_Paths(), scope=AccessScope(Path("/project")), identity=InvocationIdentity("session"))
     ids = {choice.id for choice in result.prompt.choices}
     assert ("allow_project_command_prefix" in ids) is offered

@@ -10,10 +10,10 @@ from typing import Any
 
 from ..session_runtime.tool_projection import public_tool_result, tool_phase
 
-_SHELL = frozenset({"execute_command"})
-_EDIT = frozenset({"edit_file", "write_file"})
+_SHELL = frozenset({"shell"})
+_EDIT = frozenset({"edit", "write"})
 # Directory-level tools: their target is a folder, not a file to preview.
-_LIST = frozenset({"list_directory", "glob"})
+_LIST = frozenset({"ls", "glob"})
 
 
 def project_timeline(
@@ -227,7 +227,7 @@ def project_accessed_files(session: Any) -> list[dict[str, Any]]:
             continue
         access = (
             "write" if name in _EDIT
-            else "read" if name in {"read_file", "grep"}
+            else "read" if name in {"read", "grep"}
             else "list" if name in _LIST
             else "touch"
         )

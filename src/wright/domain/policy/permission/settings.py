@@ -10,6 +10,7 @@ from pathlib import PurePosixPath, PureWindowsPath
 from typing import Literal
 from urllib.parse import urlsplit
 
+from ...model.tool_names import SHELL, canonical_tool_name
 from .scope import path_module
 
 PermissionMode = Literal["default", "acceptEdits", "bypass", "plan"]
@@ -582,6 +583,13 @@ class PermissionRule:
     path: str = ""
     path_match: str = "origin"
 
+    def __post_init__(self) -> None:
+        # Legacy names (``execute_command`` …) keep their scope: a stored or
+        # configured rule is matched under the tool's current name.
+        canonical = canonical_tool_name(self.tool_name)
+        if canonical != self.tool_name:
+            object.__setattr__(self, "tool_name", canonical)
+
     def validate_value(self) -> None:
         # Rule values stay typed here; raw record validation belongs to codecs.
         for descriptor in fields(self):
@@ -612,7 +620,7 @@ class PermissionRule:
             }:
                 raise ValueError("Tool rules require valid operations")
         if self.kind == "command":
-            if (self.tool_name != "execute_command" or self.command_match not in {"executable", "argv_prefix"}
+            if (self.tool_name != SHELL or self.command_match not in {"executable", "argv_prefix"}
                 or self.dialect != "posix" or not self.argv or not self.argv[0] or any(not isinstance(arg, str) for arg in self.argv)
                 or not PurePosixPath(self.argv[0]).is_absolute() or not PurePosixPath(self.executable_target).is_absolute() or not self.cwd or not self.sandbox_key
                 or (self.command_match == "executable" and len(self.argv) != 1)
@@ -621,11 +629,11 @@ class PermissionRule:
                 raise ValueError("Command grants require literal argv, cwd and sandbox capabilities")
         if self.kind == "sandbox_network":
             if (
-                self.tool_name != "execute_command"
+                self.tool_name != SHELL
                 or self.execution_mode != "sandbox"
                 or self.operations != ("network_read", "network_write")
             ):
-                raise ValueError("Sandbox network grants apply to sandboxed execute_command only")
+                raise ValueError("Sandbox network grants apply to sandboxed shell only")
         if self.kind in {"file", "directory"}:
             if not self.operations or not set(self.operations) <= {
                 "file_read",
@@ -655,9 +663,9 @@ class PermissionRule:
         raw = raw.strip()
         if raw.endswith(")") and "(" in raw:
             name, _, rest = raw.partition("(")
-            tool_name = name.strip()
+            tool_name = canonical_tool_name(name.strip())
             glob = rest[:-1].strip() or None
-            if tool_name == "execute_command":
+            if tool_name == SHELL:
                 return cls(tool_name, glob, kind="shell", pattern=glob or "")
             if tool_name in _NETWORK_TOOLS:
                 if glob in {"http://*", "https://*"} and effect != "allow":
@@ -831,7 +839,7 @@ class PermissionRule:
     @classmethod
     def sandbox_network_grant(cls) -> PermissionRule:
         return cls(
-            "execute_command",
+            SHELL,
             kind="sandbox_network",
             operations=("network_read", "network_write"),
             execution_mode="sandbox",
@@ -1089,7 +1097,7 @@ def _load_rule(item: object, effect: str) -> PermissionRule:
         raise ValueError("Ambiguous permission syntax is unsupported; use a bounded resource record")
     if effect == "allow" and rule.kind in {"file", "directory"} and "**" in rule.pattern:
         raise ValueError("`**` is only supported in deny and ask rules; grant a directory instead")
-    if effect == "allow" and rule.tool_name == "execute_command":
+    if effect == "allow" and rule.tool_name == SHELL:
         if rule.kind == "command":
             pass
         elif rule.kind == "shell":
@@ -1101,7 +1109,7 @@ def _load_rule(item: object, effect: str) -> PermissionRule:
             rule.validate_grant()
         else:
             raise ValueError(
-                "execute_command allow rules must be command grants, exact session shell grants, or sandbox network grants"
+                "shell allow rules must be command grants, exact session shell grants, or sandbox network grants"
             )
     return rule
 

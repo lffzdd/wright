@@ -26,30 +26,30 @@ def fold(fragments):
 
 def test_openai_shape_is_unchanged():
     calls = fold([
-        frag(0, "call_1", "read_file", ""),
+        frag(0, "call_1", "read", ""),
         frag(0, None, None, '{"fi'),
         frag(0, None, None, 'le": "a"}'),
     ])
     assert calls[0]["id"] == "call_1"
-    assert calls[0]["function"] == {"name": "read_file", "arguments": '{"file": "a"}'}
+    assert calls[0]["function"] == {"name": "read", "arguments": '{"file": "a"}'}
 
 
 def test_repeated_id_and_name_are_not_concatenated():
     calls = fold([
-        frag(0, "call_1", "list_directory", ""),
-        frag(0, "call_1", "list_directory", "{"),
-        frag(0, "call_1", "list_directory", "}"),
+        frag(0, "call_1", "ls", ""),
+        frag(0, "call_1", "ls", "{"),
+        frag(0, "call_1", "ls", "}"),
     ])
     assert calls[0]["id"] == "call_1"
-    assert calls[0]["function"] == {"name": "list_directory", "arguments": "{}"}
+    assert calls[0]["function"] == {"name": "ls", "arguments": "{}"}
 
 
 def test_missing_index_keeps_parallel_calls_apart():
     calls = fold([
-        frag(None, "a", "read_file", '{"file": "x"}'),
-        frag(None, "b", "list_directory", "{}"),
+        frag(None, "a", "read", '{"file": "x"}'),
+        frag(None, "b", "ls", "{}"),
     ])
-    assert [c["function"]["name"] for c in calls] == ["read_file", "list_directory"]
+    assert [c["function"]["name"] for c in calls] == ["read", "ls"]
     assert [c["id"] for c in calls] == ["a", "b"]
 
 

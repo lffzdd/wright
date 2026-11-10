@@ -76,10 +76,10 @@ def test_remembered_file_rule_does_not_follow_parent_segments(tmp_path):
     session = Session.create("files", workspace)
     handler = _Choices("allow_session_rule")
     executor = _files(session, handler)
-    first = _run(executor, "write_file", {"file": "nested/a.txt", "content": "a"}, "c1")
+    first = _run(executor, "write", {"file": "nested/a.txt", "content": "a"}, "c1")
     second = _run(
         executor,
-        "write_file",
+        "write",
         {"file": "nested/../../outside.txt", "content": "escaped"},
         "c2",
     )
@@ -98,11 +98,11 @@ def test_file_deny_matches_dot_and_absolute_aliases(tmp_path):
     session = Session.create("files", workspace)
     settings = PermissionSettings.from_dict({"version": 2,
         "mode": "bypass",
-        "permissions": {"deny": ["read_file(secrets/*)"]},
+        "permissions": {"deny": ["read(secrets/*)"]},
     })
     executor = _files(session, settings=settings)
-    relative = _run(executor, "read_file", {"file": "./secrets/key"}, "c1")
-    absolute = _run(executor, "read_file", {"file": str(secret.resolve())}, "c2")
+    relative = _run(executor, "read", {"file": "./secrets/key"}, "c1")
+    absolute = _run(executor, "read", {"file": str(secret.resolve())}, "c2")
     assert not relative.ok
     assert not absolute.ok
 
@@ -116,11 +116,11 @@ def test_file_rule_stays_on_its_root_when_cwd_or_project_changes(tmp_path, monke
     handler = _Choices("allow_session_rule")
     executor = _files(session, handler)
     assert _run(
-        executor, "write_file", {"file": "nested/a.txt", "content": "a"}, "c1"
+        executor, "write", {"file": "nested/a.txt", "content": "a"}, "c1"
     ).ok
     session.set_cwd(other)
     moved = _run(
-        executor, "write_file", {"file": "nested/a.txt", "content": "nope"}, "c2"
+        executor, "write", {"file": "nested/a.txt", "content": "nope"}, "c2"
     )
     assert not moved.ok
     assert not (other / "nested" / "a.txt").exists()
@@ -137,7 +137,7 @@ def test_file_rule_stays_on_its_root_when_cwd_or_project_changes(tmp_path, monke
 
     elsewhere = Session.create("elsewhere", other)
     loaded = _files(elsewhere, settings=load_permission_settings(config))
-    cross = _run(loaded, "write_file", {"file": "nested/a.txt", "content": "cross"}, "c3")
+    cross = _run(loaded, "write", {"file": "nested/a.txt", "content": "cross"}, "c3")
     assert not cross.ok
     assert not (other / "nested" / "a.txt").exists()
 
@@ -157,10 +157,10 @@ def test_symlink_write_is_judged_by_the_canonical_target(tmp_path):
     handler = _Choices("allow_session_rule")
     executor = _files(session, handler)
     assert _run(
-        executor, "write_file", {"file": "nested/a.txt", "content": "a"}, "c1"
+        executor, "write", {"file": "nested/a.txt", "content": "a"}, "c1"
     ).ok
     linked = _run(
-        executor, "write_file", {"file": "nested/inside.txt", "content": "via link"}, "c2"
+        executor, "write", {"file": "nested/inside.txt", "content": "via link"}, "c2"
     )
     assert not linked.ok
     assert not outside.exists()
@@ -252,7 +252,7 @@ def test_compound_shell_cannot_skip_deny_or_a_simple_allow(tmp_path):
     session = Session.create("shell", workspace)
     denied = PermissionSettings.from_dict({"version": 2,
         "mode": "bypass",
-        "permissions": {"deny": ["execute_command(rm *)"]},
+        "permissions": {"deny": ["shell(rm *)"]},
     })
     executor = _shell(session, denied)
     commands = [
@@ -265,17 +265,17 @@ def test_compound_shell_cannot_skip_deny_or_a_simple_allow(tmp_path):
         "rm demo > out",
     ]
     for index, command in enumerate(commands):
-        result = _run(executor, "execute_command", {"command": command}, f"d{index}")
+        result = _run(executor, "shell", {"command": command}, f"d{index}")
         assert not result.ok, command
         assert demo.read_text(encoding="utf-8") == "keep"
 
     with pytest.raises(ValueError, match="Shell grants"):
-        PermissionSettings.from_dict({"version": 2, "permissions": {"allow": ["execute_command(echo *)"]}})
+        PermissionSettings.from_dict({"version": 2, "permissions": {"allow": ["shell(echo *)"]}})
     asked = PermissionSettings.from_dict({"version": 2, "mode": "default", "permissions": {}})
     handler = _Choices()
     asking = _shell(session, asked, handler)
     compound = _run(
-        asking, "execute_command", {"command": "echo hi && echo done"}, "ask"
+        asking, "shell", {"command": "echo hi && echo done"}, "ask"
     )
     assert not compound.ok
     assert handler.prompts
@@ -316,7 +316,7 @@ def test_checkpoint_failure_rolls_back_session_and_config(tmp_path, monkeypatch)
     executor.permissions.bind_checkpoint(session.session_id, TestCheckpoint(fail_save, session))
     outside = _run(
         executor,
-        "write_file",
+        "write",
         {"file": str(extra / "a.txt"), "content": "no"},
         "c1",
     )
@@ -325,7 +325,7 @@ def test_checkpoint_failure_rolls_back_session_and_config(tmp_path, monkeypatch)
     assert not (extra / "a.txt").exists()
 
     persistent = _run(
-        executor, "write_file", {"file": "nested/a.txt", "content": "no"}, "c2"
+        executor, "write", {"file": "nested/a.txt", "content": "no"}, "c2"
     )
     assert not persistent.ok
     assert session.authorization.rules == ()
@@ -368,10 +368,10 @@ def test_child_session_rule_does_not_widen_the_parent(tmp_path):
         permission_workflow=resolver,
     )
     assert _run(
-        child_executor, "write_file", {"file": "nested/a.txt", "content": "a"}, "c1"
+        child_executor, "write", {"file": "nested/a.txt", "content": "a"}, "c1"
     ).ok
     parent_result = _run(
-        parent_executor, "write_file", {"file": "nested/b.txt", "content": "b"}, "c2"
+        parent_executor, "write", {"file": "nested/b.txt", "content": "b"}, "c2"
     )
     assert not parent_result.ok
     assert child.authorization.rules
@@ -434,7 +434,7 @@ def test_approval_cancel_deny_and_allow_end_the_dispatch(tmp_path):
 
     cancelled = threading.Thread(
         target=run_call,
-        args=("write_file", {"file": "cancelled.txt", "content": "no"}, "c1"),
+        args=("write", {"file": "cancelled.txt", "content": "no"}, "c1"),
     )
     cancelled.start()
     _wait_request(hub)
@@ -445,7 +445,7 @@ def test_approval_cancel_deny_and_allow_end_the_dispatch(tmp_path):
 
     allowed = threading.Thread(
         target=run_call,
-        args=("write_file", {"file": "kept.txt", "content": "yes"}, "c2"),
+        args=("write", {"file": "kept.txt", "content": "yes"}, "c2"),
     )
     allowed.start()
     request = _wait_request(hub)

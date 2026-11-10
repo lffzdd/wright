@@ -439,7 +439,7 @@ def test_backend_resolves_paths_but_authorized_wrapper_enforces_scope(tmp_path):
         ),
     )
     result = executor.execute([
-        ToolCall("read_file", {"file": str(outside)}, "c1")
+        ToolCall("read", {"file": str(outside)}, "c1")
     ])[0].result
     assert not result.ok
     assert "path_outside_scope" in result.data["permission"]["risk_flags"]
@@ -460,7 +460,7 @@ def test_forbidden_permission_settings_path_is_rejected(tmp_path, monkeypatch):
         ),
     )
     result = executor.execute([
-        ToolCall("read_file", {"file": str(settings)}, "c1")
+        ToolCall("read", {"file": str(settings)}, "c1")
     ])[0].result
     assert not result.ok
     assert result.data["permission"]["source"] == "protected_path"

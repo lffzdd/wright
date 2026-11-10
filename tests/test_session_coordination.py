@@ -528,7 +528,7 @@ def test_history_keeps_markup_user_text_and_hides_storage(tmp_path):
         error="", tool_execution_ids=["call-1"],
     )
     execution = SimpleNamespace(
-        call=SimpleNamespace(id="call-1", name="write_file", arguments={"file": "a.txt"}),
+        call=SimpleNamespace(id="call-1", name="write", arguments={"file": "a.txt"}),
         status="succeeded",
         result=SimpleNamespace(to_dict=lambda: {
             "ok": True,

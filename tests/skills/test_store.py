@@ -31,12 +31,12 @@ def test_parse_frontmatter_and_allowed_tools(tmp_path: Path):
         name="release-check",
         description="当用户提到发布时使用",
         body="先跑测试再发布。",
-        allowed_tools=["execute_command", "read_file"],
+        allowed_tools=["shell", "read"],
     )
     definition = load_skill_file(path, "release-check")
     assert definition.meta.name == "release-check"
     assert definition.meta.description == "当用户提到发布时使用"
-    assert definition.meta.allowed_tools == ("execute_command", "read_file")
+    assert definition.meta.allowed_tools == ("shell", "read")
     assert "先跑测试" in definition.body
 
 
@@ -111,7 +111,7 @@ def test_standard_multiline_frontmatter(tmp_path: Path):
     definition = load_skill_file(skill_dir / "SKILL.md", "release-check")
     assert definition.meta.name == "release-check"
     assert definition.meta.description == "release deployment checks across lines"
-    assert definition.meta.allowed_tools == ("execute_command", "read_file")
+    assert definition.meta.allowed_tools == ("shell", "read")
     assert definition.meta.license == "Apache-2.0"
     assert definition.meta.metadata_map()["nested"] == {"kind": "procedure"}
     assert "scripts/check.py" in definition.body

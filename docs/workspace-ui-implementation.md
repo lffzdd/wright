@@ -17,7 +17,7 @@ Changes 当前行为和验收标准见 [Changes 功能约定](changes-contract.m
 | local / worktree、分支、变更摘要 | A + B | `SessionDirectory.open` 仍用 `ProjectContext` / `WorktreeManager`。`GET /sessions/{id}/workspace` 返回执行根、项目根、环境、`base_commit`、`branch_name`，以及 `summarize_git` 的分支和未提交数量。摘要不改进程 cwd。 |
 | 文件浏览、引用、内容 | C | `files.resolve_inside` 拒绝绝对路径、`..` 和解析后越出根的符号链接。工作区树用登记根；会话树用该会话的 `workspace_dir`。 |
 | 全局搜索 | C | `search_files`、`search_content`（`kind=content`）、`search_symbols`（`kind=symbol`）、`search_tasks`。符号来自 Python `ast` 或 js/ts/go/rs 的定义正则，不是正文检索。 |
-| 执行时间线 | B | `timeline.project_timeline` 读 `message_records` 和 `tool_executions`。文本、工具、`execute_command`、`edit_file`/`write_file`、待处理交互分别投影。身份是消息 id、call id、request id。快照带 `timeline`，并保留原有 `stream_id` / `last_seq`。 |
+| 执行时间线 | B | `timeline.project_timeline` 读 `message_records` 和 `tool_executions`。文本、工具、`shell`、`edit`/`write`、待处理交互分别投影。身份是消息 id、call id、request id。快照带 `timeline`，并保留原有 `stream_id` / `last_seq`。 |
 | 计划、已访问文件、子 Agent | A + B | 计划仍是 `plan_manager.snapshot()`。`accessed_files` 来自工具参数里的路径。`subagents` 来自 `AgentControlPlane.tree()`，不用正文推断完成。 |
 | Memory & Rules | A + B | 记忆走 `MemoryService`，项目 id 取会话自己的 `project_root`。核心画像只读；`human_profile` / `project_anchor` 可改。语义记忆和 episode 删除要 `confirm`。规则是 skill 文件，走 `write_skill` / `scan_skills`。`allowed-tools` 只是建议，不授予权限。覆盖和删除都要确认。 |
 | 定时任务 | A + C | 创建、修改、暂停、恢复、删除走 `SchedulingService` 和会话上的共享 `AutonomyStore`。项目级 `GET /workspaces/{id}/schedules` 以及 `POST .../schedules/{id}/{pause\|resume\|update\|delete}` 直接读写项目任务库，会话关闭后状态仍在。有执行记录的删除保留 `cancelled` 行。 |
@@ -92,7 +92,7 @@ Changes 当前行为和验收标准见 [Changes 功能约定](changes-contract.m
 - `npm run build` 通过，产物写入 `src/wright/interfaces/web/static`。
 - `npm run test:e2e`：Playwright 2 passed。这组测试使用页面内的 fetch 和 WebSocket 替身，只证明前端协议和会话隔离，不证明后端接入。
 - 修改过的 `timeline.py` 和 `workspace_routes.py` 已用 Ruff 检查。`tests/workspace/test_workspace_phase1.py` 与 `tests/test_web_server.py` 通过。
-- 真实联调：在临时 `WRIGHT_HOME` 上启动当前 FastAPI，静态文件是这次构建。模型是本地替身，第一次补全请求 `write_file`，之后返回文本，不访问网络模型。浏览器在 `http://127.0.0.1:8765` 完成新建会话，并收到真实的 `waiting_for_input` 审批，选项来自后端。1440×960、1280×800、1024×768，以及浅色中文，都对照过同一条等待审批的任务。
+- 真实联调：在临时 `WRIGHT_HOME` 上启动当前 FastAPI，静态文件是这次构建。模型是本地替身，第一次补全请求 `write`，之后返回文本，不访问网络模型。浏览器在 `http://127.0.0.1:8765` 完成新建会话，并收到真实的 `waiting_for_input` 审批，选项来自后端。1440×960、1280×800、1024×768，以及浅色中文，都对照过同一条等待审批的任务。
 
 ## 仍未完成
 
@@ -112,7 +112,7 @@ Changes 当前行为和验收标准见 [Changes 功能约定](changes-contract.m
 - 两个项目、切换、刷新恢复 → `WorkspaceCatalog`、`POST /workspaces/select`、会话列表 → `tests/workspace/test_workspace_phase1.py` 的登记、注销和执行根隔离；浏览器里刷新 `/?v=10` 后同一条空闲任务仍在 → 选择写入登记文件，不改已打开任务的执行根 → 这次浏览器只在预览项目里操作，没有在用户仓库里登记第二个项目。
 - local / worktree、发指令、换模型、停止与恢复 → `SessionDirectory.open`、`POST /sessions/{id}/model`、websocket `turn.submit` / `turn.cancel` → 预览会话是 local；模型下拉是 `deterministic-preview`；pytest 覆盖 worktree 打开路径 → 浏览器发出的指令停在真实 `waiting_for_input`，允许一次后任务回到空闲并写出 `preview-note.txt` → 没有在浏览器里再走一遍 worktree 创建。
 - 草稿、附件、工具、审批不串线 → `App.tsx` 按会话保存草稿；附件删除调用 `DELETE` 附件接口 → Playwright `two-sessions.spec.ts` 2 passed；`isolation.test.tsx` 4 passed → 切换会话不发送 `turn.cancel`，迟到的 changes 响应被丢掉 → 文档芯片移除只影响下一次提交，没有删除已保存文件的接口。
-- 文本、工具、编辑、计划、子 Agent → `timeline.project_timeline`，前端 `Timeline` → 浏览器时间线顺序是用户文本、助手文本、`edit · write_file`、最终 “Preview turn completed.”；计划为空时显示“这一轮没有进行中的计划”，子代理为空时显示“没有子代理” → 审批解决后，reducer 会从时间线去掉已解决的审批，并把工具阶段改成 succeeded（`reducer.test.ts`） → 这次替身没有发出 shell、计划工具或子 Agent，所以这三类的实时卡片没有在浏览器里出现。
+- 文本、工具、编辑、计划、子 Agent → `timeline.project_timeline`，前端 `Timeline` → 浏览器时间线顺序是用户文本、助手文本、`edit · write`、最终 “Preview turn completed.”；计划为空时显示“这一轮没有进行中的计划”，子代理为空时显示“没有子代理” → 审批解决后，reducer 会从时间线去掉已解决的审批，并把工具阶段改成 succeeded（`reducer.test.ts`） → 这次替身没有发出 shell、计划工具或子 Agent，所以这三类的实时卡片没有在浏览器里出现。
 - 权限、拒绝、不同范围、撤销 → websocket `interaction.respond`，`GET/POST /sessions/{id}/grants` → 浏览器上的四个选项文案和范围来自后端；点击 Allow once 后服务端快照 `pending_interactions` 为 0；pytest 覆盖撤销和目录授权 → 按钮纵向排开，不再互相遮挡 → 没有在这次浏览器里点 Deny 或撤销一条已保存规则。
 - Agent / Plan / Ask → `POST /sessions/{id}/policy`，`PermissionPolicy` → 下拉受会话字段控制；pytest 断言 Ask 在 bypass 下仍受操作上限；浏览器把模式显示为 Agent / 默认 → 忙碌或有待回答交互时策略接口返回 409，输入框显示失败原因 → 没有在浏览器里把这条正在等待的任务改成 Ask 再执行工具。
 - @、/、搜索和跳转 → `GET /commands`、`search`、`GET /file` → 浏览器搜索 README，返回 1 条，点击后检查器切到文件并显示 `# Wright preview` → 符号搜索的浏览器点击没有单独再做一次；pytest 已区分符号和正文。

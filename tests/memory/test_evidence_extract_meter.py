@@ -84,7 +84,7 @@ def _session(tmp_path: Path, prompt: str) -> Session:
 
 
 def _tool(session: Session, call_id: str, command: str, *, ok: bool = True, err: str = "") -> None:
-    call = ToolCall("execute_command", {"command": command, "token": "secret-must-not-be-persisted"}, call_id)
+    call = ToolCall("shell", {"command": command, "token": "secret-must-not-be-persisted"}, call_id)
     session.record_assistant_turn("tool", {"route": "tool_calls"}, "tool_calls", [call])
     if ok:
         session.record_tool_execution(call_id, ToolResult.success({"stdout": "secret-result-must-not-be-persisted", "returncode": 0}))
@@ -94,8 +94,8 @@ def _tool(session: Session, call_id: str, command: str, *, ok: bool = True, err:
 
 def _two_tools(session: Session) -> None:
     calls = [
-        ToolCall("execute_command", {"command": "pytest tests/test_a.py"}, "call_a"),
-        ToolCall("execute_command", {"command": "pytest tests/test_b.py", "token": "secret-must-not-be-persisted"}, "call_b"),
+        ToolCall("shell", {"command": "pytest tests/test_a.py"}, "call_a"),
+        ToolCall("shell", {"command": "pytest tests/test_b.py", "token": "secret-must-not-be-persisted"}, "call_b"),
     ]
     session.record_assistant_turn("tools", {"route": "tool_calls"}, "tool_calls", calls)
     session.record_tool_execution("call_a", ToolResult.success({"stdout": "secret-result-must-not-be-persisted", "returncode": 0}))
@@ -415,7 +415,7 @@ def test_tool_count_and_recalled_text_do_not_open_extraction(tmp_path: Path):
         source="runtime_event",
     )
     for index in range(4):
-        call = ToolCall("execute_command", {"command": "ls"}, f"call_{index}")
+        call = ToolCall("shell", {"command": "ls"}, f"call_{index}")
         session.record_assistant_turn("ls", {}, "tool_calls", [call])
         session.record_tool_execution(f"call_{index}", ToolResult.success({"returncode": 0}))
     session.mark_completed()
@@ -602,7 +602,7 @@ def test_candidate_summary_keeps_tail_and_omits_usage():
         ended_step=1,
         created_at="2026-01-01T00:00:00Z",
         plan={},
-        tools=({"name": "execute_command", "error": "ECONNREFUSED postgres", "ok": False, "status": "failed"},),
+        tools=({"name": "shell", "error": "ECONNREFUSED postgres", "ok": False, "status": "failed"},),
         agents=(),
         verification=(),
         usage={"prompt_tokens": 9000001, "completion_tokens": 0, "total_tokens": 9000001},
@@ -625,7 +625,7 @@ def test_candidate_summary_keeps_tail_and_omits_usage():
         ended_step=1,
         created_at="2026-01-01T00:00:00Z",
         plan={},
-        tools=({"name": "execute_command", "error": "ECONNREFUSED postgres", "ok": False, "status": "failed"},),
+        tools=({"name": "shell", "error": "ECONNREFUSED postgres", "ok": False, "status": "failed"},),
         agents=(),
         verification=(),
         usage={"prompt_tokens": 1, "completion_tokens": 0, "total_tokens": 1},

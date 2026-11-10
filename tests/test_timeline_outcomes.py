@@ -51,7 +51,7 @@ def test_outcomes_are_placed_after_their_own_turn(tmp_path):
 def test_tool_phases_match_across_timeline_active_turn_and_history(tmp_path, status, phase):
     session = Session.create("goal", tmp_path)
     _turn(session, "read")
-    call = ToolCall("read_file", {"path": "note.md"}, "call-1")
+    call = ToolCall("read", {"path": "note.md"}, "call-1")
     session.record_assistant_turn("", {}, "tool_calls", [call])
     session.tool_executions[call.id].status = status
     run = session.active_run()

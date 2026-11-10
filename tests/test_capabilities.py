@@ -219,12 +219,13 @@ def test_file_tool_uses_injected_execution_backend(tmp_path):
     session = Session.create("test", tmp_path)
     session.begin_user_turn("test")
     outcome = ToolDispatchService(
-        {"read_file": read_file_tool},
+        {"read": read_file_tool},
         assemble_tool_capabilities(session, None, None, execution_backend=backend),
         session=session,
-    ).execute([ToolCall("read_file", {"file": "report.txt"}, "call")])[0]
+    ).execute([ToolCall("read", {"file": "report.txt"}, "call")])[0]
     assert outcome.result.ok
-    assert backend.reads == [("bytes", "report.txt"), ("text", "report.txt")]
+    # A short header read detects images and PDFs before the text read.
+    assert backend.reads == [("bytes", "report.txt"), ("bytes", "report.txt"), ("text", "report.txt")]
 
 
 def test_executor_only_injects_the_capabilities_declared_by_each_tool(tmp_path):

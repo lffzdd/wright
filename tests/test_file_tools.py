@@ -109,7 +109,7 @@ def test_once_allow_writes_outside_via_invocation_grant(tmp_path):
         [write_file_tool],
         handler=lambda request: PermissionResponse("allow_once"),
     ).execute([
-        ToolCall("write_file", {"file": str(target), "content": "hello\n"}, "c1")
+        ToolCall("write", {"file": str(target), "content": "hello\n"}, "c1")
     ])[0].result
 
     assert result.ok
@@ -148,12 +148,12 @@ def test_read_outside_asks_until_permission_allows(tmp_path):
     session = Session.create("read outside", workspace)
     denied = _file_executor(
         session, [read_file_tool]
-    ).execute([ToolCall("read_file", {"file": str(extra / "a.txt")}, "c1")])[0].result
+    ).execute([ToolCall("read", {"file": str(extra / "a.txt")}, "c1")])[0].result
     allowed = _file_executor(
         session,
         [read_file_tool],
         handler=lambda request: PermissionResponse("allow_once"),
-    ).execute([ToolCall("read_file", {"file": str(extra / "a.txt")}, "c2")])[0].result
+    ).execute([ToolCall("read", {"file": str(extra / "a.txt")}, "c2")])[0].result
 
     assert not denied.ok
     assert "path_outside_scope" in denied.data["permission"]["risk_flags"]
@@ -178,17 +178,17 @@ def test_always_allow_outside_write_then_edit_in_same_extra_root(tmp_path):
     )
     written = executor.execute([
         ToolCall(
-            "write_file",
+            "write",
             {"file": str(extra / "a.txt"), "content": "old line\n"},
             "c1",
         )
     ])[0].result
     read = executor.execute([
-        ToolCall("read_file", {"file": str(extra / "a.txt")}, "c2")
+        ToolCall("read", {"file": str(extra / "a.txt")}, "c2")
     ])[0].result
     edited = executor.execute([
         ToolCall(
-            "edit_file",
+            "edit",
             {
                 "file": str(extra / "a.txt"),
                 "old_text": "old line\n",
@@ -368,13 +368,13 @@ def test_file_view_is_shared_across_replaced_runtimes(tmp_path):
     (tmp_path / "a.txt").write_text("old line\n", encoding="utf-8", newline="")
     runtime = _runtime(tmp_path)
     assert read_file(
-        "a.txt", runtime=replace(runtime, tool_name="read_file")
+        "a.txt", runtime=replace(runtime, tool_name="read")
     ).ok
     result = edit_file(
         "a.txt",
         "old line\n",
         "new line\n",
-        runtime=replace(runtime, tool_name="edit_file"),
+        runtime=replace(runtime, tool_name="edit"),
     )
     assert result.ok
 
@@ -486,3 +486,39 @@ def test_write_and_edit_preserve_utf8_bom(tmp_path):
 def test_edit_file_schema_exposes_replace_all():
     assert "replace_all" in edit_file_tool.parameters["properties"]
     assert edit_file_tool.parameters["properties"]["replace_all"]["default"] is False
+
+
+def test_edit_applies_batched_edits_in_order_or_not_at_all(tmp_path):
+    (tmp_path / "a.py").write_text("alpha = 1\nbeta = 2\nbeta = 3\n", encoding="utf-8")
+    runtime = _runtime(tmp_path)
+    assert read_file("a.py", runtime=runtime).ok
+
+    failed = edit_file("a.py", edits=[
+        {"old_text": "alpha = 1", "new_text": "alpha = 10"},
+        {"old_text": "missing", "new_text": "x"},
+    ], runtime=runtime)
+    assert not failed.ok
+    assert failed.err.startswith("edits[1]:")
+    assert failed.data["edit_index"] == 1
+    assert (tmp_path / "a.py").read_text(encoding="utf-8") == "alpha = 1\nbeta = 2\nbeta = 3\n"
+
+    done = edit_file("a.py", edits=[
+        {"old_text": "alpha = 1", "new_text": "alpha = 10"},
+        {"old_text": "beta", "new_text": "gamma", "replace_all": True},
+        # Later edits see earlier results.
+        {"old_text": "alpha = 10", "new_text": "alpha = 11"},
+    ], runtime=runtime)
+    assert done.ok and done.data["replacements"] == 4 and done.data["edits"] == 3
+    assert (tmp_path / "a.py").read_text(encoding="utf-8") == "alpha = 11\ngamma = 2\ngamma = 3\n"
+
+
+def test_edit_rejects_mixed_or_empty_edit_forms(tmp_path):
+    (tmp_path / "a.txt").write_text("x\n", encoding="utf-8")
+    runtime = _runtime(tmp_path)
+    assert read_file("a.txt", runtime=runtime).ok
+
+    assert not edit_file("a.txt", old_text="x", new_text="y", edits=[{"old_text": "x", "new_text": "y"}], runtime=runtime).ok
+    assert not edit_file("a.txt", edits=[], runtime=runtime).ok
+    assert not edit_file("a.txt", runtime=runtime).ok
+    empty = edit_file("a.txt", edits=[{"old_text": "", "new_text": "y"}], runtime=runtime)
+    assert not empty.ok and "non-empty" in empty.err

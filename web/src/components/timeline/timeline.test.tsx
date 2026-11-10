@@ -48,8 +48,8 @@ describe("real timeline projection", () => {
 
   it("keeps the user prompt, shell arguments and incremental output as tools run", () => {
     let state = emit(fresh(), "turn.started", { prompt: "Run the tests" });
-    state = emit(state, "tool.planned", { call_id: "c", name: "execute_command", arguments: { command: "pytest -q" } });
-    state = emit(state, "tool.running", { call_id: "c", name: "execute_command" });
+    state = emit(state, "tool.planned", { call_id: "c", name: "shell", arguments: { command: "pytest -q" } });
+    state = emit(state, "tool.running", { call_id: "c", name: "shell" });
     state = emit(state, "tool.output", { call_id: "c", output: "Collecting tests\n" });
     state = emit(state, "tool.output", { call_id: "c", output: "Running tests" });
     expect(state.active_turn?.tools[0].phase).toBe("running");
@@ -105,24 +105,24 @@ describe("real timeline projection", () => {
     expect(container.querySelectorAll(".enter")).toHaveLength(0);
 
     state = emit(state, "turn.started", { prompt: "Second" }, "turn-2");
-    state = emit(state, "tool.planned", { call_id: "c2", name: "list_directory", arguments: { path: "src" } }, "turn-2");
+    state = emit(state, "tool.planned", { call_id: "c2", name: "ls", arguments: { path: "src" } }, "turn-2");
     rerender(transcript(state));
-    const live = screen.getByText("list_directory").closest(".tl-indent")!;
+    const live = screen.getByText("ls").closest(".tl-indent")!;
     expect(live.classList.contains("enter")).toBe(true);
     expect(screen.getByText("Loaded answer").closest(".enter")).toBeNull();
 
     // Long after it appeared, the same tool moving into the record must not replay.
     now.mockReturnValue(5_000);
-    state = emit(state, "tool.completed", { call_id: "c2", name: "list_directory", result: { ok: true, data: { entries: [] } } }, "turn-2");
+    state = emit(state, "tool.completed", { call_id: "c2", name: "ls", result: { ok: true, data: { entries: [] } } }, "turn-2");
     state = emit(state, "turn.completed", {}, "turn-2");
     rerender(transcript(state));
-    expect(screen.getByText("list_directory").closest(".tl-indent")!.classList.contains("enter")).toBe(false);
+    expect(screen.getByText("ls").closest(".tl-indent")!.classList.contains("enter")).toBe(false);
   });
 
   it("renders replies without a header and marks tool cards open only when expanded", () => {
     let state = emit(fresh(), "turn.started", { prompt: "List it" });
-    state = emit(state, "tool.planned", { call_id: "c", name: "list_directory", arguments: { path: "src" } });
-    state = emit(state, "tool.completed", { call_id: "c", name: "list_directory", result: { ok: true, data: { entries: ["a", "b"] } } });
+    state = emit(state, "tool.planned", { call_id: "c", name: "ls", arguments: { path: "src" } });
+    state = emit(state, "tool.completed", { call_id: "c", name: "ls", result: { ok: true, data: { entries: ["a", "b"] } } });
     state = emit(state, "content.final", { content: "Two files" });
     state = emit(state, "turn.completed", {});
     const { container } = render(transcript(state));
@@ -140,7 +140,7 @@ describe("real timeline projection", () => {
     state = emit(state, "reasoning.delta", { piece: "tools" });
     state = emit(state, "content.delta", { piece: "I will inspect" });
     for (const call_id of ["a", "b"]) {
-      state = emit(state, "tool.planned", { call_id, name: "read_file" });
+      state = emit(state, "tool.planned", { call_id, name: "read" });
       state = emit(state, "tool.running", { call_id });
       state = emit(state, "tool.finished", { call_id, ok: true });
     }
@@ -178,7 +178,7 @@ describe("real timeline projection", () => {
       timeline: [
         { id: "turn-1:user", kind: "text", role: "user", turn_id: "turn-1", text: "Check" },
         { id: "turn-1:reasoning:0", kind: "reasoning", role: "assistant", turn_id: "turn-1", text: "Before" },
-        { id: "c", kind: "tool", call_id: "c", name: "read_file", phase: "succeeded" },
+        { id: "c", kind: "tool", call_id: "c", name: "read", phase: "succeeded" },
         { id: "turn-1:reasoning:1", kind: "reasoning", role: "assistant", turn_id: "turn-1", text: "Partial" },
       ],
     };
@@ -202,19 +202,19 @@ describe("real timeline projection", () => {
 
   it("renders failed snapshot and live tool results with the same error and exit code", () => {
     const result = { ok: false, err: "Process failed", data: { stdout: "failure details", stderr: "problem on stderr", returncode: 2 } };
-    const { container, rerender } = render(toolCardFromTimeline({ id: "c", kind: "shell", name: "execute_command", phase: "failed", arguments: { command: "false" }, result }));
+    const { container, rerender } = render(toolCardFromTimeline({ id: "c", kind: "shell", name: "shell", phase: "failed", arguments: { command: "false" }, result }));
     const snapshotText = container.textContent;
     expect(screen.getByText("Exit 2")).toBeTruthy();
     expect(screen.getByText(/Process failed/).textContent).toContain("problem on stderr");
     expect(screen.queryByText(/Bug Confirmed/)).toBeNull();
     let state = emit(fresh(), "turn.started", { prompt: "Check failure" });
-    state = emit(state, "tool.planned", { call_id: "c", name: "execute_command", arguments: { command: "false" } });
-    state = emit(state, "tool.finished", { call_id: "c", name: "execute_command", ...result });
+    state = emit(state, "tool.planned", { call_id: "c", name: "shell", arguments: { command: "false" } });
+    state = emit(state, "tool.finished", { call_id: "c", name: "shell", ...result });
     const liveTool = state.timeline!.find((item) => item.call_id === "c")!;
     expect(liveTool.result).toEqual(result);
     rerender(toolCardFromTimeline(liveTool));
     expect(container.textContent).toBe(snapshotText);
-    rerender(toolCardFromState({ call_id: "c", name: "execute_command", phase: "failed", arguments: { command: "false" }, ...result }));
+    rerender(toolCardFromState({ call_id: "c", name: "shell", phase: "failed", arguments: { command: "false" }, ...result }));
     expect(container.textContent).toBe(snapshotText);
   });
 
@@ -222,7 +222,7 @@ describe("real timeline projection", () => {
     vi.spyOn(api, "grants").mockResolvedValue({ version: "v1" } as never);
     const addGrant = vi.spyOn(api, "addGrant").mockResolvedValue({} as never);
     const data = { returncode: 1, output: "ls: /outside: Operation not permitted\n", sandbox_denial: { path: "/outside", grant_directory: "/outside", readable: ["/work"], writable: ["/work"] } };
-    render(toolCardFromState({ call_id: "c", name: "execute_command", phase: "failed", arguments: { command: "ls /outside" }, data }, "s"));
+    render(toolCardFromState({ call_id: "c", name: "shell", phase: "failed", arguments: { command: "ls /outside" }, data }, "s"));
     expect(screen.getByRole("status").textContent).toContain("/work");
     fireEvent.click(screen.getByRole("button", { name: /read-only|只读/ }));
     await waitFor(() => expect(addGrant).toHaveBeenCalledWith("s", { kind: "directory", path: "/outside", operations: ["file_read"] }, "session", "v1"));
@@ -232,7 +232,7 @@ describe("real timeline projection", () => {
     vi.spyOn(api, "grants").mockResolvedValue({ version: "v1" } as never);
     const addGrant = vi.spyOn(api, "addGrant").mockResolvedValue({} as never);
     const data = { returncode: 1, output: "touch: /lib/x: Read-only file system\n", sandbox_denial: { path: "/lib/x", grant_directory: "", grant_write_directory: "/lib", readable: ["/work", "/lib"], writable: ["/work"] } };
-    render(toolCardFromState({ call_id: "c", name: "execute_command", phase: "failed", arguments: { command: "touch /lib/x" }, data }, "s"));
+    render(toolCardFromState({ call_id: "c", name: "shell", phase: "failed", arguments: { command: "touch /lib/x" }, data }, "s"));
     expect(screen.queryByRole("button", { name: /read-only|只读/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /read and write|可读写/ }));
     await waitFor(() => expect(addGrant).toHaveBeenCalledWith("s", { kind: "directory", path: "/lib", operations: ["file_read", "file_write"] }, "session", "v1"));
@@ -240,16 +240,16 @@ describe("real timeline projection", () => {
   });
 
   it("does not invent diff line numbers or file counts from output lines", () => {
-    const { container, rerender } = render(toolCardFromState({ call_id: "c", name: "edit_file", phase: "succeeded", data: "-old\n+new" }, undefined, undefined, true));
+    const { container, rerender } = render(toolCardFromState({ call_id: "c", name: "edit", phase: "succeeded", data: "-old\n+new" }, undefined, undefined, true));
     expect(container.querySelector(".diff-line")?.textContent).toBe("");
-    rerender(toolCardFromState({ call_id: "read", name: "read_file", phase: "succeeded", data: "line one\nline two" }));
+    rerender(toolCardFromState({ call_id: "read", name: "read", phase: "succeeded", data: "line one\nline two" }));
     expect(screen.queryByText("2 files")).toBeNull();
     fireEvent.click(screen.getByRole("button"));
     expect(screen.getByText(/line one/)).toBeTruthy();
   });
 
   it("opens an edit card only while its turn is live", () => {
-    const edit = { call_id: "e", name: "edit_file", phase: "succeeded", arguments: { file: "a.py" }, data: { diff: "-old\n+new", additions: 1, deletions: 1, diff_truncated: false } } as const;
+    const edit = { call_id: "e", name: "edit", phase: "succeeded", arguments: { file: "a.py" }, data: { diff: "-old\n+new", additions: 1, deletions: 1, diff_truncated: false } } as const;
     const { container, rerender } = render(toolCardFromState(edit, undefined, false, true));
     expect(container.querySelector(".tool-card")!.classList.contains("open")).toBe(true);
     rerender(toolCardFromState(edit, undefined, false, false));
@@ -265,11 +265,11 @@ describe("real timeline projection", () => {
       result: { output: "auth.ts\nrate-limiter.ts\nsession.ts\ntelemetry.ts\nconfig.ts" },
     }));
     expect(screen.getByText("5 entries (24ms)")).toBeTruthy();
-    rerender(toolCardFromState({ call_id: "read", name: "read_file", phase: "succeeded", data: "line one\nline two" }));
+    rerender(toolCardFromState({ call_id: "read", name: "read", phase: "succeeded", data: "line one\nline two" }));
     expect(screen.queryByText("2 entries")).toBeNull();
     // The real tool returns structured entries; count those, not JSON lines.
     rerender(toolCardFromTimeline({
-      id: "dir2", kind: "tool", name: "list_directory", phase: "succeeded", arguments: {},
+      id: "dir2", kind: "tool", name: "ls", phase: "succeeded", arguments: {},
       result: { ok: true, data: { directory: ".", entries: [{ name: "a" }, { name: "src" }], truncated: false } },
     }));
     expect(screen.getByText("2 entries")).toBeTruthy();
@@ -278,11 +278,11 @@ describe("real timeline projection", () => {
   it("folds a finished run of steps into a summary and keeps a live run open", () => {
     let state = emit(fresh(), "turn.started", { prompt: "Look around" });
     state = emit(state, "reasoning.delta", { piece: "Check the tree" });
-    state = emit(state, "tool.planned", { call_id: "d", name: "list_directory", arguments: { path: "." } });
+    state = emit(state, "tool.planned", { call_id: "d", name: "ls", arguments: { path: "." } });
     state = emit(state, "tool.finished", { call_id: "d", ok: true, data: { entries: [] } });
     state = emit(state, "tool.planned", { call_id: "g", name: "grep", arguments: { pattern: "x" } });
     state = emit(state, "tool.finished", { call_id: "g", ok: true, data: { matches: [] } });
-    state = emit(state, "tool.planned", { call_id: "c", name: "execute_command", arguments: { command: "false" } });
+    state = emit(state, "tool.planned", { call_id: "c", name: "shell", arguments: { command: "false" } });
     const { container, rerender } = render(transcript(state));
     expect(container.querySelectorAll(".step-group")).toHaveLength(1);
     expect(container.querySelector(".step-group")!.classList.contains("open")).toBe(true);
@@ -302,19 +302,19 @@ describe("real timeline projection", () => {
 
   it("shows a lone step without a group around it", () => {
     let state = emit(fresh(), "turn.started", { prompt: "One" });
-    state = emit(state, "tool.planned", { call_id: "r", name: "read_file", arguments: { path: "a.py" } });
+    state = emit(state, "tool.planned", { call_id: "r", name: "read", arguments: { path: "a.py" } });
     state = emit(state, "tool.finished", { call_id: "r", ok: true, data: { content: "1|x" } });
     state = emit(state, "turn.completed", {});
     const { container } = render(transcript(state));
     expect(container.querySelector(".step-group")).toBeNull();
     // The row shows the tool's own name; its icon is coloured by kind.
-    expect(screen.getByText("read_file")).toBeTruthy();
+    expect(screen.getByText("read")).toBeTruthy();
     expect(container.querySelector(".step-icon")?.classList.contains("reads")).toBe(true);
   });
 
   it("lists each user prompt in the outline and ignores headings inside replies", async () => {
     let state = emit(fresh(), "turn.started", { prompt: "Please design # NotHeading and **NotHeading**" });
-    state = emit(state, "tool.planned", { call_id: "c", name: "execute_command", arguments: { command: "echo '## NotHeading'" } });
+    state = emit(state, "tool.planned", { call_id: "c", name: "shell", arguments: { command: "echo '## NotHeading'" } });
     state = emit(state, "tool.output", { call_id: "c", output: "## Output Not Heading\n**Also Not Heading**" });
     state = emit(state, "tool.finished", { call_id: "c", ok: true });
 

@@ -111,7 +111,7 @@ describe("Inspector request and content state", () => {
 
   it("lists directories as LIST entries that do not open as files", () => {
     const file = vi.spyOn(api, "file");
-    const state = view(); state.accessed_files = [{ path: "web/src", access: "list", tool: "list_directory" }];
+    const state = view(); state.accessed_files = [{ path: "web/src", access: "list", tool: "ls" }];
     render(inspector(state));
     fireEvent.click(screen.getByRole("tab", { name: /Files\s*\(1\)/ }));
     const entry = screen.getByRole("button", { name: /LIST\s*web\/src/ }) as HTMLButtonElement;

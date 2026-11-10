@@ -1,4 +1,4 @@
-"""execute_command tool. Lifecycle belongs to CommandExecution."""
+"""shell tool. Lifecycle belongs to CommandExecution."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def execute_command(
                 journal.commit_capture(
                     before,
                     call_id=getattr(runtime, "tool_call_id", ""),
-                    tool_name="execute_command",
+                    tool_name="shell",
                 )
             except Exception:
                 import logging
@@ -61,14 +61,14 @@ def execute_command(
 
 def _project(outcome: CommandOutcome) -> ToolResult:
     if outcome.cancelled:
-        raise ToolCancelledError("execute_command cancelled")
+        raise ToolCancelledError("shell cancelled")
     if outcome.ok:
         return ToolResult.success(outcome.data or {})
     return ToolResult.fail(outcome.error, data=outcome.data)
 
 
 execute_command_tool = Tool(
-    name="execute_command",
+    name="shell",
     approval_details=lambda args, cwd: {"command": str(args.get("command", ""))},
     description=(
         "Execute a shell command in the workspace, offline and isolated by default. "
@@ -76,7 +76,7 @@ execute_command_tool = Tool(
         "on every result — do not cd into the directory you are already in. "
         "Long-running commands auto-background after timeout and return a command_id. "
         "Set run_in_background=true to background immediately and return a command_id. "
-        "Follow up with get_command, wait_command, list_commands, or terminate_command. "
+        "Follow up with shell_output (set timeout to wait for it) or shell_kill. "
         "Large output includes offset, next_offset, and truncated so you can keep reading."
     ),
     parameters={

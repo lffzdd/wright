@@ -69,9 +69,9 @@ def test_ancestor_mode_changes_also_change_child_tool_visibility(tmp_path):
     child.authorization.set_modes(permission_mode="bypass", interaction_mode="agent")
     root.authorization.set_modes(permission_mode="plan", interaction_mode="ask")
     assert child.authorization.effective_modes("default") == ("plan", "ask")
-    assert not tool_visible("write_file", child)
+    assert not tool_visible("write", child)
     assert not tool_visible("update_plan", child)
-    assert tool_visible("read_file", child)
+    assert tool_visible("read", child)
 
 
 def test_checkpoint_decoding_never_reads_permission_stores(tmp_path, monkeypatch):

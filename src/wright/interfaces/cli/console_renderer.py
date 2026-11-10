@@ -288,7 +288,7 @@ class ConsoleRenderer(Renderer):
     def _running_command(self) -> _LiveTool | None:
         running = [
             block for block in self._tools
-            if block.result is None and _tool_call_name(block.call) == "execute_command"
+            if block.result is None and _tool_call_name(block.call) == "shell"
         ]
         return running[-1] if running else None
 

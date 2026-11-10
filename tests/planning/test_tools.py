@@ -1,11 +1,6 @@
 from tests.runtime_helpers import tool_runtime_for_session
 from wright.domain.model.session import Session
-from wright.infrastructure.tools.plan_tools import (
-    create_plan,
-    get_plan,
-    replan,
-    update_plan,
-)
+from wright.infrastructure.tools.plan_tools import plan_tools, update_plan
 
 
 def _runtime(tmp_path):
@@ -13,42 +8,46 @@ def _runtime(tmp_path):
     return session, tool_runtime_for_session(session, workspace_dir=tmp_path)
 
 
-def test_plan_tools_share_session_manager(tmp_path):
+def _steps(*pairs):
+    return [{"title": title, "status": status} for title, status in pairs]
+
+
+def test_one_plan_tool_writes_the_whole_list(tmp_path):
     session, runtime = _runtime(tmp_path)
+    assert [tool.name for tool in plan_tools] == ["update_plan"]
 
-    created = create_plan("goal", ["inspect", "implement"], runtime=runtime)
+    created = update_plan(_steps(("inspect", "in_progress"), ("implement", "pending")), objective="goal", runtime=runtime)
     assert created.ok
-    assert session.plan_manager.has_plan
+    assert [step["id"] for step in created.data["steps"]] == ["step_1", "step_2"]
 
-    started = update_plan("step_1", "in_progress", runtime=runtime)
-    assert started.ok
-    assert started.data["steps"][0]["status"] == "in_progress"
-
-    current = get_plan(runtime=runtime)
-    assert current.ok
-    assert current.data == session.plan_manager.snapshot()
+    moved = update_plan(_steps(("inspect", "completed"), ("implement", "in_progress")), runtime=runtime)
+    assert moved.ok
+    assert [step["id"] for step in moved.data["steps"]] == ["step_1", "step_2"]
+    assert moved.data == session.plan_manager.snapshot()
 
 
 def test_plan_tool_errors_are_data_not_exceptions(tmp_path):
     _, runtime = _runtime(tmp_path)
 
-    result = update_plan("step_404", "completed", runtime=runtime)
+    missing_objective = update_plan(_steps(("a", "pending")), runtime=runtime)
+    out_of_order = update_plan(_steps(("a", "pending"), ("b", "completed")), objective="goal", runtime=runtime)
 
-    assert not result.ok
-    assert "Unknown step id" in result.err
+    assert not missing_objective.ok and "objective" in missing_objective.err
+    assert not out_of_order.ok and "Predecessor" in out_of_order.err
 
 
-def test_replan_tool_keeps_completed_history(tmp_path):
+def test_changing_the_list_keeps_finished_history(tmp_path):
     _, runtime = _runtime(tmp_path)
-    create_plan("goal", ["first", "old second"], runtime=runtime)
-    update_plan("step_1", "completed", runtime=runtime)
+    update_plan(_steps(("first", "completed"), ("old second", "pending")), objective="goal", runtime=runtime)
 
-    result = replan(["new second"], "requirements changed", runtime=runtime)
+    result = update_plan(_steps(("first", "completed"), ("new second", "in_progress")), runtime=runtime)
 
     assert result.ok
-    assert result.data["steps"][0]["status"] == "completed"
-    assert result.data["steps"][1]["status"] == "skipped"
-    assert result.data["steps"][2]["title"] == "new second"
+    assert [(step["title"], step["status"]) for step in result.data["steps"]] == [
+        ("old second", "skipped"), ("first", "completed"), ("new second", "in_progress"),
+    ]
+    reopened = update_plan(_steps(("first", "pending")), runtime=runtime)
+    assert not reopened.ok and "terminal" in reopened.err
 
 
 def test_sessions_have_isolated_plans(tmp_path):

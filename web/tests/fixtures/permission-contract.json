@@ -3,7 +3,7 @@
     "file": {
       "kind": "permission",
       "request_id": "approval-file",
-      "tool_name": "write_file",
+      "tool_name": "write",
       "subject": "/external/result.txt",
       "reason": "The target is outside this session's access scope",
       "risk_flags": [
@@ -246,7 +246,7 @@
     "shell": {
       "kind": "permission",
       "request_id": "approval-shell",
-      "tool_name": "execute_command",
+      "tool_name": "shell",
       "subject": "echo hello",
       "reason": "This operation needs approval",
       "risk_flags": [
@@ -278,7 +278,7 @@
           ],
           "resource": {
             "kind": "shell",
-            "tool_name": "execute_command",
+            "tool_name": "shell",
             "pattern": "echo hello",
             "id": "",
             "lifetime": "session",
@@ -304,7 +304,7 @@
           ],
           "resource": {
             "kind": "command",
-            "tool_name": "execute_command",
+            "tool_name": "shell",
             "argv": [
               "/usr/bin/echo"
             ],
@@ -338,7 +338,7 @@
           ],
           "resource": {
             "kind": "command",
-            "tool_name": "execute_command",
+            "tool_name": "shell",
             "argv": [
               "/usr/bin/echo"
             ],
@@ -372,7 +372,7 @@
           ],
           "resource": {
             "kind": "command",
-            "tool_name": "execute_command",
+            "tool_name": "shell",
             "argv": [
               "/usr/bin/echo"
             ],
@@ -407,7 +407,7 @@
           ],
           "resource": {
             "kind": "sandbox_network",
-            "tool_name": "execute_command",
+            "tool_name": "shell",
             "operations": [
               "network_read",
               "network_write"
@@ -437,7 +437,7 @@
           ],
           "resource": {
             "kind": "sandbox_network",
-            "tool_name": "execute_command",
+            "tool_name": "shell",
             "operations": [
               "network_read",
               "network_write"
@@ -467,7 +467,7 @@
           ],
           "resource": {
             "kind": "sandbox_network",
-            "tool_name": "execute_command",
+            "tool_name": "shell",
             "operations": [
               "network_read",
               "network_write"
@@ -533,7 +533,7 @@
     "python": {
       "kind": "permission",
       "request_id": "approval-python",
-      "tool_name": "execute_command",
+      "tool_name": "shell",
       "subject": "python3 -c 'print(1)'",
       "reason": "This operation needs approval",
       "risk_flags": [
@@ -565,7 +565,7 @@
           ],
           "resource": {
             "kind": "shell",
-            "tool_name": "execute_command",
+            "tool_name": "shell",
             "pattern": "python3 -c 'print(1)'",
             "id": "",
             "lifetime": "session",
@@ -591,7 +591,7 @@
           ],
           "resource": {
             "kind": "command",
-            "tool_name": "execute_command",
+            "tool_name": "shell",
             "argv": [
               "/usr/bin/python3"
             ],
@@ -625,7 +625,7 @@
           ],
           "resource": {
             "kind": "command",
-            "tool_name": "execute_command",
+            "tool_name": "shell",
             "argv": [
               "/usr/bin/python3"
             ],
@@ -659,7 +659,7 @@
           ],
           "resource": {
             "kind": "command",
-            "tool_name": "execute_command",
+            "tool_name": "shell",
             "argv": [
               "/usr/bin/python3"
             ],
@@ -694,7 +694,7 @@
           ],
           "resource": {
             "kind": "sandbox_network",
-            "tool_name": "execute_command",
+            "tool_name": "shell",
             "operations": [
               "network_read",
               "network_write"
@@ -724,7 +724,7 @@
           ],
           "resource": {
             "kind": "sandbox_network",
-            "tool_name": "execute_command",
+            "tool_name": "shell",
             "operations": [
               "network_read",
               "network_write"
@@ -754,7 +754,7 @@
           ],
           "resource": {
             "kind": "sandbox_network",
-            "tool_name": "execute_command",
+            "tool_name": "shell",
             "operations": [
               "network_read",
               "network_write"

@@ -105,13 +105,13 @@ def test_choosing_a_higher_directory_grants_exactly_that_directory(tmp_path):
             permission_workflow=AuthorizationWorkflow(approval_handler=approve),
         )
 
-    written = executor().execute([ToolCall("write_file", {"file": str(shared / "a" / "x.txt"), "content": "x"}, "c1")])[0].result
+    written = executor().execute([ToolCall("write", {"file": str(shared / "a" / "x.txt"), "content": "x"}, "c1")])[0].result
     assert written.ok
     offered = {choice.id: choice.scope for choice in prompts[0].choices}
     assert offered["allow_session_directory_write"] == str((shared / "a").resolve())
     assert offered["allow_session_directory_write_1"] == str(shared.resolve())
     assert permission_directories(session) == (shared.resolve(),)
 
-    read = executor().execute([ToolCall("read_file", {"file": str(shared / "b" / "other.txt")}, "c2")])[0].result
+    read = executor().execute([ToolCall("read", {"file": str(shared / "b" / "other.txt")}, "c2")])[0].result
     assert read.ok
     assert len(prompts) == 1

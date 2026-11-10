@@ -41,7 +41,7 @@ def _populated_session(tmp_path):
     session.plan_manager.update_step("step_1", "completed", note="written")
     session.plan_manager.update_step("step_2", "completed", note="passed")
 
-    call = ToolCall("write_file", {"file": "a.txt", "content": "ok"}, "call_1")
+    call = ToolCall("write", {"file": "a.txt", "content": "ok"}, "call_1")
     tool_turn = session.record_assistant_turn(
         assistant_raw="",
         parsed={"tool_calls": [{"name": call.name, "arguments": call.arguments}]},
@@ -295,7 +295,7 @@ def test_pending_tool_calls_recover_as_unknown_instead_of_replaying(tmp_path):
     session = Session.create("goal", workspace)
     session.begin_user_turn("write once")
     session.append_message({"role": "user", "content": "write once"})
-    call = ToolCall("write_file", {"file": "a.txt", "content": "x"}, "c1")
+    call = ToolCall("write", {"file": "a.txt", "content": "x"}, "c1")
     session.record_assistant_turn(
         "pending tool call",
         {"tool_calls": []},
@@ -336,7 +336,7 @@ def test_legacy_json_checkpoint_requires_the_preserved_version(tmp_path):
 
 def test_recovery_inserts_all_missing_results_before_later_messages(tmp_path):
     session = Session.create("goal", tmp_path)
-    calls = [ToolCall("write_file", {}, "c1"), ToolCall("read_file", {}, "c2")]
+    calls = [ToolCall("write", {}, "c1"), ToolCall("read", {}, "c2")]
     session.record_assistant_turn("checking", {}, "tool_calls", calls)
     # A successful call whose result had not reached the transcript before crash.
     session.record_tool_execution("c1", ToolResult.success("already finished"))

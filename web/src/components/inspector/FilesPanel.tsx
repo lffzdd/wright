@@ -60,10 +60,11 @@ const FolderIcon = ({ open }: { open?: boolean }) => open ? <FolderOpen size={14
  * per-tool counts fall back to the last tool and the access kind.
  */
 const ACCESS_TAGS: Array<{ label: string; kind: string; tools: string[] }> = [
-  { label: "MOD", kind: "modified", tools: ["edit_file", "write_file"] },
-  { label: "READ", kind: "read", tools: ["read_file"] },
+  // Current names first; the legacy names still appear in older sessions' data.
+  { label: "MOD", kind: "modified", tools: ["edit", "write", "edit_file", "write_file"] },
+  { label: "READ", kind: "read", tools: ["read", "read_file"] },
   { label: "GREP", kind: "search", tools: ["grep"] },
-  { label: "LIST", kind: "list", tools: ["list_directory", "glob"] },
+  { label: "LIST", kind: "list", tools: ["ls", "glob", "list_directory"] },
 ];
 const accessTag = (file: AccessedFile) => {
   const used = file.tools && Object.keys(file.tools).length ? Object.keys(file.tools) : file.tool ? [file.tool] : [];

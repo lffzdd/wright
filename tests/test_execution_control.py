@@ -63,40 +63,40 @@ def test_command_tools_follow_background_and_timeout_handoff(tmp_path):
     session = _session(tmp_path)
     executor = _executor(session)
     launched = _call(
-        executor, "execute_command", command="echo handed-off", run_in_background=True
+        executor, "shell", command="echo handed-off", run_in_background=True
     )
     assert launched.ok
     command_id = launched.data["command_id"]
     assert "task_id" not in launched.data
-    assert "get_command" in launched.data["message"]
+    assert "shell_output" in launched.data["message"]
 
-    observed = _call(executor, "get_command", command_id=command_id)
+    observed = _call(executor, "shell_output", command_id=command_id)
     assert observed.ok and observed.data["command_id"] == command_id
-    waited = _call(executor, "wait_command", command_id=command_id, timeout=2)
+    waited = _call(executor, "shell_output", command_id=command_id, timeout=2)
     assert waited.ok and waited.data["status"] == "completed", json.dumps(waited.to_dict())
     assert waited.data["returncode"] == 0
     assert "handed-off" in waited.data["output"]
-    again = _call(executor, "terminate_command", command_id=command_id)
+    again = _call(executor, "shell_kill", command_id=command_id)
     assert again.ok and again.data["already_terminal"] is True
     assert again.data["status"] == "completed"
 
     timed = _call(
         executor,
-        "execute_command",
+        "shell",
         command="sleep 2",
         timeout=0,
     )
     assert timed.ok and timed.data["timed_out"] is True
     assert "command_id" in timed.data
-    assert "terminate_command" in timed.data["message"]
-    _call(executor, "terminate_command", command_id=timed.data["command_id"])
+    assert "shell_kill" in timed.data["message"]
+    _call(executor, "shell_kill", command_id=timed.data["command_id"])
 
 
 def test_wait_timeout_does_not_terminate_and_list_stays_in_session(tmp_path):
     session = _session(tmp_path, "turn-one")
     current = _executor(session)
     first = _call(
-        current, "execute_command", command="sleep 5", run_in_background=True
+        current, "shell", command="sleep 5", run_in_background=True
     )
     session.append_message({"role": "user", "content": "next turn"})
     session.begin_user_turn("turn-two")
@@ -104,16 +104,16 @@ def test_wait_timeout_does_not_terminate_and_list_stays_in_session(tmp_path):
     second.begin_user_turn("other")
     other = _executor(second)
     launched = _call(
-        current, "execute_command", command="echo current-turn", run_in_background=True
+        current, "shell", command="echo current-turn", run_in_background=True
     )
     command_id = launched.data["command_id"]
-    waited = _call(current, "wait_command", command_id=first.data["command_id"], timeout=0)
+    waited = _call(current, "shell_output", command_id=first.data["command_id"], timeout=0)
     assert waited.ok and waited.data["wait_timed_out"] is True, json.dumps(waited.to_dict())
     assert waited.data["cancel_requested"] is False
-    still = _call(current, "get_command", command_id=first.data["command_id"])
+    still = _call(current, "shell_output", command_id=first.data["command_id"])
     assert still.data["status"] == "running"
 
-    finished = _call(current, "wait_command", command_id=command_id, timeout=2)
+    finished = _call(current, "shell_output", command_id=command_id, timeout=2)
     assert finished.data["status"] == "completed"
     current_only = _call(current, "list_commands")
     assert current_only.data["scope"] == "current_user_turn"
@@ -129,7 +129,7 @@ def test_wait_timeout_does_not_terminate_and_list_stays_in_session(tmp_path):
     assert [row["command_id"] for row in running.data["commands"]] == [
         first.data["command_id"]
     ]
-    _call(current, "terminate_command", command_id=first.data["command_id"])
+    _call(current, "shell_kill", command_id=first.data["command_id"])
 
 
 def test_list_commands_caps_count_and_output(tmp_path):
@@ -161,7 +161,7 @@ def test_unknown_command_is_not_a_successful_completion(tmp_path):
         command="lost",
         root_turn_id=session.agent_root_turn_id,
     ))
-    result = _call(_executor(session), "get_command", command_id="cmd_lost")
+    result = _call(_executor(session), "shell_output", command_id="cmd_lost")
     assert result.ok
     assert result.data["status"] == "unknown"
     assert result.data["outcome"] == "unconfirmed"
@@ -175,7 +175,7 @@ def test_terminate_command_kills_the_process_tree(tmp_path):
     late = tmp_path / "child.late"
     executor = _executor(session)
     launched = _call(
-        executor, "execute_command",
+        executor, "shell",
         command=f"(sleep 1; echo escaped > '{late}') & echo ready > '{ready}'; wait",
         run_in_background=True,
     )
@@ -185,7 +185,7 @@ def test_terminate_command_kills_the_process_tree(tmp_path):
     while not ready.exists() and time.monotonic() < deadline:
         time.sleep(0.02)
     assert ready.exists()
-    terminated = _call(executor, "terminate_command", command_id=command_id)
+    terminated = _call(executor, "shell_kill", command_id=command_id)
     assert terminated.ok
     assert terminated.data["status"] == "cancelled", json.dumps(terminated.to_dict())
     time.sleep(1.2)
@@ -215,7 +215,7 @@ def test_cross_type_ids_fail_before_any_control(tmp_path):
         requested_steps=3,
     )
     launched = _call(
-        executor, "execute_command", command="sleep 5", run_in_background=True
+        executor, "shell", command="sleep 5", run_in_background=True
     )
     command_id = launched.data["command_id"]
     schedule = _call(
@@ -230,13 +230,13 @@ def test_cross_type_ids_fail_before_any_control(tmp_path):
     assert store.get_run(run_id).status == "queued"
 
     wrong_agent = _call(executor, "cancel_agent", agent_task_id=command_id)
-    wrong_command = _call(executor, "terminate_command", command_id=agent.id)
+    wrong_command = _call(executor, "shell_kill", command_id=agent.id)
     wrong_run = _call(executor, "cancel_schedule_run", run_id=agent.id)
     assert not wrong_agent.ok and "command execution" in wrong_agent.err
     assert not wrong_command.ok and "delegated agent execution" in wrong_command.err
     assert not wrong_run.ok and "delegated agent execution" in wrong_run.err
     assert session.get_command(command_id).cancel_requested is False
-    assert _call(executor, "get_command", command_id=command_id).data["status"] == "running"
+    assert _call(executor, "shell_output", command_id=command_id).data["status"] == "running"
     assert session.control_plane.get(agent.id).cancel_requested is False
     assert store.get_run(run_id).status == "queued"
     assert store.get_job(schedule_id).status == "active"
@@ -272,5 +272,5 @@ def test_cross_type_ids_fail_before_any_control(tmp_path):
     assert parent.ok and parent.data["status"] == "running"
     assert session.control_plane.get(child.id).cancel_requested is True
     assert session.control_plane.get(child.id).status == "running"
-    _call(executor, "terminate_command", command_id=command_id)
+    _call(executor, "shell_kill", command_id=command_id)
     store.close()

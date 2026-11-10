@@ -12,6 +12,8 @@ from fnmatch import fnmatchcase
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
+from .tool_names import legacy_tool_names
+
 LifecycleEventName = Literal[
     "session_start",
     "runtime_event",
@@ -135,7 +137,14 @@ class HookRegistration:
 
     def matches(self, payload: Mapping[str, Any]) -> bool:
         subject = str(payload.get("tool_name") or payload.get("agent_type") or "")
-        return self.matcher == "*" or fnmatchcase(subject, self.matcher)
+        if self.matcher == "*":
+            return True
+        # A matcher written for a tool's legacy name (``execute_command``,
+        # ``*_file``) keeps firing. A blocking hook must not silently lapse.
+        return any(
+            fnmatchcase(name, self.matcher)
+            for name in (subject, *legacy_tool_names(subject))
+        )
 
 
 class TraceSink(Protocol):

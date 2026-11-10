@@ -388,7 +388,7 @@ def _select_base_tools(config: RuntimeConfig) -> tuple[list, list]:
         knowledge_tools = optional_knowledge_tools()
     active_base_tools = base_tools
     if config.mode == "general":
-        coding_only = {"edit_file", "write_file", "execute_command"}
+        coding_only = {"edit", "write", "shell"}
         active_base_tools = [t for t in base_tools if t.name not in coding_only]
     return active_base_tools, knowledge_tools
 
@@ -566,6 +566,7 @@ def assemble_runtime(
         agent_background=background_runtime,
         durable_store=autonomy_store,
         loop_registry=loop_registry,
+        artifact_store=artifact_store,
     )
     interaction_target = interaction_broker
     if interaction_target is not None:

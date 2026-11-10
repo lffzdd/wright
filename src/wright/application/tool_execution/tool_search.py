@@ -9,6 +9,7 @@ from typing import Any
 
 from ...domain.model.tool import ToolAccess, ToolResult, split_tool_catalog
 from ...domain.model.tool_definition import Tool
+from ...domain.model.tool_names import legacy_tool_names
 from ...domain.model.tool_runtime import ToolRuntime
 
 MAX_ACTIVE_DEFERRED_TOOLS = 12
@@ -100,28 +101,30 @@ def _schema_text(value: Any) -> str:
 
 def _score_tool(tool: Tool, query: str, tokens: set[str], requested: set[str]) -> int:
     name = _normalize(tool.name)
+    # Short names (``ls``) carry little text; their legacy names still describe them.
+    names = [name, *(_normalize(old) for old in legacy_tool_names(tool.name))]
+    compact_names = [re.sub(r"[^a-z0-9]", "", item) for item in names]
     description = _normalize(tool.description)
     parameters = _normalize(_schema_text(tool.parameters))
-    compact_name = re.sub(r"[^a-z0-9]", "", name)
     compact_description = re.sub(r"[^a-z0-9]", "", description)
     compact_parameters = re.sub(r"[^a-z0-9]", "", parameters)
 
-    score = 1_000 if name in requested else 0
+    score = 1_000 if any(item in requested for item in names) else 0
     compact_query = re.sub(r"[^a-z0-9]", "", query)
-    if query and query == name:
+    if query and query in names:
         score += 100
-    elif compact_query and compact_query == compact_name:
+    elif compact_query and compact_query in compact_names:
         score += 80
-    elif query and query in name:
+    elif query and any(query in item for item in names):
         score += 40
     elif query and query in description:
         score += 16
 
     for token in tokens:
         compact_token = token.replace("_", "")
-        if token == name or compact_token == compact_name:
+        if token in names or compact_token in compact_names:
             score += 30
-        elif token in name or compact_token in compact_name:
+        elif any(token in item for item in names) or any(compact_token in item for item in compact_names):
             score += 14
         if token in parameters or compact_token in compact_parameters:
             score += 5

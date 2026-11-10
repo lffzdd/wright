@@ -78,7 +78,7 @@ def describe_execute_command_access(args: dict) -> ToolAccess:
         subject=command,
         risk_flags=tuple(dict.fromkeys(risk_flags)),
         reason=_format_reason(
-            "execute_command",
+            "shell",
             "requires user approval by command tool policy",
             tuple(dict.fromkeys(risk_flags)),
         ),

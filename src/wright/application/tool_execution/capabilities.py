@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from ...domain.gateway.runtime_protocols import ExecutionBackend
 from ...domain.gateway.tool_capabilities import (
     AgentOperations,
+    ArtifactOperations,
     CommandOperations,
     DelegationOperations,
     RunScope,
@@ -138,6 +139,11 @@ def assemble_tool_capabilities(
                 permissions,
             ),
             loop_registry=services.loop_registry if services is not None else None,
+            artifacts=(
+                ArtifactOperations(register=services.artifact_store.register_bytes)
+                if services is not None and services.artifact_store is not None
+                else None
+            ),
         ),
         runtime_resources,
         backend,

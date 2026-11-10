@@ -219,7 +219,7 @@ describe("UI event reducer", () => {
       pending_interactions: [{ request_id: "perm-1", kind: "permission" }],
       timeline: [
         { id: "user-1", kind: "text", role: "user", text: "write the note" },
-        { id: "call-1", kind: "edit", name: "write_file", phase: "pending" },
+        { id: "call-1", kind: "edit", name: "write", phase: "pending" },
         { id: "perm-1", kind: "approval", phase: "pending", interaction: { request_id: "perm-1", kind: "permission" } },
       ],
     };
@@ -227,7 +227,7 @@ describe("UI event reducer", () => {
     expect(next.pending_interactions).toEqual([]);
     expect(next.timeline?.some((item) => item.kind === "approval")).toBe(false);
     next = applyEvent(next, event(2, "turn.started", { prompt: "write the note" }));
-    next = applyEvent(next, event(3, "tool.finished", { call_id: "call-1", name: "write_file", ok: true, data: { path: "note.txt" } }));
+    next = applyEvent(next, event(3, "tool.finished", { call_id: "call-1", name: "write", ok: true, data: { path: "note.txt" } }));
     next = applyEvent(next, event(4, "content.final", { content: "Preview turn completed." }));
     next = applyEvent(next, event(5, "turn.completed", { run_id: "run-1" }));
     expect(next.timeline?.find((item) => item.id === "call-1")?.phase).toBe("succeeded");
@@ -238,11 +238,11 @@ describe("UI event reducer", () => {
   it("keeps each step's narration as its own block, in order with tools", () => {
     let next = applyEvent({ ...state, timeline: [] }, event(1, "turn.started", { prompt: "fix it" }));
     next = applyEvent(next, event(2, "content.delta", { piece: "Reading first." }));
-    next = applyEvent(next, event(3, "tool.planned", { call_id: "a", name: "read_file" }));
-    next = applyEvent(next, event(4, "tool.finished", { call_id: "a", name: "read_file", ok: true }));
+    next = applyEvent(next, event(3, "tool.planned", { call_id: "a", name: "read" }));
+    next = applyEvent(next, event(4, "tool.finished", { call_id: "a", name: "read", ok: true }));
     next = applyEvent(next, event(5, "content.delta", { piece: "Now editing." }));
-    next = applyEvent(next, event(6, "tool.planned", { call_id: "b", name: "edit_file" }));
-    next = applyEvent(next, event(7, "tool.finished", { call_id: "b", name: "edit_file", ok: true }));
+    next = applyEvent(next, event(6, "tool.planned", { call_id: "b", name: "edit" }));
+    next = applyEvent(next, event(7, "tool.finished", { call_id: "b", name: "edit", ok: true }));
     next = applyEvent(next, event(8, "content.delta", { piece: "Do" }));
     next = applyEvent(next, event(9, "content.final", { content: "Done." }));
     next = applyEvent(next, event(10, "turn.completed", {}));

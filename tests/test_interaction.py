@@ -13,7 +13,7 @@ def test_hub_delivers_reply_from_collector():
     result = []
 
     def agent() -> None:
-        result.append(hub.request("permission", {"tool_name": "write_file"}))
+        result.append(hub.request("permission", {"tool_name": "write"}))
 
     thread = threading.Thread(target=agent)
     thread.start()
@@ -22,7 +22,7 @@ def test_hub_delivers_reply_from_collector():
         time.sleep(0.01)
     request = hub.poll()
     assert request is not None
-    assert request.payload["tool_name"] == "write_file"
+    assert request.payload["tool_name"] == "write"
     assert hub.resolve(request.request_id, "allow_once") is True
     thread.join(timeout=2)
     assert result == ["allow_once"]
@@ -62,7 +62,7 @@ def test_console_permission_uses_hub_off_collector_thread():
     prompter = RoutedPrompter(hub)
     answers: list[str] = []
     permission_prompt = PermissionPrompt(
-        "request", "write_file", "file=a.txt", "ask", (), targets=(),
+        "request", "write", "file=a.txt", "ask", (), targets=(),
         choices=(PermissionChoice("allow_once", "Allow once", "call", "none"),
                  PermissionChoice("deny", "Deny", "none", "none")),
     )
@@ -78,7 +78,7 @@ def test_console_permission_uses_hub_off_collector_thread():
     request = hub.poll()
     assert request is not None
     assert request.kind == "permission"
-    assert request.payload["tool_name"] == "write_file"
+    assert request.payload["tool_name"] == "write"
     assert hub.resolve(request.request_id, "allow_once") is True
     thread.join(timeout=2)
     assert answers == ["allow_once"]
@@ -177,7 +177,7 @@ def test_resolve_and_cancel_wake_the_waiter_once():
     answered: list[object] = []
 
     def agent() -> None:
-        answered.append(hub.request("permission", {"tool_name": "write_file"}))
+        answered.append(hub.request("permission", {"tool_name": "write"}))
 
     thread = threading.Thread(target=agent)
     thread.start()
@@ -205,7 +205,7 @@ def test_cancel_before_resolve_rejects_a_late_answer():
     answered: list[object] = []
 
     def agent() -> None:
-        answered.append(hub.request("permission", {"tool_name": "write_file"}))
+        answered.append(hub.request("permission", {"tool_name": "write"}))
 
     thread = threading.Thread(target=agent)
     thread.start()
@@ -232,7 +232,7 @@ def test_persist_failure_keeps_the_request_pending():
     answered: list[object] = []
 
     def agent() -> None:
-        answered.append(hub.request("permission", {"tool_name": "write_file"}))
+        answered.append(hub.request("permission", {"tool_name": "write"}))
 
     thread = threading.Thread(target=agent)
     thread.start()

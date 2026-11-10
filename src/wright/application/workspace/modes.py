@@ -11,11 +11,12 @@ from ...domain.model.session.authorization import InteractionMode
 from ...domain.policy.permission.limits import ASK_OPERATIONS, PLAN_OPERATIONS
 
 ASK_TOOLS = frozenset({
-    "read_file",
-    "list_directory",
+    "read",
+    "ls",
     "glob",
     "grep",
     "web_search",
+    "web_fetch",
     "knowledge_search",
     "ask_user",
     "get_core_memory",
@@ -23,10 +24,9 @@ ASK_TOOLS = frozenset({
     "get_memory",
     "search_episodes",
     "get_episode",
-    "get_plan",
     "tool_search",
     "get_agent",
-    "get_command",
+    "shell_output",
     "list_commands",
     "get_schedule",
     "list_schedules",
@@ -35,9 +35,7 @@ ASK_TOOLS = frozenset({
 })
 
 PLAN_TOOLS = ASK_TOOLS | frozenset({
-    "create_plan",
     "update_plan",
-    "replan",
 })
 
 

@@ -10,8 +10,8 @@ from wright.application.tool_execution.agent_tools import (
     wait_agent_tool,
 )
 from wright.application.tool_execution.command_control import (
-    terminate_command_tool,
-    wait_command_tool,
+    shell_kill_tool,
+    shell_output_tool,
 )
 from wright.domain.model.session import Session
 from wright.infrastructure.tools.command import execute_command
@@ -90,7 +90,7 @@ def test_wait_timeout_observes_without_cancelling_shell_task(tmp_path):
     )
     command_id = launched.data["command_id"]
 
-    observed = wait_command_tool.call(
+    observed = shell_output_tool.call(
         {"command_id": command_id, "timeout": 0}, runtime
     )
 
@@ -98,7 +98,7 @@ def test_wait_timeout_observes_without_cancelling_shell_task(tmp_path):
     assert observed.data["status"] == "running"
     assert observed.data["wait_timed_out"] is True
     assert observed.data["cancel_requested"] is False
-    cancelled = terminate_command_tool.call(
+    cancelled = shell_kill_tool.call(
         {"command_id": command_id, "reason": "test cleanup"}, runtime
     )
     assert cancelled.ok
@@ -118,7 +118,7 @@ def test_agent_cancel_and_command_terminate_keep_their_semantics(tmp_path):
     agent = cancel_agent_tool.call(
         {"agent_task_id": agent_record.id, "reason": "stop agent"}, runtime
     )
-    shell = terminate_command_tool.call(
+    shell = shell_kill_tool.call(
         {"command_id": launched.data["command_id"], "reason": "stop shell"}, runtime
     )
 
@@ -154,7 +154,7 @@ def test_agent_and_shell_completion_share_runtime_event_shape(tmp_path):
     assert agent_event["task"]["agent_task_id"] == agent_record.id
     assert "get_agent" in agent_event["follow_up"]
     assert shell_event["task"]["command_id"] == shell_id
-    assert "get_command" in shell_event["follow_up"]
+    assert "shell_output" in shell_event["follow_up"]
     assert "id" not in agent_event["task"]
     assert "id" not in shell_event["task"]
 
@@ -176,7 +176,7 @@ def test_execution_controls_are_root_only_and_history_does_not_restore_retired_n
 
     agent_controls = {"get_agent", "wait_agent", "cancel_agent"}
     command_controls = {
-        "get_command", "wait_command", "terminate_command", "list_commands",
+        "shell_output", "shell_kill", "list_commands",
     }
     autonomy = {
         "create_schedule", "get_schedule", "list_schedules", "pause_schedule",

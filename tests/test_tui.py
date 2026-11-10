@@ -282,9 +282,9 @@ def test_tui_renderer_streams_without_app():
 
 def test_tui_renderer_tracks_tools_without_app():
     renderer = TUIRenderer()
-    call = ToolCall("list_directory", {"directory": "."}, "c1")
+    call = ToolCall("ls", {"directory": "."}, "c1")
     renderer.on_tool_call(call)
-    assert renderer.tools[0].name == "list_directory"
+    assert renderer.tools[0].name == "ls"
     assert renderer.tools[0].status == "planned"
     renderer.on_tool_phase(call, "awaiting_approval")
     assert renderer.tools[0].status == "awaiting_approval"
@@ -298,7 +298,7 @@ def test_tui_renderer_tracks_tools_without_app():
 def test_tui_prompter_fail_closed_without_a_hub():
     prompter = RoutedPrompter(None)
     prompt = PermissionPrompt(
-        "request", "write_file", "a.txt", "ask", (), targets=(),
+        "request", "write", "a.txt", "ask", (), targets=(),
         choices=(PermissionChoice("allow_once", "Allow once", "call", "none"),),
     )
     assert prompter.prompt_permission(prompt) == "deny"
@@ -310,7 +310,7 @@ def test_tui_prompter_uses_hub_off_collector_thread():
     prompter = RoutedPrompter(hub)
     answers: list[str] = []
     permission_prompt = PermissionPrompt(
-        "request", "write_file", "file=a.txt", "ask", (), targets=(),
+        "request", "write", "file=a.txt", "ask", (), targets=(),
         choices=(PermissionChoice("allow_once", "Allow once", "call", "none"),
                  PermissionChoice("deny", "Deny", "none", "none")),
     )
@@ -523,11 +523,11 @@ def test_collect_history_pairs_empty():
 def test_tool_title_formats_icons_and_arguments():
     from wright.interfaces.tui.view_models import ToolView
 
-    running = ToolView(key="1", name="execute_command", arguments={"command": "pytest -v"}, status="running")
-    assert _tool_title(running) == "⏳ execute_command · $ pytest -v"
+    running = ToolView(key="1", name="shell", arguments={"command": "pytest -v"}, status="running")
+    assert _tool_title(running) == "⏳ shell · $ pytest -v"
 
-    done = ToolView(key="2", name="edit_file", arguments={"file": "src/app.py", "old_text": "a", "new_text": "b"}, status="done")
-    assert _tool_title(done) == "✓ edit_file · src/app.py"
+    done = ToolView(key="2", name="edit", arguments={"file": "src/app.py", "old_text": "a", "new_text": "b"}, status="done")
+    assert _tool_title(done) == "✓ edit · src/app.py"
 
     err = ToolView(key="3", name="web_search", arguments={"query": "python"}, status="error")
     assert _tool_title(err) == '✗ web_search · "python"'
@@ -540,7 +540,7 @@ def test_tool_body_renders_edit_file_replacement():
 
     tool = ToolView(
         key="1",
-        name="edit_file",
+        name="edit",
         arguments={"file": "app.py", "old_text": "line1", "new_text": "line2"},
         status="done",
         result={"message": "File updated"},
@@ -626,7 +626,7 @@ async def test_permission_modal_shows_scope_preview_and_escape_denies():
 
             self.push_screen(
                 PermissionModal(
-                    tool_name="write_file",
+                    tool_name="write",
                     subject="nested/a.txt",
                     risk_flags=("writes_files",),
                     reason="needs approval <script>",

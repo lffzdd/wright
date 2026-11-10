@@ -228,7 +228,7 @@ def test_broker_updates_plan_on_permission_resolution_and_cancel(tmp_path):
     def request():
         answers.append(
             broker.request(
-                "permission", {"principal": "session", "tool_name": "edit_file"}
+                "permission", {"principal": "session", "tool_name": "edit"}
             )
         )
 
@@ -386,7 +386,7 @@ def test_permission_summary_defaults_match_actual_policy(
         ):
             actual = policy.evaluate(
                 ToolAccess(frozenset({operation})),
-                tool_name="execute_command" if operation == "shell" else "read_file",
+                tool_name="shell" if operation == "shell" else "read",
                 subject="target",
                 in_scope=scope == "in_scope",
                 interaction_mode=interaction,
@@ -397,10 +397,10 @@ def test_permission_summary_defaults_match_actual_policy(
 def test_summary_exposes_conditions_and_bypass_does_not_hide_deny_or_ask():
     settings = PermissionSettings(
         mode="bypass",
-        deny=[PermissionRule.parse("execute_command(rm *)", effect="deny")],
-        ask=[PermissionRule.parse("execute_command(git push*)", effect="ask")],
+        deny=[PermissionRule.parse("shell(rm *)", effect="deny")],
+        ask=[PermissionRule.parse("shell(git push*)", effect="ask")],
         allow=[
-            PermissionRule.file_grant("edit_file", "/project", "*.py", ("file_read", "file_write"))
+            PermissionRule.file_grant("edit", "/project", "*.py", ("file_read", "file_write"))
         ],
     )
     policy = PermissionPolicy(settings)
@@ -417,7 +417,7 @@ def test_summary_exposes_conditions_and_bypass_does_not_hide_deny_or_ask():
         assert (
             policy.evaluate(
                 ToolAccess(frozenset({"shell"})),
-                tool_name="execute_command",
+                tool_name="shell",
                 subject=command,
                 in_scope=True,
             )[0]
@@ -436,7 +436,7 @@ def test_summary_exposes_conditions_and_bypass_does_not_hide_deny_or_ask():
     ):
         decision = default.evaluate(
             ToolAccess(frozenset({"file_read", "file_write"})),
-            tool_name="edit_file",
+            tool_name="edit",
             subject=path,
             in_scope=path.startswith("/project/"),
             context=MatchContext(files=((path, "file_read"), (path, "file_write"))),
@@ -567,14 +567,14 @@ def test_scripted_web_session_projects_diff_wait_policy_and_history(
 
     script = iter(
         [
-            ("create_plan", {"objective": "edit file", "steps": ["apply edit"]}),
-            ("update_plan", {"step_id": "step_1", "status": "in_progress"}),
-            ("read_file", {"file": "file.txt"}),
+            ("update_plan", {"objective": "edit file", "steps": [{"title": "apply edit", "status": "pending"}]}),
+            ("update_plan", {"steps": [{"title": "apply edit", "status": "in_progress"}]}),
+            ("read", {"file": "file.txt"}),
             (
-                "edit_file",
+                "edit",
                 {"file": "file.txt", "old_text": "old", "new_text": "new\r\nextra"},
             ),
-            ("update_plan", {"step_id": "step_1", "status": "completed"}),
+            ("update_plan", {"steps": [{"title": "apply edit", "status": "completed"}]}),
         ]
     )
 
@@ -652,7 +652,7 @@ def test_scripted_web_session_projects_diff_wait_policy_and_history(
             )
 
         requested = until("interaction.requested")[-1]
-        assert requested.payload["tool_name"] == "edit_file"
+        assert requested.payload["tool_name"] == "edit"
         assert "allow_session_rule" in {
             choice["id"] for choice in requested.payload["choices"]
         }
@@ -690,7 +690,7 @@ def test_scripted_web_session_projects_diff_wait_policy_and_history(
         edit_event = next(
             item
             for item in finished
-            if item.type == "tool.finished" and item.payload["name"] == "edit_file"
+            if item.type == "tool.finished" and item.payload["name"] == "edit"
         )
         assert edit_event.payload["ok"], edit_event.payload
         assert any(item.type == "session.policy_updated" for item in finished)
@@ -715,7 +715,7 @@ def test_scripted_web_session_projects_diff_wait_policy_and_history(
         assert completed["elapsed_ms"] >= 0 and "wait_reason" not in completed
         assert current["pending_interactions"] == []
         timeline_edit = next(
-            item for item in current["timeline"] if item.get("name") == "edit_file"
+            item for item in current["timeline"] if item.get("name") == "edit"
         )
         assert timeline_edit["result"]["data"]["diff"] == data["diff"]
         assert timeline_edit["phase"] == "succeeded"
@@ -738,7 +738,7 @@ def test_scripted_web_session_projects_diff_wait_policy_and_history(
         assert history["plan"]["steps"][0]["elapsed_ms"] == completed["elapsed_ms"]
         assert not history["session"]["active"]
         historic_edit = next(
-            item for item in history["timeline"] if item.get("name") == "edit_file"
+            item for item in history["timeline"] if item.get("name") == "edit"
         )
         assert historic_edit["result"]["data"]["diff"] == data["diff"]
         assert historic_edit["result"] == timeline_edit["result"]

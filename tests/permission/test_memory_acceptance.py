@@ -42,7 +42,7 @@ def test_program_memory_survives_repository_reload_then_revocation(boundary, lif
         return PermissionResponse(f"allow_{lifetime}_command_executable")
 
     def invoke(command, workflow=None, target_service=service):
-        return target_service.authorize(session, ToolCall("execute_command", {"command": command}, command),
+        return target_service.authorize(session, ToolCall("shell", {"command": command}, command),
             execute_command_tool, backend=backend, workflow=workflow, requires_execution=True)
 
     first = invoke("python3 -V", AuthorizationWorkflow(approval_handler=approve))
@@ -67,7 +67,7 @@ def test_launch_keeps_symlink_entry_and_rejects_retargeting(boundary, tmp_path, 
     entry = session.workspace_dir / "python-link"
     entry.symlink_to(target)
     command = f"{shlex.quote(str(entry))} -V"
-    invocation = service.authorize(session, ToolCall("execute_command", {"command": command}, "link"),
+    invocation = service.authorize(session, ToolCall("shell", {"command": command}, "link"),
         execute_command_tool, backend=backend, requires_execution=True,
         workflow=AuthorizationWorkflow(approval_handler=lambda _: PermissionResponse("allow_session_command_executable")))
     launched = []
@@ -114,7 +114,7 @@ def test_named_search_memory_cannot_authorize_persistent_writes(boundary):
 @pytest.mark.parametrize("interaction_mode", ["agent", "ask", "plan"])
 def test_remembered_program_respects_existing_mode_ceilings(boundary, permission_mode, interaction_mode):
     session, service, backend = boundary
-    command = ToolCall("execute_command", {"command": "python3 -V"}, "mode")
+    command = ToolCall("shell", {"command": "python3 -V"}, "mode")
     service.authorize(session, command, execute_command_tool, backend=backend,
         workflow=AuthorizationWorkflow(approval_handler=lambda _: PermissionResponse("allow_session_command_executable")))
     session.authorization.set_modes(permission_mode=permission_mode, interaction_mode=interaction_mode)

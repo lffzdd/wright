@@ -60,37 +60,37 @@ def test_role_instruction_presets():
 
 def test_build_system_prompt_role_and_tool_advice():
     # General mode without edit/execute tools
-    read_tools = [_dummy_tool("read_file"), _dummy_tool("web_search")]
+    read_tools = [_dummy_tool("read"), _dummy_tool("web_search")]
     prompt = build_system_prompt(
         read_tools,
         role_instruction=DEFAULT_GENERAL_ROLE,
     )
     assert DEFAULT_GENERAL_ROLE in prompt
     assert DEFAULT_CODING_ROLE not in prompt
-    assert "Prefer edit_file" not in prompt
-    assert "execute_command keeps a working directory" not in prompt
+    assert "Prefer edit for" not in prompt
+    assert "shell keeps a working directory" not in prompt
 
     # Coding mode with edit and execute tools
     coding_tools = [
-        _dummy_tool("read_file"),
-        _dummy_tool("edit_file"),
-        _dummy_tool("write_file"),
-        _dummy_tool("execute_command"),
+        _dummy_tool("read"),
+        _dummy_tool("edit"),
+        _dummy_tool("write"),
+        _dummy_tool("shell"),
     ]
     coding_prompt = build_system_prompt(
         coding_tools,
         role_instruction=DEFAULT_CODING_ROLE,
     )
     assert DEFAULT_CODING_ROLE in coding_prompt
-    assert "Prefer edit_file" in coding_prompt
-    assert "execute_command keeps a working directory" in coding_prompt
+    assert "Prefer edit for" in coding_prompt
+    assert "shell keeps a working directory" in coding_prompt
 
 
 def test_create_agent_respects_role_instruction(tmp_path):
     session = Session.create("test", tmp_path)
     create_agent(
         DummyLLM(),
-        [_dummy_tool("read_file")],
+        [_dummy_tool("read")],
         session,
         role_instruction="You are a specialized math solver.",
     )
@@ -103,12 +103,12 @@ def test_create_agent_respects_profile_role_instruction(tmp_path):
     session = Session.create("test", tmp_path)
     profile = AgentProfile(
         name="researcher",
-        allowed_tools=frozenset({"read_file"}),
+        allowed_tools=frozenset({"read"}),
         role_instruction="You are a research analyst.",
     )
     create_agent(
         DummyLLM(),
-        [_dummy_tool("read_file")],
+        [_dummy_tool("read")],
         session,
         profile=profile,
     )
@@ -144,15 +144,15 @@ def test_assemble_runtime_mode_and_rag(tmp_path, monkeypatch):
     rt_coding = assemble_runtime(cfg_coding, start_automation=False)
     try:
         base_names = {t.name for t in rt_coding.assembled_base_tools}
-        assert "edit_file" in base_names
-        assert "write_file" in base_names
-        assert "execute_command" in base_names
-        assert "read_file" in base_names
+        assert "edit" in base_names
+        assert "write" in base_names
+        assert "shell" in base_names
+        assert "read" in base_names
         assert "knowledge_search" not in base_names
 
         content = rt_coding.session_state.message_records[0].message["content"]
         assert DEFAULT_CODING_ROLE in content
-        assert "Prefer edit_file" in content
+        assert "Prefer edit for" in content
     finally:
         shutdown_runtime(rt_coding)
 
@@ -169,13 +169,13 @@ def test_assemble_runtime_mode_and_rag(tmp_path, monkeypatch):
     try:
         base_names = {t.name for t in rt_general.assembled_base_tools}
         # Coding destructive tools must be absent
-        assert "edit_file" not in base_names
-        assert "write_file" not in base_names
-        assert "execute_command" not in base_names
+        assert "edit" not in base_names
+        assert "write" not in base_names
+        assert "shell" not in base_names
 
         # Safe inspection, web, and knowledge tools must be present
-        assert "read_file" in base_names
-        assert "list_directory" in base_names
+        assert "read" in base_names
+        assert "ls" in base_names
         assert "glob" in base_names
         assert "grep" in base_names
         assert "web_search" in base_names
@@ -184,7 +184,7 @@ def test_assemble_runtime_mode_and_rag(tmp_path, monkeypatch):
         content = rt_general.session_state.message_records[0].message["content"]
         assert DEFAULT_GENERAL_ROLE in content
         assert DEFAULT_CODING_ROLE not in content
-        assert "Prefer edit_file" not in content
-        assert "execute_command keeps a working directory" not in content
+        assert "Prefer edit for" not in content
+        assert "shell keeps a working directory" not in content
     finally:
         shutdown_runtime(rt_general)

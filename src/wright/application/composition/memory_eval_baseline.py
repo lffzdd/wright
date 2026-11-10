@@ -145,7 +145,7 @@ def recall_cases() -> list[dict]:
                     "连接数据库",
                     outcome="",
                     status="failed",
-                    tools=({"name": "execute_command", "error": "ECONNREFUSED postgres", "ok": False, "status": "failed"},),
+                    tools=({"name": "shell", "error": "ECONNREFUSED postgres", "ok": False, "status": "failed"},),
                 ),
             ),
         },

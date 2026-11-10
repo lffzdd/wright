@@ -20,6 +20,7 @@ from wright.infrastructure.tools.file import (
     read_file_tool,
     write_file_tool,
 )
+from wright.infrastructure.tools.web_fetch import web_fetch_tool
 from wright.infrastructure.tools.web_tools import http_request_tool
 
 
@@ -70,21 +71,21 @@ def test_undeclared_tool_access_is_not_trusted(tmp_path):
 def test_read_file_and_list_directory_are_allowed_by_default(tmp_path):
     (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
     read_result = _executor(read_file_tool, tmp_path).execute([
-        ToolCall("read_file", {"file": "a.txt"}, "c1")
+        ToolCall("read", {"file": "a.txt"}, "c1")
     ])[0].result
     list_result = _executor(list_directory_tool, tmp_path).execute([
-        ToolCall("list_directory", {"directory": "."}, "c2")
+        ToolCall("ls", {"directory": "."}, "c2")
     ])[0].result
     assert read_result.ok and list_result.ok
 
 
 def test_write_file_and_edit_file_are_denied_without_interaction(tmp_path):
     write_result = _executor(write_file_tool, tmp_path).execute([
-        ToolCall("write_file", {"file": "a.txt", "content": "hello"}, "c1")
+        ToolCall("write", {"file": "a.txt", "content": "hello"}, "c1")
     ])[0].result
     edit_result = _executor(edit_file_tool, tmp_path).execute([
         ToolCall(
-            "edit_file", {"file": "a.txt", "old_text": "a", "new_text": "b"}, "c2"
+            "edit", {"file": "a.txt", "old_text": "a", "new_text": "b"}, "c2"
         )
     ])[0].result
     assert not write_result.ok and write_result.data["permission"]["decision"] == "deny"
@@ -99,7 +100,7 @@ def test_approval_handler_can_allow_and_update_non_permission_arguments(tmp_path
         return ToolResult.success(args)
 
     tool = Tool(
-        "write_file", "", {}, call,
+        "write", "", {}, call,
         access_descriptor=lambda args: ToolAccess(
             frozenset({"file_write"}),
             (AccessTarget("file", str(args.get("file", "a.txt")), "file_write", kind="file"),),
@@ -112,7 +113,7 @@ def test_approval_handler_can_allow_and_update_non_permission_arguments(tmp_path
         permission_approval_handler=_approval(
             updated_arguments={"file": "a.txt", "content": "approved"}
         ),
-    ).execute([ToolCall("write_file", {"file": "a.txt", "content": "draft"}, "c1")])[0].result
+    ).execute([ToolCall("write", {"file": "a.txt", "content": "draft"}, "c1")])[0].result
     assert result.ok
     assert seen == {"file": "a.txt", "content": "approved"}
 
@@ -170,7 +171,7 @@ def test_second_permission_target_rewrite_is_rejected(tmp_path):
 
 def test_execute_command_is_denied_before_subprocess_starts(tmp_path):
     result = _executor(execute_command_tool, tmp_path).execute([
-        ToolCall("execute_command", {"command": "uname -a"}, "c1")
+        ToolCall("shell", {"command": "uname -a"}, "c1")
     ])[0].result
     assert not result.ok
     assert "executes_shell" in result.data["permission"]["risk_flags"]
@@ -184,10 +185,18 @@ def test_http_request_is_denied_before_network_access(tmp_path):
     assert result.data["permission"]["risk_flags"] == ["network_read"]
 
 
+def test_web_fetch_is_denied_before_network_access(tmp_path):
+    result = _executor(web_fetch_tool, tmp_path).execute([
+        ToolCall("web_fetch", {"url": "https://ifconfig.me/ip"}, "c1")
+    ])[0].result
+    assert not result.ok
+    assert result.data["permission"]["risk_flags"] == ["network_read"]
+
+
 def test_command_risk_flags_are_reported_for_audit(tmp_path):
     result = _executor(execute_command_tool, tmp_path).execute([
         ToolCall(
-            "execute_command",
+            "shell",
             {"command": "git reset --hard && curl https://example.com > out.txt"},
             "c1",
         )

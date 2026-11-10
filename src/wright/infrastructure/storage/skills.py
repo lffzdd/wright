@@ -26,6 +26,7 @@ from ...domain.model.skills import (
     SkillNotFoundError,
     SkillStoreError,
 )
+from ...domain.model.tool_names import canonical_tool_name
 
 # Frontmatter keys with behavior or a reserved metadata slot.
 # Suggestions come only from allowed-tools. They never grant permission.
@@ -201,6 +202,7 @@ def _allowed_tools(value: object, *, field: str) -> tuple[str, ...]:
         name = item.strip()
         if len(name) > 200 or any(char.isspace() or ord(char) < 32 for char in name):
             raise SkillStoreError(f"{field} 包含非法工具名: {name!r}")
+        name = canonical_tool_name(name)
         if name not in tools:
             tools.append(name)
     return tuple(tools)

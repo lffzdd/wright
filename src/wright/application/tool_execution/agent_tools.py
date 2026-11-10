@@ -177,6 +177,7 @@ get_agent_tool = Tool(
     access_descriptor=_describe_read,
     required_capabilities=frozenset({"agents"}),
     is_concurrency_safe=lambda args: True,
+    defer_to_model=True,
 )
 
 
@@ -231,6 +232,7 @@ cancel_agent_tool = Tool(
     access_descriptor=_describe_cancel,
     required_capabilities=frozenset({"agents"}),
     is_concurrency_safe=lambda args: False,
+    defer_to_model=True,
 )
 
 

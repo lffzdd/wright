@@ -43,7 +43,7 @@ def _write_skill(directory: Path) -> SkillRegistry:
         name="release-check",
         description="发布时使用的检查流程",
         body="发布前必须先跑测试。",
-        allowed_tools=["execute_command"],
+        allowed_tools=["shell"],
     )
     return SkillRegistry(directory)
 

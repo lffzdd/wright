@@ -67,7 +67,7 @@ def test_shell_syntax_falls_back_to_exact(command):
 def command_rule(**changes):
     return replace(
         PermissionRule(
-            "execute_command",
+            "shell",
             kind="command",
             argv=("/usr/bin/python3",),
             cwd="/project",
@@ -88,22 +88,22 @@ def test_command_rule_identity_cwd_capability_and_dialect():
         execution_mode="sandbox",
     )
     rule = command_rule()
-    assert rule.matches("execute_command", "python3 -c 'print(1)'", context=context)
+    assert rule.matches("shell", "python3 -c 'print(1)'", context=context)
     # Approving a program survives cd and added directories; the sandbox still bounds it.
     for unchanged in (replace(context, cwd="/elsewhere"), replace(context, sandbox_key="changed")):
-        assert rule.matches("execute_command", "python3 -V", context=unchanged)
+        assert rule.matches("shell", "python3 -V", context=unchanged)
     for changed in (
         replace(context, executable="/other/python3"),
         replace(context, execution_mode="host"),
         replace(context, cwd="C:\\project"),
     ):
-        assert not rule.matches("execute_command", "python3 -V", context=changed)
-    assert not rule.matches("execute_command", "python3 -V && evil", context=context)
+        assert not rule.matches("shell", "python3 -V", context=changed)
+    assert not rule.matches("shell", "python3 -V && evil", context=context)
     prefix = command_rule(argv=("/usr/bin/git", "status"), command_match="argv_prefix")
     git_context = replace(context, executable="/usr/bin/git")
-    assert prefix.matches("execute_command", "git status --short", context=git_context)
-    assert not prefix.matches("execute_command", "git statusx", context=git_context)
-    assert not prefix.matches("execute_command", "git push", context=git_context)
+    assert prefix.matches("shell", "git status --short", context=git_context)
+    assert not prefix.matches("shell", "git statusx", context=git_context)
+    assert not prefix.matches("shell", "git push", context=git_context)
 
 
 def test_command_codec_rejects_unknown_and_unbounded_records():
@@ -131,7 +131,7 @@ def test_execute_command_allow_list_accepts_command_and_bounded_shell_only():
     )
     assert loaded.allow == [command]
     shell = PermissionRule(
-        "execute_command",
+        "shell",
         kind="shell",
         pattern="echo ok",
         exact=True,
@@ -149,7 +149,7 @@ def test_execute_command_allow_list_accepts_command_and_bounded_shell_only():
         )
     with pytest.raises(ValueError, match="command grants, exact session shell grants, or sandbox network"):
         PermissionSettings.from_dict(
-            {"version": 2, "permissions": {"allow": ["execute_command"]}}
+            {"version": 2, "permissions": {"allow": ["shell"]}}
         )
     PermissionSettings.from_dict(
         {"version": 2, "permissions": {"allow": [PermissionRule.sandbox_network_grant().to_persistent()]}}
@@ -232,7 +232,7 @@ def test_remembered_command_issues_canonical_launch_and_deny_still_wins():
         execute_command_tool,
         {"command": "python3 -V"},
         rules=(rule,),
-        settings=PermissionSettings(deny=[PermissionRule("execute_command")]),
+        settings=PermissionSettings(deny=[PermissionRule("shell")]),
     )
     assert denied.decision == "deny"
     network = resolve(
@@ -344,7 +344,7 @@ def test_compound_commands_that_stay_whole_command_approvals(command):
 
 
 def test_session_program_rules_cover_compound_commands_but_not_new_programs():
-    rule = PermissionRule("execute_command", kind="command", argv=("/usr/bin/python3",), command_match="executable",
+    rule = PermissionRule("shell", kind="command", argv=("/usr/bin/python3",), command_match="executable",
                           cwd="/elsewhere", sandbox_key="other", operations=("shell",), executable_target="/usr/bin/python3")
     allowed = resolve(execute_command_tool, {"command": "python3 -V && echo ok"}, rules=(rule,))
     assert allowed.decision == "allow" and allowed.grant.command_argv == ()

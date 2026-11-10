@@ -34,7 +34,7 @@ def test_web_permission_fixtures_match_the_current_backend():
     ("git reset --hard", "elevated", "modifies_git_state"),
 ])
 def test_shell_risk_is_advisory_and_all_commands_still_require_approval(tmp_path, command, level, flag):
-    result = AuthorizationWorkflow().resolve(ToolCall("execute_command", {"command": command}, "call"), execute_command_tool,
+    result = AuthorizationWorkflow().resolve(ToolCall("shell", {"command": command}, "call"), execute_command_tool,
         backend=LocalExecutionBackend(tmp_path, lambda: tmp_path), scope=AccessScope(tmp_path), identity=InvocationIdentity("test"))
     assert result.decision == "deny" and result.source == "no_interaction"
     assert result.prompt.risk_level == level
@@ -46,7 +46,7 @@ def test_shell_risk_is_advisory_and_all_commands_still_require_approval(tmp_path
 @pytest.mark.parametrize("content", ["hello", "x" * 1000])
 def test_file_preview_is_separate_from_target_and_reports_truncation(tmp_path, content):
     path = tmp_path / "a.txt"
-    result = AuthorizationWorkflow().resolve(ToolCall("write_file", {"file": str(path), "content": content}, "call"), write_file_tool,
+    result = AuthorizationWorkflow().resolve(ToolCall("write", {"file": str(path), "content": content}, "call"), write_file_tool,
         backend=LocalExecutionBackend(tmp_path, lambda: tmp_path), scope=AccessScope(tmp_path), identity=InvocationIdentity("test"))
     prompt = result.prompt
     assert prompt.targets == (str(path),)

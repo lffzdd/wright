@@ -3,7 +3,7 @@ import time
 
 from tests.runtime_helpers import tool_runtime_for_session
 from wright.application.composition.capabilities import assemble_tool_capabilities
-from wright.application.tool_execution.command_control import get_command
+from wright.application.tool_execution.command_control import shell_output
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
@@ -135,11 +135,11 @@ def test_explicit_background_command_does_not_update_session_cwd(tmp_path):
     )
     task_id = result.data["command_id"]
 
-    observed = get_command(task_id, runtime=runtime)
+    observed = shell_output(task_id, runtime=runtime)
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline and not observed.data["terminal"]:
         time.sleep(0.01)
-        observed = get_command(task_id, runtime=runtime)
+        observed = shell_output(task_id, runtime=runtime)
 
     assert observed.data["terminal"]
     assert session.get_cwd() == tmp_path
@@ -162,11 +162,11 @@ def test_timed_out_background_command_does_not_overwrite_later_cwd(tmp_path):
     session.set_cwd(later_dir)
     task_id = result.data["command_id"]
 
-    observed = get_command(task_id, runtime=runtime)
+    observed = shell_output(task_id, runtime=runtime)
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline and not observed.data["terminal"]:
         time.sleep(0.01)
-        observed = get_command(task_id, runtime=runtime)
+        observed = shell_output(task_id, runtime=runtime)
 
     assert observed.data["terminal"]
     assert session.get_cwd() == later_dir

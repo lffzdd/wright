@@ -24,7 +24,7 @@ def test_skill_returns_full_body_and_rejects_unknown(tmp_path: Path):
         name="release-check",
         description="发布时使用",
         body="先跑测试",
-        allowed_tools=["execute_command"],
+        allowed_tools=["shell"],
     )
     _session, tools, runtime = _runtime(tmp_path)
     skill = {tool.name: tool for tool in tools}["load_skill"]
@@ -34,7 +34,7 @@ def test_skill_returns_full_body_and_rejects_unknown(tmp_path: Path):
     assert loaded.data["skill_id"] == "release-check"
     assert loaded.data["name"] == "release-check"
     assert loaded.data["body"] == "先跑测试"
-    assert loaded.data["allowed_tools"] == ["execute_command"]
+    assert loaded.data["allowed_tools"] == ["shell"]
     assert loaded.retention == "instruction"
     assert loaded.retention_key == "skill:release-check"
     root = Path(loaded.data["skill_root"])

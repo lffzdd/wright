@@ -67,7 +67,7 @@ def test_model_instructions_ignore_interface_language():
     settings = PermissionSettings.from_dict({"version": 2, "mode": "plan"})
     denied = PermissionPolicy(settings).evaluate(
         ToolAccess(frozenset({"file_write"})),
-        tool_name="write_file",
+        tool_name="write",
         subject="a.txt",
         in_scope=True,
     )
@@ -85,7 +85,7 @@ def test_model_instructions_ignore_interface_language():
     assert "Ask the user" in schema
     denied_again = PermissionPolicy(settings).evaluate(
         ToolAccess(frozenset({"file_write"})),
-        tool_name="write_file",
+        tool_name="write",
         subject="a.txt",
         in_scope=True,
     )

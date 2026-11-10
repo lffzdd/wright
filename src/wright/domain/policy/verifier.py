@@ -92,7 +92,7 @@ class Verifier:
             issues.append(VerificationIssue(
                 "plan_incomplete",
                 (
-                    f"The plan status is {plan.status}. Finish, skip, or replan "
+                    f"The plan status is {plan.status}. Finish or skip "
                     "the remaining steps before the final answer"
                 ),
                 {"status": str(plan.status)},
@@ -122,7 +122,7 @@ class Verifier:
             if (
                 execution.step <= session.active_turn_start_step
                 or execution.status != "succeeded"
-                or execution.call.name not in {"write_file", "edit_file"}
+                or execution.call.name not in {"write", "edit"}
             ):
                 continue
             raw_path = execution.call.arguments.get("file")

@@ -63,7 +63,7 @@ def dispatcher(session, assembly, tool, choice='allow_once'):
 
 
 def test_domain_preparation_never_interacts(tmp_path):
-    result = PermissionResolver().prepare(ToolCall('write_file', {'file': 'a', 'content': 'x'}, 'c'), write_file_tool,
+    result = PermissionResolver().prepare(ToolCall('write', {'file': 'a', 'content': 'x'}, 'c'), write_file_tool,
         backend=LocalExecutionBackend(tmp_path, lambda: tmp_path), scope=AccessScope(tmp_path), identity=InvocationIdentity('s'))
     assert result.decision == 'ask'
     assert not hasattr(result, 'prompt')
@@ -76,7 +76,7 @@ def test_protected_resolution_failure_never_issues_a_grant(tmp_path):
             if requested == str(protected):
                 raise OSError('boundary unavailable')
             return super().resolve_path(requested, cwd=cwd)
-    result = PermissionResolver().prepare(ToolCall('read_file', {'file': 'a'}, 'c'), read_file_tool,
+    result = PermissionResolver().prepare(ToolCall('read', {'file': 'a'}, 'c'), read_file_tool,
         backend=FaultyBackend(tmp_path, lambda: tmp_path), scope=AccessScope(tmp_path, protected=(protected,)), identity=InvocationIdentity('s'))
     assert isinstance(result, PermissionResolution)
     assert result.decision == 'deny' and result.grant is None
@@ -84,7 +84,7 @@ def test_protected_resolution_failure_never_issues_a_grant(tmp_path):
 
 def test_missing_protected_path_still_enters_the_permit(tmp_path):
     protected = tmp_path / 'missing'
-    result = AuthorizationWorkflow().resolve(ToolCall('read_file', {'file': 'a'}, 'c'), read_file_tool,
+    result = AuthorizationWorkflow().resolve(ToolCall('read', {'file': 'a'}, 'c'), read_file_tool,
         backend=LocalExecutionBackend(tmp_path, lambda: tmp_path), scope=AccessScope(tmp_path, protected=(protected,)), identity=InvocationIdentity('s'))
     assert result.grant.blocked_paths[0].value == str(protected)
     assert not protected.exists()
@@ -412,6 +412,6 @@ def test_authorization_change_rejects_mutable_and_mismatched_rules():
     with pytest.raises(TypeError, match='typed'):
         AuthorizationChange(session_rules=({'kind': 'tool'},))
     with pytest.raises(TypeError, match='immutable'):
-        AuthorizationChange(session_rules=(PermissionRule('read_file', operations=['file_read']),))
+        AuthorizationChange(session_rules=(PermissionRule('read', operations=['file_read']),))
     with pytest.raises(ValueError, match='lifetime'):
-        AuthorizationChange(project_rules=(PermissionRule('read_file', lifetime='user'),))
+        AuthorizationChange(project_rules=(PermissionRule('read', lifetime='user'),))

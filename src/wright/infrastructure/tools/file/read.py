@@ -1,12 +1,19 @@
-"""read_file tool implementation."""
+"""read tool implementation."""
 
 from __future__ import annotations
 
 import hashlib
+import re
+from io import BytesIO
+from pathlib import PurePath
+
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError as PdfError
 
 from ....domain.model.tool import ToolResult
 from ....domain.model.tool_definition import Tool
 from ....domain.model.tool_runtime import ToolRuntime
+from ...storage.attachments import MAX_ATTACHMENT_BYTES, AttachmentError, inspect_image
 from .common import (
     FILE_UNCHANGED,
     MAX_READ_CHARS,
@@ -21,6 +28,85 @@ from .common import (
     _unchanged_read_view,
 )
 
+_IMAGE_MAGIC = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff")
+MAX_PDF_PAGES = 50
+
+
+def _is_image(head: bytes) -> bool:
+    return head.startswith(_IMAGE_MAGIC) or (head.startswith(b"RIFF") and head[8:12] == b"WEBP")
+
+
+def _read_image(safe_path, runtime: ToolRuntime) -> ToolResult:
+    """Register the image so the next model request shows it to the model."""
+    capabilities = runtime.capabilities
+    artifacts = capabilities.artifacts if capabilities is not None else None
+    if artifacts is None:
+        return ToolResult.fail("Image viewing is not available in this session", data={"content": ""})
+    size = _backend(runtime).metadata(safe_path).size
+    if size > MAX_ATTACHMENT_BYTES:
+        return ToolResult.fail("Image is larger than 20 MiB", data={"content": ""})
+    data = _backend(runtime).read_bytes(safe_path, MAX_ATTACHMENT_BYTES + 1)
+    try:
+        media_type, _suffix, width, height = inspect_image(BytesIO(data))
+    except AttachmentError as exc:
+        return ToolResult.fail(str(exc), data={"content": ""})
+    ref = artifacts.register(
+        data,
+        name=PurePath(str(safe_path.value)).name or "image",
+        media_type=media_type,
+        run_id=capabilities.scope.run_id,
+        call_id=runtime.tool_call_id,
+    )
+    return ToolResult.success(
+        {"type": "image", "media_type": media_type, "width": width, "height": height, "size": len(data)},
+        summary=f"image {width}x{height}",
+        artifacts=(ref,),
+    )
+
+
+def _page_range(pages: str | None, count: int) -> range:
+    if not pages:
+        return range(min(count, MAX_PDF_PAGES))
+    match = re.fullmatch(r"\s*(\d+)\s*(?:-\s*(\d+)\s*)?", str(pages))
+    if match is None:
+        raise ValueError('pages must look like "3" or "1-5"')
+    first = int(match.group(1))
+    last = int(match.group(2) or first)
+    if first < 1 or last < first:
+        raise ValueError("pages must be a valid 1-based range")
+    if last - first + 1 > MAX_PDF_PAGES:
+        raise ValueError(f"read at most {MAX_PDF_PAGES} pages at a time")
+    return range(first - 1, min(last, count))
+
+
+def _read_pdf(safe_path, runtime: ToolRuntime, pages: str | None, max_chars: int) -> ToolResult:
+    size = _backend(runtime).metadata(safe_path).size
+    if size > MAX_ATTACHMENT_BYTES:
+        return ToolResult.fail("PDF is larger than 20 MiB", data={"content": ""})
+    try:
+        reader = PdfReader(BytesIO(_backend(runtime).read_bytes(safe_path, MAX_ATTACHMENT_BYTES + 1)))
+        if reader.is_encrypted:
+            return ToolResult.fail("PDF is encrypted", data={"content": ""})
+        selected = _page_range(pages, len(reader.pages))
+        chunks = []
+        for index in selected:
+            runtime.raise_if_cancelled()
+            chunks.append(f"--- page {index + 1} ---\n{(reader.pages[index].extract_text() or '').strip()}")
+    except PdfError as exc:
+        return ToolResult.fail(f"PDF cannot be read: {exc}", data={"content": ""})
+    text = "\n\n".join(chunks)
+    truncated = len(text) > max_chars
+    data = {
+        "type": "pdf",
+        "content": text[:max_chars],
+        "page_count": len(reader.pages),
+        "pages": f"{selected.start + 1}-{selected.stop}" if len(selected) else "",
+        "truncated": truncated,
+    }
+    if selected.stop < len(reader.pages):
+        data["next_pages"] = f"{selected.stop + 1}-{min(selected.stop + len(selected), len(reader.pages))}"
+    return ToolResult.success(data)
+
 
 def read_file(
     file: str,
@@ -28,6 +114,7 @@ def read_file(
     start_column: int = 1,
     end_line: int | None = None,
     max_chars: int = 8000,
+    pages: str | None = None,
     runtime: ToolRuntime | None = None,
 ) -> ToolResult:
     try:
@@ -43,6 +130,12 @@ def read_file(
         except (ValueError, TypeError):
             max_chars = 8000
         max_chars = max(0, min(max_chars, MAX_READ_CHARS))
+
+        head = _backend(runtime).read_bytes(safe_path, 16)
+        if _is_image(head):
+            return _read_image(safe_path, runtime)
+        if head.startswith(b"%PDF-"):
+            return _read_pdf(safe_path, runtime, pages, max_chars)
 
         start_line = max(1, int(start_line))
         start_column = max(1, int(start_column))
@@ -138,11 +231,12 @@ def read_file(
 
 
 read_file_tool = Tool(
-    name="read_file",
+    name="read",
     description=(
         "Read a workspace file. Each returned line is prefixed with N| for reference; "
-        "do not copy those prefixes into edit_file. An identical unchanged re-read "
-        "returns a short stub."
+        "do not copy those prefixes into edit. An identical unchanged re-read "
+        "returns a short stub. PNG, JPEG and WebP images are shown to you as images. "
+        "PDFs return extracted text per page; use pages (e.g. \"1-5\") for long documents."
     ),
     parameters={
         "type": "object",
@@ -155,11 +249,12 @@ read_file_tool = Tool(
             "start_column": {"type": "integer", "minimum": 1, "default": 1},
             "end_line": {"type": "integer", "minimum": 1},
             "max_chars": {"type": "integer", "minimum": 0, "maximum": MAX_READ_CHARS, "default": 8000},
+            "pages": {"type": "string", "description": "PDF only: 1-based page or range, e.g. \"3\" or \"1-5\""},
         },
         "required": ["file"],
     },
     call=lambda args, runtime: read_file(**args, runtime=runtime),
     access_descriptor=_describe_file_read,
     is_concurrency_safe=lambda args: True,
-    required_capabilities=frozenset({"execution"}),
+    required_capabilities=frozenset({"execution", "artifacts"}),
 )

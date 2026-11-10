@@ -8,7 +8,7 @@
 ```text
 Model
     ├── agent_task_id  → get_agent / wait_agent / cancel_agent
-    ├── command_id     → get_command / wait_command / list_commands / terminate_command
+    ├── command_id     → shell_output / shell_kill / list_commands
     └── schedule_id / run_id → schedule tools
               │
               ▼
@@ -26,14 +26,14 @@ Model
 
 子 Agent 委派：
 
-- `spawn_agent` / `get_agent_tree`
-- `get_agent` / `wait_agent` / `cancel_agent`，参数是 `agent_task_id`
+- `spawn_agent` / `wait_agent` 常驻；`get_agent_tree`、`get_agent`、`cancel_agent` 延迟加载，经 `tool_search` 激活；参数是 `agent_task_id`
 
 命令执行：
 
-- `execute_command` 在后台启动或超时转后台时返回 `command_id`
-- `get_command` / `wait_command` / `terminate_command`
-- `list_commands` 默认只列当前 user turn 的后台命令，可按状态过滤；
+- `shell` 在后台启动或超时转后台时返回 `command_id`
+- `shell_output` 读取一页输出；带 `timeout` 时先等待命令结束（超时不终止命令）
+- `shell_kill` 终止命令及其进程组
+- `list_commands`（延迟加载）默认只列当前 user turn 的后台命令，可按状态过滤；
   `include_all_turns=true` 只扩展到当前 session
 
 持久化调度见 [`long-running-autonomy.md`](long-running-autonomy.md)。

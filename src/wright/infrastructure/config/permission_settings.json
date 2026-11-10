@@ -4,10 +4,10 @@
   "permissions": {
     "allow": [],
     "deny": [
-      "execute_command(rm *)",
-      "execute_command(sudo *)",
-      "execute_command(* sudo *)",
-      "execute_command(*git push*)",
+      "shell(rm *)",
+      "shell(sudo *)",
+      "shell(* sudo *)",
+      "shell(*git push*)",
       "http_request(http://*)"
     ]
   }

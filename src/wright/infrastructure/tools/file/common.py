@@ -213,7 +213,7 @@ def _unread_or_stale(
     viewed = _remembered_file_view(runtime, path)
     if viewed is None:
         return ToolResult.fail(
-            "read_file this path first",
+            "read this path first",
             data={"reason": "not_read", "file": relative},
         )
     if require_complete and not viewed.is_complete:
@@ -228,7 +228,7 @@ def _unread_or_stale(
     ):
         return None
     return ToolResult.fail(
-        "file changed since last read_file; read it again",
+        "file changed since it was last read; read it again",
         data={"reason": "stale", "file": relative},
     )
 

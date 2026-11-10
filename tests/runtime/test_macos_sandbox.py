@@ -270,7 +270,7 @@ def test_macos_approved_dispatch_starts_real_shell(tmp_path, monkeypatch, choice
     )
     try:
         result = dispatch.execute([
-            ToolCall("execute_command", {"command": "/usr/bin/true"}, "startup"),
+            ToolCall("shell", {"command": "/usr/bin/true"}, "startup"),
         ])[0].result
         assert answers == [True]
         assert result.ok, result

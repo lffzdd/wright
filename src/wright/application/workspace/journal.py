@@ -128,7 +128,7 @@ class SessionChangeJournal:
         with self._lock:
             held = self._held.pop(command_id, None)
         if held is not None:
-            self.commit_capture(held["before"], call_id=held["call_id"], tool_name="execute_command")
+            self.commit_capture(held["before"], call_id=held["call_id"], tool_name="shell")
 
     def ensure_baseline(self) -> None:
         with self._lock:
