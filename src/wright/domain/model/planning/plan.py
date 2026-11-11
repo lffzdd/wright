@@ -72,6 +72,10 @@ class PlanManager:
         self.objective = ""
         self.steps: list[PlanStep] = []
         self.revision = 0
+        # generation 每开始一份新计划加一；carried 表示计划是从上一轮带过来的、
+        # 本轮还没更新过。
+        self.generation = 0
+        self.carried = False
         self._step_counter = 0
         self._lock = threading.RLock()
 
@@ -86,155 +90,43 @@ class PlanManager:
             return self._derive_status()
 
     def reset(self) -> None:
-        """Start a clean plan namespace for a new user turn."""
+        """Clear the plan."""
         with self._lock:
+            # revision 不归零：界面靠它判断计划是否变化。
+            if self.steps or self.objective:
+                self.revision += 1
             self.objective = ""
             self.steps = []
-            self.revision = 0
+            self.carried = False
             self._step_counter = 0
 
-    def create_plan(
-        self,
-        objective: str,
-        steps: list[str],
-        *,
-        replace: bool = False,
-    ) -> dict:
-        """创建计划；已有未完成计划时必须显式 replace。"""
-        objective = self._clean_text(
-            objective, "objective", max_length=MAX_OBJECTIVE_LENGTH
-        )
-        titles = self._clean_steps(steps)
+    def begin_turn(self) -> None:
+        """Prepare the plan for a new user turn.
 
+        A finished plan is cleared. An unfinished one is kept and marked as
+        carried, so the model can resume or replace it; it stops being carried
+        once this turn updates it.
+        """
         with self._lock:
-            if self.steps and self._derive_status() != "completed" and not replace:
-                raise PlanError(
-                    "An unfinished plan already exists. Keep updating it, or pass replace=true to replace it.",
-                    code="plan.open_exists",
-                )
-
-            self.objective = objective
-            self.steps = []
-            self._step_counter = 0
-            for title in titles:
-                self.steps.append(self._new_step(title))
-            self.revision += 1
-            return self._snapshot_unlocked()
-
-    def update_step(
-        self,
-        step_id: str,
-        status: PlanStepStatus,
-        *,
-        note: str | None = None,
-    ) -> dict:
-        """更新单步状态，并保证同一时刻最多一个步骤 in_progress。"""
-        step_id = self._clean_text(step_id, "step_id", max_length=64)
-        if status not in _VALID_STEP_STATUSES:
-            raise PlanError(
-                "Invalid step status. It must be pending, in_progress, completed, blocked, or skipped.",
-                code="plan.bad_status",
-            )
-        normalized_note = self._clean_note(note) if note is not None else None
-
-        with self._lock:
-            step = self._find_step(step_id)
-            if step.status in _TERMINAL_STATUSES and status != step.status:
-                raise PlanError(
-                    f"{step.id} is already terminal ({step.status}) and cannot become {status}. Use replan to change the remaining route.",
-                    code="plan.terminal_step",
-                    step_id=step.id,
-                    status=step.status,
-                    next_status=status,
-                )
-
-            if status == "in_progress":
-                active = next(
-                    (
-                        other
-                        for other in self.steps
-                        if other.id != step.id and other.status == "in_progress"
-                    ),
-                    None,
-                )
-                if active is not None:
-                    raise PlanError(
-                        f"{active.id} is in progress. Finish, block, or pause it before starting {step.id}.",
-                        code="plan.step_busy",
-                        active_id=active.id,
-                        step_id=step.id,
-                    )
-
-            # steps 的 schema 和工具描述都承诺了执行顺序。允许直接完成一个足够小的
-            # 首步骤，但不允许越过任何尚未收口的前置步骤去开始、阻塞或完成后续步骤。
-            if status in {"in_progress", "completed", "blocked"}:
-                self._require_predecessors_terminal(step)
-
-            changed = step.status != status
-            if changed:
-                now = time.time()
-                if status == "in_progress" and step.started_at is None:
-                    step.started_at = now
-                if status in _TERMINAL_STATUSES:
-                    step.ended_at = max(now, step.started_at or now)
-            step.status = status
-            if normalized_note is not None:
-                changed = changed or step.note != normalized_note
-                step.note = normalized_note
-            if changed:
+            if self._derive_status() in {"empty", "completed"}:
+                self.reset()
+            elif not self.carried:
+                self.carried = True
                 self.revision += 1
-            return self._snapshot_unlocked()
-
-    def replan(self, steps: list[str], *, reason: str) -> dict:
-        """保留已完成历史，跳过旧的未完成部分并追加新路线。"""
-        titles = self._clean_steps(steps)
-        reason = self._clean_text(reason, "reason", max_length=MAX_NOTE_LENGTH)
-
-        with self._lock:
-            if not self.steps:
-                raise PlanError(
-                    "There is no plan to replan. Call create_plan first.",
-                    code="plan.no_plan",
-                )
-            if self._derive_status() == "completed":
-                raise PlanError(
-                    "The current plan is already complete. Use create_plan for a new goal.",
-                    code="plan.already_done",
-                )
-            if len(self.steps) + len(titles) > MAX_TOTAL_PLAN_STEPS:
-                raise PlanError(
-                    f"Plan history plus new steps cannot exceed {MAX_TOTAL_PLAN_STEPS}. Create a new plan or shorten the route.",
-                    code="plan.too_long",
-                    limit=MAX_TOTAL_PLAN_STEPS,
-                )
-
-            for step in self.steps:
-                if step.status not in _TERMINAL_STATUSES:
-                    step.status = "skipped"
-                    step.ended_at = max(time.time(), step.started_at or 0)
-                    marker = f"Replanned: {reason}"
-                    combined = (
-                        f"{step.note}; {marker}".strip("; ")
-                        if step.note
-                        else marker
-                    )
-                    step.note = combined[:MAX_NOTE_LENGTH]
-
-            for title in titles:
-                self.steps.append(self._new_step(title))
-            self.revision += 1
-            return self._snapshot_unlocked()
 
     def apply_steps(self, steps: list[dict], *, objective: str | None = None) -> dict:
-        """Apply a whole submitted step list atomically.
+        """Apply a submitted step list atomically.
 
-        Submitted steps are matched to existing ones by title, in order, so
-        matched steps keep their ids and timestamps. A finished step cannot
-        change status. Unfinished steps left out of the list become skipped
-        and stay as history ahead of the submitted route. The ordering rule of
-        ``update_step`` holds over the result: nothing may be active, blocked or
-        completed while an earlier step is still open. With no plan, or a
-        completed one, the list starts a new plan and needs an objective.
+        A submitted step matches an existing one by ``id`` when it carries one
+        (which also renames it), otherwise by title, so matched steps keep their
+        ids and timestamps. Existing steps left out of the list keep their
+        status and their place relative to the submitted steps; dropping a step
+        takes an explicit ``skipped``. Completed steps are final, skipped ones
+        may reopen. No step may be active or finished while an earlier step is
+        pending or in progress; blocked steps do not hold later work. A list
+        starts a new plan when there is none, or when it brings a different
+        objective and none of its steps match the current plan; a different
+        objective with matching steps only renames the goal.
         """
         items = self._clean_items(steps)
         cleaned_objective = (
@@ -242,54 +134,89 @@ class PlanManager:
             if objective is not None else None
         )
         with self._lock:
-            fresh = not self.steps or self._derive_status() == "completed"
+            fresh = not self.steps or (
+                cleaned_objective is not None
+                and cleaned_objective != self.objective
+                and not any(
+                    any(step.id == step_id if step_id is not None else step.title == title for step in self.steps)
+                    for step_id, title, _status, _note in items
+                )
+            )
             if fresh and cleaned_objective is None:
                 raise PlanError("objective is required to start a plan", code="plan.field_required", field="objective")
             existing = [] if fresh else [PlanStep(**step.to_dict()) for step in self.steps]
+            position = {id(step): index for index, step in enumerate(existing)}
             counter = 0 if fresh else self._step_counter
             now = time.time()
             unmatched = list(existing)
             route: list[PlanStep] = []
-            for title, status, note in items:
-                step = next((item for item in unmatched if item.title == title), None)
+            for step_id, title, status, note in items:
+                if step_id is not None:
+                    step = next((item for item in unmatched if item.id == step_id), None)
+                    if step is None:
+                        if any(item.id == step_id for item in route):
+                            raise PlanError(
+                                f"{step_id} appears more than once in steps",
+                                code="plan.duplicate_step", step_id=step_id,
+                            )
+                        raise PlanError(f"Unknown step id: {step_id}", code="plan.unknown_step", step_id=step_id)
+                else:
+                    step = next((item for item in unmatched if item.title == title), None)
                 if step is None:
                     counter += 1
                     step = PlanStep(id=f"step_{counter}", title=title)
                 else:
-                    unmatched.remove(step)
-                    if step.status in _TERMINAL_STATUSES and status != step.status:
+                    if step.status == "completed" and status != "completed":
                         raise PlanError(
                             f"{step.id} is already terminal ({step.status}) and cannot become {status}.",
                             code="plan.terminal_step", step_id=step.id, status=step.status, next_status=status,
                         )
+                    unmatched.remove(step)
+                    step.title = title
                 self._transition(step, status, now)
                 if note is not None:
                     step.note = note
                 route.append(step)
-            for step in unmatched:
-                if step.status not in _TERMINAL_STATUSES:
-                    self._transition(step, "skipped", now)
-                    step.note = (f"{step.note}; Removed from plan" if step.note else "Removed from plan")[:MAX_NOTE_LENGTH]
-            final = unmatched + route
+            # Omitted steps keep their status and stay ahead of the first
+            # submitted step that followed them in the old list. A new step
+            # also goes after the finished history ahead of its next anchor.
+            final: list[PlanStep] = []
+            for index, step in enumerate(route):
+                if id(step) in position:
+                    limit, finished_only = position[id(step)], False
+                else:
+                    anchor = next((position[id(item)] for item in route[index + 1:] if id(item) in position), None)
+                    limit, finished_only = (len(existing) if anchor is None else anchor), True
+                for omitted in [
+                    item for item in unmatched
+                    if position[id(item)] < limit and (not finished_only or item.status in _TERMINAL_STATUSES)
+                ]:
+                    unmatched.remove(omitted)
+                    final.append(omitted)
+                final.append(step)
+            final.extend(unmatched)
             if len(final) > MAX_TOTAL_PLAN_STEPS:
                 raise PlanError(
-                    f"Plan history plus new steps cannot exceed {MAX_TOTAL_PLAN_STEPS}. Create a new plan or shorten the route.",
+                    f"Plan history plus new steps cannot exceed {MAX_TOTAL_PLAN_STEPS}. Finish or skip the open steps, then start a new plan with a new objective.",
                     code="plan.too_long", limit=MAX_TOTAL_PLAN_STEPS,
                 )
             open_step: PlanStep | None = None
             for step in final:
                 if step.status in {"in_progress", "completed", "blocked"} and open_step is not None:
                     raise PlanError(
-                        f"Predecessor {open_step.id} of {step.id} is not completed or skipped. Follow the plan order.",
+                        f"Predecessor {open_step.id} of {step.id} is not completed or skipped. Follow the plan order, or mark it skipped.",
                         code="plan.predecessor", step_id=step.id, predecessor_id=open_step.id,
                     )
-                if step.status not in _TERMINAL_STATUSES and open_step is None:
+                if step.status in {"pending", "in_progress"} and open_step is None:
                     open_step = step
             before = self._snapshot_unlocked()
             if cleaned_objective is not None:
                 self.objective = cleaned_objective
             self.steps = final
             self._step_counter = counter
+            self.carried = False
+            if fresh:
+                self.generation += 1
             if fresh or self._snapshot_unlocked() != before:
                 self.revision += 1
             return self._snapshot_unlocked()
@@ -302,12 +229,14 @@ class PlanManager:
             step.started_at = now
         if status in _TERMINAL_STATUSES:
             step.ended_at = max(now, step.started_at or now)
+        else:
+            step.ended_at = None
         step.status = status
 
     @classmethod
-    def _clean_items(cls, values: object) -> list[tuple[str, PlanStepStatus, str | None]]:
+    def _clean_items(cls, values: object) -> list[tuple[str | None, str, PlanStepStatus, str | None]]:
         if not isinstance(values, list):
-            raise PlanError("steps must be an array", code="plan.steps_type")
+            raise PlanError("steps must be an array of objects", code="plan.steps_type")
         if not values:
             raise PlanError("steps cannot be empty", code="plan.steps_empty")
         if len(values) > MAX_PLAN_STEPS:
@@ -315,7 +244,12 @@ class PlanManager:
         items = []
         for index, value in enumerate(values):
             if not isinstance(value, dict):
-                raise PlanError("steps must be an array", code="plan.steps_type")
+                raise PlanError("steps must be an array of objects", code="plan.steps_type")
+            raw_id = value.get("id")
+            step_id = (
+                cls._clean_text(raw_id, f"steps[{index}].id", max_length=64)
+                if raw_id not in (None, "") else None
+            )
             title = cls._clean_text(value.get("title"), f"steps[{index}].title", max_length=MAX_STEP_TITLE_LENGTH)
             status = value.get("status", "pending")
             if status not in _VALID_STEP_STATUSES:
@@ -324,8 +258,8 @@ class PlanManager:
                     code="plan.bad_status",
                 )
             note = cls._clean_note(value["note"]) if value.get("note") is not None else None
-            items.append((title, status, note))
-        active = [title for title, status, _note in items if status == "in_progress"]
+            items.append((step_id, title, status, note))
+        active = [title for _id, title, status, _note in items if status == "in_progress"]
         if len(active) > 1:
             raise PlanError(
                 f"{active[0]} is in progress. Finish, block, or pause it before starting {active[1]}.",
@@ -376,6 +310,13 @@ class PlanManager:
         revision = snapshot.get("revision", 0)
         if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
             raise PlanError("plan snapshot.revision must be a non-negative integer", code="plan.snapshot")
+        # Checkpoints written before these fields existed omit them.
+        generation = snapshot.get("generation", 1 if raw_steps else 0)
+        if isinstance(generation, bool) or not isinstance(generation, int) or generation < 0:
+            raise PlanError("plan snapshot.generation must be a non-negative integer", code="plan.snapshot")
+        carried = snapshot.get("carried", False)
+        if not isinstance(carried, bool) or (carried and not raw_steps):
+            raise PlanError("plan snapshot.carried must be a boolean, true only with steps", code="plan.snapshot")
 
         restored_steps: list[PlanStep] = []
         seen_ids: set[str] = set()
@@ -436,40 +377,10 @@ class PlanManager:
             self.objective = objective
             self.steps = restored_steps
             self.revision = revision
+            self.generation = generation
+            self.carried = carried
             self._step_counter = highest_step
             return self._snapshot_unlocked()
-
-    def _new_step(self, title: str) -> PlanStep:
-        self._step_counter += 1
-        return PlanStep(id=f"step_{self._step_counter}", title=title)
-
-    def _find_step(self, step_id: str) -> PlanStep:
-        for step in self.steps:
-            if step.id == step_id:
-                return step
-        raise PlanError(
-            f"Unknown step id: {step_id}",
-            code="plan.unknown_step",
-            step_id=step_id,
-        )
-
-    def _require_predecessors_terminal(self, step: PlanStep) -> None:
-        step_index = self.steps.index(step)
-        predecessor = next(
-            (
-                previous
-                for previous in self.steps[:step_index]
-                if previous.status not in _TERMINAL_STATUSES
-            ),
-            None,
-        )
-        if predecessor is not None:
-            raise PlanError(
-                f"Predecessor {predecessor.id} of {step.id} is not completed or skipped. Follow the plan order, or use replan.",
-                code="plan.predecessor",
-                step_id=step.id,
-                predecessor_id=predecessor.id,
-            )
 
     def _derive_status(self) -> PlanStatus:
         if not self.steps:
@@ -488,6 +399,8 @@ class PlanManager:
             "objective": self.objective,
             "status": self._derive_status(),
             "revision": self.revision,
+            "generation": self.generation,
+            "carried": self.carried,
             "steps": [step.to_dict() for step in self.steps],
         }
 
@@ -529,22 +442,3 @@ class PlanManager:
                 limit=MAX_NOTE_LENGTH,
             )
         return cleaned
-
-    @classmethod
-    def _clean_steps(cls, values: object) -> list[str]:
-        if not isinstance(values, list):
-            raise PlanError("steps must be an array of strings", code="plan.steps_type")
-        if not values:
-            raise PlanError("steps cannot be empty", code="plan.steps_empty")
-        if len(values) > MAX_PLAN_STEPS:
-            raise PlanError(
-                f"steps cannot exceed {MAX_PLAN_STEPS} items",
-                code="plan.steps_limit",
-                limit=MAX_PLAN_STEPS,
-            )
-        return [
-            cls._clean_text(
-                value, f"steps[{idx}]", max_length=MAX_STEP_TITLE_LENGTH
-            )
-            for idx, value in enumerate(values)
-        ]

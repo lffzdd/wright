@@ -47,7 +47,9 @@ git worktree add --detach ../wright-legacy-study legacy-json-react
    后台命令的 `get_command`、`wait_command` 合并为 `shell_output`（带 `timeout`
    时先等待），`terminate_command` 改为 `shell_kill`，同样登记在这张表里。
    计划工具 `create_plan`、`replan`、`get_plan` 已删除，`update_plan` 改为提交
-   完整步骤列表；参数形状不同，不做别名，模型调用旧工具会收到“不可用”错误后改用新工具。
+   步骤列表：按 id（未给时按标题）匹配已有步骤，未列出的步骤保持原状，放弃步骤要显式标
+   `skipped`；不同的 objective 加全新步骤表示替换计划。未完成的计划会带到下一轮用户消息，
+   本轮更新前不参与完成检查。参数形状不同，不做别名，模型调用旧工具会收到“不可用”错误后改用新工具。
 2. `llm.py` 接收 `assistant.tool_calls`，按索引拼接流式函数名和参数；
    保留供应商调用 ID、正文、可用的推理字段和结束原因。
 3. `protocol.parse_turn` 严格解码工具参数。有工具就执行；无工具的正文就是回答。

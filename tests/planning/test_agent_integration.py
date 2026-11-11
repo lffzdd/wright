@@ -60,3 +60,44 @@ def test_agent_injects_latest_plan_as_ephemeral_reminder(tmp_path):
         "<system-reminder>" in str(record.message.get("content", ""))
         for record in session.message_records
     )
+
+
+class TwoTurnLLM:
+    context_limit = 128_000
+
+    def __init__(self):
+        self.calls = 0
+        self.seen_messages = []
+
+    def __call__(self, messages, **kwargs):
+        self.seen_messages.append(list(messages))
+        self.calls += 1
+        if self.calls == 1:
+            content = response(content=None, calls=[{
+                "name": "update_plan",
+                "arguments": {
+                    "objective": "迁移配置",
+                    "steps": [
+                        {"title": "改代码", "status": "in_progress"},
+                        {"title": "补测试", "status": "pending"},
+                    ],
+                },
+            }])
+        else:
+            content = response(content="好的", calls=[])
+        yield event(content=content)
+
+
+def test_unfinished_plan_survives_into_the_next_user_turn(tmp_path):
+    llm = TwoTurnLLM()
+    session = Session.create("task", tmp_path)
+    agent = create_agent(llm, [update_plan_tool], session)
+
+    agent.run("开始迁移")
+    agent.run("顺便问一下，这个配置在哪？")
+
+    assert session.plan_manager.carried
+    assert [step["title"] for step in session.plan_manager.snapshot()["steps"]] == ["改代码", "补测试"]
+    last_request = llm.seen_messages[-1]
+    assert "earlier turn" in last_request[-1]["content"]
+    assert '"title": "改代码"' in last_request[-1]["content"]

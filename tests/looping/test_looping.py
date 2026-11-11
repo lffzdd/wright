@@ -56,7 +56,7 @@ def test_loop_tick_uses_runtime_event_without_resetting_goal_or_plan(tmp_path):
         session,
     )
     assert agent.run("keep this goal") == "initial answer"
-    session.plan_manager.create_plan("ship", ["watch ci"])
+    session.plan_manager.apply_steps([{"title": "watch ci", "status": "pending"}], objective="ship")
     original_plan = session.plan_manager.snapshot()
 
     registry.start()

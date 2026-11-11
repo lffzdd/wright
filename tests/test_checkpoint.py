@@ -37,9 +37,10 @@ def _populated_session(tmp_path):
     session.authorization.add_rule(PermissionRule.from_mapping({"id": "checkpoint-directory", "lifetime": "session", "kind": "directory", "tool_name": "*",
                                  "root": str(extra), "pattern": "", "operations": ["file_read", "file_write"], "recursive": True}))
 
-    session.plan_manager.create_plan("ship", ["write", "test"])
-    session.plan_manager.update_step("step_1", "completed", note="written")
-    session.plan_manager.update_step("step_2", "completed", note="passed")
+    session.plan_manager.apply_steps([
+        {"title": "write", "status": "completed", "note": "written"},
+        {"title": "test", "status": "completed", "note": "passed"},
+    ], objective="ship")
 
     call = ToolCall("write", {"file": "a.txt", "content": "ok"}, "call_1")
     tool_turn = session.record_assistant_turn(
@@ -108,7 +109,7 @@ def test_checkpoint_round_trips_complete_session_state(tmp_path):
     assert restored.environment == "local"
     assert restored.committed_turn_ids == [original.agent_root_turn_id]
     assert restored.plan_manager.snapshot() == original.plan_manager.snapshot()
-    assert restored.plan_manager.create_plan is not None
+    assert restored.plan_manager.apply_steps is not None
 
     execution = restored.tool_executions["call_1"]
     assert execution.call.arguments["file"] == "a.txt"
@@ -172,7 +173,7 @@ def test_restored_plan_continues_step_ids_without_collision(tmp_path):
     store.save(original)
     restored = store.load(original.session_id)
 
-    restored.plan_manager.create_plan("next", ["new"], replace=True)
+    restored.plan_manager.apply_steps([{"title": "new", "status": "pending"}], objective="next")
     assert restored.plan_manager.snapshot()["steps"][0]["id"] == "step_1"
 
 

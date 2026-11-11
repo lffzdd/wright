@@ -31,10 +31,13 @@ def project_plan(
     result["observed_at"] = now
     # Never reuse transient wait reasons from a checkpoint or tool result.
     result.pop("wait_reason", None)
+    # A plan carried from an earlier turn is not being worked on: its active
+    # step neither keeps timing nor owns the new turn's waits until updated.
+    carried = bool(result.get("carried"))
     for step in result.get("steps", []):
         started, ended = step["started_at"], step["ended_at"]
         step.pop("elapsed_ms", None)
-        if started is not None:
+        if started is not None and (ended is not None or not carried):
             step["elapsed_ms"] = max(
                 0, int(((ended if ended is not None else now) - started) * 1000)
             )
@@ -45,7 +48,7 @@ def project_plan(
                 "detail": step.get("note", ""),
                 "request_ids": [],
             }
-    active = next(
+    active = None if carried else next(
         (
             step
             for step in result.get("steps", [])
@@ -107,7 +110,7 @@ def bind_plan_events(
             event.type == "tool.finished"
             and root_event
             and event.payload.get("name")
-            in {"update_plan", "create_plan", "replan"}
+            == "update_plan"
         )
         if (
             event.type in {"interaction.requested", "interaction.resolved"}

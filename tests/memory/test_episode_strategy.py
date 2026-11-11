@@ -701,7 +701,7 @@ def test_pending_lifecycle_checkpoint_and_concurrency(tmp_path: Path, caplog):
     assert manager.finalize_turn(cross, "旧回答", extract_semantic=False)["pending"] is True
     cross.begin_user_turn("把按钮改成蓝色")
     cross.append_message({"role": "user", "content": "把按钮改成蓝色"})
-    cross.plan_manager.create_plan("paint", ["blue"])
+    cross.plan_manager.apply_steps([{"title": "blue", "status": "pending"}], objective="paint")
     _add_tool(cross, name="paint")
     cross.control_plane.finish_task(old_task.id, status="failed", steps_used=1, error="child failed")
     saved = manager.settle_previous_turn(

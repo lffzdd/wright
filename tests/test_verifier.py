@@ -29,7 +29,7 @@ class ScriptLLM:
 
 def test_incomplete_plan_blocks_final_and_returns_to_agent_loop(tmp_path):
     session = Session.create("goal", tmp_path)
-    session.plan_manager.create_plan("deliver", ["implement"])
+    session.plan_manager.apply_steps([{"title": "implement", "status": "pending"}], objective="deliver")
     llm = ScriptLLM([
         _final("done too early"),
         _tool("update_plan", {"steps": [{"title": "implement", "status": "completed"}]}),
@@ -88,7 +88,7 @@ def test_verifier_restats_successful_file_artifacts(tmp_path):
 
 def test_verifier_and_stop_hook_retries_are_independent(tmp_path):
     session = Session.create("goal", tmp_path)
-    session.plan_manager.create_plan("deliver", ["implement"])
+    session.plan_manager.apply_steps([{"title": "implement", "status": "pending"}], objective="deliver")
     main_llm = ScriptLLM([
         _final("too early"),
         _tool("update_plan", {"steps": [{"title": "implement", "status": "completed"}]}),
@@ -126,3 +126,29 @@ def test_verifier_and_stop_hook_retries_are_independent(tmp_path):
     assert finals[0].verification.issues[0]["code"] == "plan_incomplete"
     assert finals[1].verification.approved is True
     assert finals[2].verification.approved is True
+
+
+def test_blocked_plan_may_end_the_turn(tmp_path):
+    from wright.domain.policy.verifier import Verifier
+
+    session = Session.create("goal", tmp_path)
+    session.plan_manager.apply_steps(
+        [{"title": "deploy", "status": "blocked", "note": "needs credentials"},
+         {"title": "verify", "status": "pending"}],
+        objective="ship",
+    )
+
+    assert Verifier().verify(session, "blocked on credentials").approved
+
+
+def test_plan_carried_from_an_earlier_turn_does_not_block_until_updated(tmp_path):
+    from wright.domain.policy.verifier import Verifier
+
+    session = Session.create("goal", tmp_path)
+    session.plan_manager.apply_steps([{"title": "implement", "status": "in_progress"}], objective="deliver")
+    session.plan_manager.begin_turn()
+
+    assert Verifier().verify(session, "answered a side question").approved
+
+    session.plan_manager.apply_steps([{"title": "implement", "status": "in_progress"}])
+    assert not Verifier().verify(session, "too early").approved

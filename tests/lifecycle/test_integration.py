@@ -209,7 +209,7 @@ def test_runtime_notification_preserves_user_turn_and_defers_episode(tmp_path):
         task="background",
         requested_steps=5,
     )
-    session.plan_manager.create_plan("goal", ["wait for background"])
+    session.plan_manager.apply_steps([{"title": "wait for background", "status": "pending"}], objective="goal")
 
     assert agent.run("real user goal") == "initial answer"
     original_run = session.active_run()

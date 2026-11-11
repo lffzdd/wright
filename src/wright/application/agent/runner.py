@@ -259,7 +259,7 @@ class Agent:
         # 计划是 user-turn 级状态，不是跨任务记忆。
         # 首轮允许装配层预置；后续 run() 开始新目标时清空，continue_run() 则保留。
         if self.session_state.turns:
-            self.session_state.plan_manager.reset()
+            self.session_state.plan_manager.begin_turn()
         # 重置上一轮的终态,使 status 始终反映"当前这轮"(多轮 REPL 下尤其需要)。
         attachment_ids = tuple(attachment_ids)
         records = self.session_state.attachment_records(attachment_ids)

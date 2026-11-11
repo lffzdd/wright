@@ -104,7 +104,7 @@ def test_durable_run_leaves_root_session_untouched(tmp_path):
         session,
     )
     assert root_agent.run("interactive turn") == "interactive result"
-    session.plan_manager.create_plan("old", ["old step"])
+    session.plan_manager.apply_steps([{"title": "old step", "status": "pending"}], objective="old")
     session.set_cwd(nested)
     root_goal = session.current_goal()
     root_plan = session.plan_manager.snapshot()

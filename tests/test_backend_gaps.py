@@ -117,26 +117,33 @@ def test_plan_timestamps_are_stable_across_pause_resume_and_restore(monkeypatch)
     now = [100.0]
     monkeypatch.setattr("wright.domain.model.planning.plan.time.time", lambda: now[0])
     manager = PlanManager()
-    manager.create_plan("goal", ["first", "second"])
+
+    def first(status, note=None):
+        step = {"title": "first", "status": status}
+        if note is not None:
+            step["note"] = note
+        return [step, {"title": "second", "status": "pending"}]
+
+    manager.apply_steps(first("pending"), objective="goal")
     assert manager.snapshot()["steps"][0]["started_at"] is None
-    manager.update_step("step_1", "in_progress")
+    manager.apply_steps(first("in_progress"))
     now[0] = 102.0
-    manager.update_step("step_1", "in_progress", note="working")
+    manager.apply_steps(first("in_progress", "working"))
     assert manager.snapshot()["steps"][0]["started_at"] == 100.0
-    manager.update_step("step_1", "blocked", note="external dependency")
+    manager.apply_steps(first("blocked", "external dependency"))
     view = project_plan(manager.snapshot(), [])
     assert view["steps"][0]["elapsed_ms"] == 2000
     assert view["steps"][0]["wait_reason"]["kind"] == "blocked"
     restored = PlanManager.from_snapshot(manager.snapshot())
     now[0] = 105.0
-    restored.update_step("step_1", "in_progress")
-    restored.update_step("step_1", "completed")
+    restored.apply_steps(first("in_progress"))
+    restored.apply_steps(first("completed"))
     completed = restored.snapshot()["steps"][0]
     now[0] = 110.0
-    restored.update_step("step_1", "completed", note="done")
+    restored.apply_steps(first("completed", "done"))
     assert restored.snapshot()["steps"][0]["ended_at"] == completed["ended_at"] == 105.0
     assert project_plan(restored.snapshot(), [])["steps"][0]["elapsed_ms"] == 5000
-    restored.replan(["new route"], reason="changed")
+    restored.apply_steps([{"title": "second", "status": "skipped"}, {"title": "new route", "status": "pending"}])
     assert restored.snapshot()["steps"][1]["ended_at"] == 110.0
     assert restored.snapshot()["steps"][2]["started_at"] is None
     assert manager.snapshot()["steps"][0]["ended_at"] is None
@@ -144,13 +151,14 @@ def test_plan_timestamps_are_stable_across_pause_resume_and_restore(monkeypatch)
 
 def test_unstarted_terminal_steps_do_not_invent_elapsed_and_invalid_updates_are_atomic():
     manager = PlanManager()
-    manager.create_plan("goal", ["first", "second"])
+    manager.apply_steps(
+        [{"title": "first", "status": "pending"}, {"title": "second", "status": "pending"}], objective="goal"
+    )
     original = manager.snapshot()
     with pytest.raises(PlanError):
-        manager.update_step("step_1", "in_progress", note="x" * 241)
+        manager.apply_steps([{"title": "first", "status": "in_progress", "note": "x" * 241}])
     assert manager.snapshot() == original
-    manager.update_step("step_1", "completed")
-    manager.update_step("step_2", "skipped")
+    manager.apply_steps([{"title": "first", "status": "completed"}, {"title": "second", "status": "skipped"}])
     assert all(
         "elapsed_ms" not in step
         for step in project_plan(manager.snapshot(), [])["steps"]
@@ -160,7 +168,7 @@ def test_unstarted_terminal_steps_do_not_invent_elapsed_and_invalid_updates_are_
 @pytest.mark.parametrize("bad", [True, -1, float("inf"), float("nan"), "100"])
 def test_plan_restore_rejects_invalid_timestamps_transactionally(bad):
     manager = PlanManager()
-    snapshot = manager.create_plan("goal", ["first"])
+    snapshot = manager.apply_steps([{"title": "first", "status": "pending"}], objective="goal")
     snapshot["steps"][0]["started_at"] = bad
     with pytest.raises(PlanError):
         manager.restore(snapshot)
@@ -170,8 +178,7 @@ def test_plan_restore_rejects_invalid_timestamps_transactionally(bad):
 def test_history_timing_freezes_at_checkpoint_observation(tmp_path, monkeypatch):
     manager = PlanManager()
     monkeypatch.setattr("wright.domain.model.planning.plan.time.time", lambda: 100.0)
-    manager.create_plan("goal", ["first"])
-    manager.update_step("step_1", "in_progress")
+    manager.apply_steps([{"title": "first", "status": "in_progress"}], objective="goal")
     session = Session.create("goal", tmp_path)
     session.plan_manager = manager
     repository = FileSessionRepository(tmp_path / "checkpoints")
@@ -188,8 +195,7 @@ def test_history_timing_freezes_at_checkpoint_observation(tmp_path, monkeypatch)
 
 def test_wait_projection_preserves_step_state_and_isolates_actual_principals():
     manager = PlanManager()
-    manager.create_plan("goal", ["first"])
-    manager.update_step("step_1", "in_progress")
+    manager.apply_steps([{"title": "first", "status": "in_progress"}], objective="goal")
     pending = [
         {"request_id": "root-p", "kind": "permission", "principal": "session"},
         {"request_id": "root-q", "kind": "ask_user"},
@@ -207,7 +213,7 @@ def test_wait_projection_preserves_step_state_and_isolates_actual_principals():
     assert "wait_reason" not in manager.snapshot()["steps"][0]
     cleared = project_plan(view, [], owner_session_id="session")
     assert "wait_reason" not in cleared and "wait_reason" not in cleared["steps"][0]
-    manager.update_step("step_1", "pending")
+    manager.apply_steps([{"title": "first", "status": "pending"}])
     waiting_session = project_plan(
         manager.snapshot(), pending, owner_session_id="session"
     )
@@ -217,8 +223,7 @@ def test_wait_projection_preserves_step_state_and_isolates_actual_principals():
 
 def test_broker_updates_plan_on_permission_resolution_and_cancel(tmp_path):
     session = Session.create("goal", tmp_path, session_id="session")
-    session.plan_manager.create_plan("goal", ["first"])
-    session.plan_manager.update_step("step_1", "in_progress")
+    session.plan_manager.apply_steps([{"title": "first", "status": "in_progress"}], objective="goal")
     publisher = EventPublisher(project_id="p", session_id="session")
     broker = InteractionBroker(publisher)
     bind_plan_events(publisher, session, broker)
@@ -268,8 +273,7 @@ def test_broker_updates_plan_on_permission_resolution_and_cancel(tmp_path):
 
 def test_concurrent_approval_requests_keep_root_and_child_waits_separate(tmp_path):
     session = Session.create("goal", tmp_path, session_id="session")
-    session.plan_manager.create_plan("goal", ["first"])
-    session.plan_manager.update_step("step_1", "in_progress")
+    session.plan_manager.apply_steps([{"title": "first", "status": "in_progress"}], objective="goal")
     publisher = EventPublisher(project_id="p", session_id="session")
     broker = InteractionBroker(publisher)
     bind_plan_events(publisher, session, broker)
@@ -335,7 +339,7 @@ def test_plan_projection_publishes_after_root_lifecycle_and_reset(
     tmp_path, monkeypatch
 ):
     session = Session.create("goal", tmp_path)
-    session.plan_manager.create_plan("goal", ["first"])
+    session.plan_manager.apply_steps([{"title": "first", "status": "pending"}], objective="goal")
     publisher = EventPublisher(project_id="p", session_id=session.session_id)
     bind_plan_events(publisher, session, SimpleNamespace(snapshot=list))
     monkeypatch.setattr(
@@ -744,3 +748,28 @@ def test_scripted_web_session_projects_diff_wait_policy_and_history(
         assert historic_edit["result"] == timeline_edit["result"]
     finally:
         manager.shutdown()
+
+
+def test_carried_plan_freezes_the_active_timer_and_keeps_new_waits_off_it(monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr("wright.domain.model.planning.plan.time.time", lambda: now[0])
+    manager = PlanManager()
+    manager.apply_steps(
+        [{"title": "done", "status": "completed"}, {"title": "active", "status": "in_progress"}],
+        objective="goal",
+    )
+    manager.begin_turn()
+    pending = [{"request_id": "root-p", "kind": "permission", "principal": "session"}]
+
+    view = project_plan(manager.snapshot(), pending, owner_session_id="session", observed_at=86_500.0)
+
+    active = view["steps"][1]
+    assert "elapsed_ms" not in active
+    assert "wait_reason" not in active
+    assert view["wait_reason"] == {"kind": "permission", "request_ids": ["root-p"]}
+
+    now[0] = 200.0
+    manager.apply_steps([{"title": "active", "status": "in_progress"}])
+    resumed = project_plan(manager.snapshot(), pending, owner_session_id="session", observed_at=250.0)
+    assert resumed["steps"][1]["elapsed_ms"] == 150_000
+    assert resumed["steps"][1]["wait_reason"]["request_ids"] == ["root-p"]

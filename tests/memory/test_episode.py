@@ -22,8 +22,7 @@ def _completed_session(tmp_path):
     session = Session.create("placeholder", tmp_path)
     session.begin_user_turn("修复登录测试")
     session.append_message({"role": "user", "content": "修复登录测试"})
-    session.plan_manager.create_plan("修复登录", ["修改实现"])
-    session.plan_manager.update_step("step_1", "completed", note="tests pass")
+    session.plan_manager.apply_steps([{"title": "修改实现", "status": "completed", "note": "tests pass"}], objective="修复登录")
 
     call = ToolCall(
         "shell",

@@ -88,12 +88,14 @@ class Verifier:
     def _structural_issues(session: Session) -> list[VerificationIssue]:
         issues: list[VerificationIssue] = []
         plan = session.plan_manager
-        if plan.has_plan and plan.status != "completed":
+        # blocked 表示计划在等外部条件，可以结束本轮去汇报或提问。
+        # 从上一轮带过来、本轮没动过的计划不约束本轮回答，例如用户插了一句提问。
+        if plan.has_plan and not plan.carried and plan.status not in {"completed", "blocked"}:
             issues.append(VerificationIssue(
                 "plan_incomplete",
                 (
-                    f"The plan status is {plan.status}. Finish or skip "
-                    "the remaining steps before the final answer"
+                    f"The plan status is {plan.status}. Finish or skip the remaining "
+                    "steps, or mark the step that cannot continue as blocked, before the final answer"
                 ),
                 {"status": str(plan.status)},
             ))

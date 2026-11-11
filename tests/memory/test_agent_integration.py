@@ -154,8 +154,7 @@ def test_agent_without_memory_unaffected(tmp_path: Path):
 def test_new_user_turn_resets_plan_and_episode_does_not_inherit_old_plan(tmp_path: Path):
     manager = assemble_memory_manager(MainLLM(), selector_llm=EmptySelectorLLM(), directory=tmp_path)
     session = Session.create(initial_goal="t", workspace_dir=tmp_path)
-    session.plan_manager.create_plan("first task", ["finish first"])
-    session.plan_manager.update_step("step_1", "completed")
+    session.plan_manager.apply_steps([{"title": "finish first", "status": "completed"}], objective="first task")
     agent = create_agent(MainLLM(), [], session, memory=manager)
 
     assert agent.run("first") == "done"
