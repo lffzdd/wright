@@ -23,7 +23,8 @@ const deferred = <T,>() => {
   return { promise, resolve };
 };
 const panel = (state = view(), feedback?: (text: string) => void) => <ChangesPanel sessionId={state.session.session_id} state={state} onCount={() => undefined} onFeedback={feedback} />;
-const scope = (value: string) => fireEvent.change(screen.getByLabelText("Change scope"), { target: { value } });
+const scopeLabels: Record<string, string> = { git: "Uncommitted changes", session: "This session" };
+const scope = (value: string) => fireEvent.click(screen.getByRole("radio", { name: scopeLabels[value] }));
 const openFile = async () => fireEvent.click(await screen.findByRole("button", { name: /M\s*src\/a.txt/ }));
 
 beforeEach(() => {

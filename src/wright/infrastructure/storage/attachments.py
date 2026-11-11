@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import tempfile
 import warnings
+from dataclasses import replace
 from pathlib import Path
 from typing import BinaryIO
 from uuid import uuid4
@@ -175,6 +177,24 @@ class AttachmentStore:
         if not path.is_file():
             raise AttachmentError("attachment thumbnail is unavailable")
         return path
+
+    def copy_to(
+        self, session_id: str, records: dict[str, AttachmentRecord],
+    ) -> dict[str, AttachmentRecord]:
+        """Copy these images into another session's folder; returns its records."""
+        target = AttachmentStore(self.root, session_id)
+        target.session_root.mkdir(parents=True, exist_ok=True)
+        copied: dict[str, AttachmentRecord] = {}
+        for key, record in records.items():
+            source = self._record_path(record)
+            destination = target.session_root / source.name
+            if source.is_file():
+                shutil.copy2(source, destination)
+            thumbnail = self.session_root / f"{record.id}.thumb.webp"
+            if thumbnail.is_file():
+                shutil.copy2(thumbnail, target.session_root / thumbnail.name)
+            copied[key] = replace(record, storage_path=str(destination.relative_to(self.root)))
+        return copied
 
     def remove(self, record: AttachmentRecord) -> None:
         try:

@@ -19,6 +19,7 @@ from uuid import uuid4
 from ...core.logger import get_logger
 from ...domain.model.attachment import AttachmentError
 from ...domain.model.llm.model_adapters import available_models
+from ...domain.model.session import HistoryRewriteError
 from ...domain.model.session.run import TERMINAL_RUN_STATUSES
 from ...domain.policy.permission.resolver import sandbox_network_granted
 from ..session_runtime.errors import SessionClosedError, SessionServiceError
@@ -490,6 +491,42 @@ class SessionService:
                 "duplicate": not fresh,
             },
         ).to_dict()
+
+    def rewind(
+        self, message_id: str, command_id: str, prompt: str | None = None,
+    ) -> dict[str, Any]:
+        """Forget the turn started by ``message_id`` and everything after it,
+        then send that message again, or ``prompt`` in its place.
+
+        Files the dropped turns changed are left as they are.
+        """
+        self._require_accepting_input()
+        if prompt is not None and not prompt.strip():
+            raise SessionServiceError("prompt cannot be empty")
+        with self._lock:
+            if not self.is_evictable():
+                raise SessionServiceError(
+                    "wait until the session is idle, with nothing queued or running in the background"
+                )
+            state = self.runtime.session_state
+            try:
+                index = state.user_message_index(message_id)
+            except HistoryRewriteError as exc:
+                raise SessionServiceError(str(exc)) from exc
+            message = state.message_records[index].message
+            original = str(message.get("content") or "")
+            attachment_ids = [
+                str(item) for item in message.get("attachments") or [] if isinstance(item, str)
+            ]
+            try:
+                state.truncate_history(index)
+            except HistoryRewriteError as exc:
+                raise SessionServiceError(str(exc)) from exc
+            self.publisher.history_rewritten()
+            self._checkpoint()
+        return self.submit(
+            original if prompt is None else prompt, command_id, attachment_ids, references=[],
+        )
 
     def take_interjections(self) -> list[dict[str, Any]]:
         """Hand queued text messages to the running root turn, oldest first.

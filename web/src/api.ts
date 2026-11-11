@@ -53,6 +53,8 @@ export const api = {
   close: (id: string) => json(`/api/v1/sessions/${id}/close`, { method: "POST", body: "{}" }),
   archive: (id: string, projectId?: string) => json(`/api/v1/sessions/${id}/archive${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`, { method: "POST", body: "{}" }),
   relabel: (id: string, label: string, projectId?: string) => json(`/api/v1/sessions/${id}/label${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`, { method: "POST", body: JSON.stringify({ label }) }),
+  rewind: (id: string, body: { message_id: string; command_id: string; prompt?: string }) => json<Record<string, unknown>>(`/api/v1/sessions/${id}/rewind`, { method: "POST", body: JSON.stringify(body) }),
+  fork: (id: string, messageId?: string) => json<Snapshot>(`/api/v1/sessions/${id}/fork`, { method: "POST", body: JSON.stringify(messageId ? { message_id: messageId } : {}) }),
   setModel: (id: string, model: string) => json(`/api/v1/sessions/${id}/model`, { method: "POST", body: JSON.stringify({ model }) }),
   commandStatus: (id: string, commandId: string) => json<{ command_id: string; status: string }>(`/api/v1/sessions/${id}/commands/${commandId}`),
   uploadAttachment: async (id: string, file: File) => {

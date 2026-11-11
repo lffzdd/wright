@@ -1,5 +1,5 @@
 import type { TimelineItem, ToolState } from "../../types";
-import { toolCategory, type StepCategory } from "../cards/cards";
+import { planRejection, toolCategory, type StepCategory } from "../cards/cards";
 
 /** One process step of a turn: a reasoning segment or a tool call. */
 export type Step = {
@@ -91,7 +91,8 @@ export function summarizeSteps(steps: Step[]): StepSummary {
       continue;
     }
     summary.counts[category] = (summary.counts[category] ?? 0) + 1;
-    if (step.phase === "failed") summary.failed += 1;
+    // A plan update the plan rules turned down changed nothing and is not a failure.
+    if (step.phase === "failed" && !(category === "plans" && planRejection(step.item?.result?.display ?? step.tool?.display))) summary.failed += 1;
     if (step.phase === "planned" || step.phase === "running" || step.phase === "awaiting_approval") summary.running = true;
   }
   return summary;

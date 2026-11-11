@@ -47,7 +47,7 @@ describe("web startup", () => {
       return jsonResponse({ changes: [], rules: [] });
     }));
     render(<App />);
-    await screen.findByText("web/src/App.tsx");
+    await screen.findByRole("button", { name: /Files accessed\s*1 files/ });
     expect(screen.getByRole("meter").getAttribute("aria-valuenow")).toBe("25");
     expect(screen.getByRole("heading", { name: "Real task" })).toBeTruthy();
     expect(snapshots).toBeGreaterThan(1);
@@ -92,7 +92,7 @@ describe("web startup", () => {
     expect(document.querySelector(".welcome-pane .environment-choice")).toBeTruthy();
     expect(document.querySelector(".composer .environment-choice")).toBeNull();
     expect(screen.queryByText(/Offline/)).toBeNull();
-    expect(screen.queryByRole("tab", { name: "Task" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: /Overview/ })).toBeNull();
     const exchangeAt = calls.findIndex((call) => call.includes("/auth/exchange"));
     const preferencesAt = calls.findIndex((call) => call.includes("/api/v1/preferences"));
     const projectAt = calls.findIndex((call) => call.includes("/api/v1/project"));

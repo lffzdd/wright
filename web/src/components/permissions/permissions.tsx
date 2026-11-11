@@ -1,7 +1,9 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../../api";
 import { t, useT } from "../../i18n";
-import type { ExecutionMode, Grants, SandboxStatus } from "../../types";
+import type { ExecutionMode, Grants, PermissionResource, SandboxStatus } from "../../types";
+import { InlineSelect } from "../ui/InlineSelect";
+import { SegmentedControl } from "../ui/SegmentedControl";
 import { commandRuleDetails, commandRuleLabel, networkRuleLabel } from "./permission-resource";
 import { PolicyAuditDetail } from "./policyAuditDetail";
 
@@ -48,13 +50,29 @@ export function ResourceOperations({ kind, operations, tool }: { kind: string; o
     {tool && tool !== "*" && (kind === "file" || kind === "directory") && <small>{tr("web.tool_restriction", { tool })}</small>}</>;
 }
 
+const programName = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() || path;
+
+/** A command rule named by its program, not its install path; the full rule stays in the tooltip. */
+function shortCommandLabel(grant: Grants["grants"][number]): string {
+  const resource: PermissionResource = grant.resource ?? grant;
+  const argv = resource.argv ?? [];
+  return commandRuleLabel({
+    ...resource,
+    programs: resource.programs?.map(programName),
+    argv: argv.length ? [programName(argv[0]), ...argv.slice(1)] : argv,
+  }, programName(grant.target));
+}
+
 /** Primary label for a saved grant; shell/command/network use terminal styling. */
 function GrantPrimary({ grant }: { grant: Grants["grants"][number] }) {
   const tr = useT();
   if (grant.resource_kind === "shell") {
     return <div className="perm-command grant-command"><span className="muted">{tr("web.grant_run")}</span><span className="perm-target">{grant.target}</span></div>;
   }
-  if (grant.resource_kind === "command" || grant.resource_kind === "network") {
+  if (grant.resource_kind === "command") {
+    return <div className="perm-command grant-command"><span className="perm-target">{shortCommandLabel(grant)}</span></div>;
+  }
+  if (grant.resource_kind === "network") {
     return <div className="perm-command grant-command"><span className="perm-target">{describeGrant(grant)}</span></div>;
   }
   return <span className="grant-line">{describeGrant(grant)}</span>;
@@ -95,50 +113,6 @@ function useGrantMutate(sessionId: string, grants: Grants, update: (value: Grant
   return { mutate, busy, error, notice, revision, changing };
 }
 
-function GrantFormSelect({ label, value, options, onChange, disabled = false, menuUp = false }: {
-  label: string;
-  value: string;
-  options: Array<{ value: string; label: string }>;
-  onChange: (value: string) => void;
-  disabled?: boolean;
-  menuUp?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const listId = useId();
-  const current = options.find((option) => option.value === value)?.label ?? value;
-  useEffect(() => {
-    if (!open) return;
-    const onPointer = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
-    document.addEventListener("mousedown", onPointer);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onPointer);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-  return <div className={`grant-form-select${menuUp ? " grant-form-select-up" : ""}`} ref={rootRef}>
-    <span className="grant-form-select-label" id={listId}>{label}</span>
-    <button type="button" className="grant-form-select-trigger" disabled={disabled}
-      aria-labelledby={listId} aria-haspopup="listbox" aria-expanded={open}
-      onClick={() => setOpen((currentOpen) => !currentOpen)}>
-      <span className="grant-form-select-value">{current}</span>
-    </button>
-    {open ? <ul className="grant-form-select-menu" role="listbox" aria-labelledby={listId}>
-      {options.map((option) => <li key={option.value}>
-        <button type="button" role="option" aria-selected={value === option.value}
-          className={value === option.value ? "active" : ""}
-          onClick={() => { onChange(option.value); setOpen(false); }}>
-          {option.label}
-        </button>
-      </li>)}
-    </ul> : null}
-  </div>;
-}
-
 function GrantItemList({ sessionId, items, grants, busy, mutate }: {
   sessionId: string;
   items: Grants["grants"];
@@ -148,13 +122,14 @@ function GrantItemList({ sessionId, items, grants, busy, mutate }: {
 }) {
   const tr = useT();
   const scroll = items.length > GRANT_LIST_SCROLL_AT;
-  return (
+  // Program rules all carry the same caveat; it is said once under the list.
+  const commandNotes = [...new Set(items.filter((grant) => grant.resource_kind === "command").map((grant) => commandRuleDetails(grant.resource ?? grant)))];
+  return <>
     <ul className={`grant-list${scroll ? " grant-list-scroll" : ""}`}>
-      {items.map((grant) => <li className={`grant-item ${grant.lifetime === "user" ? "warn" : ""}`} key={`${grant.source}:${grant.id}`} title={grant.resource_kind === "command" || grant.resource_kind === "shell" ? [grant.cwd && grant.resource_kind === "shell" ? tr("web.approval.in_folder", { path: grant.cwd }) : "", tr((grant.resource?.execution_mode ?? "sandbox") === "host" ? "web.execution.host_boundary" : "web.approval.sandbox_boundary")].filter(Boolean).join(" · ") : undefined}>
+      {items.map((grant) => <li className={`grant-item ${grant.lifetime === "user" ? "warn" : ""}`} key={`${grant.source}:${grant.id}`} title={grant.resource_kind === "command" || grant.resource_kind === "shell" ? [grant.resource_kind === "command" ? describeGrant(grant) : "", grant.cwd && grant.resource_kind === "shell" ? tr("web.approval.in_folder", { path: grant.cwd }) : "", tr((grant.resource?.execution_mode ?? "sandbox") === "host" ? "web.execution.host_boundary" : "web.approval.sandbox_boundary")].filter(Boolean).join(" · ") : undefined}>
         <div className="grant-item-body">
           <GrantPrimary grant={grant} />
           {grant.resource_kind === "directory" && grant.recursive && <small>{tr("web.approval.directory_recursive")}</small>}
-          {grant.resource_kind === "command" && <small>{commandRuleDetails(grant.resource ?? grant)}</small>}
           {grant.resource_kind === "tool" && <small>{tr("web.approval.tool_operations", { operations: grant.operations.map((operation) => tr(`web.operation.${operation}`)).join(", ") })}</small>}
           {grant.tool && grant.tool !== "*" && grant.resource_kind !== "command" && grant.resource_kind !== "shell" && <small>{tr("web.tool_restriction", { tool: grant.tool })}</small>}
           {grant.lifetime === "user" && <small>{tr("web.cross_project")}</small>}
@@ -162,7 +137,8 @@ function GrantItemList({ sessionId, items, grants, busy, mutate }: {
         <button type="button" disabled={busy} className="grant-revoke" aria-label={tr("web.revoke_target", { target: grant.target })} onClick={() => mutate(() => api.revokeGrant(sessionId, grant.id, grant.source, grants.version), "web.grant_revoked")}>{tr("web.revoke")}</button>
       </li>)}
     </ul>
-  );
+    {commandNotes.map((note) => <p className="grant-footnote" key={note}>{note}</p>)}
+  </>;
 }
 
 export function PermissionGrantManualAdd({ sessionId, grants, update }: { sessionId: string; grants: Grants; update: (value: Grants) => void }) {
@@ -187,17 +163,17 @@ export function PermissionGrantManualAdd({ sessionId, grants, update }: { sessio
           event.preventDefault();
           void mutate(() => api.addGrant(sessionId, { kind, path: path.trim(), operations: write ? ["file_read", "file_write"] : ["file_read"] }, lifetime, grants.version), "web.grant_added", true).then((ok) => { if (ok) setPath(""); });
         }}>
-          <GrantFormSelect label={tr("web.scope_label")} value={kind} onChange={setKind} options={[
+          <InlineSelect label={tr("web.scope_label")} value={kind} onChange={setKind} options={[
             { value: "file", label: tr("web.grant_kind.file") },
             { value: "directory", label: tr("web.grant_kind.directory") },
           ]} />
           <label>{tr("web.path")}<input className="grant-path-input" required value={path} onChange={(event) => setPath(event.target.value)} placeholder={tr("web.path")} aria-label={tr("web.path")} /></label>
           <div className="grant-form-row">
-            <GrantFormSelect label={tr("web.operations")} value={write ? "write" : "read"} menuUp onChange={(next) => setWrite(next === "write")} options={[
+            <InlineSelect label={tr("web.operations")} value={write ? "write" : "read"} menuUp onChange={(next) => setWrite(next === "write")} options={[
               { value: "read", label: tr("web.read_only") },
               { value: "write", label: tr("web.read_write") },
             ]} />
-            <GrantFormSelect label={tr("web.lifetime")} value={lifetime} onChange={setLifetime} menuUp options={[
+            <InlineSelect label={tr("web.lifetime")} value={lifetime} onChange={setLifetime} menuUp options={[
               { value: "project", label: tr("web.lifetime.project") },
               { value: "session", label: tr("web.lifetime.session") },
               { value: "user", label: tr("web.lifetime.user") },
@@ -214,7 +190,26 @@ export function PermissionGrantManualAdd({ sessionId, grants, update }: { sessio
   </div>;
 }
 
-export function PermissionGrants({ sessionId, grants, update, includeManualAdd = false }: { sessionId: string; grants: Grants; update: (value: Grants) => void; includeManualAdd?: boolean }) {
+/** Which OS sandbox runs Shell, and whether it is ready; Windows can set it up from here. */
+export function SandboxStatusCard({ sessionId, grants, update }: { sessionId: string; grants: Grants; update: (value: Grants) => void }) {
+  const tr = useT();
+  const sandbox = grants.sandbox;
+  const { mutate, busy, error, notice } = useGrantMutate(sessionId, grants, update);
+  if (!sandbox || grants.execution_mode === "host") return null;
+  return <article className="policy-card sandbox-card">
+    {error && <p className="form-error" role="alert">{error}</p>}
+    {notice && <p className="hint" role="status">{notice}</p>}
+    <strong>{tr("web.sandbox")}: {sandbox.provider}</strong>
+    <p role="status">{tr(`web.sandbox.${sandbox.state}`)}</p>
+    {sandbox.detail && <small>{sandbox.detail}</small>}
+    {sandbox.platform === "win32" && sandbox.state !== "initializing" && <div className="interaction-actions">
+      {!sandbox.available && <button className="button" disabled={busy} onClick={() => mutate(async () => { await api.sandbox(sessionId, "setup"); return api.grants(sessionId); }, "web.sandbox.requested")}>{tr("web.sandbox.initialize")}</button>}
+      {sandbox.state !== "setup_required" && <button className="text-button" disabled={busy} onClick={() => mutate(async () => { await api.sandbox(sessionId, "cleanup"); return api.grants(sessionId); }, "web.sandbox.cleaned")}>{tr("web.sandbox.cleanup")}</button>}
+    </div>}
+  </article>;
+}
+
+export function PermissionGrants({ sessionId, grants, update, includeManualAdd = false, showSandbox = true }: { sessionId: string; grants: Grants; update: (value: Grants) => void; includeManualAdd?: boolean; showSandbox?: boolean }) {
   const tr = useT();
   const sandbox = grants.sandbox;
   const { mutate, busy, error, notice, revision, changing } = useGrantMutate(sessionId, grants, update);
@@ -234,15 +229,7 @@ export function PermissionGrants({ sessionId, grants, update, includeManualAdd =
   <section className="perm-section permission-manager">
     {error && <p className="form-error" role="alert">{error}</p>}
     {notice && <p className="hint" role="status">{notice}</p>}
-    {sandbox && grants.execution_mode !== "host" && <article className="policy-card sandbox-card">
-      <strong>{tr("web.sandbox")}: {sandbox.provider}</strong>
-      <p role="status">{tr(`web.sandbox.${sandbox.state}`)}</p>
-      {sandbox.detail && <small>{sandbox.detail}</small>}
-      {sandbox.platform === "win32" && sandbox.state !== "initializing" && <div className="interaction-actions">
-        {!sandbox.available && <button className="button" disabled={busy} onClick={() => mutate(async () => { await api.sandbox(sessionId, "setup"); return api.grants(sessionId); }, "web.sandbox.requested")}>{tr("web.sandbox.initialize")}</button>}
-        {sandbox.state !== "setup_required" && <button className="text-button" disabled={busy} onClick={() => mutate(async () => { await api.sandbox(sessionId, "cleanup"); return api.grants(sessionId); }, "web.sandbox.cleaned")}>{tr("web.sandbox.cleanup")}</button>}
-      </div>}
-    </article>}
+    {showSandbox && <SandboxStatusCard sessionId={sessionId} grants={grants} update={update} />}
     <div className="section-label"><span>{tr("web.saved_grants")}</span><span className="section-count">{grants.grants?.length ?? 0}</span></div>
     {!(grants.grants ?? []).length && <p className="empty-small">{tr("web.no_saved_grants")}</p>}
     {GRANT_LIFETIMES.map((lifetime) => {
@@ -302,6 +289,22 @@ export function PermissionsPanel({ sessionId, grants, update, interactionMode, p
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally { setSaving(""); }
   };
+  const setExecution = async (next: ExecutionMode) => {
+    if (next === execution || saving) return;
+    setSaving("execution"); setError("");
+    try {
+      await api.policy(sessionId, { execution_mode: next });
+      update(await api.grants(sessionId));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally { setSaving(""); }
+  };
+  const executionChoices = (["sandbox", "host"] as const).map((item) => ({
+    value: item,
+    label: tr(`web.execution_short.${item}`),
+    title: tr(`web.execution.${item}`),
+    ariaLabel: tr(`web.execution.${item}`),
+  }));
   const networkGrants = sandboxNetworkGrants(grants);
   const sessionNetwork = networkGrants.find((grant) => grant.lifetime === "session");
   const networkDecision: Decision | null = readOnly ? "deny" : execution === "host" ? "ask" : networkGrants.length ? "allow" : "ask";
@@ -325,10 +328,10 @@ export function PermissionsPanel({ sessionId, grants, update, interactionMode, p
       }
     } finally { setSaving(""); }
   };
-  const rows: Array<{ key: string; decision: Decision | null; note?: string; toggle?: boolean }> = [
+  const rows: Array<{ key: string; decision: Decision | null; note?: string; inlineNote?: string; toggle?: boolean }> = [
     { key: "read_inside", decision: decisionOf(grants, "file_read", "in_scope") },
     { key: "edit_inside", decision: readOnly ? "deny" : decisionOf(grants, "file_write", "in_scope") },
-    { key: "shell_inside", decision: readOnly ? "deny" : decisionOf(grants, "shell", "in_scope"), note: tr(execution === "host" ? "web.execution.host" : "web.glance.sandboxed") },
+    { key: "shell_inside", decision: readOnly ? "deny" : decisionOf(grants, "shell", "in_scope"), inlineNote: tr(execution === "host" ? "web.execution.host" : "web.glance.sandboxed") },
     { key: "outside", decision: decisionOf(grants, "file_write", "outside_scope") ?? decisionOf(grants, "file_read", "outside_scope") },
     { key: "network", decision: networkDecision, note: execution === "host" ? tr("web.execution.host_network") : networkGrants.length && !sessionNetwork ? tr("web.glance.network_saved") : networkToggle ? tr("web.glance.network_enable_hint") : undefined, toggle: networkToggle },
   ];
@@ -339,31 +342,23 @@ export function PermissionsPanel({ sessionId, grants, update, interactionMode, p
   return <div className="permissions-panel">
     <section className="perm-section perm-execution">
       <div className="section-label"><span>{tr("web.execution_mode")}</span></div>
-      <select className="select perm-execution-select" aria-label={tr("web.execution_mode")} value={execution} disabled={executionBusy || Boolean(saving)} onChange={async (event) => {
-        const next = event.target.value as ExecutionMode;
-        setSaving("execution"); setError("");
-        try { await api.policy(sessionId, { execution_mode: next }); update(await api.grants(sessionId)); }
-        catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
-        finally { setSaving(""); }
-      }}>
-        <option value="sandbox">{tr("web.execution.sandbox")}</option>
-        <option value="host">{tr("web.execution.host")}</option>
-      </select>
+      <SegmentedControl className="perm-execution-segment" value={execution ?? "sandbox"} ariaLabel={tr("web.execution_mode")}
+        disabled={executionBusy || Boolean(saving)} options={executionChoices}
+        onChange={(next) => void setExecution(next)} />
       <details className="perm-fold perm-execution-help">
         <summary title={tr("web.execution.switch_help")}>{tr("web.execution.help_summary")}</summary>
         <p className="hint">{tr(execution === "host" ? "web.execution.host_help" : "web.execution.sandbox_help")}</p>
       </details>
+      {/* The sandbox's state belongs with the choice of where Shell runs. */}
+      {grants && <SandboxStatusCard sessionId={sessionId} grants={grants} update={update} />}
     </section>
     <section className="perm-section perm-policy">
       <div className="section-label"><span>{tr("web.glance.title")}</span></div>
-      <div className="perm-mode-segment" role="radiogroup" aria-label={tr("web.permission_mode")}>
-        {MODES.map((item) => <button key={item} type="button" role="radio" aria-checked={mode === item}
-          className={`perm-segment ${mode === item ? "active" : ""}`} disabled={readOnly || Boolean(saving)} onClick={() => void setMode(item)}
-          title={tr(`web.perm.${item}`)} aria-label={tr(`web.perm.${item}`)}>
-          {tr(`web.perm_short.${item}`)}
-        </button>)}
-      </div>
-      <p className="hint perm-mode-help">{modeHelp}</p>
+      <SegmentedControl value={mode} ariaLabel={tr("web.permission_mode")} disabled={readOnly || Boolean(saving)}
+        options={MODES.map((item) => ({ value: item, label: tr(`web.perm_short.${item}`), title: tr(`web.perm_help.${item}`), ariaLabel: tr(`web.perm.${item}`) }))}
+        onChange={(item) => void setMode(item)} />
+      {/* The table below already says what is automatic; only the broadest mode needs its extra caveats spelled out. */}
+      {mode === "bypass" ? <p className="hint perm-mode-help">{modeHelp}</p> : <p className="sr-only">{modeHelp}</p>}
       {readOnly && <p className="hint">{tr("web.perm_locked", { mode: tr(`web.mode.${interactionMode}`) })}</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
       <ul className="glance">
@@ -372,13 +367,15 @@ export function PermissionsPanel({ sessionId, grants, update, interactionMode, p
           return <li key={row.key} className={`glance-row ${row.decision ?? "unknown"}${row.toggle ? " has-toggle" : ""}`}>
             <span className="glance-label">
               {tr(`web.glance.${row.key}`)}
-              {row.toggle && <button type="button" role="switch" className="switch" aria-checked={row.decision === "allow"}
-                aria-label={tr(`web.glance.${row.key}`)} disabled={Boolean(saving)} onClick={() => void toggleNetwork()}
-                title={tr(sessionNetwork ? "web.glance.network_toggle_off" : "web.glance.network_toggle_on")}><span /></button>}
+              {row.inlineNote && <small className="glance-inline-note">{row.inlineNote}</small>}
             </span>
+            {/* The switch sits where the answer is, since it changes that answer. */}
             <span className="glance-outcome">
               <span className="glance-decision-line">
                 <span className="glance-decision">{decision}</span>
+                {row.toggle && <button type="button" role="switch" className="switch" aria-checked={row.decision === "allow"}
+                  aria-label={tr(`web.glance.${row.key}`)} disabled={Boolean(saving)} onClick={() => void toggleNetwork()}
+                  title={tr(sessionNetwork ? "web.glance.network_toggle_off" : "web.glance.network_toggle_on")}><span /></button>}
               </span>
             </span>
             {row.note ? <small className="glance-note">{row.note}</small> : null}
@@ -386,7 +383,7 @@ export function PermissionsPanel({ sessionId, grants, update, interactionMode, p
         })}
       </ul>
     </section>
-    {grants && <PermissionGrants sessionId={sessionId} grants={grants} update={update} includeManualAdd />}
+    {grants && <PermissionGrants sessionId={sessionId} grants={grants} update={update} includeManualAdd showSandbox={false} />}
     {grants && (blocked.length > 0 || grants.effective_policy.length > 0) && <div className="perm-advanced">
       {blocked.length > 0 && <details className="perm-fold" open>
         <summary>{tr("web.glance.always_blocked", { count: blocked.length })}</summary>

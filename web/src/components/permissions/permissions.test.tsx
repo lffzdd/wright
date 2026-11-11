@@ -301,7 +301,11 @@ it("renders and revokes command, HTTP path and named tool records using server i
     { id: "search-id", source: "user", lifetime: "user", resource_kind: "tool", target: "web_search", tool: "web_search", operations: ["network_read"], recursive: false },
   ] };
   render(<PermissionGrants sessionId="s" grants={records} update={vi.fn()} />);
-  expect(screen.getByText("any arguments for /usr/bin/python")).toBeTruthy();
+  // Programs are named, not pathed; the full rule and its caveat stay one hover away.
+  const python = screen.getByText("any arguments for python");
+  expect(python.closest(".grant-item")?.getAttribute("title")).toContain("any arguments for /usr/bin/python");
+  expect(document.querySelectorAll(".grant-footnote")).toHaveLength(1);
+  expect(document.querySelectorAll(".grant-item small")).not.toContain(document.querySelector(".grant-footnote"));
   expect(screen.getByText("GET requests to the exact path https://example.com/api (any query parameters)")).toBeTruthy();
   expect(screen.getByText("Use web_search for the listed operations")).toBeTruthy();
   expect(screen.getByText("Allowed operations: Network read")).toBeTruthy();
@@ -356,4 +360,13 @@ it("revokes a session sandbox network grant from the glance", async () => {
 it("describes a sandbox network grant", () => {
   expect(describeGrant({ id: "net", source: "session", lifetime: "session", resource_kind: "sandbox_network", target: "sandbox network", operations: ["network_read", "network_write"], recursive: false })).toBe("Sandbox commands may use the network");
   expect(describeChoice({ id: "allow_session_sandbox_network", label: "Session", scope: "Sandbox network", persistence: "", lifetime: "session", resource_kind: "sandbox_network" })).toContain("sandbox network for this session");
+});
+
+it("says the shared program caveat once for several program rules", () => {
+  const rule = (id: string, path: string) => ({ id, source: "project", lifetime: "project" as const, resource_kind: "command", target: path, operations: ["shell"], recursive: false, resource: { ...executableChoice.resource, argv: [path] } });
+  render(<PermissionGrants sessionId="s" grants={{ ...readyGrants, grants: [rule("a", "/opt/homebrew/bin/git"), rule("b", "/usr/bin/tail")] }} update={vi.fn()} />);
+  expect(screen.getByText("any arguments for git")).toBeTruthy();
+  expect(screen.getByText("any arguments for tail")).toBeTruthy();
+  expect(document.querySelectorAll(".grant-footnote")).toHaveLength(1);
+  expect(document.querySelectorAll(".grant-item small")).toHaveLength(0);
 });

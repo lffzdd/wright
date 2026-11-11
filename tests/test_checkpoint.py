@@ -52,7 +52,7 @@ def _populated_session(tmp_path):
     session.record_usage_for_turn(tool_turn, UsageRecord(10, 4, 14))
     result = ToolResult.success({"path": str(workspace / "a.txt")})
     result = ToolResult.success(
-        {"path": str(workspace / "a.txt")}, summary="saved file",
+        {"path": str(workspace / "a.txt")}, summary="saved file", display={"shown": "to the UI"},
         artifacts=(ArtifactRef("artifact_a", "text/plain", "a.txt", 2, "", "call_1", "artifact_a"),),
     )
     session.record_tool_execution("call_1", result, started_at=1.5, ended_at=2.0)
@@ -115,6 +115,7 @@ def test_checkpoint_round_trips_complete_session_state(tmp_path):
     assert execution.call.arguments["file"] == "a.txt"
     assert execution.result.ok is True
     assert execution.result.summary == "saved file"
+    assert execution.result.display == {"shown": "to the UI"}
     assert execution.result.artifacts[0].id == "artifact_a"
     assert execution.started_at == 1.5
     assert execution.ended_at == 2.0

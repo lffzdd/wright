@@ -189,6 +189,15 @@ class SessionHandle:
         except SessionServiceError as exc:
             raise RuntimeManagerError(str(exc)) from exc
 
+    def rewind(self, message_id: str, command_id: str, prompt: str | None = None) -> dict[str, Any]:
+        """Drop the turn started by ``message_id`` and what followed, then resend it."""
+        if not command_id:
+            raise RuntimeManagerError("command_id is required")
+        try:
+            return self.service.rewind(message_id, command_id, prompt)
+        except SessionServiceError as exc:
+            raise RuntimeManagerError(str(exc)) from exc
+
     def cancel(self, command_id: str) -> dict[str, Any]:
         """Stop the current turn and leave queued messages in place."""
 
@@ -770,6 +779,23 @@ class RuntimeManager:
         except SessionDirectoryError as exc:
             status = 404 if exc.kind == "not_found" else 400
             raise RuntimeManagerError(str(exc), status_code=status) from exc
+
+    def fork(self, session_id: str, message_id: str | None = None) -> SessionHandle:
+        """Copy a session's history into a new session and open it."""
+        with self._lock:
+            handle = self._handles.get(session_id)
+        directory = getattr(handle, "owner", None) or self._ui_directory()
+        try:
+            fork_id = directory.fork(session_id, message_id)
+        except SessionDirectoryError as exc:
+            status = {"not_found": 404, "conflict": 409}.get(exc.kind, 400)
+            raise RuntimeManagerError(str(exc), status_code=status) from exc
+        return self._open_on(
+            directory, environment=None, model=None, prompt=None, resume=fork_id,
+            continue_latest=False, client_request_id=None, command_id=None,
+            references=None, attachment_ids=None, document_ids=None,
+            interaction_mode=None, permission_mode=None, execution_mode=None,
+        )
 
     def search_references(self, query: str) -> list[dict[str, Any]]:
         return self.directory.search_references(query)

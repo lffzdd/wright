@@ -47,17 +47,16 @@ def test_only_one_step_can_be_in_progress():
     assert plan["status"] == "in_progress"
 
 
-def test_steps_cannot_start_or_finish_before_open_predecessors():
+def test_steps_can_start_and_finish_out_of_order():
     manager = PlanManager()
-    manager.apply_steps(_pending("first", "second"), objective="goal")
+    manager.apply_steps(_pending("first", "second", "third"), objective="goal")
 
-    with pytest.raises(PlanError, match="Predecessor step_1"):
-        manager.apply_steps(_s(("first", "pending"), ("second", "in_progress")))
-    with pytest.raises(PlanError, match="Predecessor step_1"):
-        manager.apply_steps(_s(("first", "pending"), ("second", "completed")))
+    plan = manager.apply_steps(_s(("first", "pending"), ("second", "in_progress")))
+    assert _rows(plan) == [("step_1", "first", "pending"), ("step_2", "second", "in_progress"), ("step_3", "third", "pending")]
 
-    plan = manager.apply_steps(_s(("first", "skipped"), ("second", "in_progress")))
-    assert plan["status"] == "in_progress"
+    plan = manager.apply_steps(_s(("second", "completed"), ("third", "completed")))
+    assert [row[2] for row in _rows(plan)] == ["pending", "completed", "completed"]
+    assert plan["status"] == "pending"
 
 
 def test_blocked_plan_can_resume():
@@ -152,7 +151,8 @@ def test_apply_steps_matches_titles_and_is_atomic():
     with pytest.raises(PlanError):
         manager.apply_steps([{"title": "a", "status": "in_progress"}, {"title": "b", "status": "in_progress"}])
     with pytest.raises(PlanError):
-        manager.apply_steps([{"title": "a", "status": "pending"}, {"title": "b", "status": "completed"}])
+        # Fails on the second item, after the first was already changed on the working copy.
+        manager.apply_steps([{"title": "a", "status": "completed"}, {"id": "step_9", "title": "x", "status": "pending"}])
     assert manager.snapshot() == unchanged
 
     done = manager.apply_steps([{"title": "a", "status": "completed"}, {"title": "b", "status": "completed"}])
@@ -220,13 +220,17 @@ def test_apply_steps_keeps_history_in_original_order():
     ]
 
 
-def test_skipping_an_open_step_by_omission_is_rejected():
+def test_starting_a_step_while_an_omitted_step_is_in_progress_is_rejected():
     manager = PlanManager()
-    manager.apply_steps(_s(("a", "pending"), ("b", "pending")), objective="goal")
+    manager.apply_steps(_s(("a", "in_progress"), ("b", "pending")), objective="goal")
 
-    with pytest.raises(PlanError, match="Predecessor step_1") as error:
+    with pytest.raises(PlanError, match="step_1 is in progress") as error:
         manager.apply_steps(_s(("b", "in_progress")))
-    assert error.value.code == "plan.predecessor"
+    assert error.value.code == "plan.step_busy"
+    assert error.value.params == {"active_id": "step_1", "step_id": "step_2"}
+
+    plan = manager.apply_steps(_s(("a", "pending"), ("b", "in_progress")))
+    assert [row[2] for row in _rows(plan)] == ["pending", "in_progress"]
 
 
 def test_completed_plan_accepts_repeats_and_appended_steps_without_objective():
@@ -368,3 +372,12 @@ def test_prompt_block_marks_a_carried_plan():
 
     assert "earlier turn" in plan_prompt_block(manager)
     assert "carried" not in plan_prompt_block(manager).split("<plan-state>")[1]
+
+
+def test_a_blocked_step_can_resume_after_later_work_is_completed():
+    manager = PlanManager()
+    manager.apply_steps(_s(("a", "blocked"), ("b", "in_progress")), objective="goal")
+    manager.apply_steps(_s(("b", "completed")))
+
+    plan = manager.apply_steps(_s(("a", "in_progress")))
+    assert _rows(plan) == [("step_1", "a", "in_progress"), ("step_2", "b", "completed")]

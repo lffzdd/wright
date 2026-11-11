@@ -69,15 +69,15 @@ describe("backend data in workspace panels", () => {
     const state = view();
     state.plan = { observed_at: 105, steps: [{ id: "first", title: "Edit file", status: "in_progress", started_at: 100, ended_at: null, elapsed_ms: 5000, wait_reason: { kind: "permission", request_ids: ["p"] } }] };
     const { rerender } = render(inspector(state));
-    expect(screen.getByText("Elapsed 5.0s (including waits)")).toBeTruthy();
+    expect(screen.getByLabelText("Elapsed 5.0s (including waits)").textContent).toBe("5.0s");
     expect(screen.getByText("Awaiting permission approval")).toBeTruthy();
     await act(async () => { vi.advanceTimersByTime(2000); });
-    expect(screen.getByText("Elapsed 7.0s (including waits)")).toBeTruthy();
+    expect(screen.getByLabelText("Elapsed 7.0s (including waits)").textContent).toBe("7.0s");
     const history = { ...state, session: { ...state.session, active: false, status: "closed", execution: "idle" as const } };
     rerender(inspector(history));
-    expect(screen.getByText("Elapsed 5.0s (including waits)")).toBeTruthy();
+    expect(screen.getByLabelText("Elapsed 5.0s (including waits)").textContent).toBe("5.0s");
     await act(async () => { vi.advanceTimersByTime(10_000); });
-    expect(screen.getByText("Elapsed 5.0s (including waits)")).toBeTruthy();
+    expect(screen.getByLabelText("Elapsed 5.0s (including waits)").textContent).toBe("5.0s");
   });
 
   it("shows completed time and no elapsed value for an unstarted step", () => {
@@ -87,9 +87,30 @@ describe("backend data in workspace panels", () => {
       { id: "pending", title: "Next", status: "pending", started_at: null, ended_at: null },
     ] };
     const { container } = render(inspector(state));
-    expect(screen.getByText("Elapsed 2.0s (including waits)")).toBeTruthy();
-    expect(screen.getByText(/^Ended /)).toBeTruthy();
-    expect(container.querySelector(".step-card.pending")?.textContent).not.toContain("Elapsed");
+    // Duration on the row; the full wording and end time live in its label.
+    expect(screen.getByLabelText(/^Elapsed 2\.0s \(including waits\) · Ended /).textContent).toBe("2.0s");
+    expect(container.querySelector(".step-card.pending .step-time")).toBeNull();
+  });
+
+  it("leaves the status to the icon and expands a long note in place", () => {
+    const state = view();
+    const long = "Checked every entry point and confirmed nothing was written; the remaining diffs predate this session.";
+    state.plan = { steps: [
+      { id: "short", title: "Look", status: "completed", note: "Listed the root", started_at: 100, ended_at: 101, elapsed_ms: 1000 },
+      { id: "long", title: "Report", status: "completed", note: long, started_at: 101, ended_at: 102, elapsed_ms: 1000 },
+      { id: "stuck", title: "Push", status: "blocked", note: "no remote", started_at: null, ended_at: null },
+    ] };
+    const { container } = render(inspector(state));
+    expect(container.querySelector(".step-card.completed")?.textContent).not.toContain("Completed");
+    expect(screen.getByText("Listed the root").tagName).toBe("SMALL");
+    expect(screen.getByText("Blocked · no remote")).toBeTruthy();
+    // Steps not yet done carry their position in the plan.
+    expect([...container.querySelectorAll(".step-node")].map((node) => node.textContent)).toEqual(["", "", "3"]);
+    const note = screen.getByRole("button", { name: long });
+    expect(note.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(note);
+    expect(note.getAttribute("aria-expanded")).toBe("true");
+    expect(note.className).toContain("expanded");
   });
 
   it("clears wait details on authoritative updates without changing step state", () => {

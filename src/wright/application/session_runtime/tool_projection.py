@@ -6,6 +6,7 @@ from typing import Any
 
 _RESULT_FIELDS = frozenset({
     "ok", "err", "data", "summary", "content", "artifacts", "retention", "retention_key",
+    "display",
 })
 
 

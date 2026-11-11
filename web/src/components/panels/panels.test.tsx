@@ -221,7 +221,7 @@ describe("workspace panels", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<Inspector state={view("session-a")} sessionId="session-a" open close={() => undefined} />);
     fireEvent.click(screen.getByRole("tab", { name: /changes/i }));
-    fireEvent.change(screen.getByLabelText("Change scope"), { target: { value: "session" } });
+    fireEvent.click(screen.getByRole("radio", { name: "This session" }));
     fireEvent.click(await screen.findByRole("button", { name: /Undo \d+ available changes/ }));
     expect(await screen.findByText(/bytes changed outside this task/)).toBeDefined();
     expect(calls.filter((item) => item.includes("/review/revert"))).toHaveLength(1);

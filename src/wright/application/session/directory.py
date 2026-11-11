@@ -22,6 +22,7 @@ from uuid import uuid4
 from ...core.paths import project_id, session_dir
 from ...domain.gateway.scheduling import JobNotFoundError
 from ...domain.model.llm.model_adapters import available_models, process_model_name
+from ...domain.model.session import HistoryRewriteError
 from ...domain.model.session.errors import CheckpointError
 from ...domain.model.workspace.project import ProjectContext
 from ...domain.model.workspace.worktree import ArchiveResult
@@ -33,6 +34,7 @@ from ..composition.runtime import (
     shutdown_runtime,
 )
 from ..composition.stores import (
+    copy_session_attachments,
     open_autonomy_store,
     project_checkpoints,
     project_worktrees,
@@ -424,6 +426,44 @@ class SessionDirectory:
                 "recoverable": execution_root.is_dir(),
             },
         }
+
+    def fork(self, session_id: str, message_id: str | None = None) -> str:
+        """Save a new session holding ``session_id``'s history up to the turn
+        that contains ``message_id`` (all of it when omitted); returns its id.
+
+        The fork works in the same checkout. Files are not copied.
+        """
+        with self._lock:
+            opened = self._sessions.get(session_id)
+        if opened is not None:
+            if not opened.service.is_evictable():
+                raise SessionDirectoryError(
+                    "wait until the session is idle before forking it", kind="conflict",
+                )
+            opened.service.persist()
+        try:
+            saved = self.checkpoints.load(session_id)
+        except CheckpointError as exc:
+            raise SessionDirectoryError(str(exc), kind="not_found") from exc
+        saved_project = (saved.project_root or self.project_root).resolve()
+        if saved_project != self.project_root:
+            raise SessionDirectoryError("checkpoint belongs to a different project")
+        if saved.environment != "local":
+            # Two sessions sharing one worktree would remove it from under
+            # each other when either is archived.
+            raise SessionDirectoryError("only sessions in the project checkout can be forked")
+        fork_id = uuid4().hex[:12]
+        try:
+            end = saved.turn_end_index(message_id) if message_id else len(saved.message_records)
+            forked = saved.detach_as_fork(fork_id, end=end)
+        except HistoryRewriteError as exc:
+            raise SessionDirectoryError(str(exc)) from exc
+        if forked.attachments:
+            forked.attachments = copy_session_attachments(
+                self.project_root, session_id, fork_id, forked.attachments,
+            )
+        self.checkpoints.save(forked)
+        return fork_id
 
     def search_references(self, query: str, *, limit: int = 20) -> list[dict[str, Any]]:
         """Search the project checkout. Does not create a session or a worktree."""

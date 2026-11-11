@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import threading
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -15,10 +15,11 @@ from ..agent.control import AgentControlPlane
 from ..attachment import AttachmentRecord
 from ..command.record import CommandRecord
 from ..llm.usage import UsageRecord
-from ..planning import PlanManager
+from ..planning import PlanError, PlanManager
 from ..tool import ToolCall, ToolResult
 from .authorization import SessionAuthorization
 from .conversation import (
+    USER_INPUT_SOURCE,
     ConversationMessage,
     ImagePart,
     MessageId,
@@ -39,6 +40,10 @@ from .run import TERMINAL_RUN_STATUSES, RunRecord, RunStatus, new_run_id
 
 # Label every interactive session starts with until the user names it.
 INTERACTIVE_SESSION_LABEL = "(interactive session)"
+
+
+class HistoryRewriteError(ValueError):
+    """The history cannot be cut at the requested message."""
 
 
 @dataclass
@@ -559,6 +564,146 @@ class Session:
                 item for item in self.committed_turn_ids if item != candidate
             ]
 
+    def user_message_index(self, message_id: MessageId) -> int:
+        """Position of a message the user typed as a new turn (not an interjection)."""
+        for index, record in enumerate(self.message_records):
+            if record.id == message_id:
+                if record.source != USER_INPUT_SOURCE or record.message.get("role") != "user":
+                    raise HistoryRewriteError("only a message that started a turn can be rewound to")
+                return index
+        raise HistoryRewriteError("message not found in this session")
+
+    def turn_end_index(self, message_id: MessageId) -> int:
+        """Index just past the turn that contains ``message_id``."""
+        position = next(
+            (index for index, record in enumerate(self.message_records) if record.id == message_id),
+            None,
+        )
+        if position is None:
+            raise HistoryRewriteError("message not found in this session")
+        for index in range(position + 1, len(self.message_records)):
+            if self.message_records[index].source == USER_INPUT_SOURCE:
+                return index
+        return len(self.message_records)
+
+    def truncate_history(self, end: int) -> None:
+        """Forget every turn that starts at or after message ``end``.
+
+        Only conversation records are cut. Files the dropped turns changed,
+        usage already billed, and memory already written stay as they are.
+        Ids keep counting up, so a dropped id is never handed out again.
+        """
+        if not 0 <= end <= len(self.message_records):
+            raise HistoryRewriteError("cut point is outside the history")
+        if end < len(self.message_records) and self.message_records[end].source != USER_INPUT_SOURCE:
+            raise HistoryRewriteError("history can only be cut where a turn starts")
+        dropped = self.message_records[end:]
+        if not dropped:
+            return
+        active = self.active_run()
+        if active is not None and active.status not in TERMINAL_RUN_STATUSES:
+            raise HistoryRewriteError("a turn is still running")
+        dropped_ids = {record.id for record in dropped}
+        dropped_calls = {
+            str(call.get("id") or "")
+            for record in dropped
+            for call in record.message.get("tool_calls") or []
+            if isinstance(call, dict)
+        }
+        kept_turns: list[TurnRecord] = []
+        for turn in self.turns:
+            if turn.message_id in dropped_ids:
+                dropped_calls.update(turn.tool_execution_ids)
+            else:
+                kept_turns.append(turn)
+        # The n-th user Run belongs to the n-th user message; align from the
+        # newest, as the timeline does. Everything a dropped Run started after
+        # it (runtime-event continuations) goes with it.
+        dropped_user_turns = sum(1 for record in dropped if record.source == USER_INPUT_SOURCE)
+        user_runs = [run for run in self.runs.values() if run.source == "user_input"]
+        first_dropped = user_runs[-dropped_user_turns] if 0 < dropped_user_turns <= len(user_runs) else (
+            user_runs[0] if user_runs else None
+        )
+        if first_dropped is not None:
+            run_ids = list(self.runs)
+            for run_id in run_ids[run_ids.index(first_dropped.run_id):]:
+                del self.runs[run_id]
+        if self.active_run_id not in self.runs:
+            self.active_run_id = None
+
+        del self.message_records[end:]
+        self.turns = kept_turns
+        for call_id in dropped_calls:
+            self.tool_executions.pop(call_id, None)
+        prefix = f"{self.session_id}:"
+        self.committed_turn_ids = [
+            item for item in self.committed_turn_ids
+            if not (item.startswith(prefix) and _turn_index(item, prefix) >= end)
+        ]
+        if self.agent_root_turn_id.startswith(prefix) and _turn_index(self.agent_root_turn_id, prefix) >= end:
+            self.agent_root_turn_id = ""
+        self.active_turn_start_message_index = min(self.active_turn_start_message_index, end)
+        self.context_tokens = sum(estimate_message_tokens(record.message) for record in self.message_records)
+        self.request_context_tokens = 0
+        self.request_context_breakdown = {}
+        self._restore_plan()
+
+    def _restore_plan(self) -> None:
+        """Bring back the plan as the newest kept Run left it."""
+        latest = next(reversed(self.runs.values()), None)
+        snapshot = latest.plan if latest is not None else {}
+        revision = self.plan_manager.revision
+        try:
+            if not snapshot:
+                raise PlanError("no plan to restore", code="plan.snapshot")
+            self.plan_manager.restore(deepcopy(snapshot))
+        except PlanError:
+            self.plan_manager.reset()
+        # Revisions only move forward; viewers use them to notice a change.
+        self.plan_manager.revision = max(self.plan_manager.revision, revision + 1)
+
+    def detach_as_fork(self, session_id: str, *, end: int) -> Session:
+        """Turn this copy into a new session holding history up to ``end``.
+
+        Call it on a private copy (for example one just loaded from the
+        checkpoint): its record containers move to the new session. The fork
+        keeps the modes but none of the per-session grants, and none of the
+        source's live commands, child agents, or pending memory work.
+        """
+        if not session_id or session_id == self.session_id:
+            raise HistoryRewriteError("a fork needs a new session id")
+        self.truncate_history(end)
+        old_prefix, new_prefix = f"{self.session_id}:", f"{session_id}:"
+        authorization = SessionAuthorization(
+            session_id,
+            permission_mode=self.authorization.permission_mode,
+            interaction_mode=self.authorization.interaction_mode,
+        )
+        for run in self.runs.values():
+            run.session_id = session_id
+        title = self.display_title()
+        return replace(
+            self,
+            session_id=session_id,
+            authorization=authorization,
+            session_label=f"{title} (fork)",
+            control_plane=AgentControlPlane(),
+            agent_task_id=None,
+            commands={},
+            pending_episode_finalizes=[],
+            active_run_id=None,
+            committed_turn_ids=[
+                new_prefix + item.removeprefix(old_prefix) if item.startswith(old_prefix) else item
+                for item in self.committed_turn_ids
+            ],
+            agent_root_turn_id=(
+                new_prefix + self.agent_root_turn_id.removeprefix(old_prefix)
+                if self.agent_root_turn_id.startswith(old_prefix) else self.agent_root_turn_id
+            ),
+            _cwd_lock=threading.RLock(),
+            _commands_lock=threading.RLock(),
+        )
+
     def mark_max_steps(self) -> None:
         if self.active_run() is not None:
             self.active_run().finish("failed", error="max steps reached")
@@ -577,3 +722,9 @@ class Session:
             self.active_run().finish("cancelled", error="cancellation requested")
 
 
+def _turn_index(turn_id: str, prefix: str) -> int:
+    """Message index encoded in a root turn id; unknown shapes count as kept."""
+    try:
+        return int(turn_id.removeprefix(prefix))
+    except ValueError:
+        return -1

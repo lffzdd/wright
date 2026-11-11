@@ -667,3 +667,94 @@ def test_missing_registered_project_reports_a_recoverable_owner_error(offline_ma
         manager.preview("saved", registered_id=owner)
     assert error.value.status_code == 409
     assert calls == []
+
+
+def _user_ids(handle):
+    return [
+        item["id"] for item in handle.snapshot()["timeline"]
+        if item["kind"] == "text" and item.get("role") == "user"
+    ]
+
+
+def _texts(handle):
+    return [item["text"] for item in handle.snapshot()["timeline"] if item["kind"] == "text"]
+
+
+def test_rewind_resends_the_original_message_after_dropping_its_turn(offline_manager):
+    manager, calls = offline_manager
+    handle = manager.create(environment="local")
+    handle.submit("first", "c1")
+    _wait_completed(handle, "c1")
+    handle.submit("second", "c2")
+    _wait_completed(handle, "c2")
+    second = _user_ids(handle)[1]
+
+    handle.rewind(second, "c3")
+    _wait_completed(handle, "c3")
+
+    assert _texts(handle) == ["first", "offline response", "second", "offline response"]
+    assert _user_ids(handle)[1] != second
+    assert calls == ["model"] * 3
+    state = handle.runtime.session_state
+    assert [run.goal for run in state.runs.values()] == ["first", "second"]
+    # The rewound history is what a resumed session sees.
+    manager.close(handle.session_id)
+    assert _texts(manager.create(resume=handle.session_id)) == _texts(handle)
+
+
+def test_rewind_can_replace_the_message_text(offline_manager):
+    manager, _calls = offline_manager
+    handle = manager.create(environment="local")
+    handle.submit("first", "c1")
+    _wait_completed(handle, "c1")
+
+    handle.rewind(_user_ids(handle)[0], "c2", "first, edited")
+    _wait_completed(handle, "c2")
+
+    assert _texts(handle) == ["first, edited", "offline response"]
+
+
+def test_rewind_rejects_unknown_messages_and_empty_edits(offline_manager):
+    manager, _calls = offline_manager
+    handle = manager.create(environment="local")
+    handle.submit("first", "c1")
+    _wait_completed(handle, "c1")
+    with pytest.raises(RuntimeManagerError, match="not found"):
+        handle.rewind("msg_999", "c2")
+    with pytest.raises(RuntimeManagerError, match="empty"):
+        handle.rewind(_user_ids(handle)[0], "c3", "  ")
+    assert _texts(handle) == ["first", "offline response"]
+
+
+def test_fork_opens_a_new_session_with_history_up_to_the_chosen_turn(offline_manager):
+    manager, calls = offline_manager
+    source = manager.create(environment="local")
+    source.submit("first", "c1")
+    _wait_completed(source, "c1")
+    source.submit("second", "c2")
+    _wait_completed(source, "c2")
+    first_reply = next(
+        item["id"] for item in source.snapshot()["timeline"]
+        if item["kind"] == "text" and item.get("role") == "assistant"
+    )
+    source_id = source.session_id
+
+    fork = manager.fork(source_id, first_reply)
+
+    assert fork.session_id != source_id
+    assert _texts(fork) == ["first", "offline response"]
+    fork.submit("branch", "c3")
+    _wait_completed(fork, "c3")
+    assert _texts(fork) == ["first", "offline response", "branch", "offline response"]
+    assert calls == ["model"] * 3
+    original = manager.preview(source_id)
+    assert [item["text"] for item in original["timeline"] if item["kind"] == "text"] == [
+        "first", "offline response", "second", "offline response",
+    ]
+
+
+def test_fork_of_a_missing_session_is_404(offline_manager):
+    manager, _calls = offline_manager
+    with pytest.raises(RuntimeManagerError) as error:
+        manager.fork("missing")
+    assert error.value.status_code == 404

@@ -512,6 +512,7 @@ def _deserialize_executions(value: Any) -> dict[str, ToolExecutionRecord]:
                 content=tuple(_array(raw_result.get("content", []), "tool result.content")),
                 retention=retention,
                 retention_key=retention_key,
+                display=raw_result.get("display"),
                 artifacts=tuple(
                     ArtifactRef(
                         id=_string(_object(row, "tool artifact").get("id"), "tool artifact.id"),

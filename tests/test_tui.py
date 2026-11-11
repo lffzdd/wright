@@ -664,3 +664,43 @@ async def test_permission_modal_shows_scope_preview_and_escape_denies():
         await pilot.press("escape")
         await pilot.pause()
         assert app.result == "deny"
+
+
+@pytest.mark.anyio
+async def test_tui_transcript_keeps_reader_position_until_asked_to_follow():
+    from wright.interfaces.tui.blocks import SystemBlock
+    from wright.interfaces.tui.messages import SystemNotice
+
+    class ScrollTestApp(WrightTUI):
+        def _seed_history(self) -> None:
+            pass
+
+        def _refresh_status(self) -> None:
+            pass
+
+        def _session_loop(self) -> None:
+            pass
+
+    rt = SimpleNamespace(
+        renderer=TUIRenderer(),
+        event_queue=SimpleNamespace(put_nowait=lambda _event: None),
+    )
+    app = ScrollTestApp(rt)
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app._transcript()
+        for index in range(80):
+            transcript.mount(SystemBlock(f"line {index}"))
+        await pilot.pause()
+        app.action_scroll_end()
+        await pilot.pause()
+        assert transcript.scroll_y == transcript.max_scroll_y > 0
+
+        transcript.scroll_home(animate=False)
+        await pilot.pause()
+        app.on_system_notice(SystemNotice("new event"))
+        await pilot.pause()
+        assert transcript.scroll_y == 0
+
+        app.action_scroll_end()
+        await pilot.pause()
+        assert transcript.scroll_y == transcript.max_scroll_y

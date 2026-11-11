@@ -25,7 +25,7 @@ beforeEach(() => {
   vi.spyOn(api, "review").mockResolvedValue({ changes: [] });
   vi.spyOn(api, "patch").mockResolvedValue({ path: "src/a.ts", patch: "", truncated: false, binary: false } as never);
   vi.spyOn(api, "tree").mockImplementation(async (_id, path = "") => {
-    if (path === "") return { path: "", entries: [entry("src", "dir", "src"), entry(".mypy_cache", "dir", ".mypy_cache"), entry("README.md")] };
+    if (path === "") return { path: "", entries: [entry("src", "dir", "src"), entry(".mypy_cache", "dir", ".mypy_cache"), entry("README.md"), entry(".env"), entry(".gitignore")] };
     if (path === "src") return { path: "src", entries: [entry("a.ts", "file", "src/a.ts"), entry("lib", "dir", "src/lib")] };
     if (path === "src/lib") return { path: "src/lib", entries: [entry("deep.ts", "file", "src/lib/deep.ts")] };
     return { path, entries: [] };
@@ -64,7 +64,7 @@ describe("Files panel", () => {
     const rows = screen.getAllByRole("button", { name: /src\/a.ts/ }).filter((row) => row.classList.contains("accessed-file"));
     expect(rows).toHaveLength(1);
     expect(rows[0].querySelector(".access-tag")?.textContent).toBe("MOD");
-    expect(rows[0].getAttribute("title")).toBe("src/a.ts\nedit_file ×1 · read_file ×2");
+    expect(rows[0].getAttribute("title")).toBe("/project/src/a.ts\nedit_file ×1 · read_file ×2");
   });
 
   it("opens folders searched in the session in the tree", async () => {
@@ -98,7 +98,7 @@ describe("Files panel", () => {
     const written = screen.getByRole("button", { name: /MOD\s*src\/a.ts/ });
     expect(written.querySelector(".access-tag.modified")?.textContent).toBe("MOD");
     expect(written.querySelector(".files-status")).toBeNull();
-    expect(written.getAttribute("title")).toBe("src/a.ts\nread_file ×2 · edit_file ×1");
+    expect(written.getAttribute("title")).toBe("/project/src/a.ts\nread_file ×2 · edit_file ×1");
     expect(screen.getByRole("button", { name: /READ\s*README.md/ }).querySelector(".access-tag.read")).toBeTruthy();
     expect(screen.getByRole("button", { name: /GREP\s*src$/ }).querySelector(".access-tag.search")?.textContent).toBe("GREP");
     expect(screen.getByRole("button", { name: /LIST\s*\.$/ }).querySelector(".access-tag.list")).toBeTruthy();
@@ -150,20 +150,24 @@ describe("Files panel readability", () => {
   it("shows the latest session rows first, with a show-all toggle, and remembers collapsing", async () => {
     const state = view(); state.accessed_files = Array.from({ length: 10 }, (_, index) => ({ path: `README.md${index}`, access: "read" }));
     await openFiles(state);
-    const details = document.querySelector<HTMLDetailsElement>(".files-session");
-    // Collapsed by default; the person opens it to see the rows.
-    expect(details?.open).toBe(false);
-    fireEvent.click(details!.querySelector("summary")!);
-    expect(details?.open).toBe(true);
+    const section = document.querySelector<HTMLElement>(".files-session")!;
+    const toggle = screen.getByRole("button", { name: "Used in this session" });
+    // Collapsed by default; the person opens it to see the rows and the filters.
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
     await waitFor(() => expect(localStorage.getItem("wright.files.sessionOpen")).toBe("1"));
-    expect(details!.querySelectorAll(".accessed-file")).toHaveLength(8);
+    // The filters sit in the header row next to the toggle, not inside it.
+    expect(section.querySelector(".files-session-head")!.contains(screen.getByRole("button", { name: /^All/ }))).toBe(true);
+    expect(toggle.contains(screen.getByRole("button", { name: /^All/ }))).toBe(false);
+    expect(section.querySelectorAll(".accessed-file")).toHaveLength(8);
     expect(screen.queryByRole("button", { name: /README\.md0$/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Show all (10)" }));
-    expect(details!.querySelectorAll(".accessed-file")).toHaveLength(10);
+    expect(section.querySelectorAll(".accessed-file")).toHaveLength(10);
     fireEvent.click(screen.getByRole("button", { name: "Show fewer" }));
-    expect(details!.querySelectorAll(".accessed-file")).toHaveLength(8);
-    fireEvent.click(details!.querySelector("summary")!);
-    expect(details?.open).toBe(false);
+    expect(section.querySelectorAll(".accessed-file")).toHaveLength(8);
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
     await waitFor(() => expect(localStorage.getItem("wright.files.sessionOpen")).toBe("0"));
   });
 
@@ -219,10 +223,104 @@ describe("Files panel readability", () => {
     expect(screen.getByRole("treeitem", { name: /src/ }).querySelector(".files-used-dot")).toBeNull();
   });
 
-  it("shows the cache toggle as a labeled text button", async () => {
+  it("shows the cache toggle as an icon button that keeps its label", async () => {
     await openFiles();
     const toggle = screen.getByRole("button", { name: "Show cache folders" });
-    expect(toggle.textContent).toBe("Show cache");
+    expect(toggle.textContent).toBe("");
+    expect(toggle.querySelector("svg")).toBeTruthy();
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("puts the used mark right after the file name", async () => {
+    const state = view(); state.accessed_files = [{ path: "README.md", access: "read" }];
+    await openFiles(state);
+    const dot = screen.getByRole("treeitem", { name: /README.md/ }).querySelector(".files-used-dot");
+    expect(dot?.parentElement?.classList.contains("files-name")).toBe(true);
+  });
+
+  it("tints config dotfiles like other config files", async () => {
+    await openFiles();
+    expect(screen.getByRole("treeitem", { name: /^\.env/ }).querySelector(".ext-config")).toBeTruthy();
+    expect(screen.getByRole("treeitem", { name: /\.gitignore/ }).querySelector(".ext-config")).toBeTruthy();
+    expect(screen.getByRole("treeitem", { name: /README.md/ }).querySelector(".ext-doc")).toBeTruthy();
+  });
+
+  it("does not show a history disclaimer when the workspace is still readable", async () => {
+    vi.spyOn(api, "workspaces").mockResolvedValue({
+      selected_project_id: "project",
+      projects: [{ project_id: "project", name: "project", root: "/project", exists: true }],
+    });
+    vi.spyOn(api, "workspaceTree").mockImplementation(async (_id, path = "") => {
+      if (path === "") return { path: "", entries: [entry("README.md")] };
+      return { path, entries: [] };
+    });
+    const state = view();
+    state.session.active = false;
+    await openFiles(state);
+    expect(screen.queryByText(/may have changed/i)).toBeNull();
+    expect(screen.queryByText(/Resume this session to browse/)).toBeNull();
+  });
+
+  it("flashes a session row once when it is touched again, but not when the panel first opens", async () => {
+    const state = view(); state.accessed_files = [{ path: "README.md", access: "read" }];
+    const { rerender } = render(inspector(state));
+    fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
+    await screen.findByRole("treeitem", { name: /README.md/ });
+    const row = () => screen.getByRole("button", { name: /READ\s*README.md/ });
+    expect(row().classList.contains("files-fresh")).toBe(false);
+    rerender(inspector({ ...state, accessed_files: [...state.accessed_files, { path: "README.md", access: "read" }] }));
+    await waitFor(() => expect(row().classList.contains("files-fresh")).toBe(true));
+    await waitFor(() => expect(row().classList.contains("files-fresh")).toBe(false), { timeout: 2500 });
+  });
+
+  it("keeps the tree on screen and spins the refresh icon while it reloads", async () => {
+    await openFiles();
+    let release: () => void = () => undefined;
+    vi.mocked(api.tree).mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve({ path: "", entries: [entry("README.md")] }); }));
+    const button = screen.getByRole("button", { name: "Refresh file tree" });
+    fireEvent.click(button);
+    expect(screen.getByRole("treeitem", { name: /README.md/ })).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(button.getAttribute("aria-busy")).toBe("true");
+    release();
+    await waitFor(() => expect(button.getAttribute("aria-busy")).toBe("false"));
+  });
+
+  it("keeps the filter behind a button until asked, and Escape puts it away", async () => {
+    await openFiles();
+    expect(screen.queryByRole("searchbox")).toBeNull();
+    fireEvent.keyDown(screen.getByRole("treeitem", { name: /README.md/ }), { key: "/" });
+    const box = screen.getByRole("searchbox", { name: "Filter files in this project" });
+    expect(document.activeElement).toBe(box);
+    fireEvent.keyDown(box, { key: "Escape" });
+    expect(screen.queryByRole("searchbox")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Filter files in this project" }));
+    fireEvent.keyDown(screen.getByRole("searchbox"), { key: "f", metaKey: true });
+    expect(screen.getByRole("searchbox")).toBeTruthy();
+  });
+
+  it("shows matches under the project header and clears back to the tree", async () => {
+    vi.spyOn(api, "search").mockResolvedValue({ kind: "file", results: [{ path: "src/a.ts", name: "a.ts", kind: "file" }] });
+    const state = view(); state.accessed_files = [{ path: "README.md", access: "read" }];
+    await openFiles(state);
+    fireEvent.click(screen.getByRole("button", { name: "Filter files in this project" }));
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "a.ts" } });
+    expect(await screen.findByRole("region", { name: "Matching files" })).toBeTruthy();
+    expect(screen.queryByText("Used in this session")).toBeNull();
+    expect(screen.getByRole("button", { name: "Refresh file tree" })).toBeTruthy();
+    fireEvent.blur(screen.getByRole("searchbox"));
+    expect(screen.getByRole("searchbox")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Clear filter" }));
+    expect(screen.queryByRole("searchbox")).toBeNull();
+    expect(await screen.findByRole("treeitem", { name: /README.md/ })).toBeTruthy();
+    expect(screen.getByText("Used in this session")).toBeTruthy();
+  });
+
+  it("shows the full path on hover instead of repeating a root file's name", async () => {
+    await openFiles();
+    expect(screen.getByRole("treeitem", { name: /README.md/ }).getAttribute("title")).toBe("/project/README.md");
+    fireEvent.click(screen.getByRole("treeitem", { name: /src/ }));
+    expect(screen.getByRole("treeitem", { name: /src/ }).getAttribute("title")).toBe("/project/src");
+    expect((await screen.findByRole("treeitem", { name: /a.ts/ })).getAttribute("title")).toBe("/project/src/a.ts");
   });
 });

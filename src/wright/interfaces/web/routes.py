@@ -55,6 +55,18 @@ class ModelRequest(BaseModel):
     model: str
 
 
+class RewindRequest(BaseModel):
+    message_id: str
+    command_id: str
+    # Omitted: send the original message again.
+    prompt: str | None = None
+
+
+class ForkRequest(BaseModel):
+    # Omitted: copy the whole conversation.
+    message_id: str | None = None
+
+
 class TurnRequest(BaseModel):
     execution_mode: Literal["sandbox", "host"] | None = None
     prompt: str = ""
@@ -228,6 +240,24 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
                 body.document_ids,
                 body.references,
             )
+        except RuntimeManagerError as exc:
+            raise HTTPException(status_code=exc.status_code or 409, detail=str(exc)) from exc
+
+    @router.post("/sessions/{session_id}/rewind")
+    def rewind_turn(session_id: str, body: RewindRequest, request: Request) -> dict[str, Any]:
+        """Forget a turn and everything after it, then send it again."""
+        _require_auth(request, auth)
+        try:
+            return manager.get(session_id).rewind(body.message_id, body.command_id, body.prompt)
+        except RuntimeManagerError as exc:
+            raise HTTPException(status_code=exc.status_code or 409, detail=str(exc)) from exc
+
+    @router.post("/sessions/{session_id}/fork")
+    def fork_session(session_id: str, body: ForkRequest, request: Request) -> dict[str, Any]:
+        """Open a new session that starts with this one's history."""
+        _require_auth(request, auth)
+        try:
+            return manager.fork(session_id, body.message_id).snapshot()
         except RuntimeManagerError as exc:
             raise HTTPException(status_code=exc.status_code or 409, detail=str(exc)) from exc
 

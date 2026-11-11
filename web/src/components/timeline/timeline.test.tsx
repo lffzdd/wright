@@ -446,3 +446,53 @@ describe("revealing a tool call", () => {
     expect(await screen.findByText("That tool call is not in this conversation view.")).toBeTruthy();
   });
 });
+
+describe("message actions", () => {
+  const settled = (): ViewState => ({
+    ...fresh(),
+    timeline: [
+      { id: "msg_1", kind: "text", role: "user", text: "first", order: 0 },
+      { id: "msg_2", kind: "text", role: "assistant", text: "one", order: 1 },
+      { id: "msg_3", kind: "text", role: "user", text: "second", order: 2 },
+      { id: "call-1", kind: "edit", name: "edit", arguments: { path: "a.ts" }, order: 3 },
+      { id: "msg_4", kind: "text", role: "assistant", text: "two", order: 4 },
+    ],
+  });
+  const actions = () => ({ regenerate: vi.fn(), edit: vi.fn(), fork: vi.fn() });
+
+  it("offers edit on the last prompt, regenerate on the last reply, and fork on every reply", () => {
+    const handlers = actions();
+    render(<Timeline state={settled()} respond={async () => true} cancelQueued={() => undefined} messageActions={handlers} />);
+
+    expect(screen.getAllByRole("button", { name: "Edit and resend" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Regenerate reply" })).toHaveLength(1);
+    const forks = screen.getAllByRole("button", { name: "Fork into a new session from here" });
+    expect(forks).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit and resend" }));
+    expect(handlers.edit).toHaveBeenCalledWith("msg_3", "second");
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate reply" }));
+    expect(handlers.regenerate).toHaveBeenCalledWith("msg_3");
+    fireEvent.click(forks[0]);
+    expect(handlers.fork).toHaveBeenCalledWith("msg_2");
+  });
+
+  it("hides history-changing actions while a turn runs, work is queued, or nothing is wired", () => {
+    const running = emit(settled(), "turn.started", { prompt: "third" });
+    const queued = { ...settled(), queued_commands: [{ command_id: "q", prompt: "later" }] };
+    for (const [state, handlers] of [[running, actions()], [queued, actions()], [settled(), undefined]] as const) {
+      render(<Timeline state={state} respond={async () => true} cancelQueued={() => undefined} messageActions={handlers} />);
+      expect(screen.queryByRole("button", { name: "Edit and resend" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Regenerate reply" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Fork into a new session from here" })).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("does not offer regenerate when the last prompt has no reply yet", () => {
+    const state = { ...settled(), timeline: (settled().timeline ?? []).slice(0, 3) };
+    render(<Timeline state={state} respond={async () => true} cancelQueued={() => undefined} messageActions={actions()} />);
+    expect(screen.queryByRole("button", { name: "Regenerate reply" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Edit and resend" })).toBeDefined();
+  });
+});

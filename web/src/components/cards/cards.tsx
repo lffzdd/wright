@@ -1,4 +1,4 @@
-import { ArrowSquareOut, ArrowsClockwise, BookOpen, Brain, CaretDown, ChatCircleDots, Check, Circle, File, FileText, FolderSimple, Globe, Lightbulb, ListChecks, MagnifyingGlass, Minus, PaperPlaneRight, PencilSimple, TerminalWindow, Warning, Wrench, X, type Icon as PhosphorIcon } from "@phosphor-icons/react";
+import { ArrowSquareOut, ArrowsClockwise, ArrowsSplit, BookOpen, Brain, CaretDown, ChatCircleDots, Check, Circle, Copy, File, FileText, FolderSimple, Globe, Lightbulb, ListChecks, MagnifyingGlass, Minus, PaperPlaneRight, PencilSimple, TerminalWindow, Warning, Wrench, X, type Icon as PhosphorIcon } from "@phosphor-icons/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { MarkdownContent } from "../../Markdown";
 import { api } from "../../api";
@@ -274,10 +274,14 @@ function toolIcon(name: string, category: StepCategory): PhosphorIcon {
   }
 }
 
-export function UserMessage({ text, userLabel, timestamp, tocId, enter, interjection }: { text: string; userLabel?: string; timestamp?: string; tocId?: string; enter?: boolean; interjection?: boolean }) {
+export function UserMessage({ text, userLabel, timestamp, tocId, enter, interjection, onEdit }: { text: string; userLabel?: string; timestamp?: string; tocId?: string; enter?: boolean; interjection?: boolean; onEdit?: () => void }) {
   const tr = useT();
   const parts = text.split(/(@(?:[\w.-]+\/)*[\w.-]+)/g);
   return <div className={`msg-row user-msg${enter ? " enter" : ""}`} data-toc-id={tocId}>
+    <div className="msg-actions">
+      {onEdit && <MessageActionButton label={tr("web.edit_resend")} onClick={onEdit}><PencilSimple size={14} /></MessageActionButton>}
+      <MessageCopyButton text={text} label={tr("web.copy_message")} />
+    </div>
     <div className="msg-card">
       <div className="msg-card-head">
         <span><strong>{userLabel || tr("web.you")}</strong> <span className="muted">{tr(interjection ? "web.user_interjection" : "web.user_instruction")}</span></span>
@@ -288,12 +292,44 @@ export function UserMessage({ text, userLabel, timestamp, tocId, enter, interjec
   </div>;
 }
 
-export function AssistantMessage({ text, enter }: { text: string; enter?: boolean }) {
+export function AssistantMessage({ text, enter, onRegenerate, onFork }: { text: string; enter?: boolean; onRegenerate?: () => void; onFork?: () => void }) {
+  const tr = useT();
   return <div className={`msg-row assistant-msg${enter ? " enter" : ""}`}>
     <div className="msg-card">
       <div className="msg-body"><MarkdownContent content={text} /></div>
+      <div className="msg-actions">
+        <MessageCopyButton text={text} label={tr("web.copy_reply")} />
+        {onRegenerate && <MessageActionButton label={tr("web.regenerate")} onClick={onRegenerate}><ArrowsClockwise size={14} /></MessageActionButton>}
+        {onFork && <MessageActionButton label={tr("web.fork_here")} onClick={onFork}><ArrowsSplit size={14} /></MessageActionButton>}
+      </div>
     </div>
   </div>;
+}
+
+function MessageActionButton({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
+  return <button type="button" className="icon-button msg-action" onClick={onClick} title={label} aria-label={label}>{children}</button>;
+}
+
+/** Copies a message's raw text; the icon turns into a check for a moment. */
+function MessageCopyButton({ text, label }: { text: string; label: string }) {
+  const tr = useT();
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      return;
+    }
+    setCopied(true);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopied(false), 2000);
+  };
+  const title = copied ? tr("web.copied") : label;
+  return <button type="button" className="icon-button msg-action" onClick={copy} title={title} aria-label={title}>
+    {copied ? <Check size={14} /> : <Copy size={14} />}
+  </button>;
 }
 
 export function SummaryRow({ text, durationMs, enter }: { text: string; durationMs?: number | null; enter?: boolean }) {
@@ -388,6 +424,28 @@ function SandboxDenialHint({ denial, sessionId }: { denial: SandboxDenial; sessi
 
 type PlanStep = { id: string; title: string; status: string; note?: string };
 type PlanView = { objective: string; steps: PlanStep[] };
+type PlanRejection = { code: string; params: Record<string, string> };
+
+/** The plan rule that turned an update down, from ToolResult.display; the plan itself did not change. */
+export function planRejection(display: unknown): PlanRejection | null {
+  const rejected = display && typeof display === "object" ? (display as Record<string, unknown>).rejected : null;
+  if (!rejected || typeof rejected !== "object") return null;
+  const { code, params } = rejected as Record<string, unknown>;
+  return {
+    code: textOf(code),
+    params: params && typeof params === "object" ? Object.fromEntries(Object.entries(params).map(([key, value]) => [key, textOf(value)])) : {},
+  };
+}
+
+// Params of a plan rejection that name the step standing in the way.
+const BLOCKER_PARAMS = ["active_id"];
+
+/** The status a call asked for on one step, matching its steps by id, else by title. */
+function attemptedStatus(args: Record<string, unknown> | undefined, step: PlanStep): string {
+  const submitted = Array.isArray(args?.steps) ? args.steps as Array<Record<string, unknown>> : [];
+  const match = submitted.find((item) => item && typeof item === "object" && (item.id ? textOf(item.id) === step.id : textOf(item.title) === step.title));
+  return match ? textOf(match.status) : "";
+}
 
 /** The plan a plan tool returned, or null when its result holds none. */
 function planOf(source: Record<string, unknown> | null | undefined): PlanView | null {
@@ -407,14 +465,24 @@ function PlanMark({ status }: { status: string }) {
   return <Circle size={12} className="plan-mark pending" aria-label={label} />;
 }
 
-/** A plan as a checklist; the step this call changed stands out and shows its note. */
-function PlanChecklist({ plan, focusId }: { plan: PlanView; focusId?: string }) {
+/**
+ * A plan as a checklist; the step this call changed stands out and shows its note.
+ * For a rejected update, the step it tried to change shows the status it asked
+ * for, and the step that stood in the way is marked as the blocker.
+ */
+function PlanChecklist({ plan, focusId, blockerIds = [], attempted = "" }: { plan: PlanView; focusId?: string; blockerIds?: string[]; attempted?: string }) {
+  const tr = useT();
+  const role = (step: PlanStep) => focusId === step.id ? " focus" : blockerIds.includes(step.id) ? " blocker" : focusId ? " dim" : "";
   return <div className="plan-checklist">
     {plan.objective && <p className="plan-objective">{plan.objective}</p>}
     {plan.steps.length > 0 && <ol>
-      {plan.steps.map((step) => <li key={step.id || step.title} className={`${step.status}${focusId === step.id ? " focus" : ""}${focusId && focusId !== step.id ? " dim" : ""}`}>
+      {plan.steps.map((step) => <li key={step.id || step.title} className={`${step.status}${role(step)}`}>
         <PlanMark status={step.status} />
-        <div><span>{step.title}</span>{step.note && (!focusId || focusId === step.id) && <small>{step.note}</small>}</div>
+        <div>
+          <span>{step.title}</span>
+          {attempted && focusId === step.id && <small className="plan-attempt">{tr("web.plan.tried", { status: tr(`web.plan.status.${attempted}`) })}</small>}
+          {step.note && (!focusId || focusId === step.id) && <small>{step.note}</small>}
+        </div>
       </li>)}
     </ol>}
   </div>;
@@ -430,7 +498,7 @@ function ReadToolbar({ path, line }: { path: string; line: number }) {
 }
 
 export function ToolCard({
-  name, phase, args, result, data, duration, output, kind, sessionId, enter, live, callId,
+  name, phase, args, result, data, display, duration, output, kind, sessionId, enter, live, callId,
 }: {
   enter?: boolean;
   /** Anchors the card so other views can scroll to this call. */
@@ -443,6 +511,8 @@ export function ToolCard({
   args?: Record<string, unknown>;
   result?: Record<string, unknown> | null;
   data?: unknown;
+  /** ToolResult.display: what the interface shows when it differs from the model's data. */
+  display?: unknown;
   duration?: number | null;
   output?: string;
   kind?: string;
@@ -457,8 +527,6 @@ export function ToolCard({
   const raw = output || (result ? (typeof result.output === "string" ? result.output : JSON.stringify(result, null, 2)) : "");
   const metricSource = data && typeof data === "object" ? data as Record<string, unknown> : result;
   const denied = phase === "failed" && (metricSource?.permission as { decision?: unknown } | undefined)?.decision === "deny";
-  // Derived until the person toggles it, so a live card and a reloaded one agree.
-  const open = toggled ?? (!denied && (phase === "failed" || phase === "running" || (family === "edit" && Boolean(live))));
   const hasDiff = family === "edit" && typeof metricSource?.diff === "string";
   const body = hasDiff ? metricSource.diff as string : compactToolBody(name, raw, result ?? (data && typeof data === "object" ? data as Record<string, unknown> : null));
   const lowered = name.toLowerCase();
@@ -468,7 +536,11 @@ export function ToolCard({
   const matches = isSearch ? searchMatches(metricSource) : null;
   const directory = isDirectory && Array.isArray(metricSource?.entries) ? metricSource : null;
   const content = !isDirectory && !isSearch && family !== "shell" && family !== "edit" && typeof metricSource?.content === "string" ? metricSource.content : null;
-  const failed = phase === "failed" || (code !== null && code !== 0);
+  // A plan rule turning an update down is not a tool failure: the plan is unchanged and the model retries.
+  const rejection = phase === "failed" && category === "plans" ? planRejection(display) : null;
+  const failed = !rejection && (phase === "failed" || (code !== null && code !== 0));
+  // Derived until the person toggles it, so a live card and a reloaded one agree.
+  const open = toggled ?? (!denied && !rejection && (phase === "failed" || phase === "running" || (family === "edit" && Boolean(live))));
   const Icon = failed && !denied ? X : toolIcon(name, category);
   const bodyLines = body.split("\n").filter(Boolean);
   const added = family === "edit" && typeof metricSource?.additions === "number" ? metricSource.additions : family === "edit" ? bodyLines.filter((line) => line.startsWith("+")).length : 0;
@@ -481,8 +553,10 @@ export function ToolCard({
   const readRange = category === "reads" && phase !== "failed" && metricSource?.unchanged !== true
     && typeof metricSource?.start_line === "number" && typeof metricSource?.end_line === "number" && metricSource.end_line >= metricSource.start_line
     ? { start: metricSource.start_line, end: metricSource.end_line } : null;
-  const plan = category === "plans" && phase !== "failed" ? planOf(metricSource) : null;
-  const planFocus = plan && typeof args?.step_id === "string" ? plan.steps.find((step) => step.id === args.step_id) : undefined;
+  const planSource = display && typeof display === "object" ? display as Record<string, unknown> : metricSource;
+  const plan = category === "plans" && (phase !== "failed" || rejection) ? planOf(planSource) : null;
+  const focusId = rejection ? rejection.params.step_id : typeof args?.step_id === "string" ? args.step_id : undefined;
+  const planFocus = plan && focusId ? plan.steps.find((step) => step.id === focusId) : undefined;
   const planHeadline = plan ? (planFocus?.title ?? plan.objective) : "";
   return <div className={`tl-indent${enter ? " enter" : ""}`} data-call-id={callId || undefined}>
     <section className={`tool-card ${open ? "open" : ""}`}>
@@ -499,7 +573,8 @@ export function ToolCard({
           </>}
         </span>
         <span className="tool-meta">
-          {phase === "failed" && code === null && <span className={denied ? "denied-pill" : "fail-pill"}>{tr(denied ? "web.tool_denied" : "web.status.failed")}</span>}
+          {rejection && <span className="denied-pill">{tr("web.plan.not_applied")}</span>}
+          {phase === "failed" && code === null && !rejection && <span className={denied ? "denied-pill" : "fail-pill"}>{tr(denied ? "web.tool_denied" : "web.status.failed")}</span>}
           {directoryCount > 0 && phase === "succeeded" && <span className="step-meta">{tr("web.n_files", { count: directoryCount })}{durationLabel ? ` (${durationLabel})` : ""}</span>}
           {matches && phase === "succeeded" && <span className="step-meta">{tr("web.steps.match_count", { count: matches.length, files: new Set(matches.map((match) => String(match.path ?? ""))).size })}</span>}
           {family === "edit" && phase === "succeeded" && <span className="muted edit-summary">{t("web.applied")}</span>}
@@ -512,7 +587,10 @@ export function ToolCard({
       {open && <div className={`tool-card-body${failed && !denied ? " failed" : ""}`}>
         {family === "shell" && command && <div className="term-cmd">$ {command}</div>}
         {readRange && path && <ReadToolbar path={path} line={readRange.start} />}
-        {plan ? <PlanChecklist plan={plan} focusId={planFocus?.id} />
+        {rejection && body && <p className="plan-rejection">{body}</p>}
+        {plan ? <PlanChecklist plan={plan} focusId={planFocus?.id}
+          blockerIds={rejection ? BLOCKER_PARAMS.map((key) => rejection.params[key]).filter(Boolean) : []}
+          attempted={rejection && planFocus ? attemptedStatus(args, planFocus) : ""} />
           : directory ? <DirectoryTree source={directory} />
           : matches && phase === "succeeded" ? <SearchResults matches={matches} pattern={pattern} literal={metricSource?.fixed_string === true || args?.fixed_string === true} />
           : content !== null && isNumbered(content) ? <NumberedContent text={content} path={path} />
@@ -588,16 +666,17 @@ export function toolCardFromTimeline(item: TimelineItem, sessionId?: string, ent
     call_id: item.call_id || item.id, name: item.name || item.kind,
     arguments: item.arguments, output: item.output,
     data: envelope ? result.data : result,
+    display: envelope ? result.display : undefined,
     err: envelope ? textOf(result.err) : undefined,
   };
   if (tool.name === "ask_user") return <QuestionRecord key={item.id} args={tool.arguments} data={tool.data} phase={item.phase} enter={enter} />;
   const data = tool.data && typeof tool.data === "object" ? tool.data as Record<string, unknown> : null;
-  return <ToolCard key={item.id} callId={tool.call_id} name={tool.name} phase={item.phase} args={tool.arguments} result={data} duration={item.duration_ms} output={toolOutput(tool)} kind={item.kind} sessionId={sessionId} enter={enter} live={live} />;
+  return <ToolCard key={item.id} callId={tool.call_id} name={tool.name} phase={item.phase} args={tool.arguments} result={data} display={tool.display} duration={item.duration_ms} output={toolOutput(tool)} kind={item.kind} sessionId={sessionId} enter={enter} live={live} />;
 }
 
 export function toolCardFromState(tool: ToolState, sessionId?: string, enter?: boolean, live?: boolean) {
   if (tool.name === "ask_user") return <QuestionRecord key={tool.call_id} args={tool.arguments} data={tool.data} phase={tool.phase} enter={enter} />;
-  return <ToolCard key={tool.call_id} callId={tool.call_id} name={tool.name} phase={tool.phase} args={tool.arguments} data={tool.data} output={toolOutput(tool)} sessionId={sessionId} enter={enter} live={live} />;
+  return <ToolCard key={tool.call_id} callId={tool.call_id} name={tool.name} phase={tool.phase} args={tool.arguments} data={tool.data} display={tool.display} output={toolOutput(tool)} sessionId={sessionId} enter={enter} live={live} />;
 }
 
 export function InteractionCard({ sessionId, interaction, respond, root }: {

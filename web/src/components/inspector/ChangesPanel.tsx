@@ -1,9 +1,10 @@
-import { ArrowsOutSimple, ArrowClockwise, ChatCircle, X } from "@phosphor-icons/react";
+import { ArrowsOutSimple, ArrowClockwise, ChatCircle, Info, X } from "@phosphor-icons/react";
 import { confirmDialog } from "../ui/dialogs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api";
 import { DiffViewer, type DiffFeedbackLine } from "../../DiffViewer";
 import { useT } from "../../i18n";
+import { SegmentedControl } from "../ui/SegmentedControl";
 import type { ChangeAction, ChangePatch, ChangesSummary, GitChange, GitChangeScope, ReviewChange, ViewState } from "../../types";
 
 type Row = GitChange & { review?: ReviewChange };
@@ -305,8 +306,18 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
   };
 
   return <div className="changes-panel">
-    <div className="changes-toolbar"><label className="changes-scope"><span className="sr-only">{tr("web.changes.scope")}</span><select aria-label={tr("web.changes.scope")} value={view} disabled={actionPending} onChange={(event) => setView(event.target.value as ChangeView)}>{views.map((value) => <option key={value} value={value}>{tr(`web.changes.view.${value}`)}</option>)}</select></label><button type="button" className="icon-button" aria-label={tr("web.changes.refresh")} title={tr("web.changes.refresh")} disabled={loading || actionPending} onClick={() => setRefresh((value) => value + 1)}><ArrowClockwise size={15} /></button></div>
-    <p className="changes-scope-help">{tr(`web.changes.help.${view}`)}</p>
+    <div className="changes-toolbar">
+      <SegmentedControl className="changes-view-switch" value={view} ariaLabel={tr("web.changes.scope")}
+        describedBy={`changes-scope-help-${sessionId}`} disabled={actionPending}
+        options={views.map((value) => ({ value, label: tr(`web.changes.view.${value}`), title: tr(`web.changes.help.${value}`) }))}
+        onChange={setView} />
+      <div className="changes-toolbar-actions">
+        <span className="changes-scope-info" title={tr(`web.changes.help.${view}`)} aria-hidden="true"><Info size={15} /></span>
+        <button type="button" className="icon-button" aria-label={tr("web.changes.refresh")} title={tr("web.changes.refresh")} disabled={loading || actionPending} onClick={() => setRefresh((value) => value + 1)}><ArrowClockwise size={15} /></button>
+      </div>
+    </div>
+    {/* What the scope covers is reference, not news: a tooltip for sight, a description for screen readers. */}
+    <p className="sr-only" id={`changes-scope-help-${sessionId}`}>{tr(`web.changes.help.${view}`)}</p>
     {owned && !error && owned.git !== false && <div className="changes-summary"><span>{tr("web.changes.count", { count: fileCount })}</span><span className="diff-stats"><span className="stat-add">+{stats.add}</span><span className="stat-del">−{stats.del}</span><DiffBar add={stats.add} del={stats.del} /></span></div>}
     {runtimeBusy && <p className="hint">{tr("web.changes.busy")}</p>}
     {loading && <p className="hint" role="status">{tr("web.inspector_loading")}</p>}

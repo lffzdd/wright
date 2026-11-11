@@ -42,6 +42,8 @@ export type ToolState = {
   ok?: boolean;
   err?: string;
   data?: unknown;
+  // Interface-only payload from ToolResult.display (e.g. the plan checklist).
+  display?: unknown;
   phase?: "planned" | "awaiting_approval" | "running" | "succeeded" | "failed";
   artifacts?: ArtifactRef[];
 };

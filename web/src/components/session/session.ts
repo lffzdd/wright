@@ -1,4 +1,5 @@
 import { t } from "../../i18n";
+import type { TimelineItem } from "../../types";
 
 export function formatAgo(iso?: string): string {
   if (!iso) return "";
@@ -31,4 +32,38 @@ export function shortPath(path: string, keep = 3): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
   if (parts.length <= keep) return path;
   return `…/${parts.slice(-keep).join("/")}`;
+}
+
+/** The conversation's messages as Markdown; tool calls and reasoning are left out. */
+export function conversationMarkdown(title: string, timeline: TimelineItem[], tr: typeof t): string {
+  const blocks = [`# ${title}`];
+  for (const item of timeline) {
+    const text = item.text?.trim();
+    if (item.kind !== "text" || !text) continue;
+    const speaker = item.role === "user" ? tr("web.you") : "Wright";
+    blocks.push(`## ${speaker}`, text);
+  }
+  return `${blocks.join("\n\n")}\n`;
+}
+
+/** Turns a title into a file name that every desktop OS accepts. */
+export function markdownFileName(title: string): string {
+  const base = title.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+  return `${base || "conversation"}.md`;
+}
+
+/** What dropping a turn leaves behind: files its edits touched, and whether shell commands ran. */
+export function rewindImpact(timeline: TimelineItem[], messageId: string): { files: string[]; shell: boolean } {
+  const start = timeline.findIndex((item) => item.id === messageId);
+  if (start < 0) return { files: [], shell: false };
+  const files = new Set<string>();
+  let shell = false;
+  for (const item of timeline.slice(start)) {
+    if (item.kind === "shell") shell = true;
+    if (item.kind !== "edit") continue;
+    const args = item.arguments ?? {};
+    const path = ["path", "file_path", "file"].map((key) => args[key]).find((value) => typeof value === "string" && value);
+    if (typeof path === "string") files.add(path);
+  }
+  return { files: [...files], shell };
 }

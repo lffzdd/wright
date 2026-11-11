@@ -1,8 +1,8 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { marked } from "marked";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { t } from "./i18n";
-import { InteractionCard, ToolCard } from "./components/cards/cards";
+import { AssistantMessage, InteractionCard, ToolCard, UserMessage } from "./components/cards/cards";
 import { SessionRail } from "./components/session/SessionRail";
 import { Composer, visibleModels } from "./components/composer/Composer";
 import { sessionTitle } from "./components/session/session";
@@ -12,6 +12,35 @@ import { MarkdownContent, markdownChunks } from "./Markdown";
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+});
+
+describe("message copy buttons", () => {
+  it("copies the raw Markdown of a reply and confirms it", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const reply = "## Result\n\n- **one**\n\n```py\nprint(1)\n```";
+    render(<AssistantMessage text={reply} />);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: t("web.copy_reply") })); });
+    expect(writeText).toHaveBeenCalledWith(reply);
+    expect(screen.getByRole("button", { name: t("web.copied") })).toBeDefined();
+  });
+
+  it("copies a user message verbatim, including file references", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    render(<UserMessage text="fix @src/a.ts please" />);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: t("web.copy_message") })); });
+    expect(writeText).toHaveBeenCalledWith("fix @src/a.ts please");
+  });
+
+  it("keeps the copy label when the clipboard refuses the write", async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    render(<UserMessage text="hello" />);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: t("web.copy_message") })); });
+    expect(screen.getByRole("button", { name: t("web.copy_message") })).toBeDefined();
+    expect(screen.queryByRole("button", { name: t("web.copied") })).toBeNull();
+  });
 });
 
 describe("MarkdownContent", () => {

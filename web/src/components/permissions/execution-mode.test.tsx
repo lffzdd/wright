@@ -11,6 +11,9 @@ import { emptyDraft } from "../composer/draft";
 const grants: Grants = { version: "1", grants: [], effective_policy: [], execution_mode: "sandbox", sandbox: { available: false, state: "failed", platform: "win32", provider: "Windows" } };
 beforeEach(() => setLocale("en"));
 afterEach(() => { cleanup(); vi.restoreAllMocks(); setLocale("en"); });
+const pickShellExecution = (label: RegExp) => {
+  fireEvent.click(screen.getByRole("radio", { name: label }));
+};
 it("defaults to sandbox and chooses host independently of the worktree", () => {
   function Create() { const [draft, setDraft] = useState(emptyDraft()); return <EnvironmentChoice sessionId="new" draft={draft} git updateDraft={(_, patch) => setDraft(patch)} />; }
   render(<Create />);
@@ -45,20 +48,30 @@ it("switches explicitly through policy and refreshes server facts", async () => 
   vi.spyOn(api, "grants").mockResolvedValue({ ...grants, execution_mode: "host" });
   render(<PermissionsPanel sessionId="s" grants={grants} update={update} interactionMode="agent" permissionMode="default" />);
   expect(policy).not.toHaveBeenCalled();
-  fireEvent.change(screen.getByRole("combobox", { name: "Shell execution" }), { target: { value: "host" } });
+  pickShellExecution(/Host \(no sandbox\)/);
   await waitFor(() => expect(policy).toHaveBeenCalledWith("s", { execution_mode: "host" }));
   await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ execution_mode: "host" })));
 });
 it("retains the mode on a 409 without retrying", async () => {
   const policy = vi.spyOn(api, "policy").mockRejectedValue(new ApiError("Stop background Shell before switching", 409));
   render(<PermissionsPanel sessionId="s" grants={grants} update={vi.fn()} interactionMode="agent" permissionMode="default" />);
-  fireEvent.change(screen.getByRole("combobox", { name: "Shell execution" }), { target: { value: "host" } });
+  pickShellExecution(/Host \(no sandbox\)/);
   expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Stop background Shell before switching");
-  expect(screen.getByRole("combobox", { name: "Shell execution" })).toHaveProperty("value", "sandbox"); expect(policy).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("radio", { name: "Sandbox (default)" }).getAttribute("aria-checked")).toBe("true");
+  expect(policy).toHaveBeenCalledTimes(1);
 });
 it("disables busy switching and localizes the host scope", () => {
   setLocale("zh-CN");
   render(<PermissionsPanel sessionId="s" grants={{ ...grants, execution_mode: "host" }} update={vi.fn()} executionBusy interactionMode="plan" permissionMode="default" />);
-  expect(screen.getByRole("combobox", { name: "Shell 执行方式" })).toHaveProperty("disabled", true);
+  expect(screen.getByRole("radio", { name: "宿主（无沙箱）" })).toHaveProperty("disabled", true);
+  expect(screen.getByRole("radio", { name: "沙箱（默认）" })).toHaveProperty("disabled", true);
   expect(screen.getByText(/Plan 和 Ask 仍禁止 Shell/)).toBeTruthy();
+});
+
+it("spells out mode caveats only for the broadest mode", () => {
+  const { rerender } = render(<PermissionsPanel sessionId="s" grants={grants} update={vi.fn()} interactionMode="agent" permissionMode="default" />);
+  expect(document.querySelector(".perm-mode-help")).toBeNull();
+  expect(screen.getByRole("radio", { name: /Ask/ }).getAttribute("title")).toMatch(/ask first/);
+  rerender(<PermissionsPanel sessionId="s" grants={{ ...grants, permission_mode: "bypass" }} update={vi.fn()} interactionMode="agent" permissionMode="bypass" />);
+  expect(document.querySelector(".perm-mode-help")?.textContent).toBeTruthy();
 });

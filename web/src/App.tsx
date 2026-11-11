@@ -1,4 +1,4 @@
-import { Archive, Brain, Clock, Copy, DotsThree, Gear, GitBranch, MagnifyingGlass, Moon, PencilSimple, Scroll, SidebarSimple, Sun, Warning, X, XCircle } from "@phosphor-icons/react";
+import { Archive, Brain, Clock, Copy, DotsThree, DownloadSimple, Gear, GitBranch, MagnifyingGlass, Moon, PencilSimple, Scroll, SidebarSimple, Sun, Warning, X, XCircle } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { api, ApiError, bootstrap } from "./api";
 import { browserLocale, setLocale, useT } from "./i18n";
@@ -8,18 +8,18 @@ import { applyEvent } from "./reducer";
 import type { FileReference, SessionSummary, Snapshot, ViewState } from "./types";
 import { Composer, EnvironmentChoice } from "./components/composer/Composer";
 import { emptyDraft, type Draft } from "./components/composer/draft";
-import { Inspector } from "./components/inspector/Inspector";
+import { Inspector, type InspectorTab } from "./components/inspector/Inspector";
 import { InspectorResizeHandle } from "./components/inspector/InspectorResizeHandle";
 import { MemoryPage, RulesPage, SchedulesPage, SearchDialog, SettingsPage } from "./components/panels/panels";
 import { clampInspectorWidth, defaultInspectorWidth, parseInspectorWidth } from "./inspectorWidth";
 import { ContextRing } from "./components/session/ContextRing";
 import { SessionRail } from "./components/session/SessionRail";
-import { sessionTitle } from "./components/session/session";
+import { conversationMarkdown, markdownFileName, rewindImpact, sessionTitle } from "./components/session/session";
 import { AddWorkspaceDialog } from "./components/session/AddWorkspaceDialog";
-import { confirmDialog, DialogHost } from "./components/ui/dialogs";
+import { confirmDialog, DialogHost, promptDialog } from "./components/ui/dialogs";
 import { InlineRename } from "./components/ui/InlineRename";
 import { MenuButton } from "./components/ui/Menu";
-import { InteractionDock, Timeline } from "./components/timeline/Timeline";
+import { InteractionDock, Timeline, type MessageActions } from "./components/timeline/Timeline";
 import { OpenFileContext } from "./components/code/openFile";
 
 
@@ -78,6 +78,7 @@ export default function App() {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [addingWorkspace, setAddingWorkspace] = useState(false);
   const [callFocus, setCallFocus] = useState<{ sessionId: string; callId: string; request: number } | null>(null);
+  const [inspectorTab, setInspectorTab] = useState<{ tab: InspectorTab; request: number } | undefined>(undefined);
   const [fileFocus, setFileFocus] = useState<{ sessionId: string; path: string; line?: number; request: number } | null>(null);
   const [booted, setBooted] = useState(false);
   const socket = useRef<WebSocket | null>(null);
@@ -218,7 +219,7 @@ export default function App() {
     return () => media.removeEventListener("change", changed);
   }, []);
 
-  useEffect(() => { setFileFocus(null); setCallFocus(null); }, [selected]);
+  useEffect(() => { setFileFocus(null); setCallFocus(null); setInspectorTab(undefined); }, [selected]);
 
   const closeInspector = useCallback(() => {
     setNarrowInspector(false);
@@ -724,6 +725,48 @@ export default function App() {
     });
   }, [state?.resync, selected]);
 
+  /** Explains what a rewind drops and keeps; files on disk are never restored. */
+  const rewindNotes = (messageId: string) => {
+    const impact = rewindImpact(state?.timeline ?? [], messageId);
+    return [
+      tr("web.rewind_help"),
+      impact.files.length ? tr("web.rewind_files", { files: impact.files.join(", ") }) : "",
+      impact.shell ? tr("web.rewind_shell") : "",
+    ].filter(Boolean).join("\n\n");
+  };
+  const rewind = (sessionId: string, messageId: string, prompt?: string) =>
+    api.rewind(sessionId, { message_id: messageId, command_id: crypto.randomUUID(), ...(prompt === undefined ? {} : { prompt }) })
+      .then(() => { refreshSessions().catch(() => undefined); });
+  const messageActions: MessageActions | undefined = state && browsing === "live" ? {
+    regenerate: (messageId) => {
+      const sessionId = state.session.session_id;
+      confirmDialog({ title: tr("web.regenerate_title"), message: rewindNotes(messageId), confirmLabel: tr("web.regenerate") })
+        .then((ok) => ok ? rewind(sessionId, messageId) : undefined)
+        .catch((error) => setFatal(String(error)));
+    },
+    edit: (messageId, text) => {
+      const sessionId = state.session.session_id;
+      promptDialog({ title: tr("web.edit_title"), message: rewindNotes(messageId), initial: text, multiline: true, confirmLabel: tr("web.resend") })
+        .then((edited) => edited !== null && edited.trim() && edited !== text ? rewind(sessionId, messageId, edited) : undefined)
+        .catch((error) => setFatal(String(error)));
+    },
+    fork: (replyId) => {
+      const sessionId = state.session.session_id;
+      confirmDialog({ title: tr("web.fork_title"), message: tr("web.fork_help"), confirmLabel: tr("web.fork") })
+        .then((ok) => {
+          if (!ok) return;
+          return api.fork(sessionId, replyId).then((snapshot) => {
+            const forkId = snapshot.session.session_id;
+            remember(forkId);
+            setBrowsing("live");
+            setSelected(forkId);
+            refreshSessions().catch(() => undefined);
+          });
+        })
+        .catch((error) => setFatal(String(error)));
+    },
+  } : undefined;
+
   const execution = state?.session.execution ?? state?.session.status;
   const running = execution === "running" || execution === "waiting_for_input";
   const directoryQueued = execution === "queued";
@@ -846,10 +889,17 @@ export default function App() {
                 : <h1 title={headerTitle} onDoubleClick={() => setRenaming(state.session.session_id)}>{headerTitle}</h1>}
             </div>
             <div className="task-status">
-              {typeof breakdown?.total === "number" && <ContextRing total={breakdown.total} limit={breakdown.limit} />}
+              {/* The meter opens the full breakdown in the inspector. */}
+              {typeof breakdown?.total === "number" && <button type="button" className="context-ring-button" aria-label={tr("web.context_open")} onClick={() => {
+                setInspectorTab((previous) => ({ tab: "context", request: (previous?.request ?? 0) + 1 }));
+                openInspector();
+              }}><ContextRing total={breakdown.total} limit={breakdown.limit} /></button>}
               <MenuButton label={tr("web.session_actions")} items={() => [
                 { label: tr("web.rename"), icon: <PencilSimple size={13} />, onSelect: () => setRenaming(state.session.session_id) },
                 { label: tr("web.copy_session_id"), icon: <Copy size={13} />, onSelect: () => { navigator.clipboard?.writeText(state.session.session_id).catch(() => undefined); } },
+                "separator",
+                { label: tr("web.copy_conversation"), icon: <Copy size={13} />, onSelect: () => { navigator.clipboard?.writeText(conversationMarkdown(headerTitle, state.timeline || [], tr)).catch(() => undefined); } },
+                { label: tr("web.download_conversation"), icon: <DownloadSimple size={13} />, onSelect: () => downloadText(markdownFileName(headerTitle), conversationMarkdown(headerTitle, state.timeline || [], tr)) },
                 "separator",
                 { label: tr("web.archive"), icon: <Archive size={13} />, onSelect: () => { archiveSession().catch((error) => setFatal(String(error))); } },
                 { label: tr("web.close_session"), icon: <XCircle size={13} />, danger: true, onSelect: () => {
@@ -867,6 +917,7 @@ export default function App() {
             key={state.session.session_id}
             state={state}
             revealCall={callFocus?.sessionId === state.session.session_id ? callFocus : null}
+            messageActions={messageActions}
             respond={(requestId, answer) => {
               return respondToInteraction(requestId, answer);
             }}
@@ -972,7 +1023,7 @@ export default function App() {
       {!page && state && selected && inspectorOpen && !compactViewport ? (
         <InspectorResizeHandle width={inspectorWidth} onWidthChange={setInspectorWidth} onCommit={commitInspectorWidth} />
       ) : null}
-      {!page && state && selected ? <Inspector key={selected} state={state} sessionId={selected} open={compactViewport ? inspectorOpen && narrowInspector : inspectorOpen} narrow={compactViewport && narrowInspector} focusPath={fileFocus?.sessionId === selected ? fileFocus.path : null} focusLine={fileFocus?.sessionId === selected ? fileFocus.line : undefined} focusRequest={fileFocus?.request} close={closeInspector} showCall={(callId) => {
+      {!page && state && selected ? <Inspector key={selected} state={state} sessionId={selected} open={compactViewport ? inspectorOpen && narrowInspector : inspectorOpen} narrow={compactViewport && narrowInspector} focusPath={fileFocus?.sessionId === selected ? fileFocus.path : null} focusLine={fileFocus?.sessionId === selected ? fileFocus.line : undefined} focusRequest={fileFocus?.request} tabRequest={inspectorTab} close={closeInspector} showCall={(callId) => {
         setCallFocus((previous) => ({ sessionId: selected, callId, request: (previous?.request ?? 0) + 1 }));
         // On narrow screens the inspector covers the conversation.
         if (compactViewport) closeInspector();
@@ -1003,4 +1054,13 @@ export default function App() {
     }} />}
     <DialogHost />
   </div>;
+}
+
+function downloadText(fileName: string, text: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: "text/markdown;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }

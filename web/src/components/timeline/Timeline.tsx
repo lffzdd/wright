@@ -57,8 +57,19 @@ function TurnOutcome({ status, detail, enter }: { status?: string; detail?: stri
 const REVEAL_FLASH_MS = 1600;
 const REVEAL_MISS_MS = 3000;
 
-export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, children, revealCall }: {
+/** Per-message actions; each takes the id of a persisted message. */
+export type MessageActions = {
+  regenerate: (userMessageId: string) => void;
+  edit: (userMessageId: string, text: string) => void;
+  fork: (replyId: string) => void;
+};
+
+const persisted = (id: string) => /^msg_\d+$/.test(id);
+
+export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, children, revealCall, messageActions }: {
   state: ViewState;
+  /** Shown only while the session is idle; omitted for read-only history. */
+  messageActions?: MessageActions;
   /** A tool call to scroll to, open and highlight; a new `request` repeats it. */
   revealCall?: RevealCall | null;
   respond: (requestId: string, answer: unknown) => boolean | Promise<boolean>;
@@ -195,6 +206,12 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
   // A message sent mid-turn does not start a turn: steps after it stay live.
   segments.forEach((segment, index) => { if (segment.type === "item" && segment.item.kind === "text" && segment.item.role === "user" && !segment.item.interjection) lastPrompt = index; });
   const turnRunning = Boolean(state.active_turn);
+  // History can only be rewritten when nothing is running, queued or waiting.
+  const actions = messageActions && !turnRunning && !state.queued_commands?.length && !state.pending_interactions.length ? messageActions : undefined;
+  const lastUserIndex = lastUser ? timeline.indexOf(lastUser) : -1;
+  const editableId = actions && lastUser && persisted(lastUser.id) ? lastUser.id : undefined;
+  const lastReply = [...timeline].reverse().find((item) => item.kind === "text" && item.role === "assistant");
+  const regenerateReplyId = editableId && lastReply && timeline.indexOf(lastReply) > lastUserIndex ? lastReply.id : undefined;
   const outlineCompact = toc.items.length < OUTLINE_DOCK_MIN_ITEMS;
   const lastOutlineSessionRef = useRef<string | undefined>(state.session.session_id);
   useEffect(() => {
@@ -219,8 +236,8 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
     {timeline.length > 0 ? <>
       {segments.map((segment, index) => {
         if (segment.type === "steps") return <StepGroup key={segment.key} steps={segment.steps} live={turnRunning && (pendingPrompt ? false : index > lastPrompt)} sessionId={state.session?.session_id} entering={entering} />;        const item = segment.item;
-        if (item.kind === "text" && item.role === "user") return <UserMessage key={item.id} text={item.text || ""} userLabel={userLabel} timestamp={timestamp} tocId={item.id} interjection={item.interjection} enter={entering(item.turn_id !== undefined && !item.interjection ? `user:${item.turn_id}` : item.id)} />;
-        if (item.kind === "text") return <AssistantMessage key={item.id} text={item.text || ""} enter={entering(item.turn_id !== undefined ? `reply:${item.turn_id}` : item.id)} />;
+        if (item.kind === "text" && item.role === "user") return <UserMessage key={item.id} text={item.text || ""} userLabel={userLabel} timestamp={timestamp} tocId={item.id} interjection={item.interjection} enter={entering(item.turn_id !== undefined && !item.interjection ? `user:${item.turn_id}` : item.id)} onEdit={actions && item.id === editableId ? () => actions.edit(item.id, item.text || "") : undefined} />;
+        if (item.kind === "text") return <AssistantMessage key={item.id} text={item.text || ""} enter={entering(item.turn_id !== undefined ? `reply:${item.turn_id}` : item.id)} onRegenerate={actions && editableId && item.id === regenerateReplyId ? () => actions.regenerate(editableId) : undefined} onFork={actions && persisted(item.id) ? () => actions.fork(item.id) : undefined} />;
         if (item.kind === "status") return <TurnOutcome key={item.id} status={item.status} detail={item.text} enter={entering(item.id)} />;
         return null;
       })}

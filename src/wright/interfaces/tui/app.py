@@ -129,6 +129,7 @@ class WrightTUI(App):
         self._draining = False
         self._active_request: InteractionRequest | None = None
         self._scroll_pending = False
+        self._scroll_wanted = False
         self._slash_completion = SlashCompletion()
         self._mentions: list[dict[str, Any]] = []
         self._mention_index = 0
@@ -219,7 +220,7 @@ class WrightTUI(App):
                     restored = True
             if restored:
                 transcript.mount(SystemBlock("earlier turns above  ·  new messages follow"))
-            self._scroll_to_end()
+            self._scroll_to_end(force=True)
             return
         for turn in session.turns:
             assistant_index = positions.get(turn.message_id)
@@ -288,7 +289,7 @@ class WrightTUI(App):
                         ),
                     ))
             transcript.mount(SystemBlock("earlier turns above  ·  new messages follow"))
-        self._scroll_to_end()
+        self._scroll_to_end(force=True)
 
     @staticmethod
     def _history_user_before(records: list[Any], assistant_index: int) -> tuple[str, list[str]]:
@@ -337,7 +338,14 @@ class WrightTUI(App):
             self._transcript().mount(self._reasoning)
         return self._reasoning
 
-    def _scroll_to_end(self) -> None:
+    def _scroll_to_end(self, force: bool = False) -> None:
+        # Follow new output only while the reader is already at the bottom;
+        # a reader who scrolled up keeps their place until they return or ask.
+        # The check runs before the new block is laid out, so it compares the
+        # reader's position against the bottom they were looking at.
+        transcript = self._transcript()
+        at_bottom = transcript.scroll_y >= transcript.max_scroll_y - 2
+        self._scroll_wanted = self._scroll_wanted or force or at_bottom
         if self._scroll_pending:
             return
         self._scroll_pending = True
@@ -345,7 +353,9 @@ class WrightTUI(App):
 
     def _scroll_to_end_after_refresh(self) -> None:
         self._scroll_pending = False
-        self._transcript().scroll_end(animate=False, immediate=True)
+        wanted, self._scroll_wanted = self._scroll_wanted, False
+        if wanted:
+            self._transcript().scroll_end(animate=False, immediate=True)
 
     def on_turn_begin(self, _event: TurnBegin) -> None:
         self._close_draft()
@@ -555,7 +565,7 @@ class WrightTUI(App):
             self._transcript().remove_children()
             return
         self._transcript().mount(UserBlock(value))
-        self._scroll_to_end()
+        self._scroll_to_end(force=True)
         try:
             assert self.service is not None
             self.service.submit(value)
@@ -837,7 +847,7 @@ class WrightTUI(App):
             tool.collapsed = not any_collapsed
 
     def action_scroll_end(self) -> None:
-        self._scroll_to_end()
+        self._scroll_to_end(force=True)
 
     def on_key(self, event: Key) -> None:
         focused = self.focused

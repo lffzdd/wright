@@ -23,12 +23,13 @@ it("supports arrow-key tabs and returns to the same searched file on repeated re
 it("keeps keyboard focus inside an open drawer", () => {
   vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ changes: [] }) })));
   render(<Inspector state={state} sessionId="s" open narrow close={() => undefined} />);
-  const first = screen.getByRole("tab", { name: "Task" });
-  const close = screen.getByRole("button", { name: "Close inspector" });
+  const first = screen.getByRole("tab", { name: /Overview/ });
+  // The Overview's last row is the drawer's last control.
+  const last = [...document.querySelectorAll<HTMLButtonElement>(".overview-row")].pop()!;
   expect(document.activeElement).toBe(first);
   fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
-  expect(document.activeElement).toBe(close);
-  fireEvent.keyDown(close, { key: "Tab" });
+  expect(document.activeElement).toBe(last);
+  fireEvent.keyDown(last, { key: "Tab" });
   expect(document.activeElement).toBe(first);
 });
 

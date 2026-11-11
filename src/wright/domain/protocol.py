@@ -17,7 +17,7 @@ def build_tool_results_messages(
         {
             "role": "tool",
             "tool_call_id": call.id,
-            "content": json.dumps(result.to_dict(), ensure_ascii=False),
+            "content": json.dumps(result.to_model_dict(), ensure_ascii=False),
         }
         for call, result in tool_tuple
     ]

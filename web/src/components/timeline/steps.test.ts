@@ -51,6 +51,17 @@ describe("summarizeSteps", () => {
   });
 });
 
+describe("summarizeSteps", () => {
+  it("does not count a plan update the plan rules turned down as a failure", () => {
+    const rejected = { ok: false, err: "step_2 is in progress. Finish, block, or skip it before starting step_4.", display: { objective: "g", steps: [], rejected: { code: "plan.step_busy", params: {} } } };
+    const steps = [
+      stepFromItem(item("p", "tool", { name: "update_plan", phase: "failed", result: rejected })),
+      stepFromItem(item("s", "shell", { name: "shell", phase: "failed" })),
+    ];
+    expect(summarizeSteps(steps).failed).toBe(1);
+  });
+});
+
 describe("stepCategory", () => {
   it("keeps web, memory and plan tools out of code search", () => {
     const names = ["grep", "glob", "web_search", "http_request", "search_memory", "search_episodes", "knowledge_search", "update_core_memory", "update_plan", "replan", "ask_user", "manage_loop", "mcp_tool"];

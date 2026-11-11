@@ -122,8 +122,8 @@ class PlanManager:
         ids and timestamps. Existing steps left out of the list keep their
         status and their place relative to the submitted steps; dropping a step
         takes an explicit ``skipped``. Completed steps are final, skipped ones
-        may reopen. No step may be active or finished while an earlier step is
-        pending or in progress; blocked steps do not hold later work. A list
+        may reopen. Steps may start and finish in any order, but at most one is
+        in progress across the whole plan. A list
         starts a new plan when there is none, or when it brings a different
         objective and none of its steps match the current plan; a different
         objective with matching steps only renames the goal.
@@ -146,6 +146,7 @@ class PlanManager:
                 raise PlanError("objective is required to start a plan", code="plan.field_required", field="objective")
             existing = [] if fresh else [PlanStep(**step.to_dict()) for step in self.steps]
             position = {id(step): index for index, step in enumerate(existing)}
+            was_active = {step.id for step in existing if step.status == "in_progress"}
             counter = 0 if fresh else self._step_counter
             now = time.time()
             unmatched = list(existing)
@@ -200,15 +201,16 @@ class PlanManager:
                     f"Plan history plus new steps cannot exceed {MAX_TOTAL_PLAN_STEPS}. Finish or skip the open steps, then start a new plan with a new objective.",
                     code="plan.too_long", limit=MAX_TOTAL_PLAN_STEPS,
                 )
-            open_step: PlanStep | None = None
-            for step in final:
-                if step.status in {"in_progress", "completed", "blocked"} and open_step is not None:
-                    raise PlanError(
-                        f"Predecessor {open_step.id} of {step.id} is not completed or skipped. Follow the plan order, or mark it skipped.",
-                        code="plan.predecessor", step_id=step.id, predecessor_id=open_step.id,
-                    )
-                if step.status in {"pending", "in_progress"} and open_step is None:
-                    open_step = step
+            # Steps may start and finish in any order, but only one runs at a
+            # time across the whole plan, including steps the caller left out.
+            active = [step for step in final if step.status == "in_progress"]
+            if len(active) > 1:
+                running = next((step for step in active if step.id in was_active), active[0])
+                starting = next(step for step in active if step is not running)
+                raise PlanError(
+                    f"{running.id} is in progress. Finish, block, or skip it before starting {starting.id}.",
+                    code="plan.step_busy", active_id=running.id, step_id=starting.id,
+                )
             before = self._snapshot_unlocked()
             if cleaned_objective is not None:
                 self.objective = cleaned_objective
@@ -262,7 +264,7 @@ class PlanManager:
         active = [title for _id, title, status, _note in items if status == "in_progress"]
         if len(active) > 1:
             raise PlanError(
-                f"{active[0]} is in progress. Finish, block, or pause it before starting {active[1]}.",
+                f"{active[0]} is in progress. Finish, block, or skip it before starting {active[1]}.",
                 code="plan.step_busy", active_id=active[0], step_id=active[1],
             )
         return items

@@ -26,7 +26,7 @@ from .records import (
     VerificationRecord,
 )
 from .run import TERMINAL_RUN_STATUSES, RunRecord, RunStatus, new_run_id
-from .session import INTERACTIVE_SESSION_LABEL, Session
+from .session import INTERACTIVE_SESSION_LABEL, HistoryRewriteError, Session
 
 __all__ = [
     "INTERACTIVE_SESSION_LABEL",
@@ -37,6 +37,7 @@ __all__ = [
     "CallId",
     "ConversationMessage",
     "ConversationPart",
+    "HistoryRewriteError",
     "ImagePart",
     "MessageId",
     "MessageRecord",

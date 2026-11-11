@@ -173,6 +173,12 @@ class DisplayFold:
         if payload.get("context_limit") is not None:
             self.context_limit = payload.get("context_limit")
 
+    def forget_history(self) -> None:
+        """Drop folded state after the session history was rewritten."""
+        self.root = None
+        self.request_usage = None
+        self.context_tokens = None
+
     def seed(self, turn_ids: set[str], run_ids: set[str]) -> None:
         """Show history that already existed before this process published."""
 
@@ -322,6 +328,18 @@ class EventPublisher:
 
         with self._lock:
             return build(self._seq, self.stream_id)
+
+    def history_rewritten(self) -> None:
+        """Make every subscriber reload a snapshot instead of patching its view.
+
+        Events already sent describe turns that no longer exist, so the stream
+        cannot continue from them.
+        """
+        with self._lock:
+            self.display.forget_history()
+            for subscriber_id, target in self._subscribers.items():
+                self._stale.add(subscriber_id)
+                _drain(target)
 
     def take_stale(self, subscriber_id: str) -> bool:
         """Report and clear a subscriber whose queue overflowed."""

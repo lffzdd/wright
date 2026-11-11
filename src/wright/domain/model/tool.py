@@ -100,6 +100,9 @@ class ToolResult:
     # not special-case a tool name. Empty means an ordinary foldable result.
     retention: str = ""
     retention_key: str = ""
+    # Structured payload for interfaces only. It is persisted and projected to
+    # the UI but never sent to the model, so ``data`` stays the model's view.
+    display: Any = None
 
     @classmethod
     def success(
@@ -111,10 +114,11 @@ class ToolResult:
         artifacts=(),
         retention: str = "",
         retention_key: str = "",
+        display: Any = None,
     ) -> ToolResult:
         return cls(
             True, "", data, summary, tuple(content), tuple(artifacts),
-            retention, retention_key,
+            retention, retention_key, display,
         )
 
     @classmethod
@@ -128,10 +132,11 @@ class ToolResult:
         artifacts=(),
         retention: str = "",
         retention_key: str = "",
+        display: Any = None,
     ) -> ToolResult:
         return cls(
             False, err, data, summary, tuple(content), tuple(artifacts),
-            retention, retention_key,
+            retention, retention_key, display,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -147,6 +152,14 @@ class ToolResult:
             payload["retention"] = self.retention
         if self.retention_key:
             payload["retention_key"] = self.retention_key
+        if self.display is not None:
+            payload["display"] = self.display
+        return payload
+
+    def to_model_dict(self) -> dict[str, Any]:
+        """The result as the model sees it: ``to_dict`` without interface-only fields."""
+        payload = self.to_dict()
+        payload.pop("display", None)
         return payload
 
 

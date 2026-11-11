@@ -19,6 +19,10 @@ const deferred = <T,>() => {
   return { promise, resolve };
 };
 const patch = (text: string) => ({ path: "a.txt", patch: `--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+${text}\n`, truncated: false, binary: false });
+const pickChangeScope = (value: "git" | "session") => {
+  const label = value === "session" ? "This session" : "Uncommitted changes";
+  fireEvent.click(screen.getByRole("radio", { name: label }));
+};
 
 beforeEach(() => {
   setLocale("en");
@@ -29,10 +33,11 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); setLocale("en"); });
 
 describe("Inspector task tab", () => {
-  it("keeps only the goal card and one hint while nothing has happened", () => {
+  it("keeps the goal, the session glance and one hint while nothing has happened", () => {
     render(inspector(view()));
     const cards = [...document.querySelectorAll("#inspector-panel-task .goal-card")];
-    expect(cards).toHaveLength(1);
+    expect(cards).toHaveLength(2);
+    expect(document.querySelectorAll("#inspector-panel-task .overview-row")).toHaveLength(4);
     expect(screen.getByText("No goal set yet.").closest(".goal-card")).toBeTruthy();
     expect(document.querySelector("#inspector-panel-task .inspector-task-empty")).toBeTruthy();
     for (const text of ["No active plan for this turn.", "No files accessed in this session.", "No subagents"]) {
@@ -45,6 +50,34 @@ describe("Inspector task tab", () => {
     render(inspector({ ...state, session: { ...state.session, user_goal: "Ship the redesign" } }));
     expect(screen.getByText("Ship the redesign").closest(".goal-card")).toBeTruthy();
     expect(screen.queryByText("No goal set yet.")).toBeNull();
+  });
+});
+
+describe("Inspector overview and tab layout", () => {
+  it("opens each detail tab from its overview row", () => {
+    const state = view(); state.accessed_files = [{ path: "a.ts", access: "read" }];
+    render(inspector(state));
+    fireEvent.click(screen.getByRole("button", { name: /Files accessed\s*1 files/ }));
+    expect(screen.getByRole("tab", { name: /Files/ }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(screen.getByRole("tab", { name: /Overview/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Permissions/ }));
+    expect(screen.getByRole("tab", { name: "Permissions" }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("shows settings-like tabs as named icons and flags waiting approvals", () => {
+    const state = view(); state.pending_interactions = [{ interaction_id: "i", kind: "permission" } as unknown as ViewState["pending_interactions"][number]];
+    render(inspector(state));
+    const permissions = screen.getByRole("tab", { name: "Permissions" });
+    expect(permissions.textContent).toBe("");
+    expect(permissions.querySelector(".tab-alert")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Context" }).classList.contains("icon-tab")).toBe(true);
+    expect(screen.getByRole("button", { name: /Permissions\s*1 waiting/ })).toBeTruthy();
+  });
+
+  it("switches to a tab another part of the window asks for", () => {
+    const { rerender } = render(<Inspector state={view()} sessionId="a" open close={() => undefined} />);
+    rerender(<Inspector state={view()} sessionId="a" open tabRequest={{ tab: "context", request: 1 }} close={() => undefined} />);
+    expect(screen.getByRole("tab", { name: "Context" }).getAttribute("aria-selected")).toBe("true");
   });
 });
 
@@ -68,17 +101,51 @@ describe("Inspector request and content state", () => {
     fireEvent.click(screen.getByRole("tab", { name: /Changes/ }));
     expect(await screen.findByText("No uncommitted changes.")).toBeTruthy();
     expect(api.review).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByLabelText("Change scope"), { target: { value: "session" } });
+    pickChangeScope("session");
     expect(await screen.findByRole("button", { name: /a.txt/ })).toBeTruthy();
     expect(screen.queryByText("No uncommitted changes.")).toBeNull();
     expect(screen.queryByRole("button", { name: "Accept review" })).toBeNull();
+  });
+
+  it("keeps the Changes panel and its scope when switching away and back", async () => {
+    vi.mocked(api.changes).mockResolvedValue({ changes: [], baseline: "HEAD", local_warning: false });
+    render(inspector(view()));
+    fireEvent.click(screen.getByRole("tab", { name: /Changes/ }));
+    expect(await screen.findByText("No uncommitted changes.")).toBeTruthy();
+    pickChangeScope("session");
+    fireEvent.click(screen.getByRole("tab", { name: /Overview/ }));
+    expect((document.getElementById("inspector-panel-changes") as HTMLElement).hidden).toBe(true);
+    const fetches = vi.mocked(api.changes).mock.calls.length;
+    fireEvent.click(screen.getByRole("tab", { name: /Changes/ }));
+    expect(screen.getByRole("radio", { name: "This session" }).getAttribute("aria-checked")).toBe("true");
+    expect(vi.mocked(api.changes).mock.calls.length).toBe(fetches);
+  });
+
+  it("keeps the scope explanation in a tooltip and a screen-reader description", async () => {
+    vi.mocked(api.changes).mockResolvedValue({ changes: [], baseline: "HEAD", local_warning: false });
+    render(inspector(view()));
+    fireEvent.click(screen.getByRole("tab", { name: /Changes/ }));
+    const scope = await screen.findByLabelText("Change scope");
+    const help = document.getElementById(scope.getAttribute("aria-describedby") ?? "");
+    expect(help?.textContent).toMatch(/not committed/);
+    expect(help?.classList.contains("sr-only")).toBe(true);
+    expect(document.querySelector(".changes-scope-info")?.getAttribute("title")).toBe(help?.textContent);
+  });
+
+  it("switches tabs on press and draws one shared highlight", () => {
+    render(inspector(view()));
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /Context/ }), { button: 0 });
+    expect(screen.getByRole("tab", { name: /Context/ }).getAttribute("aria-selected")).toBe("true");
+    expect(document.querySelectorAll(".inspector-tab-indicator")).toHaveLength(1);
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /Overview/ }), { button: 2 });
+    expect(screen.getByRole("tab", { name: /Context/ }).getAttribute("aria-selected")).toBe("true");
   });
 
   it("only enables session undo when the server says it is safe", async () => {
     vi.mocked(api.review).mockResolvedValue({ changes: [{ path: "a.txt", state: "conflict", origin: "task", can_revert: false }], revision: "session-r1" });
     render(inspector(view()));
     fireEvent.click(screen.getByRole("tab", { name: /Changes/ }));
-    fireEvent.change(screen.getByLabelText("Change scope"), { target: { value: "session" } });
+    pickChangeScope("session");
     const undo = await screen.findByRole("button", { name: /Undo \d+ available changes/ }) as HTMLButtonElement;
     expect(undo.disabled).toBe(true);
   });
@@ -113,7 +180,7 @@ describe("Inspector request and content state", () => {
     const file = vi.spyOn(api, "file");
     const state = view(); state.accessed_files = [{ path: "web/src", access: "list", tool: "ls" }];
     render(inspector(state));
-    fireEvent.click(screen.getByRole("tab", { name: /Files\s*\(1\)/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Files\s*1$/ }));
     const entry = screen.getByRole("button", { name: /LIST\s*web\/src/ }) as HTMLButtonElement;
     expect(entry.disabled).toBe(true);
     fireEvent.click(entry);
@@ -126,11 +193,11 @@ describe("Inspector request and content state", () => {
       { path: "/project/f0.ts", access: "write" },
     ];
     render(inspector(state));
-    fireEvent.click(screen.getByRole("tab", { name: /Files\s*\(10\)/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Files\s*10$/ }));
     fireEvent.click(screen.getByRole("button", { name: "Show all (10)" }));
     expect(screen.getAllByRole("button").filter((button) => button.classList.contains("accessed-file"))).toHaveLength(10);
     expect(screen.getByRole("button", { name: /MOD\s*f0.ts/ })).toBeTruthy();
-    expect(await screen.findByRole("tab", { name: /Changes\s*\(1\)/ })).toBeTruthy();
+    expect(await screen.findByRole("tab", { name: /Changes\s*1$/ })).toBeTruthy();
   });
 
   it("does not write a review action result into a different session", async () => {
@@ -140,7 +207,7 @@ describe("Inspector request and content state", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const { rerender } = render(inspector(view()));
     fireEvent.click(screen.getByRole("tab", { name: /Changes/ }));
-    fireEvent.change(screen.getByLabelText("Change scope"), { target: { value: "session" } });
+    pickChangeScope("session");
     fireEvent.click(await screen.findByRole("button", { name: /Undo \d+ available changes/ }));
     await waitFor(() => expect(api.reviewAction).toHaveBeenCalled());
     rerender(inspector(view("b")));
@@ -179,7 +246,7 @@ describe("Inspector historical sessions", () => {
     render(inspector(state));
     fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
     await waitFor(() => expect(api.workspaces).toHaveBeenCalled());
-    expect(screen.getByRole("searchbox", { name: "Filter files in this project" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Filter files in this project" }).hasAttribute("disabled")).toBe(true);
     expect(screen.queryByRole("tree")).toBeNull();
     expect(screen.getByText(/Resume this session to browse/)).toBeTruthy(); expect(file).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("tab", { name: /Context/ }));
@@ -194,6 +261,7 @@ describe("Inspector files, context and visibility", () => {
     vi.spyOn(api, "file").mockResolvedValue({ path: "src/deep/app.ts", content: "one\ntwo", binary: false });
     render(inspector(view()));
     fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Filter files in this project" }));
     fireEvent.change(screen.getByRole("searchbox", { name: "Filter files in this project" }), { target: { value: "app" } });
     fireEvent.click(await screen.findByRole("button", { name: /app.ts/ }));
     await screen.findByText("two");

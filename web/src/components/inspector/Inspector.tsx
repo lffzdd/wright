@@ -1,5 +1,5 @@
-import { Check, Circle, X } from "@phosphor-icons/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { CaretRight, Check, Gauge, ShieldCheck, X } from "@phosphor-icons/react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../../api";
 import { parseDiff } from "../../diff";
 import { useT } from "../../i18n";
@@ -9,7 +9,12 @@ import { ChangesPanel } from "./ChangesPanel";
 import { ContextPanel } from "./ContextPanel";
 import { FilesPanel } from "./FilesPanel";
 
-type InspectorTab = "task" | "files" | "changes" | "permissions" | "context";
+export type InspectorTab = "task" | "files" | "changes" | "permissions" | "context";
+/** Settings-like tabs sit at the end as icons, so the working tabs always fit. */
+const ACTIVE_STEP = ["in_progress", "running", "active"];
+/** Notes longer than this clamp to two lines and expand on click. */
+const LONG_STEP_NOTE = 80;
+const ICON_TABS: Partial<Record<InspectorTab, typeof Gauge>> = { permissions: ShieldCheck, context: Gauge };
 
 /** A path relative to the project, or null when it lies outside it. */
 /** Time of day for today, otherwise a short date and time; the full stamp stays in the tooltip. */
@@ -30,7 +35,7 @@ export function projectRelative(path: string, root?: string): string | null {
   return null;
 }
 
-export function Inspector({ state, sessionId, open, narrow = false, focusPath = null, focusLine, focusRequest = 0, close, onResume, onFeedback, showCall }: { state: ViewState; sessionId: string; open: boolean; narrow?: boolean; focusPath?: string | null; focusLine?: number; focusRequest?: number; close: () => void; onResume?: () => Promise<unknown>; onFeedback?: (feedback: string) => void; showCall?: (callId: string) => void }) {
+export function Inspector({ state, sessionId, open, narrow = false, focusPath = null, focusLine, focusRequest = 0, tabRequest, close, onResume, onFeedback, showCall }: { state: ViewState; sessionId: string; open: boolean; narrow?: boolean; focusPath?: string | null; focusLine?: number; focusRequest?: number; tabRequest?: { tab: InspectorTab; request: number }; close: () => void; onResume?: () => Promise<unknown>; onFeedback?: (feedback: string) => void; showCall?: (callId: string) => void }) {
   const tr = useT();
   const panelRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -43,16 +48,41 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
     };
   }, [open, narrow]);
   const [tab, setTab] = useState<InspectorTab>("task");
+  // Files and Changes stay mounted once opened, so their trees, previews and scroll survive tab switches.
+  // Other parts of the window (the header's context meter) can ask for a tab.
+  useEffect(() => { if (tabRequest) setTab(tabRequest.tab); }, [tabRequest?.request]);
   const [filesVisited, setFilesVisited] = useState(false);
-  useEffect(() => { if (tab === "files") setFilesVisited(true); }, [tab]);
+  const [changesVisited, setChangesVisited] = useState(false);
+  useEffect(() => { if (tab === "files") setFilesVisited(true); if (tab === "changes") setChangesVisited(true); }, [tab]);
+  // One highlight slides between tabs instead of each tab drawing its own box.
+  const tablistRef = useRef<HTMLDivElement>(null);
+  const [indicator, setIndicator] = useState<{ left: number; width: number; animate: boolean } | null>(null);
+  useLayoutEffect(() => {
+    const list = tablistRef.current;
+    const selected = list?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+    if (!list || !selected) return;
+    const measure = () => setIndicator((current) => {
+      const next = { left: selected.offsetLeft, width: selected.offsetWidth };
+      if (current && current.left === next.left && current.width === next.width) return current;
+      // The first placement and resizes jump; only a tab change slides.
+      return { ...next, animate: current !== null && current.left !== next.left };
+    });
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(selected);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [tab]);
   const [changes, setChanges] = useState<Array<{ path: string; status: string }> | null>(null);
   const [changeCount, setChangeCount] = useState(0);
   const [changesFocus, setChangesFocus] = useState<{ path: string; request: number } | null>(null);
   const [recentFileMeta, setRecentFileMeta] = useState<Record<string, { size?: number; additions?: number; deletions?: number }>>({});
+  const [expandedSteps, setExpandedSteps] = useState<ReadonlySet<string>>(new Set());
   const [filePath, setFilePath] = useState("");
   useEffect(() => {
     if (!filePath || tab !== "files") return;
-    const body = panelRef.current?.querySelector<HTMLElement>(".inspector-body");
+    const body = panelRef.current?.querySelector<HTMLElement>("#inspector-panel-files");
     if (body) body.scrollTop = 0;
   }, [filePath, tab, focusRequest]);
   const [permissionsError, setPermissionsError] = useState("");
@@ -193,12 +223,14 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
   }
   const projectName = (state.session.execution_root ?? "").replace(/\\/g, "/").replace(/\/+$/, "").split("/").pop() ?? "";
   const completedSteps = steps.filter((step) => step.status === "completed").length;
-  const currentStep = steps.findIndex((step) => ["in_progress", "running", "active"].includes(step.status));
+  const currentStep = steps.findIndex((step) => ACTIVE_STEP.includes(step.status));
   const tabCount = (item: InspectorTab) => item === "files" ? accessedFiles.length : item === "changes" ? changeCount : 0;
   const fileMeta = (path: string) => recentFileMeta[projectRelative(path, state.session.execution_root) ?? path] ?? {};
+  // The icon already says done, doing or to do; only other states (blocked, skipped…) are spelled out.
   const stepMeta = (status: string, note?: string) => {
     const label = status.replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
     const detail = note?.trim();
+    if (["completed", "pending", ...ACTIVE_STEP].includes(status)) return detail ?? "";
     if (!detail) return label;
     if (detail.toLowerCase().startsWith(label.toLowerCase())) return detail[0].toUpperCase() + detail.slice(1);
     return `${label} · ${detail}`;
@@ -211,8 +243,22 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
     if (typeof step.elapsed_ms !== "number") return "";
     const extra = livePlan && step.ended_at === null && typeof state.plan.observed_at === "number"
       ? Math.max(0, clockNow - state.plan.observed_at * 1000) : 0;
-    return tr("web.step_elapsed", { duration: `${((step.elapsed_ms + extra) / 1000).toFixed(1)}s` });
+    return `${((step.elapsed_ms + extra) / 1000).toFixed(1)}s`;
   };
+  const contextLimit = breakdown?.limit ?? state.usage.context_limit ?? null;
+  const contextTotal = breakdown?.total ?? state.usage.context_tokens ?? null;
+  const contextShare = contextLimit && typeof contextTotal === "number" ? Math.min(100, Math.round((contextTotal / contextLimit) * 100)) : null;
+  const permissionMode = state.session.permission_mode ?? "default";
+  const pendingCount = state.pending_interactions.length;
+  const modeLabel = tr(`web.perm_short.${permissionMode}`) === `web.perm_short.${permissionMode}` ? permissionMode : tr(`web.perm_short.${permissionMode}`);
+  const overviewRows: Array<{ tab: InspectorTab; label: string; value: string; alert?: boolean }> = [
+    { tab: "files", label: tr("web.accessed_files"), value: accessedFiles.length ? tr("web.files_count", { count: accessedFiles.length }) : tr("web.overview.none") },
+    { tab: "changes", label: tr("web.overview.changes"), value: changeCount ? tr("web.files_count", { count: changeCount }) : tr("web.overview.none") },
+    { tab: "context", label: tr("web.tab.context"), value: contextShare === null ? "—" : tr("web.overview.context_used", { percent: contextShare }) },
+    { tab: "permissions", label: tr("web.tab.permissions"), alert: pendingCount > 0,
+      value: pendingCount ? tr("web.overview.waiting", { count: pendingCount })
+        : `${modeLabel} · ${tr(state.session.execution_mode === "host" ? "web.overview.host" : "web.overview.sandbox")}` },
+  ];
   return <aside id="workspace-inspector" ref={panelRef} inert={!open} aria-hidden={!open || undefined} role={narrow ? "dialog" : undefined} aria-modal={narrow || undefined} aria-label={tr("web.inspector")} className={`inspector ${open ? "" : "is-closed"} ${narrow ? "narrow-open" : ""}`} onKeyDown={(event) => {
     if (!open || !narrow || event.key !== "Tab") return;
     const controls = Array.from(panelRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]):not([tabindex="-1"]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]') ?? []);
@@ -222,14 +268,21 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
   }}>
     <div className="inspector-inner">
     <div className="inspector-tabs">
-      <div className="inspector-tablist" role="tablist" aria-label={tr("web.inspector")}>
-      {tabs.map((item, index) => <button key={item} id={`inspector-tab-${item}`} aria-controls={`inspector-panel-${item}`} tabIndex={tab === item ? 0 : -1} className={item === "permissions" && state.pending_interactions.length ? "pending-tab" : ""} role="tab" aria-selected={tab === item} onClick={() => setTab(item)} onKeyDown={(event) => {
+      <div className="inspector-tablist" role="tablist" aria-label={tr("web.inspector")} ref={tablistRef}>
+      {indicator && <span className={`inspector-tab-indicator${indicator.animate ? " animate" : ""}`} aria-hidden="true" style={{ width: indicator.width, transform: `translateX(${indicator.left}px)` }} />}
+      {/* Tabs switch on press, as editor tabs do; click still covers keyboard and assistive activation. */}
+      {tabs.map((item, index) => <button key={item} id={`inspector-tab-${item}`} aria-controls={`inspector-panel-${item}`} tabIndex={tab === item ? 0 : -1} className={`${ICON_TABS[item] ? "icon-tab" : ""}${item === "permissions" && state.pending_interactions.length ? " pending-tab" : ""}`.trim() || undefined} role="tab" aria-selected={tab === item}
+        onMouseDown={(event) => { if (event.button === 0) setTab(item); }} onClick={() => setTab(item)} onKeyDown={(event) => {
         const next = event.key === "ArrowRight" ? (index + 1) % tabs.length : event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : null;
         if (next === null) return;
         event.preventDefault(); setTab(tabs[next]);
         const button = panelRef.current?.querySelector<HTMLButtonElement>(`#inspector-tab-${tabs[next]}`);
         button?.focus(); button?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-      }}><span>{tr(`web.tab.${item}`)}</span>{tabCount(item) > 0 && <small>{`(${tabCount(item)})`}</small>}</button>)}
+      }} aria-label={ICON_TABS[item] ? tr(`web.tab.${item}`) : undefined} title={ICON_TABS[item] ? tr(`web.tab.${item}`) : undefined}>
+        {(() => { const Icon = ICON_TABS[item]; return Icon
+          ? <><Icon size={15} aria-hidden="true" />{item === "permissions" && state.pending_interactions.length > 0 && <span className="tab-alert" aria-hidden="true" />}</>
+          : <><span>{tr(`web.tab.${item}`)}</span>{tabCount(item) > 0 && <>{" "}<small>{tabCount(item)}</small></>}</>; })()}
+      </button>)}
       </div>
       <button className="icon-button" onClick={close} aria-label={tr("web.close_inspector")} title={tr("web.close_inspector")}><X size={14} weight="bold" /></button>
     </div>
@@ -244,34 +297,65 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
       {state.plan.wait_reason && <p className="hint plan-wait" role="status">{waitText(state.plan.wait_reason)}</p>}
       {steps.length > 0 && <section className="goal-card inspector-plan">
         <div className="card-kicker"><span>{tr("web.execution_plan")}</span>{steps.length ? <span>{currentStep >= 0 ? tr("web.step_active", { step: currentStep + 1 }) : `${completedSteps}/${steps.length}`}</span> : null}</div>
-        <div className="step-list">{steps.map((step) => {
-          const metadata = stepMeta(step.status, step.note);
-          const timing = stepTiming(step);
-          return <article key={step.id} className={`step-card ${step.status}`}>{step.status === "completed" ? <Check size={15} weight="bold" /> : ["in_progress", "running", "active"].includes(step.status) ? <span className="step-spinner" aria-hidden="true" /> : <Circle size={15} />}<div><strong title={step.title}>{step.title}</strong><small title={metadata}>{metadata}</small>{timing && <small>{timing}</small>}{typeof step.ended_at === "number" && <small title={new Date(step.ended_at * 1000).toLocaleString()}>{tr("web.step_ended", { time: shortTime(step.ended_at) })}</small>}{step.wait_reason && <small className="plan-wait" role="status">{waitText(step.wait_reason)}</small>}</div>{["in_progress", "running", "active"].includes(step.status) && <span className="current-step">{tr("web.current_step")}</span>}</article>;
-        })}</div>
+        <ol className="step-list">{steps.map((step, index) => {
+          const active = ACTIVE_STEP.includes(step.status);
+          const note = stepMeta(step.status, step.note);
+          const duration = stepTiming(step);
+          const ended = typeof step.ended_at === "number" ? step.ended_at : null;
+          // The row shows how long; the full wording and end time sit in the tooltip.
+          const timeTitle = [duration && tr("web.step_elapsed", { duration }), ended !== null && tr("web.step_ended", { time: new Date(ended * 1000).toLocaleString() })].filter(Boolean).join(" · ");
+          const timeText = duration || (ended !== null ? shortTime(ended) : "");
+          const expanded = expandedSteps.has(step.id);
+          const toggleNote = () => setExpandedSteps((current) => {
+            const next = new Set(current);
+            if (!next.delete(step.id)) next.add(step.id);
+            return next;
+          });
+          const statusKey = `web.plan.status.${step.status}`;
+          const statusLabel = tr(statusKey) === statusKey ? step.status : tr(statusKey);
+          // A timeline node: done shows a check, the current step a live dot, the rest their number.
+          return <li key={step.id} className={`step-card ${step.status}`}>
+            <span className="step-node" aria-hidden="true">{step.status === "completed" ? <Check size={10} weight="bold" /> : active ? <i /> : index + 1}</span>
+            <span className="sr-only">{statusLabel}: </span>
+            <div className="step-body">
+              <div className="step-head">
+                <strong title={step.title}>{step.title}</strong>
+                {active && <span className="current-step">{tr("web.current_step")}</span>}
+                {timeText && <span className="step-time" title={timeTitle} aria-label={timeTitle}>{timeText}</span>}
+              </div>
+              {note && (note.length > LONG_STEP_NOTE
+                ? <button type="button" className={`step-note-toggle${expanded ? " expanded" : ""}`} aria-expanded={expanded} title={expanded ? undefined : note} onClick={toggleNote}><span className="step-note">{note}</span></button>
+                : <small className="step-note">{note}</small>)}
+              {step.wait_reason && <small className="plan-wait" role="status">{waitText(step.wait_reason)}</small>}
+            </div>
+          </li>;
+        })}</ol>
       </section>}
-      {accessedFiles.length > 0 && <section className="goal-card">
-        <div className="card-kicker"><span>{tr("web.accessed_files")}</span>{accessedFiles.length ? <span>{tr("web.files_count", { count: accessedFiles.length })}</span> : null}</div>
-        {accessedFiles.slice(-3).map((file) => {
-          const metadata = fileMeta(file.path);
-          const access = file.access === "write" && metadata.additions !== undefined ? `+${metadata.additions} -${metadata.deletions ?? 0}` : file.access === "write" ? "MOD" : file.access === "read" ? "READ" : (file.access || "TOUCH").toUpperCase();
-          return <div className={`file-stat${file.access === "write" ? " changed" : ""}`} key={`${file.call_id}-${file.path}`}><span>{file.path}</span><span>{access}</span></div>;
-        })}
-      </section>}
+      {/* Where things stand, one row per detail tab; each row opens its tab. */}
+      <section className="goal-card overview-glance" aria-label={tr("web.overview.session")}>
+        <div className="card-kicker"><span>{tr("web.overview.session")}</span></div>
+        <div className="overview-rows">
+          {overviewRows.map((row) => <button key={row.tab} type="button" className={`overview-row${row.alert ? " alert" : ""}`} onClick={() => setTab(row.tab)}>
+            <span className="overview-label">{row.label}</span>
+            <span className="overview-value">{row.value}</span>
+            <CaretRight size={11} weight="bold" aria-hidden="true" />
+          </button>)}
+        </div>
+      </section>
       {(state.subagents ?? []).length > 0 && <section className="goal-card">
         <div className="card-kicker"><span>{tr("web.subagents")}</span>{(state.subagents ?? []).length ? <span>{tr("web.spawned_count", { count: (state.subagents ?? []).length })}</span> : null}</div>
         {(state.subagents ?? []).map((agent) => <div className="subagent-row" key={agent.task_id}><span className="status-dot" /><span>{agent.task || agent.task_id}</span><span>{(agent.status || "unknown").replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())}</span></div>)}
       </section>}
-      {!steps.length && !accessedFiles.length && !(state.subagents ?? []).length && <p className="hint inspector-task-empty">{tr("web.inspector_task_empty")}</p>}
+      {!steps.length && !(state.subagents ?? []).length && <p className="hint inspector-task-empty">{tr("web.inspector_task_empty")}</p>}
     </div>}
     {/* Kept mounted once opened, so the tree and preview survive tab switches. */}
     {(tab === "files" || filesVisited) && <div className="inspector-body" role="tabpanel" id="inspector-panel-files" aria-labelledby="inspector-tab-files" hidden={tab !== "files"}>
       <FilesPanel sessionKey={`${sessionId}:${historyOnly}:${historyProjectId ?? ""}`} canReadFiles={canReadFiles} historyOnly={historyOnly}
         accessedFiles={accessedFiles} fileMeta={fileMeta} readTree={readTree} readFile={readFile} searchFiles={searchFiles}
-        filePath={filePath} focusLine={focusPath && filePath === (projectRelative(focusPath, state.session.execution_root) ?? focusPath) ? focusLine : undefined} openFile={setFilePath} changes={changes ?? []} accessCounts={accessCounts} projectName={projectName}
+        filePath={filePath} focusLine={focusPath && filePath === (projectRelative(focusPath, state.session.execution_root) ?? focusPath) ? focusLine : undefined} openFile={setFilePath} changes={changes ?? []} accessCounts={accessCounts} projectName={projectName} projectRoot={state.session.execution_root ?? undefined}
         openChanges={(path) => { setChangesFocus((current) => ({ path, request: (current?.request ?? 0) + 1 })); setTab("changes"); }} showCall={showCall} />
     </div>}
-    {tab === "changes" && <div className="inspector-body" role="tabpanel" id="inspector-panel-changes" aria-labelledby="inspector-tab-changes">
+    {(tab === "changes" || changesVisited) && <div className="inspector-body" role="tabpanel" id="inspector-panel-changes" aria-labelledby="inspector-tab-changes" hidden={tab !== "changes"}>
       {historyOnly ? resumeStatus ?? <p className="hint">{tr("web.inspector_history_changes")}</p> : <ChangesPanel sessionId={sessionId} state={state} onCount={setChangeCount} onWorkingChanges={setChanges} onFeedback={onFeedback} focus={changesFocus} />}
 
     </div>}

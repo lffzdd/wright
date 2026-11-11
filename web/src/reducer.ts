@@ -79,7 +79,7 @@ function eventOutput(previous: string | undefined, payload: Record<string, unkno
 
 function toolResult(payload: Record<string, unknown>): Record<string, unknown> {
   // These are the fields serialized by backend ToolResult.to_dict().
-  const fields = ["ok", "err", "data", "summary", "content", "artifacts", "retention", "retention_key"];
+  const fields = ["ok", "err", "data", "summary", "content", "artifacts", "retention", "retention_key", "display"];
   const result = Object.fromEntries(fields.filter((key) => key in payload).map((key) => [key, payload[key]]));
   if (Array.isArray(result.artifacts)) {
     result.artifacts = result.artifacts.map((artifact: unknown) => artifact && typeof artifact === "object"

@@ -95,7 +95,7 @@ describe("UI event reducer", () => {
     const result = {
       ok, err: ok ? "" : "failed", data: { output: "report" }, summary: "Report",
       content: [{ type: "text", text: "report" }], artifacts: [artifact],
-      retention: "instruction", retention_key: "report",
+      retention: "instruction", retention_key: "report", display: { objective: "g", steps: [] },
     };
     let next = applyEvent({ ...state, timeline: [] }, event(1, "turn.started", { prompt: "report" }));
     next = applyEvent(next, event(2, "tool.running", { call_id: "c", name: "write_report", arguments: { path: "report.md" } }));
