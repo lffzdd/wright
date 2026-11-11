@@ -113,11 +113,11 @@ def make_spawn_agent_tool(
     permission_service=None,
 ) -> Tool:
     if depth < 0 or max_depth < 1 or depth >= max_depth:
-        raise ValueError("spawn_agent 只能在 0 <= depth < max_depth 时创建")
+        raise ValueError("spawn_agent requires 0 <= depth < max_depth")
     if child_max_steps < 1:
-        raise ValueError("child_max_steps 必须 > 0")
+        raise ValueError("child_max_steps must be > 0")
     if child_timeout <= 0:
-        raise ValueError("child_timeout 必须 > 0")
+        raise ValueError("child_timeout must be > 0")
 
     def _call(arguments: dict[str, Any], runtime: ToolRuntime) -> ToolResult:
         task = arguments["task"].strip()
@@ -450,7 +450,7 @@ def build_agent_tools(
     permission_service=None,
 ) -> list[Tool]:
     if depth < 0 or max_depth < 1 or depth > max_depth:
-        raise ValueError("需要满足 0 <= depth <= max_depth 且 max_depth >= 1")
+        raise ValueError("requires 0 <= depth <= max_depth and max_depth >= 1")
     tools = list(base_tools)
     if depth < max_depth:
         tools.append(

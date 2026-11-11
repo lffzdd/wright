@@ -112,7 +112,7 @@ class SourceLocator:
 def encode_locator(locator: SourceLocator) -> str:
     """Stable single-line form. Values cannot contain separators."""
     if not locator.session_id:
-        raise SemanticMemoryStoreError("source_ref 必须包含 session")
+        raise SemanticMemoryStoreError("source_ref must include a session")
     fields = (
         ("sess", locator.session_id),
         ("root", locator.root_run_id),
@@ -129,7 +129,7 @@ def encode_locator(locator: SourceLocator) -> str:
         if not value:
             continue
         if any(char in value for char in ";=\n"):
-            raise SemanticMemoryStoreError("source_ref 含有非法分隔符")
+            raise SemanticMemoryStoreError("source_ref contains an invalid separator")
         parts.append(f"{key}={value}")
     return ";".join(parts)
 
@@ -138,7 +138,7 @@ def parse_locator(token: str) -> SourceLocator:
     """Parse one stored ref. A token without a session is rejected."""
     text = token.strip()
     if not text or "=" not in text:
-        raise SemanticMemoryStoreError("source_ref 必须包含 session")
+        raise SemanticMemoryStoreError("source_ref must include a session")
     fields: dict[str, str] = {}
     for part in text.split(";"):
         if "=" not in part:
@@ -147,7 +147,7 @@ def parse_locator(token: str) -> SourceLocator:
         fields[key] = value
     session_id = fields.get("sess", "")
     if not session_id:
-        raise SemanticMemoryStoreError("source_ref 必须包含 session")
+        raise SemanticMemoryStoreError("source_ref must include a session")
     return SourceLocator(
         session_id=session_id,
         root_run_id=fields.get("root", ""),

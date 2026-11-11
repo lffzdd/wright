@@ -106,7 +106,7 @@ def _resolve_path(memory_id: str, directory: Path) -> Path:
     normalized = normalize_memory_id(memory_id)
     path = directory / f"{normalized}.md"
     if not _is_memory_file(path):
-        raise SemanticMemoryNotFoundError(f"记忆不存在: {normalized}")
+        raise SemanticMemoryNotFoundError(f"memory not found: {normalized}")
     return path
 
 def _visible(record: SemanticMemoryRecord, *, read_scope: str, project_id: str, include_inactive: bool) -> bool:
@@ -140,7 +140,7 @@ def _matching_headers(
     type_: str | None,
 ) -> list[SemanticMemoryHeader]:
     if type_ is not None and parse_semantic_memory_type(type_) is None:
-        raise SemanticMemoryStoreError(f"非法 memory type: {type_}")
+        raise SemanticMemoryStoreError(f"invalid memory type: {type_}")
     matched: list[SemanticMemoryHeader] = []
     for header in scan_memory_files(directory):
         if type_ is not None and header.type != type_:

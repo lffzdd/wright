@@ -107,7 +107,7 @@ class Agent:
         )
         self._memory_finalized_turns: set[str] = set()
         if max_verification_retries < 1:
-            raise ValueError("max_verification_retries 必须 >= 1")
+            raise ValueError("max_verification_retries must be >= 1")
         self.on_run_started = on_run_started
         self.max_consecutive_invalid = max_consecutive_invalid
         self.profile = prepared.profile
@@ -254,7 +254,7 @@ class Agent:
         if self.profile.max_steps is not None:
             max_steps = min(max_steps, self.profile.max_steps)
         if max_steps <= 0:
-            raise ValueError("max_steps 必须 > 0")
+            raise ValueError("max_steps must be > 0")
         self.session_state.max_steps = max_steps
         # 计划是 user-turn 级状态，不是跨任务记忆。
         # 首轮允许装配层预置；后续 run() 开始新目标时清空，continue_run() 则保留。
@@ -353,16 +353,16 @@ class Agent:
         as a clearly typed data message and receives its own lifecycle trace.
         """
         if self.session_state.agent_task_id is not None:
-            raise ValueError("只有 root Agent 可以处理 runtime event")
+            raise ValueError("only the root agent can handle runtime events")
         budget = self.session_state.max_steps if max_steps is None else max_steps
         if budget <= 0:
-            raise ValueError("max_steps 必须 > 0")
+            raise ValueError("max_steps must be > 0")
         try:
             content = json.dumps(
                 {"runtime_event": event}, ensure_ascii=False, default=repr
             )
         except Exception as exc:
-            raise ValueError(f"runtime event 无法序列化: {exc}") from exc
+            raise ValueError(f"runtime event cannot be serialized: {exc}") from exc
         if len(content) > 12_000:
             content = json.dumps({
                 "runtime_event": {
@@ -431,7 +431,7 @@ class Agent:
         """
         if self.session_state.current_run_status() != "running":
             raise ValueError(
-                "只能继续 running 的 Run，当前为 "
+                "only a running run can be continued; current status is "
                 f"{self.session_state.current_run_status()}"
             )
         # A checkpoint may have been copied while an older writer still showed
@@ -447,7 +447,7 @@ class Agent:
             return None
         budget = self.session_state.max_steps if max_steps is None else max_steps
         if budget <= 0:
-            raise ValueError("max_steps 必须 > 0")
+            raise ValueError("max_steps must be > 0")
         if (
             self.session_state.agent_task_id is None
             and not self.session_state.agent_root_turn_id

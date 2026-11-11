@@ -48,7 +48,7 @@ class AgentControlConfig:
     def __post_init__(self) -> None:
         for name, value in self.to_dict().items():
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-                raise AgentControlError(f"{name} 必须是正整数")
+                raise AgentControlError(f"{name} must be a positive integer")
         ceilings = {
             "max_depth": 8,
             "max_children_per_parent": 64,
@@ -61,7 +61,7 @@ class AgentControlConfig:
         }
         for name, ceiling in ceilings.items():
             if getattr(self, name) > ceiling:
-                raise AgentControlError(f"{name} 不能超过 {ceiling}")
+                raise AgentControlError(f"{name} must not exceed {ceiling}")
 
     def to_dict(self) -> dict[str, int]:
         return {
@@ -78,7 +78,7 @@ class AgentControlConfig:
     @classmethod
     def from_dict(cls, value: Any) -> AgentControlConfig:
         if not isinstance(value, dict):
-            raise AgentControlError("agent control config 必须是对象")
+            raise AgentControlError("agent control config must be an object")
         defaults = cls()
         return cls(**{
             name: value.get(name, getattr(defaults, name))
@@ -159,26 +159,26 @@ class AgentTaskRecord:
     @classmethod
     def from_dict(cls, value: Any) -> AgentTaskRecord:
         if not isinstance(value, dict):
-            raise AgentControlError("agent task 必须是对象")
+            raise AgentControlError("agent task must be an object")
         status = value.get("status")
         if status not in {
             "pending", "running", "completed", "failed", "cancelled", "timed_out"
         }:
-            raise AgentControlError("agent task status 非法")
+            raise AgentControlError("invalid agent task status")
         usage = value.get("usage", {})
         if not isinstance(usage, dict):
-            raise AgentControlError("agent task usage 必须是对象")
+            raise AgentControlError("agent task usage must be an object")
         children = value.get("children", [])
         if not isinstance(children, list) or not all(
             isinstance(child, str) for child in children
         ):
-            raise AgentControlError("agent task children 必须是字符串数组")
+            raise AgentControlError("agent task children must be an array of strings")
         parent_id = value.get("parent_id")
         if parent_id is not None and not isinstance(parent_id, str):
-            raise AgentControlError("agent task parent_id 非法")
+            raise AgentControlError("invalid agent task parent_id")
         cancel_requested = value.get("cancel_requested", False)
         if not isinstance(cancel_requested, bool):
-            raise AgentControlError("agent task cancel_requested 必须是 boolean")
+            raise AgentControlError("agent task cancel_requested must be a boolean")
         record = cls(
             id=_bounded_string(value.get("id"), "id", 80),
             root_turn_id=_bounded_string(
@@ -224,13 +224,13 @@ class AgentTaskRecord:
             children=list(children),
         )
         if record.steps_used > record.step_budget:
-            raise AgentControlError("agent task steps_used 不能超过 step_budget")
+            raise AgentControlError("agent task steps_used must not exceed step_budget")
         if (
             record.started_at is not None
             and record.ended_at is not None
             and record.ended_at < record.started_at
         ):
-            raise AgentControlError("agent task ended_at 不能早于 started_at")
+            raise AgentControlError("agent task ended_at must not be earlier than started_at")
         return record
 
 
@@ -384,7 +384,7 @@ class AgentControlPlane:
         error: str = "",
     ) -> AgentTaskRecord:
         if status not in TERMINAL_AGENT_TASK_STATUSES:
-            raise AgentControlError("finish_task 需要终态 status")
+            raise AgentControlError("finish_task requires a terminal status")
         with self._lock:
             record = self._require(task_id)
             if record.status in TERMINAL_AGENT_TASK_STATUSES and record.ended_at is not None:
@@ -515,20 +515,20 @@ class AgentControlPlane:
         if value in (None, {}):
             return cls()
         if not isinstance(value, dict):
-            raise AgentControlError("agent control snapshot 必须是对象")
+            raise AgentControlError("agent control snapshot must be an object")
         plane = cls(AgentControlConfig.from_dict(value.get("config", {})))
         counter = _nonnegative_int(value.get("counter", 0), "counter")
         rows = value.get("tasks", [])
         if not isinstance(rows, list):
-            raise AgentControlError("agent control tasks 必须是数组")
+            raise AgentControlError("agent control tasks must be an array")
         if len(rows) > 10_000:
-            raise AgentControlError("agent control tasks 超出快照上限")
+            raise AgentControlError("agent control tasks exceed the snapshot limit")
         with plane._lock:
             plane._counter = counter
             for row in rows:
                 record = AgentTaskRecord.from_dict(row)
                 if record.id in plane._tasks:
-                    raise AgentControlError(f"重复 agent task id: {record.id}")
+                    raise AgentControlError(f"duplicate agent task id: {record.id}")
                 if mark_interrupted and record.status in {"pending", "running"}:
                     record.status = "failed"
                     record.ended_at = time.time()
@@ -548,31 +548,31 @@ class AgentControlPlane:
     def _validate_tree_unlocked(self) -> None:
         for record in self._tasks.values():
             if record.parent_id is None and record.depth != 1:
-                raise AgentControlError("root agent task depth 必须为 1")
+                raise AgentControlError("root agent task depth must be 1")
             if len(set(record.children)) != len(record.children):
-                raise AgentControlError(f"agent task {record.id} children 重复")
+                raise AgentControlError(f"agent task {record.id} has duplicate children")
             for child_id in record.children:
                 child = self._tasks.get(child_id)
                 if child is None:
                     raise AgentControlError(
-                        f"agent task {record.id} 引用了不存在的 child {child_id}"
+                        f"agent task {record.id} references missing child {child_id}"
                     )
                 if child.parent_id != record.id:
-                    raise AgentControlError("agent task parent/children 关系不一致")
+                    raise AgentControlError("agent task parent/children links are inconsistent")
                 if child.root_turn_id != record.root_turn_id:
-                    raise AgentControlError("父子 agent task 不属于同一个 root turn")
+                    raise AgentControlError("parent and child agent tasks belong to different root turns")
                 if child.depth != record.depth + 1:
-                    raise AgentControlError("父子 agent task depth 不连续")
+                    raise AgentControlError("parent and child agent task depths are not consecutive")
             if record.parent_id is not None:
                 parent = self._tasks.get(record.parent_id)
                 if parent is None or record.id not in parent.children:
-                    raise AgentControlError("agent task 缺少对应 parent 反向引用")
+                    raise AgentControlError("agent task is missing its back-reference from the parent")
 
             seen: set[str] = set()
             current: AgentTaskRecord | None = record
             while current is not None:
                 if current.id in seen:
-                    raise AgentControlError("agent task tree 存在环")
+                    raise AgentControlError("agent task tree contains a cycle")
                 seen.add(current.id)
                 current = (
                     self._tasks.get(current.parent_id)
@@ -622,10 +622,10 @@ def _bounded_string(
     allow_empty: bool = False,
 ) -> str:
     if not isinstance(value, str) or (not allow_empty and not value.strip()):
-        raise AgentControlError(f"{field} 必须是字符串")
+        raise AgentControlError(f"{field} must be a string")
     cleaned = value.strip()
     if len(cleaned) > max_chars:
-        raise AgentControlError(f"{field} 不能超过 {max_chars} 个字符")
+        raise AgentControlError(f"{field} must not exceed {max_chars} characters")
     return cleaned
 
 
@@ -637,13 +637,13 @@ def _optional_string(value: Any, field: str, max_chars: int) -> str | None:
 
 def _nonnegative_int(value: Any, field: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise AgentControlError(f"{field} 必须是非负整数")
+        raise AgentControlError(f"{field} must be a non-negative integer")
     return value
 
 
 def _number(value: Any, field: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise AgentControlError(f"{field} 必须是数字")
+        raise AgentControlError(f"{field} must be a number")
     return float(value)
 
 

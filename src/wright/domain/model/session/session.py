@@ -391,16 +391,16 @@ class Session:
         tool_calls = tool_calls or []
 
         if route == "tool_calls" and not tool_calls:
-            raise ValueError("route='tool_calls' 时必须提供 tool_calls")
+            raise ValueError("route='tool_calls' requires tool_calls")
         if route == "final" and tool_calls:
-            raise ValueError("route='final' 时不能提供 tool_calls")
+            raise ValueError("route='final' must not include tool_calls")
 
         tool_execution_ids: list[CallId] = []
         for tool_call in tool_calls:
             if not tool_call.id:
-                raise ValueError("ToolCall 缺少 id,无法建立工具执行记录")
+                raise ValueError("ToolCall has no id; cannot create a tool execution record")
             if tool_call.id in self.tool_executions or tool_call.id in tool_execution_ids:
-                raise ValueError(f"重复的 tool_call id: {tool_call.id}")
+                raise ValueError(f"duplicate tool_call id: {tool_call.id}")
 
             tool_execution_ids.append(tool_call.id)
 
@@ -532,7 +532,7 @@ class Session:
         issues: list[dict[str, str]],
     ) -> VerificationRecord:
         if turn not in self.turns or turn.route != "final":
-            raise ValueError("verification 只能关联已记录的 final turn")
+            raise ValueError("verification can only attach to a recorded final turn")
         record = VerificationRecord(approved=approved, issues=issues)
         turn.verification = record
         return record

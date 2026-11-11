@@ -32,7 +32,7 @@ class SkillRegistry:
         else:
             dirs = [Path(item) for item in directory]
         if not dirs:
-            raise ValueError("SkillRegistry 至少需要一个目录")
+            raise ValueError("SkillRegistry requires at least one directory")
         self.directories = tuple(path.expanduser().resolve() for path in dirs)
         self.directory = self.directories[0]
         self._lock = threading.RLock()

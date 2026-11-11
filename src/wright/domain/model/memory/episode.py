@@ -46,7 +46,7 @@ class EpisodeNotFoundError(EpisodeStoreError):
 
 def _string(value: Any, field: str, *, allow_empty: bool = False) -> str:
     if not isinstance(value, str) or (not allow_empty and not value):
-        raise EpisodeStoreError(f"{field} 必须是字符串")
+        raise EpisodeStoreError(f"{field} must be a string")
     return value
 
 
@@ -59,13 +59,13 @@ def _bounded_string(
 ) -> str:
     text = _string(value, field, allow_empty=allow_empty)
     if len(text) > max_chars:
-        raise EpisodeStoreError(f"{field} 不能超过 {max_chars} 个字符")
+        raise EpisodeStoreError(f"{field} must not exceed {max_chars} characters")
     return text
 
 
 def _nonnegative_int(value: Any, field: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise EpisodeStoreError(f"{field} 必须是非负整数")
+        raise EpisodeStoreError(f"{field} must be a non-negative integer")
     return value
 
 
@@ -120,21 +120,21 @@ class EvidenceRef:
     @classmethod
     def from_dict(cls, value: Any) -> EvidenceRef:
         if not isinstance(value, dict):
-            raise EpisodeStoreError("evidence 必须是对象")
+            raise EpisodeStoreError("evidence must be an object")
         evidence_id = value.get("id")
         if not isinstance(evidence_id, str) or EVIDENCE_ID_RE.fullmatch(evidence_id) is None:
-            raise EpisodeStoreError("evidence id 非法")
+            raise EpisodeStoreError("invalid evidence id")
         kind = value.get("kind")
         if kind not in SOURCE_KINDS:
-            raise EpisodeStoreError("evidence kind 非法")
+            raise EpisodeStoreError("invalid evidence kind")
         ok = value.get("ok", None)
         if ok is not None and not isinstance(ok, bool):
-            raise EpisodeStoreError("evidence ok 必须是布尔或空")
+            raise EpisodeStoreError("evidence ok must be a boolean or null")
         exit_code = value.get("exit_code", None)
         if exit_code is not None and (
             isinstance(exit_code, bool) or not isinstance(exit_code, int)
         ):
-            raise EpisodeStoreError("evidence exit_code 必须是整数或空")
+            raise EpisodeStoreError("evidence exit_code must be an integer or null")
         return cls(
             id=evidence_id,
             kind=kind,
@@ -206,15 +206,15 @@ class EpisodeSearchHit:
 def _parse_evidence(value: Any) -> tuple[EvidenceRef, ...]:
     """An empty list means this turn recorded no locators."""
     if value is None:
-        raise EpisodeStoreError("episode evidence 缺失")
+        raise EpisodeStoreError("episode evidence is missing")
     if not isinstance(value, list):
-        raise EpisodeStoreError("episode evidence 非法")
+        raise EpisodeStoreError("invalid episode evidence")
     if len(value) > MAX_EPISODE_EVIDENCE:
-        raise EpisodeStoreError("episode evidence 超出上限")
+        raise EpisodeStoreError("episode evidence exceeds the limit")
     refs = tuple(EvidenceRef.from_dict(item) for item in value)
     ids = [item.id for item in refs]
     if len(ids) != len(set(ids)):
-        raise EpisodeStoreError("episode evidence id 重复")
+        raise EpisodeStoreError("duplicate episode evidence id")
     return refs
 
 
@@ -272,48 +272,48 @@ class EpisodeRecord:
     @classmethod
     def from_dict(cls, value: Any) -> EpisodeRecord:
         if not isinstance(value, dict):
-            raise EpisodeStoreError("episode 必须是对象")
+            raise EpisodeStoreError("episode must be an object")
         episode_id = value.get("id")
         if not isinstance(episode_id, str) or EPISODE_ID_RE.fullmatch(episode_id) is None:
-            raise EpisodeStoreError("episode id 非法")
+            raise EpisodeStoreError("invalid episode id")
         status = value.get("status")
         if status not in EPISODE_STATUSES:
-            raise EpisodeStoreError("episode status 非法")
+            raise EpisodeStoreError("invalid episode status")
         tools = value.get("tools", [])
         agents = value.get("agents", [])
         verification = value.get("verification", [])
         plan = value.get("plan", {})
         usage = value.get("usage", {})
         if not isinstance(tools, list) or not all(isinstance(item, dict) for item in tools):
-            raise EpisodeStoreError("episode tools 非法")
+            raise EpisodeStoreError("invalid episode tools")
         if len(tools) > MAX_EPISODE_TOOLS:
-            raise EpisodeStoreError("episode tools 超出上限")
+            raise EpisodeStoreError("episode tools exceed the limit")
         if not isinstance(agents, list) or not all(
             isinstance(item, dict) for item in agents
         ):
-            raise EpisodeStoreError("episode agents 非法")
+            raise EpisodeStoreError("invalid episode agents")
         if len(agents) > MAX_EPISODE_AGENTS:
-            raise EpisodeStoreError("episode agents 超出上限")
+            raise EpisodeStoreError("episode agents exceed the limit")
         if not isinstance(verification, list) or not all(
             isinstance(item, dict) for item in verification
         ):
-            raise EpisodeStoreError("episode verification 非法")
+            raise EpisodeStoreError("invalid episode verification")
         if len(verification) > MAX_EPISODE_VERIFICATIONS:
-            raise EpisodeStoreError("episode verification 超出上限")
+            raise EpisodeStoreError("episode verification exceeds the limit")
         if not isinstance(plan, dict) or not isinstance(usage, dict):
-            raise EpisodeStoreError("episode plan/usage 非法")
+            raise EpisodeStoreError("invalid episode plan/usage")
         started_step = _nonnegative_int(value.get("started_step"), "started_step")
         ended_step = _nonnegative_int(value.get("ended_step"), "ended_step")
         if ended_step < started_step:
-            raise EpisodeStoreError("ended_step 不能小于 started_step")
+            raise EpisodeStoreError("ended_step must not be less than started_step")
         version = value.get("version")
         if version != EPISODE_SCHEMA_VERSION:
-            raise EpisodeStoreError("episode version 非法")
+            raise EpisodeStoreError("invalid episode version")
         project = value.get("project_id", "")
         if not isinstance(project, str) or PROJECT_ID_RE.fullmatch(project) is None:
-            raise EpisodeStoreError("episode project_id 非法")
+            raise EpisodeStoreError("invalid episode project_id")
         if "evidence" not in value:
-            raise EpisodeStoreError("episode evidence 缺失")
+            raise EpisodeStoreError("episode evidence is missing")
         return cls(
             id=episode_id,
             session_id=_bounded_string(value.get("session_id"), "session_id", 128),

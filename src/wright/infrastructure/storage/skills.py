@@ -49,7 +49,7 @@ def _construct_unique_map(loader: yaml.SafeLoader, node: yaml.MappingNode) -> di
     for key_node, value_node in node.value:
         key = loader.construct_object(key_node, deep=False)
         if key in mapping:
-            raise SkillStoreError(f"frontmatter 键重复: {key}")
+            raise SkillStoreError(f"duplicate frontmatter key: {key}")
         mapping[key] = loader.construct_object(value_node, deep=False)
     return mapping
 
@@ -69,13 +69,13 @@ def normalize_skill_id(skill_id: str) -> str:
     value = str(skill_id).strip()
     value = value.removesuffix("/SKILL.md")
     if "/" in value or "\\" in value or value in {".", ".."}:
-        raise SkillStoreError("skill_id 必须是安全的目录名，不能包含路径")
+        raise SkillStoreError("skill_id must be a safe directory name without path components")
     if not value or SAFE_SKILL_ID_RE.fullmatch(value) is None:
         raise SkillStoreError(
-            f"skill_id 必须匹配 {SAFE_SKILL_ID_RE.pattern}，不能包含路径"
+            f"skill_id must match {SAFE_SKILL_ID_RE.pattern} and contain no path components"
         )
     if len(value) > MAX_SKILL_ID_CHARS:
-        raise SkillStoreError(f"skill_id 不能超过 {MAX_SKILL_ID_CHARS} 个字符")
+        raise SkillStoreError(f"skill_id must not exceed {MAX_SKILL_ID_CHARS} characters")
     return value
 
 
@@ -84,19 +84,19 @@ def skill_file_path(directory: Path, skill_id: str) -> Path:
     normalized = normalize_skill_id(skill_id)
     path = (directory / normalized / "SKILL.md").resolve()
     if path.parent.parent != directory or path.parent.name != normalized:
-        raise SkillStoreError("skill path 越界")
+        raise SkillStoreError("skill path escapes the skills directory")
     return path
 
 
 def _required_text(value: object, field: str, max_chars: int) -> str:
     if not isinstance(value, str):
-        raise SkillStoreError(f"{field} 必须是字符串")
+        raise SkillStoreError(f"{field} must be a string")
     cleaned = " ".join(value.splitlines()).strip()
     if not cleaned:
-        raise SkillStoreError(f"skill frontmatter 缺少 {field}")
+        raise SkillStoreError(f"skill frontmatter is missing {field}")
     if len(cleaned) > max_chars:
         raise SkillStoreError(
-            f"{field} 不能超过 {max_chars} 个字符（当前 {len(cleaned)}）"
+            f"{field} must not exceed {max_chars} characters (got {len(cleaned)})"
         )
     return cleaned
 
@@ -105,11 +105,11 @@ def _optional_text(value: object, field: str, max_chars: int) -> str:
     if value is None:
         return ""
     if not isinstance(value, str):
-        raise SkillStoreError(f"{field} 必须是字符串")
+        raise SkillStoreError(f"{field} must be a string")
     cleaned = " ".join(value.splitlines()).strip()
     if len(cleaned) > max_chars:
         raise SkillStoreError(
-            f"{field} 不能超过 {max_chars} 个字符（当前 {len(cleaned)}）"
+            f"{field} must not exceed {max_chars} characters (got {len(cleaned)})"
         )
     return cleaned
 
@@ -117,36 +117,36 @@ def _optional_text(value: object, field: str, max_chars: int) -> str:
 def _plain_metadata(value: Any, *, depth: int = 0) -> Any:
     """Keep JSON-like metadata. safe_load already blocks arbitrary objects."""
     if depth > 6:
-        raise SkillStoreError("metadata 嵌套过深")
+        raise SkillStoreError("metadata is nested too deeply")
     if value is None or isinstance(value, (str, int, bool)):
         if isinstance(value, str) and len(value) > 4_000:
-            raise SkillStoreError("metadata 字符串过长")
+            raise SkillStoreError("metadata string is too long")
         return value
     if isinstance(value, float):
         if value != value or value in {float("inf"), float("-inf")}:
-            raise SkillStoreError("metadata 不能包含 NaN 或无穷大")
+            raise SkillStoreError("metadata must not contain NaN or infinity")
         return value
     if isinstance(value, list):
         if len(value) > 50:
-            raise SkillStoreError("metadata 列表过长")
+            raise SkillStoreError("metadata list is too long")
         return [_plain_metadata(item, depth=depth + 1) for item in value]
     if isinstance(value, dict):
         if len(value) > 50:
-            raise SkillStoreError("metadata 字段过多")
+            raise SkillStoreError("metadata has too many fields")
         cleaned: dict[str, Any] = {}
         for key, item in value.items():
             if not isinstance(key, str) or not key.strip():
-                raise SkillStoreError("metadata 键必须是非空字符串")
+                raise SkillStoreError("metadata keys must be non-empty strings")
             cleaned[key] = _plain_metadata(item, depth=depth + 1)
         return cleaned
-    raise SkillStoreError(f"metadata 包含不支持的类型: {type(value).__name__}")
+    raise SkillStoreError(f"metadata contains an unsupported type: {type(value).__name__}")
 
 
 def _metadata_pairs(value: object) -> tuple[tuple[str, str], ...]:
     if value is None:
         return ()
     if not isinstance(value, dict):
-        raise SkillStoreError("metadata 必须是映射")
+        raise SkillStoreError("metadata must be a mapping")
     plain = _plain_metadata(value)
     return tuple(
         (key, json.dumps(item, ensure_ascii=False, sort_keys=True))
@@ -160,7 +160,7 @@ def _extra_pairs(frontmatter: dict[str, Any]) -> tuple[tuple[str, str], ...]:
         if key in _RESERVED_KEYS:
             continue
         if not isinstance(key, str) or not key.strip():
-            raise SkillStoreError("frontmatter 键必须是非空字符串")
+            raise SkillStoreError("frontmatter keys must be non-empty strings")
         plain = _plain_metadata(value)
         pairs.append((key, json.dumps(plain, ensure_ascii=False, sort_keys=True)))
     return tuple(pairs)
@@ -169,18 +169,18 @@ def _extra_pairs(frontmatter: dict[str, Any]) -> tuple[tuple[str, str], ...]:
 def parse_skill_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     match = _FRONTMATTER_RE.match(text)
     if not match:
-        raise SkillStoreError("SKILL.md 必须包含 YAML frontmatter（以 --- 包围）")
+        raise SkillStoreError("SKILL.md must start with YAML frontmatter (enclosed in ---)")
     raw_fm, body = match.group(1), match.group(2)
     try:
         loaded = yaml.load(raw_fm, Loader=_UniqueKeyLoader)
     except SkillStoreError:
         raise
     except yaml.YAMLError as exc:
-        raise SkillStoreError(f"无法解析 skill frontmatter: {exc}") from exc
+        raise SkillStoreError(f"cannot parse skill frontmatter: {exc}") from exc
     if loaded is None:
-        raise SkillStoreError("skill frontmatter 为空")
+        raise SkillStoreError("skill frontmatter is empty")
     if not isinstance(loaded, dict):
-        raise SkillStoreError("skill frontmatter 必须是映射")
+        raise SkillStoreError("skill frontmatter must be a mapping")
     return loaded, body
 
 
@@ -194,14 +194,14 @@ def _allowed_tools(value: object, *, field: str) -> tuple[str, ...]:
     elif isinstance(value, list):
         parts = list(value)
     else:
-        raise SkillStoreError(f"{field} 必须是字符串或字符串列表")
+        raise SkillStoreError(f"{field} must be a string or a list of strings")
     tools: list[str] = []
     for item in parts:
         if not isinstance(item, str) or not item.strip():
-            raise SkillStoreError(f"{field} 的每一项必须是非空字符串")
+            raise SkillStoreError(f"every item in {field} must be a non-empty string")
         name = item.strip()
         if len(name) > 200 or any(char.isspace() or ord(char) < 32 for char in name):
-            raise SkillStoreError(f"{field} 包含非法工具名: {name!r}")
+            raise SkillStoreError(f"{field} contains an invalid tool name: {name!r}")
         name = canonical_tool_name(name)
         if name not in tools:
             tools.append(name)
@@ -210,7 +210,7 @@ def _allowed_tools(value: object, *, field: str) -> tuple[str, ...]:
 
 def _normalize_allowed_tools(frontmatter: dict[str, Any]) -> tuple[str, ...]:
     if "allowed_tools" in frontmatter:
-        raise SkillStoreError("请使用 allowed-tools，不再接受 allowed_tools")
+        raise SkillStoreError("use allowed-tools; allowed_tools is no longer accepted")
     if "allowed-tools" not in frontmatter:
         return ()
     return _allowed_tools(frontmatter.get("allowed-tools"), field="allowed-tools")
@@ -220,15 +220,15 @@ def parse_skill_markdown(skill_id: str, text: str, path: Path) -> SkillDefinitio
     frontmatter, body = parse_skill_frontmatter(text)
     name = _required_text(frontmatter.get("name"), "name", MAX_SKILL_NAME_CHARS)
     if name != skill_id:
-        raise SkillStoreError(f"name 必须与目录名一致: {skill_id}")
+        raise SkillStoreError(f"name must match the directory name: {skill_id}")
     description = _required_text(
         frontmatter.get("description"), "description", MAX_SKILL_DESCRIPTION_CHARS
     )
     cleaned_body = body.strip()
     if len(cleaned_body) > MAX_SKILL_BODY_CHARS:
         raise SkillStoreError(
-            f"skill 正文不能超过 {MAX_SKILL_BODY_CHARS} 个字符"
-            f"（当前 {len(cleaned_body)}）"
+            f"skill body must not exceed {MAX_SKILL_BODY_CHARS} characters"
+            f" (got {len(cleaned_body)})"
         )
     return SkillDefinition(
         meta=SkillMeta(
@@ -254,27 +254,27 @@ def parse_skill_markdown(skill_id: str, text: str, path: Path) -> SkillDefinitio
 
 def _reject_symlink(path: Path, label: str) -> None:
     if path.is_symlink() or path.parent.is_symlink():
-        raise SkillStoreError(f"拒绝符号链接: {label}")
+        raise SkillStoreError(f"refusing symlink: {label}")
 
 
 def load_skill_file(path: Path, skill_id: str | None = None) -> SkillDefinition:
     path = path.resolve()
     _reject_symlink(path, str(path))
     if not path.is_file():
-        raise SkillNotFoundError(f"skill 不存在: {path}")
+        raise SkillNotFoundError(f"skill not found: {path}")
     size = path.stat().st_size
     if size > MAX_SKILL_FILE_BYTES:
         raise SkillStoreError(
-            f"skill 文件过大（{size} 字节，上限 {MAX_SKILL_FILE_BYTES}）"
+            f"skill file is too large ({size} bytes, limit {MAX_SKILL_FILE_BYTES})"
         )
     try:
         text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
         raise SkillStoreError(
-            f"SKILL.md 不是有效的 UTF-8（{path.name}）: {exc.reason}"
+            f"SKILL.md is not valid UTF-8 ({path.name}): {exc.reason}"
         ) from exc
     except OSError as exc:
-        raise SkillStoreError(f"无法读取 {path.name}: {exc}") from exc
+        raise SkillStoreError(f"cannot read {path.name}: {exc}") from exc
     resolved_id = skill_id or path.parent.name
     return parse_skill_markdown(normalize_skill_id(resolved_id), text, path)
 
@@ -336,7 +336,7 @@ def write_skill(
     path = skill_file_path(directory, skill_id)
     text = dump_skill_markdown(name, description, body, allowed_tools)
     if len(text.encode("utf-8")) > MAX_SKILL_FILE_BYTES:
-        raise SkillStoreError("skill 文件超过大小上限")
+        raise SkillStoreError("skill file exceeds the size limit")
     parse_skill_markdown(normalize_skill_id(skill_id), text, path)
     _atomic_write(path, text)
     return path
@@ -353,42 +353,42 @@ def scan_skills(directory: Path) -> tuple[list[SkillDefinition], list[str]]:
     try:
         children = sorted(directory.iterdir(), key=lambda path: path.name)
     except OSError as exc:
-        return [], [f"无法扫描 skill 目录 {directory}: {exc}"]
+        return [], [f"cannot scan skill directory {directory}: {exc}"]
     for child in children:
         try:
             if child.is_symlink():
-                errors.append(f"跳过符号链接目录: {child.name}")
+                errors.append(f"skipped symlinked directory: {child.name}")
                 continue
             if not child.is_dir():
                 continue
         except OSError as exc:
-            errors.append(f"跳过无法读取的目录 {child.name}: {exc}")
+            errors.append(f"skipped unreadable directory {child.name}: {exc}")
             continue
         try:
             skill_id = normalize_skill_id(child.name)
         except SkillStoreError as exc:
-            errors.append(f"跳过非法 skill id {child.name!r}: {exc}")
+            errors.append(f"skipped invalid skill id {child.name!r}: {exc}")
             continue
         skill_path = child / "SKILL.md"
         try:
             if skill_path.is_symlink():
-                errors.append(f"跳过符号链接: {skill_id}")
+                errors.append(f"skipped symlink: {skill_id}")
                 continue
             if not skill_path.is_file():
-                errors.append(f"跳过缺少 SKILL.md 的目录: {skill_id}")
+                errors.append(f"skipped directory without SKILL.md: {skill_id}")
                 continue
         except OSError as exc:
-            errors.append(f"跳过无法读取的 skill {skill_id}: {exc}")
+            errors.append(f"skipped unreadable skill {skill_id}: {exc}")
             continue
         if len(definitions) >= MAX_SKILLS:
             errors.append(
-                f"已达到 skill 数量上限 {MAX_SKILLS}，忽略 {skill_id}"
+                f"reached the skill limit of {MAX_SKILLS}; ignored {skill_id}"
             )
             continue
         try:
             definitions.append(load_skill_file(skill_path, skill_id))
         except SkillStoreError as exc:
-            errors.append(f"跳过损坏的 skill {skill_id}: {exc}")
+            errors.append(f"skipped invalid skill {skill_id}: {exc}")
     return definitions, errors
 
 

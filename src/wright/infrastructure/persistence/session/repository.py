@@ -76,7 +76,7 @@ class FileSessionRepository(ISessionRepository):
 
     def path_for(self, session_id: str) -> Path:
         if _SESSION_ID_PATTERN.fullmatch(session_id) is None:
-            raise _CheckpointError("非法 session_id")
+            raise _CheckpointError("invalid session_id")
         return self.directory / f"{session_id}.json"
 
     def save(self, session: Session) -> Path:
@@ -87,7 +87,7 @@ class FileSessionRepository(ISessionRepository):
         path = self.path_for(session.session_id)
         if not session.workspace_dir.is_dir():
             raise _CheckpointError(
-                f"不能保存不可恢复的会话，workspace_dir 不存在: {session.workspace_dir}"
+                f"cannot save an unrecoverable session; workspace_dir does not exist: {session.workspace_dir}"
             )
         payload = _encode_session(session)
 
@@ -102,14 +102,14 @@ class FileSessionRepository(ISessionRepository):
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except FileNotFoundError as exc:
-                raise _CheckpointError(f"checkpoint 不存在: {session_id}") from exc
+                raise _CheckpointError(f"checkpoint not found: {session_id}") from exc
             except (OSError, json.JSONDecodeError) as exc:
-                raise _CheckpointError(f"checkpoint 无法读取: {exc}") from exc
+                raise _CheckpointError(f"cannot read checkpoint: {exc}") from exc
             if data.get("version") != CHECKPOINT_VERSION:
                 raise _CheckpointError("Unsupported checkpoint version; only version 8 is accepted")
             session = data.setdefault("session", {})
             if not isinstance(session, dict):
-                raise _CheckpointError(f"checkpoint 无法读取: {session_id}")
+                raise _CheckpointError(f"cannot read checkpoint: {session_id}")
             session["session_label"] = label
             atomic_write(path, json.dumps(data, ensure_ascii=False, indent=2).encode())
         return {"session_id": session_id, "user_goal": label, "active": False}
@@ -124,9 +124,9 @@ class FileSessionRepository(ISessionRepository):
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except FileNotFoundError as exc:
-                raise _CheckpointError(f"checkpoint 不存在: {session_id}") from exc
+                raise _CheckpointError(f"checkpoint not found: {session_id}") from exc
             except (OSError, json.JSONDecodeError) as exc:
-                raise _CheckpointError(f"checkpoint 无法读取: {exc}") from exc
+                raise _CheckpointError(f"cannot read checkpoint: {exc}") from exc
         session = _decode_session(data)
         try:
             saved_at = datetime.fromisoformat(data["saved_at"]).timestamp()
@@ -157,7 +157,7 @@ class FileSessionRepository(ISessionRepository):
         with transaction():
             session_id = self.latest_session_id()
             if session_id is None:
-                raise _CheckpointError("没有可继续的 checkpoint")
+                raise _CheckpointError("no checkpoint to resume")
             return self.load(session_id)
 
     def list_recent_sessions(self, limit: int = 5) -> list[dict[str, Any]]:

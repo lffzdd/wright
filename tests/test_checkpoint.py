@@ -222,7 +222,7 @@ def test_checkpoint_refuses_missing_workspace(tmp_path):
     session = Session.create("goal", tmp_path / "missing")
     store = FileSessionRepository(tmp_path / "checkpoints")
 
-    with pytest.raises(CheckpointError, match="workspace_dir 不存在"):
+    with pytest.raises(CheckpointError, match="workspace_dir does not exist"):
         store.save(session)
 
 

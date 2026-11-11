@@ -116,19 +116,19 @@ def create_memory(
     elif scope == "global":
         project_id = ""
     else:
-        raise SemanticMemoryStoreError("新建记忆的 scope 只能是 project 或 global")
+        raise SemanticMemoryStoreError("a new memory's scope must be project or global")
     memory_type = parse_semantic_memory_type(type_)
     if memory_type is None:
-        raise SemanticMemoryStoreError(f"非法 memory type: {type_}")
+        raise SemanticMemoryStoreError(f"invalid memory type: {type_}")
     chosen = _normalize_memory_id(memory_id) if memory_id else _new_memory_id()
     locators, tokens = _encode_refs(source_refs)
     now = _utc_now()
     with _StoreLock(directory):
         path = (directory / f"{chosen}.md").resolve()
         if path.parent != directory:
-            raise SemanticMemoryStoreError("memory path 越界")
+            raise SemanticMemoryStoreError("memory path escapes the memory directory")
         if path.exists():
-            raise SemanticMemoryAlreadyExistsError(f"记忆已存在: {chosen}")
+            raise SemanticMemoryAlreadyExistsError(f"memory already exists: {chosen}")
         record = SemanticMemoryRecord(
             id=chosen,
             name=name,
@@ -173,14 +173,14 @@ def update_memory(
     directory = _directory(directory)
     revision = _revision(expected_revision)
     if status is not None and parse_semantic_status(status) is None:
-        raise SemanticMemoryStoreError(f"非法 memory status: {status}")
+        raise SemanticMemoryStoreError(f"invalid memory status: {status}")
     provenance_set = origin is not _UNSET or source_refs is not _UNSET
     with _StoreLock(directory):
         path = _resolve_path(memory_id, directory)
         current = _load_path(path)
         if current.revision != revision:
             raise SemanticMemoryConflictError(
-                f"记忆已被更新，当前 revision={current.revision}，拒绝用旧版本覆盖",
+                f"memory was updated (current revision={current.revision}); refusing to overwrite with a stale version",
                 current_revision=current.revision,
             )
         _require_visible(current, read_scope=read_scope, project_id=project_id)
@@ -244,7 +244,7 @@ def _apply_update_unlocked(
         return current
     memory_type = parse_semantic_memory_type(next_type)
     if memory_type is None:
-        raise SemanticMemoryStoreError(f"非法 memory type: {next_type}")
+        raise SemanticMemoryStoreError(f"invalid memory type: {next_type}")
     updated = SemanticMemoryRecord(
         id=current.id,
         name=next_name,
@@ -283,7 +283,7 @@ def delete_memory(
         try:
             path.unlink()
         except OSError as exc:
-            raise SemanticMemoryStoreError(f"删除记忆失败: {exc}") from exc
+            raise SemanticMemoryStoreError(f"failed to delete memory: {exc}") from exc
         _rebuild_index_unlocked(directory)
     return current
 
@@ -299,7 +299,7 @@ def search_memories(
     include_inactive: bool = False,
 ) -> list[SemanticMemoryRecord]:
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
-        raise SemanticMemoryStoreError("limit 必须是 1..100 的整数")
+        raise SemanticMemoryStoreError("limit must be an integer in 1..100")
     directory = _directory(directory)
     query_text = str(query).strip().casefold()
     terms = [term for term in re.split(r"\s+", query_text) if term]
@@ -339,7 +339,7 @@ def list_memories(
     type_: str | None = None,
 ) -> list[SemanticMemoryRecord]:
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
-        raise SemanticMemoryStoreError("limit 必须是 1..500 的整数")
+        raise SemanticMemoryStoreError("limit must be an integer in 1..500")
     directory = _directory(directory)
     with _StoreLock(directory):
         headers = _matching_headers(

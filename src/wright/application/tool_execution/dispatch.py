@@ -98,7 +98,7 @@ class ToolDispatchService:
         executor: IToolExecutor | None = None,
     ):
         if tool_timeout <= 0:
-            raise ValueError("tool_timeout 必须 > 0")
+            raise ValueError("tool_timeout must be > 0")
         self.tool_registry = tool_registry
         self.capability_snapshot = capability_snapshot
         self.execution_journal = execution_journal
@@ -449,7 +449,7 @@ class ToolDispatchService:
         slots: list[ToolExecutionOutcome | None] = [None] * len(tool_calls)
 
         if max_workers < 1:
-            raise ValueError("max_workers 必须 >= 1")
+            raise ValueError("max_workers must be >= 1")
 
         prepared: list[tuple[int, ToolCall, ToolCall, ToolResult | None]] = []
         for idx, tool_call in enumerate(tool_calls):

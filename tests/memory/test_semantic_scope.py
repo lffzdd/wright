@@ -385,7 +385,7 @@ def test_old_semantic_files_are_ignored(tmp_path: Path):
     assert "legacy body stays" not in context.semantic_text
     assert context.memories == ()
     _record, _reads, error = service.get_semantic("old-note", project_id=project_a)
-    assert _record is None and error and "不是当前语义记忆格式" in error
+    assert _record is None and error and "not in the current semantic memory format" in error
     listed, list_error = service.search_semantic("", project_id=project_a)
     assert list_error is None and listed == []
     assert (directory / "old-note.md").read_text(encoding="utf-8").endswith("legacy body stays\n")

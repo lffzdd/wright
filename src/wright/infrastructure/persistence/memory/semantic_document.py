@@ -73,11 +73,11 @@ def dump_frontmatter(record: SemanticMemoryRecord) -> str:
     )
     memory_type = parse_semantic_memory_type(record.type)
     if memory_type is None:
-        raise SemanticMemoryStoreError(f"非法 memory type: {record.type}")
+        raise SemanticMemoryStoreError(f"invalid memory type: {record.type}")
     if record.scope not in {"global", "project"}:
-        raise SemanticMemoryStoreError(f"非法 memory scope: {record.scope}")
+        raise SemanticMemoryStoreError(f"invalid memory scope: {record.scope}")
     if record.status not in {"active", "inactive"}:
-        raise SemanticMemoryStoreError(f"非法 memory status: {record.status}")
+        raise SemanticMemoryStoreError(f"invalid memory status: {record.status}")
     content = _content(record.content)
     lines = [
         "---",
@@ -119,7 +119,7 @@ def normalize_memory_id(memory_id: str) -> str:
     value = str(memory_id).strip()
     value = value.removesuffix(".md")
     if not value or _SAFE_ID_RE.fullmatch(value) is None:
-        raise SemanticMemoryStoreError("memory_id 必须是安全的记忆 id，不能包含路径")
+        raise SemanticMemoryStoreError("memory_id must be a safe memory id without path components")
     return value
 
 def _single_line(
@@ -130,27 +130,27 @@ def _single_line(
     allow_empty: bool = False,
 ) -> str:
     if not isinstance(value, str):
-        raise SemanticMemoryStoreError(f"{field} 必须是字符串")
+        raise SemanticMemoryStoreError(f"{field} must be a string")
     cleaned = " ".join(value.splitlines()).strip()
     if not allow_empty and not cleaned:
-        raise SemanticMemoryStoreError(f"{field} 不能为空")
+        raise SemanticMemoryStoreError(f"{field} must not be empty")
     if len(cleaned) > max_chars:
-        raise SemanticMemoryStoreError(f"{field} 不能超过 {max_chars} 个字符")
+        raise SemanticMemoryStoreError(f"{field} must not exceed {max_chars} characters")
     return cleaned
 
 def _content(value: object) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise SemanticMemoryStoreError("content 不能为空")
+        raise SemanticMemoryStoreError("content must not be empty")
     cleaned = value.strip()
     if len(cleaned) > MAX_MEMORY_CONTENT_CHARS:
         raise SemanticMemoryStoreError(
-            f"content 不能超过 {MAX_MEMORY_CONTENT_CHARS} 个字符"
+            f"content must not exceed {MAX_MEMORY_CONTENT_CHARS} characters"
         )
     return cleaned
 
 def _revision(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise SemanticMemoryStoreError("expected_revision 必须是非负整数")
+        raise SemanticMemoryStoreError("expected_revision must be a non-negative integer")
     return value
 
 def _atomic_write(path: Path, text: str) -> None:
@@ -184,26 +184,26 @@ def _encode_refs(
 def _current_fields(path: Path, fm: dict[str, str]) -> tuple[str, str, str, str, int]:
     """Require the current semantic schema. Older markdown is not a memory."""
     if fm.get("schema_version") != str(SEMANTIC_SCHEMA_VERSION):
-        raise SemanticMemoryStoreError(f"不是当前语义记忆格式: {path.name}")
+        raise SemanticMemoryStoreError(f"not in the current semantic memory format: {path.name}")
     try:
         memory_id = normalize_memory_id(fm.get("id") or "")
     except SemanticMemoryStoreError as exc:
-        raise SemanticMemoryStoreError(f"不是当前语义记忆格式: {path.name}") from exc
+        raise SemanticMemoryStoreError(f"not in the current semantic memory format: {path.name}") from exc
     if memory_id != path.stem:
-        raise SemanticMemoryStoreError(f"记忆 id 与文件名不一致: {path.name}")
+        raise SemanticMemoryStoreError(f"memory id does not match the file name: {path.name}")
     stored = normalize_stored_scope(fm.get("scope"), fm.get("project_id") or "")
     if stored is None:
-        raise SemanticMemoryStoreError(f"不是当前语义记忆格式: {path.name}")
+        raise SemanticMemoryStoreError(f"not in the current semantic memory format: {path.name}")
     scope, project = stored
     status = parse_semantic_status(fm.get("status")) if "status" in fm else None
     if status is None or "revision" not in fm or not fm.get("created_at") or not fm.get("updated_at"):
-        raise SemanticMemoryStoreError(f"不是当前语义记忆格式: {path.name}")
+        raise SemanticMemoryStoreError(f"not in the current semantic memory format: {path.name}")
     try:
         revision = int(fm["revision"])
     except ValueError as exc:
-        raise SemanticMemoryStoreError(f"不是当前语义记忆格式: {path.name}") from exc
+        raise SemanticMemoryStoreError(f"not in the current semantic memory format: {path.name}") from exc
     if revision < 0:
-        raise SemanticMemoryStoreError(f"不是当前语义记忆格式: {path.name}")
+        raise SemanticMemoryStoreError(f"not in the current semantic memory format: {path.name}")
     return memory_id, scope, project, status, revision
 
 
@@ -211,12 +211,12 @@ def _load_path(path: Path) -> SemanticMemoryRecord:
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise SemanticMemoryNotFoundError(f"记忆不存在: {path.stem}") from exc
+        raise SemanticMemoryNotFoundError(f"memory not found: {path.stem}") from exc
     fm, body = parse_frontmatter(text)
     memory_id, scope, project, status, revision = _current_fields(path, fm)
     memory_type = parse_semantic_memory_type(fm.get("type"))
     if memory_type is None:
-        raise SemanticMemoryStoreError(f"记忆 {path.name} 缺少合法 type")
+        raise SemanticMemoryStoreError(f"memory {path.name} has no valid type")
     locators, stored_tokens = _encode_refs(_source_tokens(fm))
     return SemanticMemoryRecord(
         id=memory_id,

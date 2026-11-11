@@ -51,12 +51,12 @@ class EpisodeStore(IEpisodeStore):
             if existing is not None:
                 return self._read_path(existing)
             if not checked.project_id:
-                raise EpisodeStoreError("新 episode 必须带 project_id")
+                raise EpisodeStoreError("a new episode requires a project_id")
             path = self._destination(checked)
             path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             text = json.dumps(checked.to_dict(), ensure_ascii=False, indent=2) + "\n"
             if len(text.encode("utf-8")) > MAX_EPISODE_FILE_BYTES:
-                raise EpisodeStoreError("episode 文件超出大小上限")
+                raise EpisodeStoreError("episode file exceeds the size limit")
             _atomic_write(path, text)
             if checked.project_id:
                 self._prune_project_unlocked(checked.project_id)
@@ -66,19 +66,19 @@ class EpisodeStore(IEpisodeStore):
         with _StoreLock(self.directory):
             path = self._find_unlocked(episode_id)
             if path is None:
-                raise EpisodeNotFoundError(f"episode 不存在: {episode_id}")
+                raise EpisodeNotFoundError(f"episode not found: {episode_id}")
             return self._read_path(path)
 
     def delete(self, episode_id: str) -> EpisodeRecord:
         with _StoreLock(self.directory):
             path = self._find_unlocked(episode_id)
             if path is None:
-                raise EpisodeNotFoundError(f"episode 不存在: {episode_id}")
+                raise EpisodeNotFoundError(f"episode not found: {episode_id}")
             episode = self._read_path(path)
             try:
                 path.unlink()
             except OSError as exc:
-                raise EpisodeStoreError(f"episode 删除失败: {exc}") from exc
+                raise EpisodeStoreError(f"failed to delete episode: {exc}") from exc
         return episode
 
     def list(
@@ -89,7 +89,7 @@ class EpisodeStore(IEpisodeStore):
         scope: EpisodeSearchScope | None = None,
     ) -> list[EpisodeRecord]:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_EPISODES:
-            raise EpisodeStoreError(f"limit 必须是 1..{MAX_EPISODES} 的整数")
+            raise EpisodeStoreError(f"limit must be an integer in 1..{MAX_EPISODES}")
         with _StoreLock(self.directory):
             episodes = self._load_scope(scope=scope, project_id=project_id or "")
         _sort_by_time(episodes)
@@ -99,7 +99,7 @@ class EpisodeStore(IEpisodeStore):
         if not project_id:
             return []
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_EPISODES:
-            raise EpisodeStoreError(f"limit 必须是 1..{MAX_EPISODES} 的整数")
+            raise EpisodeStoreError(f"limit must be an integer in 1..{MAX_EPISODES}")
         with _StoreLock(self.directory):
             episodes = self._load_scope(scope="current_project", project_id=project_id)
         _sort_by_time(episodes)
@@ -115,11 +115,11 @@ class EpisodeStore(IEpisodeStore):
         project_id: str = "",
     ) -> list[EpisodeSearchHit]:
         if scope not in EPISODE_SEARCH_SCOPES:
-            raise EpisodeStoreError("episode scope 非法")
+            raise EpisodeStoreError("invalid episode scope")
         if status is not None and status not in EPISODE_STATUSES:
-            raise EpisodeStoreError("episode status 非法")
+            raise EpisodeStoreError("invalid episode status")
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
-            raise EpisodeStoreError("limit 必须是 1..100 的整数")
+            raise EpisodeStoreError("limit must be an integer in 1..100")
         if scope == "current_project" and not project_id:
             return []
         with _StoreLock(self.directory):
@@ -149,7 +149,7 @@ class EpisodeStore(IEpisodeStore):
     def path_for(self, episode_id: str) -> Path:
         path = self._find_unlocked(episode_id) if self.directory.is_dir() else None
         if path is None:
-            raise EpisodeNotFoundError(f"episode 不存在: {episode_id}")
+            raise EpisodeNotFoundError(f"episode not found: {episode_id}")
         return path
 
     def _destination(self, episode: EpisodeRecord) -> Path:
@@ -181,7 +181,7 @@ class EpisodeStore(IEpisodeStore):
         project_id: str,
     ) -> list[EpisodeRecord]:
         if scope is not None and scope not in EPISODE_SEARCH_SCOPES:
-            raise EpisodeStoreError("episode scope 非法")
+            raise EpisodeStoreError("invalid episode scope")
         if scope == "current_project":
             if not project_id:
                 return []
@@ -242,26 +242,26 @@ class EpisodeStore(IEpisodeStore):
     def _read_path(self, path: Path) -> EpisodeRecord:
         try:
             if path.is_symlink() or not path.is_file():
-                raise EpisodeStoreError("拒绝读取符号链接 episode")
+                raise EpisodeStoreError("refusing to read a symlinked episode")
             if path.stat().st_size > MAX_EPISODE_FILE_BYTES:
-                raise EpisodeStoreError("episode 文件超出大小上限")
+                raise EpisodeStoreError("episode file exceeds the size limit")
             return EpisodeRecord.from_dict(json.loads(path.read_text(encoding="utf-8")))
         except EpisodeStoreError:
             raise
         except FileNotFoundError as exc:
-            raise EpisodeNotFoundError(f"episode 不存在: {path.stem}") from exc
+            raise EpisodeNotFoundError(f"episode not found: {path.stem}") from exc
         except (OSError, json.JSONDecodeError) as exc:
-            raise EpisodeStoreError(f"episode 无法读取: {exc}") from exc
+            raise EpisodeStoreError(f"cannot read episode: {exc}") from exc
 
     @staticmethod
     def _check_episode_id(episode_id: str) -> None:
         if not isinstance(episode_id, str) or EPISODE_ID_RE.fullmatch(episode_id) is None:
-            raise EpisodeStoreError("episode_id 非法")
+            raise EpisodeStoreError("invalid episode_id")
 
     @staticmethod
     def _check_project_id(project_id: str) -> None:
         if not isinstance(project_id, str) or PROJECT_ID_RE.fullmatch(project_id) is None:
-            raise EpisodeStoreError("project_id 非法")
+            raise EpisodeStoreError("invalid project_id")
 
 
 def _weighted_tokens(episode: EpisodeRecord) -> list[str]:

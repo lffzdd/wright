@@ -190,7 +190,7 @@ class FileCoreMemoryStore(ICoreMemoryStore):
 
 def _require_project_id(project_id: str) -> str:
     if not isinstance(project_id, str) or PROJECT_ID_RE.fullmatch(project_id) is None:
-        raise CoreMemoryStoreError("非法 project_id")
+        raise CoreMemoryStoreError("invalid project_id")
     return project_id
 
 

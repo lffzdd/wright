@@ -50,9 +50,9 @@ def test_missing_name_or_description_is_rejected(tmp_path: Path):
 
 
 def test_skill_id_rejects_path_traversal(tmp_path: Path):
-    with pytest.raises(SkillStoreError, match="路径"):
+    with pytest.raises(SkillStoreError, match="path"):
         normalize_skill_id("../outside")
-    with pytest.raises(SkillStoreError, match="路径"):
+    with pytest.raises(SkillStoreError, match="path"):
         skill_file_path(tmp_path, "..")
     with pytest.raises(SkillStoreError):
         normalize_skill_id("a/b")
@@ -69,14 +69,14 @@ def test_symlink_skill_is_rejected(tmp_path: Path):
     linked.symlink_to(target_dir)
     definitions, errors = scan_skills(tmp_path / "skills")
     assert definitions == []
-    assert any("符号链接" in item for item in errors)
+    assert any("symlink" in item for item in errors)
 
     real = tmp_path / "skills" / "real"
     real.mkdir()
     (real / "SKILL.md").symlink_to(target)
     definitions, errors = scan_skills(tmp_path / "skills")
     assert all(item.id != "real" for item in definitions)
-    assert any("符号链接" in item for item in errors)
+    assert any("symlink" in item for item in errors)
 
 
 def test_oversized_file_is_rejected(tmp_path: Path):
@@ -84,7 +84,7 @@ def test_oversized_file_is_rejected(tmp_path: Path):
     skill_dir.mkdir()
     path = skill_dir / "SKILL.md"
     path.write_bytes(b"x" * (MAX_SKILL_FILE_BYTES + 1))
-    with pytest.raises(SkillStoreError, match="过大"):
+    with pytest.raises(SkillStoreError, match="too large"):
         load_skill_file(path, "huge")
 
 
@@ -124,7 +124,7 @@ def test_name_must_match_directory_and_old_tool_field_is_rejected(tmp_path: Path
         "---\nname: 发布前检查\ndescription: 中文显示名\n---\nbody\n",
         encoding="utf-8",
     )
-    with pytest.raises(SkillStoreError, match="目录名"):
+    with pytest.raises(SkillStoreError, match="directory name"):
         load_skill_file(mismatched, "release-check")
 
     legacy = tmp_path / "legacy" / "SKILL.md"
@@ -154,7 +154,7 @@ def test_duplicate_frontmatter_key_is_rejected(tmp_path: Path):
         "body\n",
         encoding="utf-8",
     )
-    with pytest.raises(SkillStoreError, match="重复"):
+    with pytest.raises(SkillStoreError, match="duplicate"):
         load_skill_file(path, "release-check")
 
 

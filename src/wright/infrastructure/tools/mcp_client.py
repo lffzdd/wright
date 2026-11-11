@@ -94,7 +94,7 @@ def load_mcp_config(path: Path) -> list[McpServerConfig]:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as e:
-        logger.warning("读取 MCP 配置失败 %s: %s", path, e)
+        logger.warning("failed to read MCP config %s: %s", path, e)
         return []
 
     servers = raw.get("mcpServers")
@@ -104,7 +104,7 @@ def load_mcp_config(path: Path) -> list[McpServerConfig]:
     configs: list[McpServerConfig] = []
     for name, entry in servers.items():
         if not isinstance(entry, dict):
-            logger.warning("跳过 MCP server %r:配置不是对象", name)
+            logger.warning("skipping MCP server %r: config is not an object", name)
             continue
 
         # transport:显式 type 优先(streamable-http 归一为 http),否则按字段推断。
@@ -117,7 +117,7 @@ def load_mcp_config(path: Path) -> list[McpServerConfig]:
         if transport == "stdio":
             command = entry.get("command")
             if not command:
-                logger.warning("跳过 MCP server %r:stdio 需要 command 字段", name)
+                logger.warning("skipping MCP server %r: stdio requires a command field", name)
                 continue
             configs.append(
                 McpServerConfig(
@@ -131,7 +131,7 @@ def load_mcp_config(path: Path) -> list[McpServerConfig]:
         elif transport in ("sse", "http"):
             url = entry.get("url")
             if not url:
-                logger.warning("跳过 MCP server %r:%s 需要 url 字段", name, transport)
+                logger.warning("skipping MCP server %r: %s requires a url field", name, transport)
                 continue
             configs.append(
                 McpServerConfig(
@@ -143,7 +143,7 @@ def load_mcp_config(path: Path) -> list[McpServerConfig]:
             )
         else:
             logger.warning(
-                "跳过 MCP server %r:无法识别 transport(type=%r,且缺 command/url)",
+                "skipping MCP server %r: unknown transport (type=%r, and no command/url)",
                 name,
                 entry.get("type"),
             )
@@ -223,14 +223,14 @@ class McpManager:
                         session = await self._connect_one(stack, cfg)
                     except Exception as e:
                         # 单个 server 连不上不拖垮整体:log 后跳过,其余照常。
-                        logger.warning("MCP server %r 连接失败,已跳过:%s", cfg.name, e)
+                        logger.warning("MCP server %r failed to connect, skipped: %s", cfg.name, e)
                         continue
                     self.sessions[cfg.name] = session
                     listed = await session.list_tools()
                     for mcp_tool in listed.tools:
                         tools.append(self._wrap(cfg.name, session, mcp_tool))
                     logger.info(
-                        "MCP server %r 已连接,发现 %d 个工具",
+                        "MCP server %r connected with %d tools",
                         cfg.name,
                         len(listed.tools),
                     )
@@ -244,7 +244,7 @@ class McpManager:
             if self._ready is not None and not self._ready.done():
                 self._ready.set_exception(e)
             else:
-                logger.warning("MCP serve 任务异常:%s", e)
+                logger.warning("MCP serve task failed: %s", e)
 
     async def _connect_one(
         self, stack: AsyncExitStack, cfg: McpServerConfig
@@ -269,7 +269,7 @@ class McpManager:
                 streamablehttp_client(url=cfg.url, headers=cfg.headers)
             )
         else:
-            raise ValueError(f"未知 transport: {cfg.transport!r}")
+            raise ValueError(f"unknown transport: {cfg.transport!r}")
 
         session = await stack.enter_async_context(ClientSession(read, write))
         await session.initialize()
@@ -340,7 +340,7 @@ class McpManager:
             if self._serve_future is not None:
                 self._serve_future.result(timeout=5)  # 等 session 干净关闭
         except Exception as e:
-            logger.warning("关闭 MCP session 时出错:%s", e)
+            logger.warning("error while closing MCP session: %s", e)
         finally:
             self.loop.call_soon_threadsafe(self.loop.stop)
             self._thread.join(timeout=5)

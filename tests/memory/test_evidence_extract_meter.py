@@ -585,7 +585,7 @@ def test_old_semantic_file_is_not_loaded(tmp_path: Path):
         "---\n\nlegacy body\n",
         encoding="utf-8",
     )
-    with pytest.raises(SemanticMemoryStoreError, match="不是当前语义记忆格式"):
+    with pytest.raises(SemanticMemoryStoreError, match="not in the current semantic memory format"):
         get_memory("old-note", directory)
     assert list(directory.glob("*.md")) == [directory / "old-note.md"]
 

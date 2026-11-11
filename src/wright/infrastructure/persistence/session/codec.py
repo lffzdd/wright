@@ -181,7 +181,7 @@ def _deserialize_session(payload: Any) -> Session:
 
     session_id = _string(data.get("session_id"), "session_id")
     if _SESSION_ID_PATTERN.fullmatch(session_id) is None:
-        raise CheckpointError("非法 session_id")
+        raise CheckpointError("invalid session_id")
     lifecycle = _one_of(
         data.get("lifecycle", "open"),
         frozenset({"open", "closing", "closed"}),
@@ -202,7 +202,7 @@ def _deserialize_session(payload: Any) -> Session:
         raise CheckpointError("execution_mode must be sandbox or host")
     environment = data.get("environment", "local")
     if environment not in {"local", "worktree"}:
-        raise CheckpointError("environment 必须是 local 或 worktree")
+        raise CheckpointError("environment must be local or worktree")
     base_commit = _optional_string(data.get("base_commit"), "base_commit")
     branch_name = _optional_string(data.get("branch_name"), "branch_name")
 
@@ -214,25 +214,25 @@ def _deserialize_session(payload: Any) -> Session:
     if not isinstance(active_deferred_value, list) or not all(
         isinstance(item, str) and item for item in active_deferred_value
     ):
-        raise CheckpointError("active_deferred_tools 必须是非空字符串数组")
+        raise CheckpointError("active_deferred_tools must be an array of non-empty strings")
     active_deferred_tools = list(dict.fromkeys(active_deferred_value))
     try:
         control_plane = AgentControlPlane.from_snapshot(
             data.get("agent_control", {}), mark_interrupted=True
         )
     except AgentControlError as exc:
-        raise CheckpointError(f"agent control snapshot 非法: {exc}") from exc
+        raise CheckpointError(f"invalid agent control snapshot: {exc}") from exc
     agent_task_id = data.get("agent_task_id")
     if agent_task_id is not None and not isinstance(agent_task_id, str):
-        raise CheckpointError("agent_task_id 必须是字符串或 null")
+        raise CheckpointError("agent_task_id must be a string or null")
     agent_root_turn_id = data.get("agent_root_turn_id", "")
     if not isinstance(agent_root_turn_id, str):
-        raise CheckpointError("agent_root_turn_id 必须是字符串")
+        raise CheckpointError("agent_root_turn_id must be a string")
     committed_value = data.get("committed_turn_ids", [])
     if not isinstance(committed_value, list) or not all(
         isinstance(item, str) and item for item in committed_value
     ):
-        raise CheckpointError("committed_turn_ids 必须是非空字符串数组")
+        raise CheckpointError("committed_turn_ids must be an array of non-empty strings")
     committed_turn_ids = list(dict.fromkeys(committed_value))[-1_000:]
     pending_episode_finalizes = _deserialize_pending_episodes(
         data.get("pending_episode_finalizes", [])
@@ -388,14 +388,14 @@ def _deserialize_pending_episodes(value: Any) -> list[dict[str, Any]]:
     if value is None:
         return []
     if not isinstance(value, list):
-        raise CheckpointError("pending_episode_finalizes 必须是数组")
+        raise CheckpointError("pending_episode_finalizes must be an array")
     pending: list[dict[str, Any]] = []
     for item in value:
         if not isinstance(item, dict):
-            raise CheckpointError("pending episode finalize 必须是对象")
+            raise CheckpointError("pending episode finalize must be an object")
         episode = item.get("episode")
         if episode is not None and not isinstance(episode, dict):
-            raise CheckpointError("pending episode 必须是对象")
+            raise CheckpointError("pending episode must be an object")
         pending.append(item)
     return pending
 
@@ -443,7 +443,7 @@ def _deserialize_turns(value: Any) -> list[TurnRecord]:
             item.get("tool_execution_ids"), f"turns[{index}].tool_execution_ids"
         )
         if not all(isinstance(call_id, str) for call_id in execution_ids):
-            raise CheckpointError(f"turns[{index}].tool_execution_ids 必须是字符串数组")
+            raise CheckpointError(f"turns[{index}].tool_execution_ids must be an array of strings")
 
         verification_data = item.get("verification")
         verification = None
@@ -451,7 +451,7 @@ def _deserialize_turns(value: Any) -> list[TurnRecord]:
             verify = _object(verification_data, f"turns[{index}].verification")
             approved = verify.get("approved")
             if not isinstance(approved, bool):
-                raise CheckpointError("verification.approved 必须是 boolean")
+                raise CheckpointError("verification.approved must be a boolean")
             issues = _array(verify.get("issues"), "verification.issues")
             if not all(
                 isinstance(issue, dict)
@@ -459,7 +459,7 @@ def _deserialize_turns(value: Any) -> list[TurnRecord]:
                 and isinstance(issue.get("message"), str)
                 for issue in issues
             ):
-                raise CheckpointError("verification.issues 形状非法")
+                raise CheckpointError("verification.issues has an invalid shape")
             verification = VerificationRecord(approved, issues)
 
         turns.append(TurnRecord(
@@ -484,12 +484,12 @@ def _deserialize_executions(value: Any) -> dict[str, ToolExecutionRecord]:
     executions: dict[str, ToolExecutionRecord] = {}
     for call_id, row in rows.items():
         if not isinstance(call_id, str) or not call_id:
-            raise CheckpointError("tool execution id 必须是非空字符串")
+            raise CheckpointError("tool execution id must be a non-empty string")
         item = _object(row, f"tool_executions[{call_id}]")
         raw_call = _object(item.get("call"), f"tool_executions[{call_id}].call")
         stored_id = _string(raw_call.get("id"), "tool call id")
         if stored_id != call_id:
-            raise CheckpointError(f"tool execution key/id 不一致: {call_id}")
+            raise CheckpointError(f"tool execution key/id mismatch: {call_id}")
         arguments = _object(raw_call.get("arguments"), "tool call arguments")
         result_data = item.get("result")
         result = None
@@ -497,7 +497,7 @@ def _deserialize_executions(value: Any) -> dict[str, ToolExecutionRecord]:
             raw_result = _object(result_data, "tool result")
             ok = raw_result.get("ok")
             if not isinstance(ok, bool):
-                raise CheckpointError("tool result.ok 必须是 boolean")
+                raise CheckpointError("tool result.ok must be a boolean")
             retention = raw_result.get("retention", "")
             retention_key = raw_result.get("retention_key", "")
             if not isinstance(retention, str) or retention not in {"", "instruction"}:
@@ -575,32 +575,32 @@ def _json_safe(value: Any) -> Any:
 
 def _object(value: Any, field: str) -> dict[str, Any]:
     if not isinstance(value, dict):
-        raise CheckpointError(f"{field} 必须是对象")
+        raise CheckpointError(f"{field} must be an object")
     return value
 
 
 def _array(value: Any, field: str) -> list[Any]:
     if not isinstance(value, list):
-        raise CheckpointError(f"{field} 必须是数组")
+        raise CheckpointError(f"{field} must be an array")
     return value
 
 
 def _string(value: Any, field: str, *, allow_empty: bool = False) -> str:
     if not isinstance(value, str) or (not allow_empty and not value):
-        raise CheckpointError(f"{field} 必须是字符串")
+        raise CheckpointError(f"{field} must be a string")
     return value
 
 
 def _one_of(value: Any, allowed: frozenset[_T], field: str) -> _T:
     text = _string(value, field)
     if text not in allowed:
-        raise CheckpointError(f"非法 {field}: {text}")
+        raise CheckpointError(f"invalid {field}: {text}")
     return cast(_T, text)
 
 
 def _message_param(value: dict[str, Any]) -> dict[str, Any]:
     if value.get("role") not in _MESSAGE_ROLES:
-        raise CheckpointError(f"非法 message role: {value.get('role')}")
+        raise CheckpointError(f"invalid message role: {value.get('role')}")
     return value
 
 
@@ -635,21 +635,21 @@ def _documents(value: Any) -> dict[str, dict[str, Any]]:
     documents: dict[str, dict[str, Any]] = {}
     for key, item in raw.items():
         if not isinstance(item, dict):
-            raise CheckpointError("documents 的值必须是对象")
+            raise CheckpointError("documents values must be objects")
         documents[str(key)] = dict(item)
     return documents
 
 
 def _nonnegative_int(value: Any, field: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise CheckpointError(f"{field} 必须是非负整数")
+        raise CheckpointError(f"{field} must be a non-negative integer")
     return value
 
 
 def _positive_int(value: Any, field: str) -> int:
     number = _nonnegative_int(value, field)
     if number == 0:
-        raise CheckpointError(f"{field} 必须大于 0")
+        raise CheckpointError(f"{field} must be greater than 0")
     return number
 
 
@@ -657,5 +657,5 @@ def _optional_number(value: Any, field: str) -> float | None:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise CheckpointError(f"{field} 必须是 number 或 null")
+        raise CheckpointError(f"{field} must be a number or null")
     return float(value)

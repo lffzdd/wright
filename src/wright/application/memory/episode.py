@@ -34,10 +34,10 @@ def episode_id_for_root_run(root_run_id: str) -> str:
     """Stable id for one root run. Repeating finalize keeps this id."""
     safe = re.sub(r"[^A-Za-z0-9_-]", "-", root_run_id).strip("-")
     if not safe:
-        raise EpisodeStoreError("root_run_id 无法生成 episode id")
+        raise EpisodeStoreError("cannot derive an episode id from root_run_id")
     episode_id = f"ep-{safe}"[:184]
     if EPISODE_ID_RE.fullmatch(episode_id) is None:
-        raise EpisodeStoreError("episode id 非法")
+        raise EpisodeStoreError("invalid episode id")
     return episode_id
 
 
@@ -51,12 +51,12 @@ def episode_from_session(
     """Slice the active user turn. Project identity comes from ``project_root``."""
     root_run_id, _active_run_id = root_run_identity(session_state)
     if not root_run_id:
-        raise EpisodeStoreError("缺少 root run，不能记录 episode")
+        raise EpisodeStoreError("cannot record an episode without a root run")
     status, reason = terminal_status(
         session_state, termination_reason=termination_reason
     )
     if status not in {"completed", "failed", "cancelled"}:
-        raise EpisodeStoreError(f"不能记录未终止的 run status: {status}")
+        raise EpisodeStoreError(f"cannot record a run that has not finished, status: {status}")
     outcome = bounded_outcome(final_answer)
     if prior_outcome and outcome and prior_outcome not in outcome:
         outcome = f"{prior_outcome}\n{outcome}"[:MAX_EPISODE_OUTCOME_CHARS]
