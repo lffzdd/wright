@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from .authorization import SessionAuthorization
 from .conversation import (
+    USER_AUTHORED_SOURCES,
+    USER_INPUT_SOURCE,
+    USER_INTERJECTION_SOURCE,
     ConversationMessage,
     ConversationPart,
     ImagePart,
@@ -28,6 +31,9 @@ from .session import INTERACTIVE_SESSION_LABEL, Session
 __all__ = [
     "INTERACTIVE_SESSION_LABEL",
     "TERMINAL_RUN_STATUSES",
+    "USER_AUTHORED_SOURCES",
+    "USER_INPUT_SOURCE",
+    "USER_INTERJECTION_SOURCE",
     "CallId",
     "ConversationMessage",
     "ConversationPart",

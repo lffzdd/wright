@@ -17,6 +17,7 @@ from ...domain.model.memory import (
     MAX_EPISODE_TOOLS,
     MAX_EVIDENCE_TEXT,
 )
+from ...domain.model.session import USER_AUTHORED_SOURCES
 from ...domain.policy.memory import bounded_safe_text
 
 _SUBJECT_KEYS = ("path", "file_path", "directory")
@@ -34,7 +35,7 @@ def real_user_texts(session_state: Any) -> list[str]:
     records = getattr(session_state, "message_records", [])
     texts: list[str] = []
     for record in records[start:]:
-        if getattr(record, "source", "") != "user_input":
+        if getattr(record, "source", "") not in USER_AUTHORED_SOURCES:
             continue
         message = getattr(record, "message", {})
         content = message.get("content") if isinstance(message, dict) else None
@@ -171,7 +172,7 @@ def turn_evidence(session_state: Any) -> tuple[dict[str, Any], ...]:
         refs.append(payload)
 
     for record in records[start_message:]:
-        if getattr(record, "source", "") != "user_input":
+        if getattr(record, "source", "") not in USER_AUTHORED_SOURCES:
             continue
         text = _message_text(record)
         stripped = text.lstrip()

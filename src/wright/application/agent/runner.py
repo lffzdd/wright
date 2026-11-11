@@ -27,6 +27,7 @@ from ..tool_execution.capabilities import (
 )
 from .components import AgentComponents, PreparedTools
 from .context import ContextBudgetExceeded
+from .interjections import InterjectionInbox, deliver_interjections
 from .model_turn import ModelTurnRunner
 from .parse import TurnAbort, parse_turn
 from .prompt import AgentPromptManager
@@ -93,6 +94,8 @@ class Agent:
         self.checkpoint_store = checkpoint_store
         self.last_checkpoint_error: Exception | None = None
         self.last_error: str = ""
+        # The session service sets this so messages sent mid-turn reach the model.
+        self.interjection_inbox: InterjectionInbox | None = None
         self._usage_observer = usage_observer
         self._execution_journal = execution_journal
         if self.memory is not None:
@@ -256,8 +259,8 @@ class Agent:
         if max_steps <= 0:
             raise ValueError("max_steps must be > 0")
         self.session_state.max_steps = max_steps
-        # 计划是 user-turn 级状态，不是跨任务记忆。
-        # 首轮允许装配层预置；后续 run() 开始新目标时清空，continue_run() 则保留。
+        # 首轮允许装配层预置。后续 run() 清掉已完成的计划，未完成的带到新一轮，
+        # 由模型按用户的新消息决定继续还是替换；continue_run() 保持原状。
         if self.session_state.turns:
             self.session_state.plan_manager.begin_turn()
         # 重置上一轮的终态,使 status 始终反映"当前这轮"(多轮 REPL 下尤其需要)。
@@ -625,6 +628,14 @@ class Agent:
             counters,
         )
 
+    def _deliver_interjections(self) -> None:
+        # A cancelled turn leaves the messages queued for a turn of their own.
+        if self._is_cancelled():
+            return
+        deliver_interjections(
+            self.session_state, self.interjection_inbox, self._run_events, self._checkpoint,
+        )
+
     def _handle_tool_calls_turn(
         self,
         turn,
@@ -752,12 +763,14 @@ class Agent:
                         return answer
                     if outcome != "retry":
                         return None
+                    self._deliver_interjections()
                 elif turn.kind == "tool_calls":
                     if not self._handle_tool_calls_turn(
                         turn, content, usage_record, transient,
                         record_memory=record_memory,
                     ):
                         return None
+                    self._deliver_interjections()
             except TurnAbort as error:
                 outcome = self._handle_invalid_turn(
                     response, error, usage_record, transient, counters,

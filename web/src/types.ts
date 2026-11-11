@@ -153,6 +153,8 @@ export type Notice = {
 export type TimelineItem = {
   id: string;
   turn_id?: string;
+  /** A user message sent while its turn was already running. */
+  interjection?: boolean;
   attachments?: Attachment[];
   output?: string;
   kind: "text" | "reasoning" | "tool" | "shell" | "edit" | "approval" | "status";

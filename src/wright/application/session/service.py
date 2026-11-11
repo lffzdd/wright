@@ -23,6 +23,7 @@ from ...domain.model.session.run import TERMINAL_RUN_STATUSES
 from ...domain.policy.permission.resolver import sandbox_network_granted
 from ..session_runtime.errors import SessionClosedError, SessionServiceError
 from ..session_runtime.events import session_status
+from ..workspace.references import capture_turn_references
 from .runner import RuntimeShutdown, SessionRunner
 from .title import first_user_request, generate_title, is_unlabeled
 
@@ -130,6 +131,10 @@ class SessionService:
         self._queued: dict[str, dict[str, Any]] = {}
         self.last_activity = time.monotonic()
         self._cancelled: set[str] = set()
+        # Queued messages handed to the running turn. Their USER_INPUT events
+        # are still in the queue and must not start a turn of their own.
+        self._absorbed: set[str] = set()
+        self._interjected: dict[str, dict[str, Any]] = {}
         self._active_command: str | None = None
         self._active_attachment_ids: set[str] = set()
         self._staged_references: list[dict[str, Any]] = []
@@ -169,6 +174,7 @@ class SessionService:
 
         if agent is not None:
             agent.on_run_started = persist_run_id
+            agent.interjection_inbox = self
         self.runner = SessionRunner(runtime, self._consume, shutdown=shutdown)
 
     @property
@@ -484,6 +490,86 @@ class SessionService:
                 "duplicate": not fresh,
             },
         ).to_dict()
+
+    def take_interjections(self) -> list[dict[str, Any]]:
+        """Hand queued text messages to the running root turn, oldest first.
+
+        Stops at the first message that has to start its own turn (a slash
+        command, or one with attachments), so nothing overtakes it.
+        """
+        state = self.runtime.session_state
+        if getattr(state, "agent_task_id", None) is not None:
+            return []
+        run = getattr(state, "active_run", lambda: None)()
+        run_id = str(getattr(run, "run_id", "") or "")
+        store = getattr(self.runtime, "autonomy_store", None)
+        taken: list[tuple[str, dict[str, Any]]] = []
+        with self._lock:
+            for command_id, item in list(self._queued.items()):
+                if command_id in self._cancelled:
+                    continue
+                prompt = str(item.get("prompt") or "")
+                if item.get("attachments") or not prompt.strip() or prompt.lstrip().startswith("/"):
+                    break
+                if store is not None:
+                    if store.claim_command(self._command_scope, command_id, self._consumer_id) is None:
+                        break
+                    if not store.start_command(
+                        self._command_scope, command_id, self._consumer_id, run_id=run_id
+                    ):
+                        break
+                del self._queued[command_id]
+                self._absorbed.add(command_id)
+                taken.append((command_id, item))
+        delivered: list[dict[str, Any]] = []
+        for command_id, item in taken:
+            try:
+                prompt, captured = capture_turn_references(
+                    self.runtime, str(item.get("prompt") or ""), list(item.get("references") or []),
+                )
+            except Exception as exc:
+                self.interjection_rejected(command_id, f"could not read a referenced file: {exc}")
+                continue
+            with self._lock:
+                self._interjected[command_id] = {"prompt": prompt, "references": captured, "run_id": run_id}
+            delivered.append({"command_id": command_id, "prompt": prompt})
+        return delivered
+
+    def interjection_delivered(self, command_id: str, message_index: int) -> None:
+        """Record that the running turn added the message to its context."""
+        with self._lock:
+            info = self._interjected.pop(command_id, {})
+        self._close_interjection(command_id, {"run_id": info.get("run_id", ""), "interjected": True}, "completed")
+        state = self.runtime.session_state
+        payload: dict[str, Any] = {
+            "command_id": command_id,
+            "prompt": str(info.get("prompt", "")),
+            "message_index": message_index,
+        }
+        if info.get("references"):
+            payload["references"] = info["references"]
+        self.publisher.publish(
+            "turn.interjected", payload,
+            turn_id=f"{state.session_id}:{getattr(state, 'active_turn_start_message_index', 0)}",
+        )
+
+    def interjection_rejected(self, command_id: str, reason: str) -> None:
+        """Report a message the running turn did not take, such as one a hook denied."""
+        with self._lock:
+            self._interjected.pop(command_id, None)
+        self._close_interjection(command_id, {"error": reason}, "failed")
+        self.publisher.publish(
+            "command.rejected", {"command_id": command_id, "command": "turn.submit", "reason": reason},
+        )
+
+    def _close_interjection(self, command_id: str, result: dict[str, Any], status: str) -> None:
+        store = getattr(self.runtime, "autonomy_store", None)
+        if store is None:
+            return
+        try:
+            store.complete_command(self._command_scope, command_id, result, status=status)
+        except Exception:
+            logger.warning("could not persist interjection outcome", exc_info=True)
 
     def stop_current(self, command_id: str | None = None) -> dict[str, Any]:
         """Stop the turn that holds execution. Queued messages stay queued."""
@@ -933,6 +1019,10 @@ class SessionService:
         )
         if command_id:
             with self._lock:
+                if command_id in self._absorbed:
+                    # Already delivered into an earlier turn.
+                    self._absorbed.discard(command_id)
+                    return False
                 item = self._queued.pop(command_id, None)
                 cancelled = command_id in self._cancelled
                 self._cancelled.discard(command_id)

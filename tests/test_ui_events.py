@@ -198,3 +198,15 @@ def test_child_events_share_the_bus_without_entering_the_root_transcript(monkeyp
     ]
     assert {event.payload["agent_depth"] for event in child_events} == {1}
     assert all(event.payload.get("agent_depth", 0) == 0 for event in publisher.retained_events() if event.type == "content.delta" and event.payload.get("piece") == "root")
+
+
+def test_terminal_transcript_notes_a_message_delivered_mid_turn(monkeypatch):
+    monkeypatch.setattr("wright.interfaces.i18n.locale._current", "en")
+    notices: list[str] = []
+    sink = type("Sink", (), {"on_system_notice": lambda self, text, **_: notices.append(text)})()
+    publisher = EventPublisher(project_id="project", session_id="session")
+    publisher.add_listener(RendererEventSubscriber(sink))
+
+    publisher.publish("turn.interjected", {"command_id": "c2", "prompt": "skip B\nand do C", "message_index": 4})
+
+    assert notices == ["Delivered to the running turn: skip B and do C"]

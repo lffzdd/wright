@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 UI_EVENT_VERSION = 2
 UI_EVENT_TYPES = frozenset({
-    "session.status_changed", "turn.started",
+    "session.status_changed", "turn.started", "turn.interjected",
     "turn.completed", "turn.failed", "turn.cancelled", "reasoning.delta",
     "content.delta", "content.final", "tool.planned", "tool.awaiting_approval",
     "tool.running", "tool.output", "tool.finished", "interaction.requested", "interaction.resolved",

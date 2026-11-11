@@ -34,6 +34,24 @@ function event(seq: number, type: string, payload: Record<string, unknown>, turn
 }
 
 describe("UI event reducer", () => {
+  it("places a message sent mid-turn in the running turn and takes it off the queue", () => {
+    let next = applyEvent({ ...state, timeline: [] }, event(1, "turn.started", { prompt: "migrate", command_id: "c1" }));
+    next = applyEvent(next, event(2, "command.accepted", { command: "turn.submit", command_id: "c2", prompt: "skip B", queued: true }));
+    next = applyEvent(next, event(3, "content.delta", { piece: "Working on A" }));
+    expect(next.queued_commands.map((item) => item.command_id)).toEqual(["c2"]);
+    next = applyEvent(next, event(4, "turn.interjected", { command_id: "c2", prompt: "skip B", message_index: 5 }));
+    next = applyEvent(next, event(5, "content.delta", { piece: "Skipping B" }));
+    expect(next.queued_commands).toEqual([]);
+    expect(next.queue_depth).toBe(0);
+    expect(next.active_turn?.prompt).toBe("migrate");
+    expect(next.timeline?.map((item) => [item.role, item.text, item.interjection ?? false])).toEqual([
+      ["user", "migrate", false],
+      ["assistant", "Working on A", false],
+      ["user", "skip B", true],
+      ["assistant", "Skipping B", false],
+    ]);
+  });
+
   it("replaces a streamed draft with the final content", () => {
     let next = applyEvent(state, event(1, "turn.started", { prompt: "hello" }));
     next = applyEvent(next, event(2, "content.delta", { piece: "dra" }));

@@ -3,6 +3,7 @@
   "types": [
     "session.status_changed",
     "turn.started",
+    "turn.interjected",
     "turn.completed",
     "turn.failed",
     "turn.cancelled",

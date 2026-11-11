@@ -12,6 +12,7 @@ from typing import Any
 
 from ....domain.gateway.memory.evidence import EvidenceRead, IEpisodeEvidenceSource
 from ....domain.model.memory.episode import EvidenceRef
+from ....domain.model.session import USER_AUTHORED_SOURCES
 from ....domain.policy.memory import bounded_safe_text, is_safe_memory
 
 _SESSION_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
@@ -120,7 +121,7 @@ def _read_user(session: Any, ref: EvidenceRef, remaining: int) -> EvidenceRead:
     record = _message(session, ref.message_id)
     if record is None:
         return _unavailable(ref, "source_missing")
-    if getattr(record, "source", "") != "user_input":
+    if getattr(record, "source", "") not in USER_AUTHORED_SOURCES:
         return _rejected(ref, "message_mismatch")
     message = record.message if isinstance(record.message, dict) else {}
     if message.get("role") != "user":

@@ -274,13 +274,13 @@ function toolIcon(name: string, category: StepCategory): PhosphorIcon {
   }
 }
 
-export function UserMessage({ text, userLabel, timestamp, tocId, enter }: { text: string; userLabel?: string; timestamp?: string; tocId?: string; enter?: boolean }) {
+export function UserMessage({ text, userLabel, timestamp, tocId, enter, interjection }: { text: string; userLabel?: string; timestamp?: string; tocId?: string; enter?: boolean; interjection?: boolean }) {
   const tr = useT();
   const parts = text.split(/(@(?:[\w.-]+\/)*[\w.-]+)/g);
   return <div className={`msg-row user-msg${enter ? " enter" : ""}`} data-toc-id={tocId}>
     <div className="msg-card">
       <div className="msg-card-head">
-        <span><strong>{userLabel || tr("web.you")}</strong> <span className="muted">{tr("web.user_instruction")}</span></span>
+        <span><strong>{userLabel || tr("web.you")}</strong> <span className="muted">{tr(interjection ? "web.user_interjection" : "web.user_instruction")}</span></span>
         {timestamp && <span className="mono muted">{timestamp}</span>}
       </div>
       <p className="msg-body">{parts.map((part, index) => part.startsWith("@") ? <span className="prompt-reference" key={`${part}-${index}`}>{part}</span> : part)}</p>

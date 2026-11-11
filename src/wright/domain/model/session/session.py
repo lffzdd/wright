@@ -335,6 +335,7 @@ class Session:
 
     def append_user_message(
         self, prompt: str, attachment_ids: list[str] | tuple[str, ...] = (),
+        *, source: str | None = None,
     ) -> MessageId:
         """Append a normalized user message with optional durable image parts."""
         turn = UserTurnInput(prompt=prompt, attachment_ids=tuple(attachment_ids))
@@ -346,7 +347,7 @@ class Session:
         parts = ([TextPart(turn.prompt)] if turn.prompt else []) + [
             ImagePart(attachment_id) for attachment_id in turn.attachment_ids
         ]
-        return self.append_message(ConversationMessage("user", parts).to_dict())  # type: ignore[arg-type]
+        return self.append_message(ConversationMessage("user", parts).to_dict(), source=source)  # type: ignore[arg-type]
 
     def attachment_records(
         self, attachment_ids: list[str] | tuple[str, ...],

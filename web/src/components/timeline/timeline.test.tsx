@@ -25,6 +25,21 @@ function emit(state: ViewState, type: string, payload: Record<string, unknown>, 
 const transcript = (state: ViewState) => <Timeline state={state} respond={async () => true} cancelQueued={() => undefined} />;
 
 describe("real timeline projection", () => {
+  it("shows a message sent mid-turn inside the running turn, marked as added while working", () => {
+    let state = emit(fresh(), "turn.started", { prompt: "Migrate the config" });
+    state = emit(state, "content.delta", { piece: "Editing A" });
+    state = emit(state, "turn.interjected", { command_id: "c2", prompt: "Skip B", message_index: 4 });
+    state = emit(state, "content.delta", { piece: "Skipping B" });
+    const { container } = render(transcript(state));
+    const users = [...container.querySelectorAll(".user-msg")];
+    expect(users.map((node) => node.querySelector(".msg-body")?.textContent)).toEqual(["Migrate the config", "Skip B"]);
+    expect(users[1].textContent).toContain("Added while working");
+    expect(users[0].textContent).not.toContain("Added while working");
+    const text = container.querySelector(".timeline")?.textContent ?? "";
+    expect(text.indexOf("Editing A")).toBeLessThan(text.indexOf("Skip B"));
+    expect(text.indexOf("Skip B")).toBeLessThan(text.indexOf("Skipping B"));
+  });
+
   it("stays pinned when content grows before a programmatic scroll event lands", () => {
     const state = emit(fresh(), "turn.started", { prompt: "Long answer" });
     const { container } = render(transcript(state));

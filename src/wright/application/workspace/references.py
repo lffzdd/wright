@@ -302,3 +302,25 @@ __all__ = [
     "render_captures",
     "search_file_references",
 ]
+
+
+def capture_turn_references(
+    rt: Any, prompt: str, references: list[dict[str, Any]],
+) -> tuple[str, list[dict[str, Any]]]:
+    """Read a submitted message's references as the runtime sees them now."""
+
+    if not references:
+        return prompt, []
+    session_state = rt.session_state
+    permissions = rt.agent.executor.permissions
+    captured = capture_references(
+        project_root=rt.project_context.project_root,
+        execution_root=rt.project_context.execution_root,
+        references=references,
+        reader=lambda path: permissions.read_file(
+            session_state, rt.agent.executor.backend, path, max_bytes=MAX_REFERENCE_BYTES + 1
+        ),
+        external_roots=permissions.reference_roots(session_state),
+    )
+    return render_captures(prompt, captured), captured
+

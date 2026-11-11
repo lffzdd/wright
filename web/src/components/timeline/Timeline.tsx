@@ -178,7 +178,7 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
   const liveTools = (state.active_turn?.tools ?? []).filter((tool) => !known.has(tool.call_id));
   // The snapshot can be taken after the turn started but before the server
   // recorded the user message; show the prompt until the record arrives.
-  const lastUser = [...timeline].reverse().find((item) => item.kind === "text" && item.role === "user");
+  const lastUser = [...timeline].reverse().find((item) => item.kind === "text" && item.role === "user" && !item.interjection);
   const pendingPrompt = state.active_turn?.prompt && lastUser?.text !== state.active_turn.prompt
     && !timeline.some((item) => item.role === "user" && item.turn_id !== undefined && item.turn_id === state.active_turn?.turn_id)
     ? state.active_turn.prompt : "";
@@ -192,7 +192,8 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
   for (const step of liveSteps) appendStep(pendingPrompt ? liveSegments : segments, step);
   // Groups after the latest prompt belong to the running turn.
   let lastPrompt = -1;
-  segments.forEach((segment, index) => { if (segment.type === "item" && segment.item.kind === "text" && segment.item.role === "user") lastPrompt = index; });
+  // A message sent mid-turn does not start a turn: steps after it stay live.
+  segments.forEach((segment, index) => { if (segment.type === "item" && segment.item.kind === "text" && segment.item.role === "user" && !segment.item.interjection) lastPrompt = index; });
   const turnRunning = Boolean(state.active_turn);
   const outlineCompact = toc.items.length < OUTLINE_DOCK_MIN_ITEMS;
   const lastOutlineSessionRef = useRef<string | undefined>(state.session.session_id);
@@ -218,7 +219,7 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
     {timeline.length > 0 ? <>
       {segments.map((segment, index) => {
         if (segment.type === "steps") return <StepGroup key={segment.key} steps={segment.steps} live={turnRunning && (pendingPrompt ? false : index > lastPrompt)} sessionId={state.session?.session_id} entering={entering} />;        const item = segment.item;
-        if (item.kind === "text" && item.role === "user") return <UserMessage key={item.id} text={item.text || ""} userLabel={userLabel} timestamp={timestamp} tocId={item.id} enter={entering(item.turn_id !== undefined ? `user:${item.turn_id}` : item.id)} />;
+        if (item.kind === "text" && item.role === "user") return <UserMessage key={item.id} text={item.text || ""} userLabel={userLabel} timestamp={timestamp} tocId={item.id} interjection={item.interjection} enter={entering(item.turn_id !== undefined && !item.interjection ? `user:${item.turn_id}` : item.id)} />;
         if (item.kind === "text") return <AssistantMessage key={item.id} text={item.text || ""} enter={entering(item.turn_id !== undefined ? `reply:${item.turn_id}` : item.id)} />;
         if (item.kind === "status") return <TurnOutcome key={item.id} status={item.status} detail={item.text} enter={entering(item.id)} />;
         return null;

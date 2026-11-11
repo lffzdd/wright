@@ -380,21 +380,9 @@ def process_session_event(
             return False
         captured: list[dict] = []
         if references:
-            from ..workspace.references import (
-                MAX_REFERENCE_BYTES,
-                capture_references,
-                render_captures,
-            )
+            from ..workspace.references import capture_turn_references
 
-            external = rt.agent.executor.permissions.reference_roots(session_state)
-            captured = capture_references(
-                project_root=rt.project_context.project_root,
-                execution_root=rt.project_context.execution_root,
-                references=references,
-                reader=lambda path: rt.agent.executor.permissions.read_file(session_state, rt.agent.executor.backend, path, max_bytes=MAX_REFERENCE_BYTES + 1),
-                external_roots=external,
-            )
-            user_input = render_captures(user_input, captured)
+            user_input, captured = capture_turn_references(rt, user_input, references)
         turn_id = f"{session_state.session_id}:{len(session_state.message_records)}"
         coordinator = getattr(rt, "directory_coordinator", None)
         lease = None

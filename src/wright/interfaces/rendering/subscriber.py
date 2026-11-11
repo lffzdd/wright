@@ -107,6 +107,12 @@ class RendererEventSubscriber:
         elif event.type == "session.status_changed":
             if model_turn_started(payload):
                 self.renderer.on_turn_begin()
+        elif event.type == "turn.interjected":
+            # The terminal already echoed the text when it was typed.
+            preview = " ".join(str(payload.get("prompt", "")).split())
+            if len(preview) > 80:
+                preview = preview[:77] + "..."
+            self.renderer.on_system_notice(t("cli.interjected_preview", preview=preview))
 
     def _project_child(self, event: UiEventEnvelope) -> None:
         payload = event.payload

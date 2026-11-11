@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ...domain.model.session import USER_AUTHORED_SOURCES, USER_INTERJECTION_SOURCE
 from ..session_runtime.tool_projection import public_tool_result, tool_phase
 
 _SHELL = frozenset({"shell"})
@@ -30,14 +31,18 @@ def project_timeline(
         message = getattr(record, "message", {}) or {}
         role = message.get("role")
         source = getattr(record, "source", "")
-        if role == "user" and source == "user_input":
-            items.append({
+        if role == "user" and source in USER_AUTHORED_SOURCES:
+            item = {
                 "id": getattr(record, "id", f"user:{index}"),
                 "kind": "text",
                 "role": "user",
                 "text": _text(message),
                 "order": index,
-            })
+            }
+            if source == USER_INTERJECTION_SOURCE:
+                # Sent while the turn ran; it belongs to that turn's Run.
+                item["interjection"] = True
+            items.append(item)
         elif role == "assistant":
             record_id = getattr(record, "id", f"assistant:{index}")
             reasoning = str(message.get("reasoning") or message.get("reasoning_content") or "").strip()
@@ -118,7 +123,7 @@ def _with_run_outcomes(session: Any, items: list[dict[str, Any]]) -> list[dict[s
     ]
     user_positions = [
         index for index, item in enumerate(items)
-        if item.get("kind") == "text" and item.get("role") == "user"
+        if item.get("kind") == "text" and item.get("role") == "user" and not item.get("interjection")
     ]
     if not runs or not user_positions:
         return items

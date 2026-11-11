@@ -200,6 +200,17 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
     const commandId = String(event.payload.command_id ?? "");
     next.queued_commands = next.queued_commands.filter((item) => item.command_id !== commandId);
     next.queue_depth = next.queued_commands.length;
+  } else if (event.type === "turn.interjected") {
+    // A message sent while the turn ran: it joins this turn after what has
+    // streamed so far, and the reply continues in a new segment below it.
+    const commandId = String(event.payload.command_id ?? "");
+    next = closeSegment(next, event);
+    if (next.timeline) next.timeline = [...next.timeline, {
+      id: `${commandId || event.event_id}:interjection`, kind: "text", role: "user",
+      turn_id: event.turn_id, text: String(event.payload.prompt ?? ""), interjection: true,
+    }];
+    next.queued_commands = next.queued_commands.filter((item) => item.command_id !== commandId);
+    next.queue_depth = next.queued_commands.length;
   } else if (event.type === "reasoning.delta" && next.active_turn) {
     const piece = String(event.payload.piece ?? "");
     next.active_turn = { ...next.active_turn, reasoning: next.active_turn.reasoning + piece };

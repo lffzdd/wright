@@ -69,6 +69,13 @@ class ConversationMessage:
         return value
 
 
+# A user message that starts a turn, and one the user sent while that turn was
+# running. Both are user-authored; only the first marks a turn boundary.
+USER_INPUT_SOURCE = "user_input"
+USER_INTERJECTION_SOURCE = "user_interjection"
+USER_AUTHORED_SOURCES = frozenset({USER_INPUT_SOURCE, USER_INTERJECTION_SOURCE})
+
+
 @dataclass
 class MessageRecord:
     id: MessageId
@@ -77,6 +84,9 @@ class MessageRecord:
 
 
 __all__ = [
+    "USER_AUTHORED_SOURCES",
+    "USER_INPUT_SOURCE",
+    "USER_INTERJECTION_SOURCE",
     "ConversationMessage",
     "ConversationPart",
     "ImagePart",

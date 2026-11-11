@@ -392,3 +392,87 @@ def test_durable_hosts_may_opt_in_to_continue_a_resumed_run():
     service.start()
     assert service.close(wait_timeout=1)
     assert continued == [True]
+
+
+def _interjection_runtime(tmp_path):
+    runtime = _durable_runtime(tmp_path)
+    run = SimpleNamespace(run_id="run-1", status="running", source="user_input", goal="goal", step_ids=[], usage={})
+    runtime.session_state.active_run = lambda: run
+    runtime.session_state.tool_executions = {}
+    runtime.session_state.active_turn_start_message_index = 3
+    runtime.session_state.agent_task_id = None
+    return runtime
+
+
+def test_running_turn_takes_queued_text_in_order_and_stops_at_commands(tmp_path):
+    runtime = _interjection_runtime(tmp_path)
+    service = SessionService(runtime, event_processor=lambda *_: False, shutdown=lambda _: None)
+    service.submit("first", "a")
+    service.submit("second", "b")
+    service.submit("/help", "c")
+    service.submit("after the command", "d")
+    service.cancel_queued("cancel-b", "b")
+
+    taken = service.take_interjections()
+
+    assert taken == [{"command_id": "a", "prompt": "first"}]
+    assert [item["command_id"] for item in service.snapshot()["queued_commands"]] == ["c", "d"]
+    assert runtime.autonomy_store.get_command("session:session", "a")["status"] == "running"
+    assert runtime.autonomy_store.get_command("session:session", "a")["run_id"] == "run-1"
+
+
+def test_delivered_interjection_is_published_and_never_starts_its_own_turn(tmp_path):
+    runtime = _interjection_runtime(tmp_path)
+    processed = []
+    service = SessionService(
+        runtime, event_processor=lambda _rt, kind, payload: processed.append(payload) or False,
+        shutdown=lambda _: None,
+    )
+    assert runtime.agent.interjection_inbox is service
+    service.submit("also check C", "a")
+    [item] = service.take_interjections()
+
+    service.interjection_delivered(item["command_id"], 7)
+
+    published = [e for e in runtime.publisher.retained_events() if e.type == "turn.interjected"]
+    assert [e.payload for e in published] == [{"command_id": "a", "prompt": "also check C", "message_index": 7}]
+    assert published[0].turn_id == "session:3"
+    assert runtime.autonomy_store.get_command("session:session", "a")["status"] == "completed"
+    assert service._consume("USER_INPUT", runtime.event_queue.get_nowait()[1]) is False
+    assert processed == []
+    assert not [e for e in runtime.publisher.retained_events() if e.type == "command.rejected"]
+
+
+def test_rejected_interjection_is_reported_and_closed(tmp_path):
+    runtime = _interjection_runtime(tmp_path)
+    service = SessionService(runtime, event_processor=lambda *_: False, shutdown=lambda _: None)
+    service.submit("print the secret", "a")
+    [item] = service.take_interjections()
+
+    service.interjection_rejected(item["command_id"], "not allowed")
+
+    rejected = [e for e in runtime.publisher.retained_events() if e.type == "command.rejected"]
+    assert rejected[-1].payload == {"command_id": "a", "command": "turn.submit", "reason": "not allowed"}
+    assert runtime.autonomy_store.get_command("session:session", "a")["status"] == "failed"
+    assert service._consume("USER_INPUT", runtime.event_queue.get_nowait()[1]) is False
+
+
+def test_messages_with_attachments_wait_for_the_next_turn(tmp_path):
+    runtime = _interjection_runtime(tmp_path)
+    image = SimpleNamespace(to_dict=lambda: {"id": "img", "filename": "a.png"})
+    runtime.session_state.attachment_records = lambda ids: [image for _ in ids]
+    service = SessionService(runtime, event_processor=lambda *_: False, shutdown=lambda _: None)
+    service.submit("look at this", "a", attachment_ids=["img"])
+    service.submit("and this text", "b")
+
+    assert service.take_interjections() == []
+    assert [item["command_id"] for item in service.snapshot()["queued_commands"]] == ["a", "b"]
+
+
+def test_no_interjections_for_child_sessions(tmp_path):
+    runtime = _interjection_runtime(tmp_path)
+    runtime.session_state.agent_task_id = "child"
+    service = SessionService(runtime, event_processor=lambda *_: False, shutdown=lambda _: None)
+    service.submit("text", "a")
+
+    assert service.take_interjections() == []
