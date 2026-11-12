@@ -17,13 +17,7 @@ for the reading order, execution records, and how to open the old version.
 ```bash
 git clone git@github.com:lffzdd/wright.git
 cd wright
-uv sync --group dev
-```
-
-Install the optional local Web console dependencies when needed:
-
-```bash
-uv sync --group dev --extra web
+uv sync
 ```
 
 Put your OpenAI-compatible endpoint and model, which must support native function
@@ -53,6 +47,10 @@ or:
 uv run python -m wright.main
 ```
 
+That starts the localhost-only Web console and opens a browser. Use `--ui tui`
+for the terminal UI, `--ui cli` for the text REPL, or `--ui headless` for the
+automation host.
+
 The agent edits the current directory (or `--workspace DIR`). Sessions, traces,
 and the task database go to `~/.wright/projects/<id>/`, not into your repo.
 Resume with `wright --continue` or `wright --resume`. Native sessions use checkpoint
@@ -73,12 +71,11 @@ wright --workspace /path/to/your/project
 
 ### Local Web console
 
-The TUI remains the default. Start the optional, localhost-only Web console
-explicitly:
+`wright` starts the Web console by default:
 
 ```bash
-wright --ui web --workspace /path/to/your/project
-wright --ui web --web-port 8765 --web-capacity 4 --no-open
+wright --workspace /path/to/your/project
+wright --web-port 8765 --web-capacity 4 --no-open
 ```
 
 Wright binds only to `127.0.0.1`. At startup it creates a one-time bootstrap
@@ -87,7 +84,7 @@ removes the fragment in the browser.
 
 After changing the Web frontend, run `npm ci` and `npm run build` from `web/`.
 Vite writes the production bundle into `src/wright/interfaces/web/static`, the
-same directory served by `wright --ui web`. The normal `/` entry renders the
+same directory served by `wright`. The normal `/` entry renders the
 reference-inspired workspace with real session data; no visual fixture mode is
 required or shipped.
 
@@ -181,7 +178,7 @@ provider quirks such as HTTP errors, slow streams and non-standard tool-call
 fragments. They are opt-in:
 
 ```bash
-uv sync --group dev --group e2e --extra web
+uv sync --group e2e
 uv run playwright install chromium
 WRIGHT_E2E_WEB=1 uv run pytest tests/e2e_web
 ```

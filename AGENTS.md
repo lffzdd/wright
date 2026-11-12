@@ -6,7 +6,7 @@ Wright 是一个终端编程 Agent，提供 CLI、TUI、本地 Web 控制台和 
 ## 常用命令
 
 ```bash
-uv sync --group dev --extra web   # 安装依赖；Web 相关测试需要 web extra
+uv sync                           # 安装依赖
 uv run pytest -q                  # Python 测试
 uv run ruff check src tests       # Lint
 uv run pytest -q tests/test_tui.py  # 只跑一个测试文件

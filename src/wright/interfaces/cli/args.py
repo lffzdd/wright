@@ -56,7 +56,7 @@ def parse_cli_args() -> argparse.Namespace:
     parser.add_argument(
         "--ui",
         choices=("cli", "tui", "web", "headless"),
-        default="tui",
+        default="web",
         help=t("cli.help.ui"),
     )
     parser.add_argument(

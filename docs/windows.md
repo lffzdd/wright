@@ -3,9 +3,9 @@
 原生 Windows 的 CLI 帮助命令和 Web 服务可以启动：
 
 ```powershell
-uv sync --extra web
+uv sync
 uv run wright --help
-uv run wright --ui web --no-open
+uv run wright --no-open
 ```
 
 配置、项目注册表、核心记忆、语义记忆、episode 和 ApplicationHost

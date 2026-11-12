@@ -40,7 +40,7 @@ def test_web_entry_point_serves_the_frontend(tmp_path):
         port = listener.getsockname()[1]
     process = subprocess.Popen(
         [
-            sys.executable, "-m", "wright.main", "--ui", "web", "--no-open",
+            sys.executable, "-m", "wright.main", "--no-open",
             "--web-port", str(port), "--workspace", str(tmp_path),
         ],
         cwd=REPO_ROOT,

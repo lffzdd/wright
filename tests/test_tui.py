@@ -33,10 +33,10 @@ from wright.interfaces.tui.format import (
 from wright.interfaces.tui.renderer import TUIRenderer
 
 
-def test_cli_ui_flag_defaults_to_tui(monkeypatch):
+def test_cli_ui_flag_defaults_to_web(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["wright"])
     args = parse_cli_args()
-    assert args.ui == "tui"
+    assert args.ui == "web"
 
 
 def test_tui_exposes_a_visible_stop_binding():
