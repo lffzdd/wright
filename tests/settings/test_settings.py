@@ -253,6 +253,9 @@ def test_runtime_is_built_from_the_settings_files(tmp_path, clean_env):
     clean_env.setenv("WRIGHT_AUTO_TITLE", "0")
     workspace = tmp_path / "repo"
     workspace.mkdir()
+    # load_env() reads the .env in the current directory; run from the fixture
+    # workspace so a developer's own .env cannot override the project settings.
+    clean_env.chdir(workspace)
     _write(user_settings_path(), {
         "llm": {
             "model": "user-model", "base_url": "http://127.0.0.1:9/v1",
