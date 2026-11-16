@@ -9,6 +9,7 @@ import { PermissionApproval } from "../permissions/approval";
 import { CodeView } from "../code/CodeView";
 import { languageForPath } from "../code/highlight";
 import { useOpenFile } from "../code/openFile";
+import { Expandable, StructuredOutput, parseJsonOutput } from "./StructuredOutput";
 
 function textOf(value: unknown): string {
   if (typeof value === "string") return value;
@@ -348,7 +349,8 @@ export function SummaryRow({ text, durationMs, enter }: { text: string; duration
       >
         <span className="tool-title">
           <span className="step-icon reasoning" aria-hidden="true"><Lightbulb size={12} /></span>
-          <span className="reasoning-snippet">{open ? tr("web.steps.reasoning") : preview}</span>
+          <span className="reasoning-label">{tr("web.steps.reasoning")}</span>
+          {!open && preview && <span className="reasoning-snippet">{preview}</span>}
         </span>
         <span className="tool-meta">
           {durationLabel && <span className="step-meta">{durationLabel}</span>}
@@ -594,13 +596,25 @@ export function ToolCard({
           : directory ? <DirectoryTree source={directory} />
           : matches && phase === "succeeded" ? <SearchResults matches={matches} pattern={pattern} literal={metricSource?.fixed_string === true || args?.fixed_string === true} />
           : content !== null && isNumbered(content) ? <NumberedContent text={content} path={path} />
-          : body && (family === "edit" ? <DiffBody text={body} /> : testFailed ? <TestFailureOutput text={body} /> : isNumbered(body) ? <NumberedContent text={body} path={path} /> : <pre className={`term-body ${code !== null && code !== 0 ? "failed" : ""}`}>{body}</pre>)}
+          : body && (family === "edit" ? <DiffBody text={body} /> : testFailed ? <TestFailureOutput text={body} /> : isNumbered(body) ? <NumberedContent text={body} path={path} /> : <PlainOutput body={body} failed={code !== null && code !== 0} structured={family !== "shell"} live={phase === "running"} />)}
         {Boolean(metricSource?.sandbox_denial) && <SandboxDenialHint denial={metricSource!.sandbox_denial as SandboxDenial} sessionId={sessionId} />}
         {hasDiff && !body && <p className="empty-small">{tr("web.no_diff")}</p>}
         {hasDiff && metricSource?.diff_truncated === true && <p className="hint" role="status">{tr("web.diff_truncated")}</p>}
       </div>}
     </section>
   </div>;
+}
+
+/**
+ * Tool output with no dedicated view: JSON is laid out for reading, other text
+ * is shown as is, both capped to a few lines until expanded. Running output is
+ * left uncapped so the newest lines stay in view.
+ */
+function PlainOutput({ body, failed, structured, live }: { body: string; failed: boolean; structured: boolean; live: boolean }) {
+  const json = structured && !failed ? parseJsonOutput(body) : undefined;
+  if (json !== undefined) return <StructuredOutput value={json} />;
+  const text = <pre className={`term-body ${failed ? "failed" : ""}`}>{body}</pre>;
+  return live ? text : <Expandable>{text}</Expandable>;
 }
 
 function toolOutput(tool: ToolState): string {

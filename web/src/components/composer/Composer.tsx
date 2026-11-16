@@ -1,5 +1,5 @@
-import { CaretDown, Desktop, FolderSimple, GitFork, Image, Paperclip, PaperPlaneRight, ShieldCheck, Square, Warning, X } from "@phosphor-icons/react";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { CaretDown, Desktop, FolderSimple, GitFork, Paperclip, PaperPlaneRight, ShieldCheck, ShieldWarning, Square, Warning, X } from "@phosphor-icons/react";
+import { FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { api } from "../../api";
 import { useT } from "../../i18n";
 import { commandAfter } from "../../protocol";
@@ -39,6 +39,10 @@ export function EnvironmentChoice({
   </div>;
 }
 
+/** Image types the attachment endpoint accepts; anything else is uploaded as a document. */
+const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const isImage = (file: File) => IMAGE_TYPES.has(file.type);
+
 export function visibleModels(models: string[], currentModel: string, extras: string[] = []): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -53,7 +57,7 @@ export function visibleModels(models: string[], currentModel: string, extras: st
 
 export function Composer({
   sessionId, connection, draft, updateDraft, submit, cancel, cancelAll, running, models = [], currentModel = "", interactionMode = "agent", permissionMode = "default", executionMode = "sandbox", onModel, onPolicy,
-  projectId = null, chooseEnvironment = false, deferUploads = chooseEnvironment, git = false, workLabel = "",
+  projectId = null, chooseEnvironment = false, deferUploads = chooseEnvironment, git = false, workLabel = "", context,
 }: {
   sessionId: string;
   connection: ViewState["connection"];
@@ -75,6 +79,8 @@ export function Composer({
   deferUploads?: boolean;
   git?: boolean;
   workLabel?: string;
+  /** Context usage meter, shown beside the mode and model it depends on. */
+  context?: ReactNode;
 }) {
   const tr = useT();
   const [uploading, setUploading] = useState(false);
@@ -84,17 +90,16 @@ export function Composer({
   const [menuError, setMenuError] = useState("");
   const [menuLoading, setMenuLoading] = useState(false);
   const composing = useRef(false);
-  const imageInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
-  const upload = async (files: FileList | File[], images: boolean) => {
+  const upload = async (files: FileList | File[]) => {
     const owner = sessionId;
     const selected = Array.from(files);
     if (!selected.length) return;
     if (deferUploads) {
       updateDraft(owner, (current) => ({
         ...current,
-        localFiles: [...(current.localFiles ?? []), ...selected.map((file) => ({ name: file.name, file, image: images }))],
+        localFiles: [...(current.localFiles ?? []), ...selected.map((file) => ({ name: file.name, file, image: isImage(file) }))],
       }));
       return;
     }
@@ -105,7 +110,7 @@ export function Composer({
     const errors: string[] = [];
     for (const file of selected) {
       try {
-        if (images && file.type.startsWith("image/")) uploaded.push(await api.uploadAttachment(owner, file) as Attachment);
+        if (isImage(file)) uploaded.push(await api.uploadAttachment(owner, file) as Attachment);
         else documents.push(await api.uploadDocument(owner, file));
       } catch (reason) { errors.push(reason instanceof Error ? reason.message : String(reason)); }
     }
@@ -203,11 +208,14 @@ export function Composer({
     node?.focus();
   };
   const offline = connection === "disconnected" || connection === "reconnecting" || connection === "closed";
-  const settingsSummary = [tr(`web.mode.${interactionMode}`), currentModel || tr("web.model")].filter(Boolean).join(" · ");
+  // Only what differs from the defaults is spelled out: the mode when it is not
+  // Agent, and a relaxed permission mode as a shield icon with its help as tooltip.
+  const relaxed = interactionMode === "agent" && (permissionMode === "acceptEdits" || permissionMode === "bypass");
+  const relaxedLabel = relaxed ? tr(`web.perm_short.${permissionMode}`) : "";
+  const settingsSummary = [interactionMode === "agent" ? "" : tr(`web.mode.${interactionMode}`), currentModel || tr("web.model")].filter(Boolean).join(" · ");
   const policyControls = Boolean(onPolicy || onModel);
   return <form className="composer" onSubmit={(event) => { send(event).catch((reason) => updateDraft(sessionId, (item) => ({ ...item, phase: "unknown", reason: String(reason) }))); }}>
-    <input ref={imageInput} className="file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple tabIndex={-1} aria-hidden="true" onChange={(event) => { if (event.target.files) upload(event.target.files, true); event.target.value = ""; }} />
-    <input ref={fileInput} className="file-input" type="file" multiple tabIndex={-1} aria-hidden="true" onChange={(event) => { if (event.target.files) upload(event.target.files, false); event.target.value = ""; }} />
+    <input ref={fileInput} className="file-input" type="file" multiple tabIndex={-1} aria-hidden="true" onChange={(event) => { if (event.target.files) upload(event.target.files); event.target.value = ""; }} />
     {chooseEnvironment && <EnvironmentChoice sessionId={sessionId} draft={draft} updateDraft={updateDraft} git={git} workLabel={workLabel} />}
     {(draft.attachments.length > 0 || (draft.documents ?? []).length > 0 || (draft.references ?? []).length > 0 || (draft.localFiles ?? []).length > 0 || draft.command) && <div className="chips">
       {draft.attachments.map((attachment) => <span className="chip" key={attachment.id}>{attachment.filename}<button type="button" aria-label={tr("web.remove", { name: attachment.filename })} onClick={() => {
@@ -248,22 +256,24 @@ export function Composer({
     <div className="composer-actions">
       <div className="row-actions">
         <button type="button" className="icon-button" title={tr("web.attach_file")} aria-label={tr("web.attach_file")} onClick={() => fileInput.current?.click()}><Paperclip size={14} /></button>
-        <button type="button" className="icon-button" title={tr("web.attach")} aria-label={tr("web.attach")} onClick={() => imageInput.current?.click()}><Image size={14} /></button>
         <button type="button" className="icon-button" title={tr("web.reference_file")} onClick={() => { updateDraft(sessionId, (item) => ({ ...item, prompt: `${item.prompt}@` })); setMenu({ kind: "file", query: "", index: 0 }); box.current?.focus(); }}>@</button>
         <button type="button" className="icon-button" title={tr("web.commands_title")} onClick={() => { updateDraft(sessionId, (item) => ({ ...item, prompt: `${item.prompt}/` })); setMenu({ kind: "command", query: "", index: 0 }); box.current?.focus(); }}>/</button>
         <span className="hint" role={draft.phase === "rejected" || draft.phase === "unknown" ? "alert" : "status"}>{draft.reason || (uploading ? tr("web.uploading") : "") || (draft.phase === "awaiting" ? tr("web.awaiting_accept") : "") || (offline ? tr("web.offline_hint") : "")}</span>
       </div>
       <div className="row-actions composer-primary-actions">
+        {context}
         {policyControls && (
           <button
             type="button"
             className="text-button composer-settings-toggle"
             aria-expanded={settingsOpen}
             aria-controls={`composer-settings-${sessionId}`}
-            title={tr("web.composer_settings")}
+            title={relaxed ? `${relaxedLabel}: ${tr(`web.perm_help.${permissionMode}`)}` : tr("web.composer_settings")}
             onClick={() => setSettingsOpen((open) => !open)}
           >
-            {settingsSummary}
+            {relaxed && <ShieldWarning className="composer-permission-icon" size={13} weight="fill" role="img" aria-label={relaxedLabel} />}
+            <span className="composer-settings-text">{settingsSummary}</span>
+            <CaretDown size={10} weight="bold" aria-hidden="true" />
           </button>
         )}
         {running && <button type="button" className="button stop" onClick={() => { cancel().catch(() => undefined); }}><Square size={11} weight="fill" />{tr("web.stop")}<kbd>{tr("web.shortcut_key", { key: "." })}</kbd></button>}

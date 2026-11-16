@@ -40,12 +40,16 @@ export const api = {
     theme: "dark" | "light";
     inspector_open: boolean;
     inspector_width: number | null;
+    sidebar_open?: boolean;
+    sidebar_width?: number | null;
   }>("/api/v1/preferences"),
-  setPreference: (body: { interface_language?: string; theme?: "dark" | "light"; inspector_open?: boolean; inspector_width?: number }) => json<{
+  setPreference: (body: { interface_language?: string; theme?: "dark" | "light"; inspector_open?: boolean; inspector_width?: number; sidebar_open?: boolean; sidebar_width?: number }) => json<{
     interface_language: string;
     theme: "dark" | "light";
     inspector_open: boolean;
     inspector_width: number | null;
+    sidebar_open?: boolean;
+    sidebar_width?: number | null;
   }>("/api/v1/preferences", { method: "PUT", body: JSON.stringify(body) }),
   project: () => json<Record<string, unknown>>("/api/v1/project"),
   // Without a project only the user settings file is in play.

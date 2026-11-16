@@ -101,13 +101,15 @@ it("reopens the same historical session and retries an uncertain submit with the
 it("keeps a new conversation draft with its project and lets project history collapse", async () => {
   setup(); await screen.findByRole("heading", { name: "Alpha conversation" });
   const one = screen.getByRole("region", { name: "One" }), two = screen.getByRole("region", { name: "Two" });
-  fireEvent.click(within(one).getByRole("button", { name: "One" }));
+  fireEvent.click(within(one).getByRole("button", { name: "New session in One" }));
   fireEvent.change(screen.getByLabelText("Message Wright"), { target: { value: "New One draft" } });
-  fireEvent.click(within(two).getByRole("button", { name: "Two" }));
+  fireEvent.click(within(two).getByRole("button", { name: "New session in Two" }));
   expect((screen.getByLabelText("Message Wright") as HTMLTextAreaElement).value).toBe("");
   expect(screen.getByText("/two")).toBeTruthy();
-  fireEvent.click(within(one).getByRole("button", { name: "One" }));
+  fireEvent.click(within(one).getByRole("button", { name: "New session in One" }));
   expect((screen.getByLabelText("Message Wright") as HTMLTextAreaElement).value).toBe("New One draft");
-  const toggle = within(two).getByRole("button", { name: "Toggle conversations for Two" });
+  const toggle = within(two).getByRole("button", { name: "Two" });
   expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
 });

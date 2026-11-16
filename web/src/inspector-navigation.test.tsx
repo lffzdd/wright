@@ -142,6 +142,44 @@ it("resizes the desktop inspector and persists width", async () => {
   await waitFor(() => expect(grid.style.getPropertyValue("--inspector-width")).toBe("380px"));
 });
 
+it("resizes the desktop session list from its right edge and persists width", async () => {
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1440 });
+  const calls = boot(false);
+  await screen.findByRole("heading", { name: "Review task" });
+  const grid = document.querySelector<HTMLElement>(".workspace-grid")!;
+  expect(grid.style.getPropertyValue("--sidebar-width")).toBe("230px");
+  const handle = screen.getByRole("separator", { name: "Resize session list" });
+  fireEvent.pointerDown(handle, { button: 0, clientX: 230, pointerId: 1 });
+  fireEvent.pointerMove(handle, { clientX: 300, pointerId: 1 });
+  expect(grid.style.getPropertyValue("--sidebar-width")).toBe("300px");
+  fireEvent.pointerUp(handle, { clientX: 300, pointerId: 1 });
+  await waitFor(() => expect(calls.some((call) => call.init?.method === "PUT" && JSON.parse(String(call.init?.body)).sidebar_width === 300)).toBe(true));
+  fireEvent.pointerDown(handle, { button: 0, clientX: 300, pointerId: 2 });
+  fireEvent.pointerMove(handle, { clientX: 0, pointerId: 2 });
+  expect(grid.style.getPropertyValue("--sidebar-width")).toBe("180px");
+  fireEvent.pointerUp(handle, { clientX: 0, pointerId: 2 });
+  fireEvent.doubleClick(handle);
+  await waitFor(() => expect(grid.style.getPropertyValue("--sidebar-width")).toBe("230px"));
+});
+
+it("folds the desktop session list from the top bar and with the shortcut, and remembers it", async () => {
+  const calls = boot(false);
+  await screen.findByRole("heading", { name: "Review task" });
+  const grid = document.querySelector<HTMLElement>(".workspace-grid")!;
+  fireEvent.click(screen.getByRole("button", { name: "Close sessions" }));
+  expect(grid.dataset.sidebar).toBe("closed");
+  // Folded, not removed: the panel slides closed and leaves the tab order.
+  const rail = document.querySelector<HTMLElement>(".sidebar")!;
+  expect(rail.classList.contains("is-closed")).toBe(true);
+  expect(rail.hasAttribute("inert")).toBe(true);
+  expect(screen.queryByRole("separator", { name: "Resize session list" })).toBeNull();
+  await waitFor(() => expect(calls.some((call) => call.init?.method === "PUT" && JSON.parse(String(call.init?.body)).sidebar_open === false)).toBe(true));
+  fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+  expect(grid.dataset.sidebar).toBe("open");
+  expect(screen.getByRole("button", { name: "Close sessions" }).getAttribute("aria-expanded")).toBe("true");
+  expect(document.querySelector(".sidebar-backdrop")).toBeNull();
+});
+
 it("opens memory for a history task's workspace and returns to the task from the sidebar", async () => {
   const calls = boot(false);
   await screen.findByRole("heading", { name: "Review task" });

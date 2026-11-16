@@ -1,7 +1,8 @@
 import { Check, Copy } from "@phosphor-icons/react";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
-import { memo, useMemo, useState } from "react";
+import { memo, useMemo, useState, type CSSProperties } from "react";
+import { languageForFence, useHighlight } from "./components/code/highlight";
 import { useT } from "./i18n";
 
 type MarkdownChunk =
@@ -63,22 +64,31 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
     }
   };
 
+  const grammar = languageForFence(lang);
+  const tokens = useHighlight(code, grammar);
+  const label = lang?.trim().split(/\s+/)[0] || "";
+  const copyLabel = copied ? tr("web.copied") : tr("web.copy_code");
+
   return (
     <div className="code-block">
       <div className="code-header">
-        <span className="code-lang">{lang || "code"}</span>
+        <span className="code-lang">{label}</span>
         <button
           type="button"
-          className="copy-button"
+          className={`copy-button${copied ? " copied" : ""}`}
           onClick={handleCopy}
-          title={tr("web.copy_code")}
-          aria-label={tr("web.copy_code")}
+          title={copyLabel}
+          aria-label={copyLabel}
         >
           {copied ? <Check size={13} /> : <Copy size={13} />}
-          <span>{copied ? tr("web.copied") : tr("web.copy")}</span>
         </button>
       </div>
-      <pre><code>{code}</code></pre>
+      <pre><code>{tokens
+        ? tokens.map((line, index) => <span key={index} className="code-line">
+          {line.map((token, at) => <span key={at} className="cv-tok" style={token.style as CSSProperties}>{token.content}</span>)}
+          {index < tokens.length - 1 ? "\n" : ""}
+        </span>)
+        : code}</code></pre>
     </div>
   );
 }

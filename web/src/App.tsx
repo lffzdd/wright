@@ -10,8 +10,10 @@ import { Composer, EnvironmentChoice } from "./components/composer/Composer";
 import { emptyDraft, type Draft } from "./components/composer/draft";
 import { Inspector, type InspectorTab } from "./components/inspector/Inspector";
 import { InspectorResizeHandle } from "./components/inspector/InspectorResizeHandle";
+import { ResizeHandle } from "./components/ui/ResizeHandle";
 import { MemoryPage, RulesPage, SchedulesPage, SearchDialog, SettingsPage } from "./components/panels/panels";
 import { clampInspectorWidth, defaultInspectorWidth, parseInspectorWidth } from "./inspectorWidth";
+import { clampSidebarWidth, parseSidebarWidth, SIDEBAR_WIDTH_DEFAULT, SIDEBAR_WIDTH_MAX, SIDEBAR_WIDTH_MIN } from "./sidebarWidth";
 import { ContextRing } from "./components/session/ContextRing";
 import { SessionRail } from "./components/session/SessionRail";
 import { conversationMarkdown, markdownFileName, rewindImpact, sessionTitle } from "./components/session/session";
@@ -61,6 +63,12 @@ export default function App() {
   const [railOpen, setRailOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [inspectorWidth, setInspectorWidth] = useState(() => defaultInspectorWidth());
+  // On wide screens the session list is docked and can be folded away; on
+  // compact ones it is a drawer (railOpen) and these two do not apply.
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_WIDTH_DEFAULT);
+  const sidebarOpenRef = useRef(sidebarOpen);
+  sidebarOpenRef.current = sidebarOpen;
   const [narrowInspector, setNarrowInspector] = useState(false);
   const [compactViewport, setCompactViewport] = useState(() => window.matchMedia?.("(max-width: 1024px)").matches ?? false);
   const inspectorVisibility = useRef({ open: inspectorOpen, narrow: narrowInspector, compact: compactViewport });
@@ -244,6 +252,21 @@ export default function App() {
     if (current.compact ? current.open && current.narrow : current.open) closeInspector();
     else openInspector();
   }, [closeInspector, openInspector]);
+  const toggleRail = useCallback(() => {
+    setNarrowInspector(false);
+    if (inspectorVisibility.current.compact) {
+      setRailOpen((prev) => !prev);
+      return;
+    }
+    const next = !sidebarOpenRef.current;
+    setSidebarOpen(next);
+    api.setPreference({ sidebar_open: next }).catch(() => undefined);
+  }, []);
+  const commitSidebarWidth = useCallback((width: number) => {
+    const next = clampSidebarWidth(width);
+    setSidebarWidth(next);
+    api.setPreference({ sidebar_width: next }).catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -271,8 +294,7 @@ export default function App() {
         });
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
         event.preventDefault();
-        setNarrowInspector(false);
-        setRailOpen((prev) => !prev);
+        toggleRail();
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
         event.preventDefault();
         toggleInspector();
@@ -335,6 +357,8 @@ export default function App() {
         setInspectorOpen(prefs.inspector_open);
         const stored = parseInspectorWidth(prefs.inspector_width);
         setInspectorWidth(stored ?? defaultInspectorWidth());
+        setSidebarOpen(prefs.sidebar_open ?? true);
+        setSidebarWidth(parseSidebarWidth(prefs.sidebar_width) ?? SIDEBAR_WIDTH_DEFAULT);
       }
       setProject(projectData);
       launchId.current = String(projectData.project_id ?? "");
@@ -811,7 +835,7 @@ export default function App() {
   return <div className="app-viewport">
     <header className="topbar">
       <div className="brand">
-        <button className="icon-button rail-toggle" onClick={() => { setNarrowInspector(false); setRailOpen(true); }} aria-label={tr("web.open_sessions")}><SidebarSimple size={14} /></button>
+        <button type="button" className="icon-button rail-toggle" onClick={toggleRail} aria-label={tr((compactViewport ? railOpen : sidebarOpen) ? "web.close_sessions" : "web.open_sessions")} aria-expanded={compactViewport ? railOpen : sidebarOpen} title={tr("web.toggle_sessions_title")}><SidebarSimple size={14} /></button>
         <span className="brand-mark">W</span>
         <strong>Wright</strong>
         <span className="sep">/</span>
@@ -830,7 +854,8 @@ export default function App() {
     <div
       className="workspace-grid"
       data-inspector={!page && state && selected && inspectorOpen ? "open" : "closed"}
-      style={{ "--inspector-width": `${inspectorWidth}px` } as CSSProperties}
+      data-sidebar={sidebarOpen ? "open" : "closed"}
+      style={{ "--inspector-width": `${inspectorWidth}px`, "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
     >
       <SessionRail
         sessions={sessions}
@@ -838,8 +863,8 @@ export default function App() {
         onSelect={(session) => selectSession(session).catch((error) => setFatal(String(error)))}
         onCreate={() => { setPage(null); setBrowsing("draft"); setSelected(null); setState(null); remember(null); }}
         open={railOpen}
+        collapsed={!sidebarOpen && !compactViewport}
         selectedProgress={selectedProgress}
-        footer={state?.session.model ?? String(project?.default_model ?? "")}
         connectionLatency={serverLatency}
         workspaces={workspaces}
         onSelectWorkspace={(projectId) => {
@@ -865,16 +890,29 @@ export default function App() {
         onRenameCancel={() => setRenaming(null)}
         onRenameSubmit={(session, title) => renameSession(session, title).catch((error) => setFatal(String(error)))}
         onArchive={(session) => archiveSession(session.session_id).catch((error) => setFatal(String(error)))}
-      >
-        {!workspaces.length && <p className="empty-small">{tr("web.launch_project")}</p>}
-        <div>
-          <div className="section-label"><span>{tr("web.capabilities")}</span></div>
+        nav={<>
           <button type="button" className={`nav-row${page === "memory" ? " selected" : ""}`} aria-current={page === "memory" ? "page" : undefined} onClick={() => { setPage("memory"); setRailOpen(false); }}><Brain size={14} />{tr("web.memory")}{capabilityCounts.memory !== null && capabilityCounts.memory > 0 && <span className="nav-count">{capabilityCounts.memory}</span>}</button>
           <button type="button" className={`nav-row${page === "rules" ? " selected" : ""}`} aria-current={page === "rules" ? "page" : undefined} onClick={() => { setPage("rules"); setRailOpen(false); }}><Scroll size={14} />{tr("web.rules")}{capabilityCounts.rules !== null && capabilityCounts.rules > 0 && <span className="nav-count">{capabilityCounts.rules}</span>}</button>
           <button type="button" className={`nav-row${page === "schedules" ? " selected" : ""}`} aria-current={page === "schedules" ? "page" : undefined} onClick={() => { setPage("schedules"); setRailOpen(false); }}><Clock size={14} />{tr("web.schedules")}{capabilityCounts.schedules !== null && capabilityCounts.schedules > 0 && <span className="nav-count">{capabilityCounts.schedules}</span>}</button>
           <button type="button" className={`nav-row${page === "settings" ? " selected" : ""}`} aria-current={page === "settings" ? "page" : undefined} onClick={() => { setPage("settings"); setRailOpen(false); }}><Gear size={14} />{tr("web.settings")}</button>
-        </div>
+        </>}
+      >
+        {!workspaces.length && <p className="empty-small">{tr("web.launch_project")}</p>}
       </SessionRail>
+      {sidebarOpen && !compactViewport ? <ResizeHandle
+        width={sidebarWidth}
+        min={SIDEBAR_WIDTH_MIN}
+        max={SIDEBAR_WIDTH_MAX}
+        edge="end"
+        className="sidebar-resize-handle"
+        resizingClass="sidebar-resizing"
+        label={tr("web.resize_sessions")}
+        hint={tr("web.resize_inspector_hint")}
+        clamp={(next) => clampSidebarWidth(next)}
+        reset={() => SIDEBAR_WIDTH_DEFAULT}
+        onWidthChange={setSidebarWidth}
+        onCommit={commitSidebarWidth}
+      /> : null}
       {page ? <main className="conversation capability-main">
         {page === "memory" && <MemoryPage projectId={selectedProjectId || null} />}
         {page === "rules" && <RulesPage projectId={selectedProjectId || null} />}
@@ -889,11 +927,6 @@ export default function App() {
                 : <h1 title={headerTitle} onDoubleClick={() => setRenaming(state.session.session_id)}>{headerTitle}</h1>}
             </div>
             <div className="task-status">
-              {/* The meter opens the full breakdown in the inspector. */}
-              {typeof breakdown?.total === "number" && <button type="button" className="context-ring-button" aria-label={tr("web.context_open")} onClick={() => {
-                setInspectorTab((previous) => ({ tab: "context", request: (previous?.request ?? 0) + 1 }));
-                openInspector();
-              }}><ContextRing total={breakdown.total} limit={breakdown.limit} /></button>}
               <MenuButton label={tr("web.session_actions")} items={() => [
                 { label: tr("web.rename"), icon: <PencilSimple size={13} />, onSelect: () => setRenaming(state.session.session_id) },
                 { label: tr("web.copy_session_id"), icon: <Copy size={13} />, onSelect: () => { navigator.clipboard?.writeText(state.session.session_id).catch(() => undefined); } },
@@ -939,6 +972,11 @@ export default function App() {
             <Composer
               key={state.session.session_id}
               sessionId={state.session.session_id}
+              context={typeof breakdown?.total === "number" && <button type="button" className="context-ring-button" aria-label={tr("web.context_open")} onClick={() => {
+                // The meter opens the full breakdown in the inspector.
+                setInspectorTab((previous) => ({ tab: "context", request: (previous?.request ?? 0) + 1 }));
+                openInspector();
+              }}><ContextRing total={breakdown.total} limit={breakdown.limit} /></button>}
               projectId={projectKey() || null}
               deferUploads={browsing === "preview"}
               connection={browsing === "preview" ? "connected" : (state.session.lifecycle === "closing" || state.session.lifecycle === "closed" || state.session.status === "closing" || state.session.status === "closed" ? "closed" : state.connection)}

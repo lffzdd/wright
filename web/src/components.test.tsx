@@ -49,7 +49,7 @@ describe("MarkdownContent", () => {
     render(<MarkdownContent content={markdown} />);
     expect(screen.getByText("python")).toBeDefined();
     expect(screen.getByText("print('hello')")).toBeDefined();
-    expect(screen.getByText("Copy")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Copy code" })).toBeDefined();
   });
 
   it("strips scripts and javascript urls from rendered markdown", () => {
@@ -285,8 +285,52 @@ describe("SessionRail", () => {
 
   it("shows no live dot when no open session is working", () => {
     const { container } = render(rail([]));
-    expect(screen.getByText("Open sessions")).toBeTruthy();
+    expect(screen.getByText("Recent sessions")).toBeTruthy();
     expect(container.querySelector(".live-dot")).toBeNull();
+  });
+
+  const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+
+  it("orders open and closed sessions together by recency and marks only live or failed ones", () => {
+    const { container } = render(<SessionRail
+      sessions={[
+        { session_id: "old-open", user_goal: "Old open", status: "idle", active: true, execution: "idle", agent_status: "completed", saved_at: ago(90) },
+        { session_id: "new-closed", user_goal: "New closed", active: false, status: "closed", agent_status: "completed", saved_at: ago(5) },
+        { session_id: "running", user_goal: "Running now", status: "running", active: true, execution: "running", saved_at: ago(30) },
+        { session_id: "broken", user_goal: "Broken", active: false, status: "closed", agent_status: "failed", saved_at: ago(60) },
+      ]}
+      selected={null} onSelect={vi.fn()} onCreate={vi.fn()} open
+    />);
+    const titles = [...container.querySelectorAll(".session-title")].map((node) => node.textContent);
+    expect(titles).toEqual(["New closed", "Running now", "Broken", "Old open"]);
+    expect(screen.getByRole("button", { name: /Old open/ }).textContent).toContain("2h");
+    expect(container.querySelectorAll(".status-dot")).toHaveLength(1);
+    expect(container.querySelector(".status-dot.running")).toBeTruthy();
+    expect(container.querySelectorAll(".recent-mark.fail")).toHaveLength(1);
+  });
+
+  it("keeps the selected session visible when the list is cut short", () => {
+    const sessions = Array.from({ length: 8 }, (_, index) => ({ session_id: `s${index}`, user_goal: `Task ${index}`, status: "closed", active: false, saved_at: ago(index + 1) }));
+    render(<SessionRail sessions={sessions} selected="s7" onSelect={vi.fn()} onCreate={vi.fn()} open />);
+    expect(screen.getByRole("button", { name: /Task 7/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Task 6/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Show all 2" })).toBeTruthy();
+  });
+
+  it("folds a workspace from its row and starts a session there from its + button", () => {
+    const onSelectWorkspace = vi.fn();
+    render(<SessionRail
+      sessions={[{ session_id: "a", user_goal: "Listed task", project_id: "one", status: "closed", active: false, saved_at: ago(1) }]}
+      selected={null} onSelect={vi.fn()} onCreate={vi.fn()} open
+      workspaces={[{ project_id: "one", name: "One" }]} onSelectWorkspace={onSelectWorkspace}
+    />);
+    const row = screen.getByRole("button", { name: "One" });
+    expect(row.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(row);
+    expect(row.getAttribute("aria-expanded")).toBe("false");
+    expect(onSelectWorkspace).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "New session in One" }));
+    expect(onSelectWorkspace).toHaveBeenCalledWith("one");
   });
 });
 

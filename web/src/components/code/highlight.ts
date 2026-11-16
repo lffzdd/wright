@@ -51,6 +51,16 @@ export function languageForPath(path: string | undefined): string | undefined {
   return dot > 0 ? EXTENSIONS[name.slice(dot + 1)] : undefined;
 }
 
+const FENCE_ALIASES: Record<string, string> = { shell: "shellscript", console: "shellscript", ts: "typescript", js: "javascript", py: "python", yml: "yaml", golang: "go" };
+
+/** The grammar for a Markdown fence tag such as `python`, `py` or `bash`. */
+export function languageForFence(tag: string | undefined): string | undefined {
+  const name = tag?.trim().split(/\s+/)[0]?.toLowerCase();
+  if (!name) return undefined;
+  if (GRAMMARS[name]) return name;
+  return FENCE_ALIASES[name] ?? EXTENSIONS[name];
+}
+
 /** A short label for the language, shown next to a file. */
 export function languageLabel(lang: string | undefined): string {
   if (!lang) return "";

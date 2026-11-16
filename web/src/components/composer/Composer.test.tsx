@@ -46,7 +46,7 @@ describe("composer input", () => {
     let finish!: (value: Awaited<ReturnType<typeof api.uploadAttachment>>) => void;
     vi.spyOn(api, "uploadAttachment").mockReturnValue(new Promise((resolve) => { finish = resolve; }));
     const { container, box, submit } = mount();
-    const input = container.querySelector('input[accept="image/png,image/jpeg,image/webp"]')!;
+    const input = container.querySelector('input[type="file"]')!;
     fireEvent.change(input, { target: { files: [new File(["image"], "example.png", { type: "image/png" })] } });
     fireEvent.submit(container.querySelector("form")!);
     fireEvent.keyDown(box, { key: "Enter" });
@@ -83,5 +83,25 @@ describe("composer input", () => {
     expect(screen.getByRole("listbox")).toBeTruthy();
     fireEvent.keyDown(box, { key: "Escape" });
     expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("keeps a relaxed permission mode and the context meter on the toolbar", () => {
+    render(<Composer sessionId="session-a" connection="connected" draft={emptyDraft()} updateDraft={() => undefined}
+      submit={async () => "accepted"} cancel={async () => undefined} running={false}
+      currentModel="model-a" permissionMode="bypass" onPolicy={async () => undefined}
+      context={<span>meter</span>} />);
+    const toggle = screen.getByRole("button", { name: /model-a/ });
+    expect(toggle.textContent).toBe("model-a");
+    expect(screen.getByRole("img", { name: "Project auto" })).toBeTruthy();
+    expect(toggle.getAttribute("title")).toMatch(/^Project auto: /);
+    expect(screen.getByText("meter")).toBeTruthy();
+  });
+
+  it("names the mode only when it is not Agent", () => {
+    render(<Composer sessionId="session-a" connection="connected" draft={emptyDraft()} updateDraft={() => undefined}
+      submit={async () => "accepted"} cancel={async () => undefined} running={false}
+      currentModel="model-a" interactionMode="plan" onPolicy={async () => undefined} />);
+    expect(screen.getByRole("button", { name: /model-a/ }).textContent).toBe("Plan · model-a");
+    expect(screen.queryByRole("img")).toBeNull();
   });
 });
