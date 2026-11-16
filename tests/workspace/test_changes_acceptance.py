@@ -1,13 +1,12 @@
-"""Independent Changes acceptance against HTTP routes and real temporary Git trees.
+"""Git Changes HTTP acceptance: stage, unstage, discard, commit, and Git scopes.
 
-The session handle is deliberately small: no model runs or user checkout is used.
-Git, the change journal, directory coordination and HTTP handlers are real.
+Session undo, conflict and symlink rules live in test_session_changes.py.
+This module hits the real Git trees and HTTP handlers; it does not run a model.
 """
 
 from __future__ import annotations
 
 import os
-import stat
 import subprocess
 from contextlib import contextmanager
 from pathlib import Path
@@ -44,18 +43,9 @@ def facts(root: Path) -> dict:
 
 
 @pytest.fixture
-def env(tmp_path: Path, monkeypatch):
+def env(tmp_path: Path, monkeypatch, git_workspace_unrelated):
     monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "wright-home"))
-    root = tmp_path / "repo"
-    root.mkdir()
-    git(root, "init")
-    git(root, "config", "user.email", "changes@example.test")
-    git(root, "config", "user.name", "Changes Acceptance")
-    git(root, "config", "commit.gpgsign", "false")
-    (root / "a.txt").write_text("base\n", encoding="utf-8")
-    (root / "b.txt").write_text("unrelated\n", encoding="utf-8")
-    git(root, "add", ".")
-    git(root, "commit", "-m", "base")
+    root = git_workspace_unrelated
     state = SimpleNamespace(session_id="changes-test", project_root=root, workspace_dir=root)
     runtime = SimpleNamespace(
         session_state=state,
@@ -127,14 +117,6 @@ def review(env):
     response = env.client.get(f"{env.base}/review")
     assert response.status_code == 200, response.text
     return response.json()
-
-
-def undo(env, paths, revision):
-    return env.client.post(
-        f"{env.base}/review/revert",
-        json={"confirm": True, "paths": paths, "expected_revision": revision},
-        headers={"origin": "http://testserver"},
-    )
 
 
 def test_scopes_stage_and_unstage_keep_disk_bytes(env):
@@ -284,40 +266,6 @@ def test_busy_session_and_other_directory_worker_block_git_mutations(env):
         lease.release()
 
 
-def test_session_undo_restores_dirty_before_bytes_and_preserves_index_head(env):
-    (env.root / "a.txt").write_text("staged user edit\n", encoding="utf-8")
-    git(env.root, "add", "a.txt")
-    (env.root / "a.txt").write_text("dirty before task\n", encoding="utf-8")
-    (env.root / "b.txt").write_text("unrelated user edit\n", encoding="utf-8")
-    env.journal.ensure_baseline()
-    before_task = facts(env.root)
-    note(env, "a.txt", "task result\n")
-    session_patch = env.client.get(f"{env.base}/review/patch", params={"path": "a.txt"})
-    assert session_patch.status_code == 200, session_patch.text
-    assert "-dirty before task" in session_patch.json()["patch"]
-    assert "+task result" in session_patch.json()["patch"]
-    succeeded(undo(env, ["a.txt"], review(env)["revision"]))
-    assert facts(env.root) == before_task
-
-
-def test_session_undo_preflights_external_edit_for_whole_batch(env):
-    env.journal.ensure_baseline()
-    note(env, "a.txt", "task A\n")
-    note(env, "b.txt", "task B\n")
-    stale = review(env)["revision"]
-    (env.root / "a.txt").write_text("later external edit\n", encoding="utf-8")
-    before = facts(env.root)
-    response = undo(env, ["b.txt", "a.txt"], stale)
-    assert response.status_code in {400, 409}, response.text
-    assert facts(env.root) == before
-    current = review(env)
-    external = next(row for row in current["changes"] if row["path"] == "a.txt")
-    assert external["can_revert"] is False
-    response = undo(env, ["b.txt", "a.txt"], current["revision"])
-    assert response.status_code >= 400 or response.json().get("applied") is False
-    assert facts(env.root) == before
-
-
 def test_journal_reopen_and_git_commit_keep_task_history_without_false_conflict(env):
     env.journal.ensure_baseline()
     note(env, "a.txt", "task result\n")
@@ -433,67 +381,6 @@ def test_missing_execution_root_is_an_error_instead_of_a_clean_workspace(env):
         assert response.status_code in {400, 404, 409}, response.text
     finally:
         saved.rename(env.root)
-
-
-def test_session_undo_keeps_executable_mode_and_git_index(env):
-    target = env.root / "a.txt"
-    target.chmod(0o755)
-    git(env.root, "add", "a.txt")
-    git(env.root, "commit", "-m", "executable source")
-    env.journal.ensure_baseline()
-    before = facts(env.root)
-    note(env, "a.txt", "task result\n")
-    succeeded(undo(env, ["a.txt"], review(env)["revision"]))
-    assert facts(env.root) == before
-    assert stat.S_IMODE(target.stat().st_mode) == 0o755
-
-
-def test_session_undo_rejects_a_later_symlink_even_if_target_content_matches(env):
-    env.journal.ensure_baseline()
-    note(env, "a.txt", "task result\n")
-    target = env.root / "a.txt"
-    outside = env.root.parent / "external.txt"
-    outside.write_text("task result\n", encoding="utf-8")
-    target.unlink()
-    target.symlink_to(outside)
-    current = review(env)
-    row = next(item for item in current["changes"] if item["path"] == "a.txt")
-    assert row["can_revert"] is False
-    response = undo(env, ["a.txt"], current["revision"])
-    assert response.status_code >= 400 or response.json().get("applied") is False
-    assert target.is_symlink()
-    assert outside.read_bytes() == b"task result\n"
-
-
-def test_session_undo_does_not_erase_intervening_user_edit_after_a_later_task_write(env):
-    env.journal.ensure_baseline()
-    note(env, "a.txt", "first task edit\n")
-    (env.root / "a.txt").write_text("intervening user edit\n", encoding="utf-8")
-    note(env, "a.txt", "task integrates user edit\n")
-    before = facts(env.root)
-    current = review(env)
-    row = next(item for item in current["changes"] if item["path"] == "a.txt")
-    assert row["can_revert"] is False
-    response = undo(env, ["a.txt"], current["revision"])
-    assert response.status_code >= 400 or response.json().get("applied") is False
-    assert facts(env.root) == before
-
-
-def test_session_staged_rename_undo_restores_pair_but_preserves_current_index(env):
-    (env.root / "b.txt").write_text("unrelated user edit\n", encoding="utf-8")
-    before = env.journal.capture()
-    git(env.root, "mv", "a.txt", "renamed.txt")
-    env.journal.commit_capture(before, call_id="rename-call", tool_name="shell")
-    current = review(env)
-    task_paths = {row["path"] for row in current["changes"] if row.get("origin") == "task"}
-    assert task_paths == {"a.txt", "renamed.txt"}
-    before_undo = facts(env.root)
-    succeeded(undo(env, ["a.txt", "renamed.txt"], current["revision"]))
-    after = facts(env.root)
-    assert after["files"] == {"a.txt": b"base\n", "b.txt": b"unrelated user edit\n"}
-    assert after["index"] == before_undo["index"]
-    assert after["staged"] == before_undo["staged"]
-    assert after["head"] == before_undo["head"]
 
 
 def test_worktree_stage_and_commit_never_retarget_the_primary_checkout(env):

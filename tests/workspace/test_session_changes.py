@@ -32,17 +32,9 @@ def git(root, *args):
 
 
 @pytest.fixture
-def workspace(tmp_path, monkeypatch):
+def workspace(tmp_path, monkeypatch, git_workspace_other):
     monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "home"))
-    root = tmp_path / "repo"
-    root.mkdir()
-    git(root, "init")
-    git(root, "config", "user.email", "tests@example.test")
-    git(root, "config", "user.name", "Tests")
-    (root / "a.txt").write_bytes(b"base\n")
-    (root / "b.txt").write_bytes(b"other\n")
-    git(root, "add", ".")
-    git(root, "commit", "-m", "base")
+    root = git_workspace_other
     session = SimpleNamespace(session_id="review-session", project_root=root, workspace_dir=root)
     return root, session, SessionChangeJournal(session)
 
@@ -63,6 +55,9 @@ def service(session):
 
 def test_session_diff_uses_task_before_not_head_and_undo_preserves_index(workspace):
     root, _, journal = workspace
+    (root / "a.txt").chmod(0o755)
+    git(root, "add", "a.txt")
+    git(root, "commit", "-m", "executable")
     (root / "a.txt").write_text("staged user change\n")
     git(root, "add", "a.txt")
     (root / "a.txt").write_text("unstaged user change\n")
@@ -75,6 +70,7 @@ def test_session_diff_uses_task_before_not_head_and_undo_preserves_index(workspa
     assert (result["additions"], result["deletions"]) == (1, 1)
     assert journal.revert(["a.txt"], confirm=True, expected_revision=result["revision"])["applied"]
     assert (root / "a.txt").read_text() == "unstaged user change\n"
+    assert stat.S_IMODE((root / "a.txt").stat().st_mode) == 0o755
     assert git(root, "ls-files", "--stage") == index and git(root, "rev-parse", "HEAD") == head
 
 

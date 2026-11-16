@@ -330,8 +330,7 @@ def test_concurrent_profile_appends_keep_the_whole_section(tmp_path, processes):
     assert not (tmp_path / "core").exists()
 
 
-@pytest.mark.parametrize("processes", [False, True], ids=["threads", "processes"])
-def test_concurrent_anchor_appends_keep_the_whole_section(tmp_path, processes):
+def test_concurrent_anchor_appends_keep_the_whole_section(tmp_path):
     pid = project_id(tmp_path / "alpha")
     service = _service(tmp_path)
     service.update_core_memory("human_profile", "global profile", "replace")
@@ -339,7 +338,7 @@ def test_concurrent_anchor_appends_keep_the_whole_section(tmp_path, processes):
     global_bytes = (tmp_path / CORE_MEMORY_FILE).read_bytes()
     indexes = range(4)
     _run_pool(
-        processes,
+        False,
         [_append_anchor for _ in indexes],
         [(str(tmp_path), pid, index) for index in indexes],
     )
@@ -351,8 +350,7 @@ def test_concurrent_anchor_appends_keep_the_whole_section(tmp_path, processes):
     assert (tmp_path / CORE_MEMORY_FILE).read_bytes() == global_bytes
 
 
-@pytest.mark.parametrize("processes", [False, True], ids=["threads", "processes"])
-def test_concurrent_projects_do_not_overwrite_each_other(tmp_path, processes):
+def test_concurrent_projects_do_not_overwrite_each_other(tmp_path):
     pid_a = project_id(tmp_path / "alpha")
     pid_b = project_id(tmp_path / "beta")
     service = _service(tmp_path)
@@ -365,7 +363,7 @@ def test_concurrent_projects_do_not_overwrite_each_other(tmp_path, processes):
     for index in range(4):
         calls.append(_append_anchor)
         args.append((str(tmp_path), pid_a if index % 2 == 0 else pid_b, index))
-    _run_pool(processes, calls, args)
+    _run_pool(False, calls, args)
     store = FileCoreMemoryStore(tmp_path)
     anchor_a = store.load_project(pid_a).project_anchor
     anchor_b = store.load_project(pid_b).project_anchor

@@ -41,6 +41,7 @@ Repository = "https://github.com/lffzdd/wright"
 dev = [
     "import-linter>=2.15",
     "pytest>=8",
+    "pytest-xdist>=3.8.0",
     "ruff>=0.15",
 ]
 # Browser end-to-end tests (tests/e2e_web), opt-in with WRIGHT_E2E_WEB=1.
@@ -55,6 +56,7 @@ packages = ["src/wright"]
 [tool.pytest.ini_options]
 pythonpath = ["src", "."]
 testpaths = ["tests"]
+addopts = ["-n", "auto", "--dist=worksteal"]
 markers = ["native_sandbox: real OS isolation acceptance (enabled explicitly in CI)", "real_resolver: use the system DNS resolver in network permission checks"]
 python_files = ["test_*.py"]
 

@@ -248,11 +248,17 @@ def test_two_session_consumers_claim_one_persisted_command_once(tmp_path):
 
     left = SessionService(first, event_processor=consume, shutdown=lambda _: None)
     right = SessionService(second, event_processor=consume, shutdown=lambda _: None)
-    left.start()
-    right.start()
+    # Recover both ledgers before either worker runs. start() recovers and then
+    # immediately claims; the second recover would otherwise demote a live claim
+    # back to queued, which is crash-restart behavior, not two live consumers.
+    left._recover_durable_commands()
+    right._recover_durable_commands()
+    left.runner.start()
+    right.runner.start()
     deadline = time.monotonic() + 1
     while not seen and time.monotonic() < deadline:
         time.sleep(0.01)
+    time.sleep(0.05)
     assert seen == ["only once"]
     assert first.autonomy_store.get_command("session:session", "racing-command")["status"] == "completed"
     assert left.close(wait_timeout=1)

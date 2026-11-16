@@ -528,7 +528,7 @@ def _wait_completed(handle, command_id):
     deadline = time.monotonic() + 3
     while time.monotonic() < deadline:
         record = handle.command_status(command_id)
-        if record["status"] == "completed":
+        if record["status"] == "completed" and handle.service.is_evictable():
             return
         time.sleep(0.005)
     pytest.fail(f"command did not complete: {command_id}")
