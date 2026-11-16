@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from os import environ
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 from ....utils.token_counter import tool_image_references
@@ -322,19 +321,21 @@ class ResponsesAdapter:
         return [], None, None
 
 
-def process_model_name(cli_model: str | None = None) -> str:
-    """Choose a new-session model without changing the established precedence."""
-    for candidate in (cli_model, environ.get("OPENAI_MODEL")):
+def process_model_name(cli_model: str | None = None, configured: str | None = None) -> str:
+    """Choose a new-session model: the --model flag, then the ``llm.model`` setting."""
+    for candidate in (cli_model, configured):
         cleaned = (candidate or "").strip()
         if cleaned:
             return cleaned
     return ""
 
 
-def available_models(current: str, configured: str | None = None) -> tuple[str, ...]:
-    """Return configured candidates, retaining the selected model first."""
-    configured = environ.get("WRIGHT_MODELS", "") if configured is None else configured
-    models = [model.strip() for model in configured.split(",") if model.strip()]
+def available_models(
+    current: str, configured: str | Iterable[str] | None = None
+) -> tuple[str, ...]:
+    """Return configured candidates (``llm.models``), retaining the selected model first."""
+    items = configured.split(",") if isinstance(configured, str) else (configured or ())
+    models = [model.strip() for model in items if model.strip()]
     if current and current not in models:
         models.insert(0, current)
     return tuple(dict.fromkeys(models))

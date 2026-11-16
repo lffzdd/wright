@@ -20,18 +20,31 @@ cd wright
 uv sync
 ```
 
-Put your OpenAI-compatible endpoint and model, which must support native function
-calling, in `~/.wright/.env`. A `.env` in the project only supplies API keys and
-model names; Wright ignores anything else there, because a cloned repository or a
-sandboxed command can write that file:
+Put your API key in `~/.wright/.env` (or the real environment):
 
 ```bash
-OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4.1
-# Optional comma-separated choices offered by TUI /model.
-WRIGHT_MODELS=gpt-4.1,gpt-4.1-mini
 ```
+
+Put the endpoint and model, which must support native function calling, in
+`~/.wright/settings.json`:
+
+```json
+{
+  "llm": {
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt-4.1",
+    "models": ["gpt-4.1", "gpt-4.1-mini"]
+  }
+}
+```
+
+A project's `.wright/settings.json` may only choose the model
+(`llm.model`, `llm.context_limit`, `llm.memory_model`); a project `.env` only
+supplies API keys and those model names. Wright ignores anything else there,
+because a cloned repository or a sandboxed command can write those files.
+Environment variables such as `OPENAI_MODEL` still work and override both
+files. See [docs/settings.md](docs/settings.md) for every key.
 
 ## Run
 
@@ -59,7 +72,7 @@ session after upgrading; existing checkpoint files are not converted or deleted.
 
 The TUI also offers `/new`, `/resume`, and `/model`. `/new` and `/resume` rebuild
 the session runtime cleanly; `/model` switches the active OpenAI-compatible model
-for subsequent requests. Configure optional model choices with `WRIGHT_MODELS`.
+for subsequent requests. Configure optional model choices with `llm.models`.
 
 ```bash
 cd /path/to/your/project
@@ -183,8 +196,8 @@ uv run playwright install chromium
 WRIGHT_E2E_WEB=1 uv run pytest tests/e2e_web
 ```
 
-Knowledge search is off unless `WRIGHT_KNOWLEDGE_ENABLED=1`. It is an optional
-adapter: set `WRIGHT_RAG_DIR` / `WRIGHT_KNOWLEDGE_INDEX` if you have an external
+Knowledge search is off unless `knowledge.enabled` is true. It is an optional
+adapter: set `knowledge.rag_dir` / `knowledge.index` if you have an external
 RAG package. Wright does not vendor that stack.
 
 ## Layout

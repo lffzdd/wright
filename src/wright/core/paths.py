@@ -80,6 +80,16 @@ def user_preferences_path() -> Path:
     return wright_home() / "preferences.json"
 
 
+def user_settings_path() -> Path:
+    """Typed runtime settings set by the person. See docs/settings.md."""
+    return wright_home() / "settings.json"
+
+
+def project_settings_path(workspace: Path) -> Path:
+    """Project settings; only keys marked project-safe are read from it."""
+    return workspace.expanduser().resolve() / ".wright" / "settings.json"
+
+
 def workspace_registry_path() -> Path:
     """Registered project directories. Selection here is not a process cwd."""
     return wright_home() / "workspaces.json"

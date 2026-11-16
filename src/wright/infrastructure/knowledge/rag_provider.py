@@ -2,7 +2,8 @@
 
 硬约束：import wright 不能触发 RAG 导入、模型加载或网络请求。
 RAGChain 构造和 load_index 推迟到第一次 search()。
-RAG 实现不在本仓库内；通过 WRIGHT_RAG_DIR / WRIGHT_KNOWLEDGE_INDEX 接入。
+RAG 实现不在本仓库内；通过 knowledge.rag_dir / knowledge.index 设置接入
+（环境变量 WRIGHT_RAG_DIR / WRIGHT_KNOWLEDGE_INDEX 仍可覆盖）。
 """
 
 from __future__ import annotations
@@ -19,46 +20,21 @@ from ...domain.model.knowledge import (
     KnowledgeUnavailable,
     knowledge_hit_from_search_result,
 )
-
-_TRUTHY = {"1", "true", "yes", "on"}
-
-
-def _env_path(name: str) -> Path | None:
-    raw = os.environ.get(name, "").strip()
-    if not raw:
-        return None
-    return Path(raw).expanduser().resolve()
+from ...domain.model.settings import KnowledgeSettings
 
 
-def knowledge_enabled() -> bool:
-    """默认关闭：未显式启用时 knowledge_search 不进工具集。"""
-    return os.environ.get("WRIGHT_KNOWLEDGE_ENABLED", "").strip().lower() in _TRUTHY
+def _setting_path(raw: str) -> Path | None:
+    text = raw.strip()
+    return Path(text).expanduser().resolve() if text else None
 
 
-def knowledge_rag_dir() -> Path | None:
-    """外部 RAG 包目录（含 rag_chain.py）。未设置则不尝试导入。"""
-    return _env_path("WRIGHT_RAG_DIR")
-
-
-def knowledge_index_path() -> Path:
-    override = _env_path("WRIGHT_KNOWLEDGE_INDEX")
+def knowledge_index_path(rag_dir: Path | None, index: str = "") -> Path:
+    override = _setting_path(index)
     if override is not None:
         return override
-    rag_dir = knowledge_rag_dir()
     if rag_dir is not None:
         return rag_dir / "simple_index.json"
     return Path("simple_index.json").resolve()
-
-
-def knowledge_retriever_type() -> str:
-    value = os.environ.get("WRIGHT_KNOWLEDGE_RETRIEVER", "dense").strip().lower()
-    if value not in {"dense", "hybrid"}:
-        return "dense"
-    return value
-
-
-def knowledge_use_reranker() -> bool:
-    return os.environ.get("WRIGHT_KNOWLEDGE_RERANKER", "").strip().lower() in _TRUTHY
 
 
 class RagKnowledgeProvider:
@@ -73,20 +49,17 @@ class RagKnowledgeProvider:
         api_key: str | None = None,
         rag_dir: Path | None = None,
     ) -> None:
+        self._rag_dir: Path | None = (
+            Path(rag_dir).expanduser().resolve() if rag_dir is not None else None
+        )
         self.index_path = (
             Path(index_path).expanduser().resolve()
             if index_path is not None
-            else knowledge_index_path()
+            else knowledge_index_path(self._rag_dir)
         )
-        self.retriever_type = retriever_type or knowledge_retriever_type()
-        self.use_reranker = (
-            knowledge_use_reranker() if use_reranker is None else use_reranker
-        )
+        self.retriever_type = retriever_type or "dense"
+        self.use_reranker = bool(use_reranker)
         self._api_key = api_key
-        if rag_dir is not None:
-            self._rag_dir: Path | None = Path(rag_dir).expanduser().resolve()
-        else:
-            self._rag_dir = knowledge_rag_dir()
         self._lock = threading.RLock()
         self._chain: object | None = None
         self._init_error: str | None = None
@@ -94,8 +67,14 @@ class RagKnowledgeProvider:
         self._dotenv_cache: dict[str, str] | None = None
 
     @classmethod
-    def from_env(cls) -> RagKnowledgeProvider:
-        return cls()
+    def from_settings(cls, knowledge: KnowledgeSettings) -> RagKnowledgeProvider:
+        rag_dir = _setting_path(knowledge.rag_dir)
+        return cls(
+            index_path=knowledge_index_path(rag_dir, knowledge.index),
+            retriever_type=knowledge.retriever,
+            use_reranker=knowledge.reranker,
+            rag_dir=rag_dir,
+        )
 
     def search(self, query: str, top_k: int) -> list[KnowledgeHit]:
         error = self._ensure_ready()
@@ -144,8 +123,8 @@ class RagKnowledgeProvider:
         if not self.index_path.is_file():
             raise KnowledgeUnavailable(
                 f"Knowledge index does not exist: {self.index_path}. "
-                "Build the index in the RAG project, or point WRIGHT_KNOWLEDGE_INDEX "
-                "at an existing simple_index.json."
+                "Build the index in the RAG project, or point knowledge.index "
+                "(WRIGHT_KNOWLEDGE_INDEX) at an existing simple_index.json."
             )
         rag_chain_cls = self._import_rag_chain()
         chain = rag_chain_cls(
@@ -204,8 +183,8 @@ class RagKnowledgeProvider:
     def _import_rag_chain(self):
         if self._rag_dir is None:
             raise KnowledgeUnavailable(
-                "Could not import the RAG module. Set WRIGHT_RAG_DIR to a directory "
-                "that contains rag_chain.py before enabling knowledge_search."
+                "Could not import the RAG module. Set knowledge.rag_dir (WRIGHT_RAG_DIR) "
+                "to a directory that contains rag_chain.py before enabling knowledge_search."
             )
         rag_dir = str(self._rag_dir)
         if rag_dir not in sys.path:
@@ -214,7 +193,7 @@ class RagKnowledgeProvider:
             from rag_chain import RAGChain
         except Exception as exc:
             raise KnowledgeUnavailable(
-                "Could not import the RAG module. Check that WRIGHT_RAG_DIR points "
+                "Could not import the RAG module. Check that knowledge.rag_dir points "
                 f"at a directory containing rag_chain.py and that its dependencies are installed. Original error: {type(exc).__name__}: {exc}"
             ) from exc
         return RAGChain
@@ -238,9 +217,5 @@ class RagKnowledgeProvider:
 
 __all__ = [
     "RagKnowledgeProvider",
-    "knowledge_enabled",
     "knowledge_index_path",
-    "knowledge_rag_dir",
-    "knowledge_retriever_type",
-    "knowledge_use_reranker",
 ]

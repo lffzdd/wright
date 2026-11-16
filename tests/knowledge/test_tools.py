@@ -4,6 +4,7 @@ from wright.application.composition.capabilities import assemble_tool_capabiliti
 from wright.application.execution.roles import tools_for_role
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.knowledge import MAX_HIT_CONTENT_CHARS, KnowledgeHit
+from wright.domain.model.settings import KnowledgeSettings
 from wright.domain.model.tool import ToolCall
 from wright.infrastructure.storage.skill_registry import SkillRegistry
 from wright.infrastructure.storage.skills import write_skill
@@ -69,14 +70,13 @@ def test_tool_wraps_untrusted_content_and_truncates():
     assert "not verified fact" in result.data["warning"]
 
 
-def test_knowledge_tools_absent_when_disabled(monkeypatch):
-    monkeypatch.delenv("WRIGHT_KNOWLEDGE_ENABLED", raising=False)
+def test_knowledge_tools_absent_when_disabled():
     assert optional_knowledge_tools() == []
+    assert optional_knowledge_tools(KnowledgeSettings(enabled=False)) == []
 
 
-def test_knowledge_tools_present_when_enabled(monkeypatch):
-    monkeypatch.setenv("WRIGHT_KNOWLEDGE_ENABLED", "1")
-    names = [tool.name for tool in optional_knowledge_tools()]
+def test_knowledge_tools_present_when_enabled():
+    names = [tool.name for tool in optional_knowledge_tools(KnowledgeSettings(enabled=True))]
     assert names == ["knowledge_search"]
 
 

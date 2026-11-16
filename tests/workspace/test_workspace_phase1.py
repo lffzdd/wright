@@ -615,7 +615,7 @@ def test_switching_workspace_does_not_retarget_a_running_root(tmp_path: Path, mo
     monkeypatch.setattr(assembly, "load_env", lambda: None)
     monkeypatch.setattr(assembly, "LLMClient", lambda **_: Model())
     monkeypatch.setattr(assembly, "load_mcp_configs", lambda _: [])
-    monkeypatch.setattr(assembly, "optional_knowledge_tools", list)
+    monkeypatch.setattr(assembly, "optional_knowledge_tools", lambda *args, **kwargs: [])
     monkeypatch.setattr(
         assembly, "load_lifecycle_manager", lambda *a, **k: SimpleNamespace(emit=lambda *a, **k: None),
     )

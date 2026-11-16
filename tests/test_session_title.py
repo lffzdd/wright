@@ -125,10 +125,10 @@ def test_labeled_or_disabled_sessions_are_left_alone():
     assert other.close(wait_timeout=1)
 
 
-def test_runtime_assembly_honours_the_switch(monkeypatch):
-    from wright.application.composition.runtime import _auto_title_disabled
+def test_runtime_assembly_honours_the_switch(monkeypatch, tmp_path):
+    from wright.application.composition.settings import load_settings
 
     monkeypatch.setenv("WRIGHT_AUTO_TITLE", "0")
-    assert _auto_title_disabled()
+    assert load_settings(tmp_path).session.auto_title is False
     monkeypatch.delenv("WRIGHT_AUTO_TITLE")
-    assert not _auto_title_disabled()
+    assert load_settings(tmp_path).session.auto_title is True

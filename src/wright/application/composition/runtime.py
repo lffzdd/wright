@@ -31,6 +31,7 @@ from ...core.paths import (
 )
 from ...domain.model.session import INTERACTIVE_SESSION_LABEL, Session
 from ...domain.model.session.errors import CheckpointError
+from ...domain.model.settings import LlmSettings, SettingsError, WrightSettings
 from ...domain.model.tool_definition import Tool
 from ...domain.model.workspace.project import ProjectContext
 from ...domain.policy import (
@@ -84,9 +85,12 @@ from .memory_assembly import (
     assemble_memory_manager,
     memory_tools,
 )
+from .settings import load_settings
 
 logger = get_logger(__name__)
-# The only settings a project .env can set; everything else belongs in ~/.wright/.env.
+# The only keys a project .env can set; everything else belongs in ~/.wright/.env
+# or ~/.wright/settings.json. Non-secret ones here are legacy aliases of
+# project-safe settings (llm.model, llm.context_limit, llm.memory_model).
 _PROJECT_ENV_KEYS = frozenset({"OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_CONTEXT_LIMIT", "OPENAI_MEMORY_MODEL", "TAVILY_API_KEY"})
 
 
@@ -117,6 +121,8 @@ class WrightRuntime:
     interaction_broker: Any = None
     # Side model that names a session after its first turn; None turns it off.
     title_llm: Any = None
+    # Effective settings this runtime was built with.
+    settings: WrightSettings = field(default_factory=WrightSettings)
     # The ApplicationHost owns durable scheduling, SQLite and durable workers.
     # A session catalog may retain it after this Session closes.
     application_host: ApplicationHost | None = None
@@ -378,14 +384,10 @@ def _is_interactive(interaction_broker: Any, prompter: UserPrompter | None) -> b
     )
 
 
-def _select_base_tools(config: RuntimeConfig) -> tuple[list, list]:
-    if config.with_rag:
-        try:
-            knowledge_tools = optional_knowledge_tools(enabled=True)
-        except TypeError:
-            knowledge_tools = optional_knowledge_tools()
-    else:
-        knowledge_tools = optional_knowledge_tools()
+def _select_base_tools(config: RuntimeConfig, settings: WrightSettings) -> tuple[list, list]:
+    knowledge_tools = optional_knowledge_tools(
+        settings.knowledge, enabled=True if config.with_rag else None
+    )
     active_base_tools = base_tools
     if config.mode == "general":
         coding_only = {"edit", "write", "shell"}
@@ -400,28 +402,28 @@ def _create_llm_clients(
     attachment_store: AttachmentStore,
     artifact_store: ArtifactStore,
     *,
-    base_url: str | None,
+    llm: LlmSettings,
     api_key: str | None,
-    context_limit: int | None,
 ) -> tuple[LLMClient, LLMClient]:
     requested_transport = (
         session_state.llm_transport
         or config.transport
-        or os.getenv("WRIGHT_LLM_TRANSPORT", "auto")
+        or llm.transport
     )
+    base_url = llm.base_url or None
     llm_client = LLMClient(
         base_url=base_url,
         api_key=api_key,
         model=model,
-        context_limit=context_limit or 128000,
+        context_limit=llm.context_limit,
         transport=requested_transport,
         attachment_store=attachment_store,
         artifact_store=artifact_store,
     )
     session_state.llm_transport = llm_client.transport_name
     # 记忆的召回/提取 side-query 可选用更便宜的模型省钱(对标 memdir 用 Sonnet 选记忆)。
-    # 配了 OPENAI_MEMORY_MODEL 就单独建个非流式 client,否则复用主 client。
-    memory_model = os.getenv("OPENAI_MEMORY_MODEL")
+    # 配了 llm.memory_model 就单独建个非流式 client,否则复用主 client。
+    memory_model = llm.memory_model
     selector_llm = (
         LLMClient(
             base_url=base_url,
@@ -476,12 +478,8 @@ def assemble_runtime(
 ) -> WrightRuntime:
     load_env()
 
-    base_url = os.getenv("OPENAI_BASE_URL")
     api_key = os.getenv("OPENAI_API_KEY")
     requested_model = config.model
-    configured_model = os.getenv("OPENAI_MODEL")
-    context_limit_raw = os.getenv("OPENAI_CONTEXT_LIMIT")
-    context_limit = int(context_limit_raw) if context_limit_raw else None
 
     requested_workspace = (config.workspace or Path.cwd()).expanduser().resolve()
     project_context = project_context or ProjectContext.local(requested_workspace)
@@ -489,6 +487,11 @@ def assemble_runtime(
     project_root = project_context.project_root
     if not workspace_dir.is_dir():
         raise SystemExit(f"Workspace does not exist: {workspace_dir}")
+    try:
+        settings = load_settings(project_root)
+    except SettingsError as exc:
+        raise SystemExit(f"Could not load settings: {exc}") from exc
+    configured_model = settings.llm.model
     ensure_project_state(project_root)
     logger.info("workspace=%s", workspace_dir)
     logger.info("state=%s", session_dir(project_root).parent)
@@ -512,16 +515,16 @@ def assemble_runtime(
     permissions = _restore_permissions(project_root, session_state)
 
     # An explicit --model wins. Otherwise resuming retains the model selected
-    # in that session, falling back to OPENAI_MODEL for new/legacy sessions.
+    # in that session, falling back to llm.model for new/legacy sessions.
     model = requested_model or session_state.model_name or configured_model
     if not model:
-        raise ValueError("OPENAI_MODEL or --model is required")
+        raise ValueError("Set llm.model in settings (or OPENAI_MODEL), or pass --model")
     session_state.model_name = model
     attachment_store = AttachmentStore(attachment_dir(project_root), session_state.session_id)
     artifact_store = ArtifactStore(artifact_dir(project_root))
     llm_client, selector_llm = _create_llm_clients(
         config, session_state, model, attachment_store, artifact_store,
-        base_url=base_url, api_key=api_key, context_limit=context_limit,
+        llm=settings.llm, api_key=api_key,
     )
     llm_client.session_attachments = session_state.attachments
     draft_attachments = DraftAttachments(attachment_store, session_state.attachments)
@@ -650,7 +653,7 @@ def assemble_runtime(
     # 默认只委派叶子子 Agent（max_depth=1）。嵌套 spawn 仍由控制面支持，
     # 无人值守 durable run 会显式打开第二层。
     # knowledge_search 是只读检索：启用后放进 base，让子 Agent 也能查知识库。
-    active_base_tools, knowledge_tools = _select_base_tools(config)
+    active_base_tools, knowledge_tools = _select_base_tools(config, settings)
 
     # defer_to_model 只推迟 MCP 工具的 schema 暴露。McpManager.start() 已经
     # 在启动时连接服务器并发现工具，这里不是延迟初始化。
@@ -794,12 +797,9 @@ def assemble_runtime(
         application_host=constructed_application_host,
         directory_coordinator=coordinator,
         sandbox_control=LocalSandboxControl(),
-        title_llm=None if _auto_title_disabled() else selector_llm,
+        title_llm=selector_llm if settings.session.auto_title else None,
+        settings=settings,
     )
-
-
-def _auto_title_disabled() -> bool:
-    return os.getenv("WRIGHT_AUTO_TITLE", "1").strip().lower() in {"0", "false", "no", "off"}
 
 
 def shutdown_runtime(rt: WrightRuntime) -> None:

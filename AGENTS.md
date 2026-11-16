@@ -26,6 +26,7 @@ WRIGHT_SANDBOX_INTEGRATION=1 uv run pytest -q tests/runtime/test_native_sandbox.
 改动以下部分前，先读对应文档：
 
 - 权限、审批、沙箱：[docs/permissions.md](docs/permissions.md)
+- 运行时设置（settings.json、分层、环境变量覆盖）：[docs/settings.md](docs/settings.md)
 - 工具调用协议：[docs/native-tool-calling.md](docs/native-tool-calling.md)
 - 子 Agent 和多 Agent：[docs/multiagent-control-plane.md](docs/multiagent-control-plane.md)
 - Agent 和 Shell 任务的统一控制入口：[docs/unified-task-runtime.md](docs/unified-task-runtime.md)
@@ -71,7 +72,7 @@ WRIGHT_SANDBOX_INTEGRATION=1 uv run pytest -q tests/runtime/test_native_sandbox.
 - **不要往 `pyproject.toml` 的 `ignore_imports` 白名单里加新条目。** 它只能变短。遇到依赖问题，改为依赖 `domain/gateway` 的接口，或把共用定义移到 `domain`。
 - **不要用函数内 import 绕开循环。** 先查清依赖方向为什么不对。可选依赖（如 `fastapi`）可以延迟 import，`TYPE_CHECKING` 只用于类型标注。
 - **权限和沙箱的默认值不要顺手改。** `application/tool_execution` 里选择权限存储和执行后端的代码，以及 `domain/policy/permission`，改动前要先说明影响并等用户确认。失败时必须保持拒绝，不能放行。
-- **不要提交或输出密钥。** API Key 只放在被 Git 忽略的 `.env` 里，新增配置项时同步更新 `.env.example`。
+- **不要提交或输出密钥。** API Key 只放在被 Git 忽略的 `.env` 里。非密钥配置加到 `domain/model/settings.py` 的 `SETTING_SPECS`，不要新增 `os.getenv`；新增配置项时同步更新 `docs/settings.md` 和 `.env.example`。
 - **不要提交过程产物。** `docs/` 只放长期有效的设计说明，不放带基线和测试结果的实施记录。
 
 ## 代码风格

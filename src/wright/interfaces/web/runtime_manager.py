@@ -467,7 +467,10 @@ class RuntimeManager:
         self._lock = threading.RLock()
 
     def project(self) -> dict[str, Any]:
-        return self.directory.project()
+        try:
+            return self.directory.project()
+        except SessionDirectoryError as exc:
+            raise RuntimeManagerError(str(exc), status_code=409) from exc
 
     def set_model(self, session_id: str, model: str) -> dict[str, Any]:
         return self.get(session_id).set_model(model)

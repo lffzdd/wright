@@ -1,8 +1,7 @@
-"""Core framework infrastructure: config, logging, paths, processes, and event bus."""
+"""Core framework infrastructure: logging, paths, processes, and event bus."""
 
 from __future__ import annotations
 
-from .config import AppConfig, get_config
 from .event_bus import EventBus, global_bus
 from .exceptions import (
     ApplicationError,
@@ -27,7 +26,6 @@ from .paths import (
 )
 
 __all__ = [
-    "AppConfig",
     "ApplicationError",
     "ConfigurationError",
     "DomainError",
@@ -39,7 +37,6 @@ __all__ = [
     "artifact_dir",
     "attachment_dir",
     "ensure_project_state",
-    "get_config",
     "get_logger",
     "global_bus",
     "project_id",

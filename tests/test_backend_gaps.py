@@ -600,7 +600,7 @@ def test_scripted_web_session_projects_diff_wait_policy_and_history(
     monkeypatch.setattr(assembly, "load_env", lambda: None)
     monkeypatch.setattr(assembly, "LLMClient", lambda **_: Model())
     monkeypatch.setattr(assembly, "load_mcp_configs", lambda _: [])
-    monkeypatch.setattr(assembly, "optional_knowledge_tools", list)
+    monkeypatch.setattr(assembly, "optional_knowledge_tools", lambda *args, **kwargs: [])
     monkeypatch.setattr(
         assembly,
         "load_lifecycle_manager",

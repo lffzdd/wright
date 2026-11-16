@@ -12,13 +12,11 @@ from ....domain.model.knowledge import (
     KnowledgeUnavailable,
     truncate_hits,
 )
+from ....domain.model.settings import KnowledgeSettings
 from ....domain.model.tool import ToolAccess, ToolResult
 from ....domain.model.tool_definition import Tool
 from ....domain.model.tool_runtime import ToolRuntime
-from ...knowledge.rag_provider import (
-    RagKnowledgeProvider,
-    knowledge_enabled,
-)
+from ...knowledge.rag_provider import RagKnowledgeProvider
 
 
 def _describe_network(args: dict[str, Any]) -> ToolAccess:
@@ -115,13 +113,19 @@ def build_knowledge_tools(provider: KnowledgeProvider | IKnowledgeProvider) -> l
     ]
 
 
-def optional_knowledge_tools(*, enabled: bool | None = None) -> list[Tool]:
-    """未显式启用时返回空列表，避免不可用工具占住每个新会话。"""
-    is_active = enabled if enabled is not None else knowledge_enabled()
+def optional_knowledge_tools(
+    knowledge: KnowledgeSettings | None = None, *, enabled: bool | None = None
+) -> list[Tool]:
+    """未显式启用时返回空列表，避免不可用工具占住每个新会话。
+
+    ``enabled`` (--with-rag) overrides ``knowledge.enabled``.
+    """
+    knowledge = knowledge or KnowledgeSettings()
+    is_active = enabled if enabled is not None else knowledge.enabled
     if not is_active:
         return []
 
-    return build_knowledge_tools(RagKnowledgeProvider.from_env())
+    return build_knowledge_tools(RagKnowledgeProvider.from_settings(knowledge))
 
 
 __all__ = [

@@ -5,8 +5,9 @@ there, so routine diagnostics (memory recall, selection, extraction) must not
 be interleaved with it. Records at INFO and above go to a log file under the
 Wright home directory; only warnings and errors reach the terminal.
 
-``WRIGHT_LOG_LEVEL`` sets what reaches the terminal (default ``WARNING``;
-``INFO`` or ``DEBUG`` for troubleshooting). Both the variable and the home
+``WRIGHT_LOG_LEVEL`` or ``logging.level`` in the user settings file sets what
+reaches the terminal (default ``WARNING``; ``INFO`` or ``DEBUG`` for
+troubleshooting). Both the variable and the home
 directory are read when a record is written, because ``.env`` is loaded after
 modules (and their loggers) are imported.
 """
@@ -23,9 +24,22 @@ _FORMAT = Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 _MAX_BYTES = 5 * 1024 * 1024
 
 
+_configured_level: str | None = None
+
+
+def set_configured_terminal_level(level: str | None) -> None:
+    """Level from the user settings file; ``WRIGHT_LOG_LEVEL`` still wins."""
+    global _configured_level
+    _configured_level = level
+
+
 class _TerminalLevel(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        name = os.environ.get("WRIGHT_LOG_LEVEL", "").strip().upper() or "WARNING"
+        name = (
+            os.environ.get("WRIGHT_LOG_LEVEL", "").strip().upper()
+            or _configured_level
+            or "WARNING"
+        )
         level = logging.getLevelName(name)
         return record.levelno >= (level if isinstance(level, int) else logging.WARNING)
 

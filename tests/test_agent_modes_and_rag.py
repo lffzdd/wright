@@ -10,6 +10,7 @@ from wright.application.composition.runtime import (
 )
 from wright.domain.model.agent import AgentProfile
 from wright.domain.model.session import Session
+from wright.domain.model.settings import KnowledgeSettings
 from wright.domain.model.tool import ToolResult
 from wright.domain.model.tool_definition import Tool
 from wright.domain.prompt import (
@@ -117,14 +118,12 @@ def test_create_agent_respects_profile_role_instruction(tmp_path):
     assert DEFAULT_CODING_ROLE not in system_content
 
 
-def test_optional_knowledge_tools_explicit_switches(monkeypatch):
-    # When enabled=False, returns empty even if env is truthy
-    monkeypatch.setenv("WRIGHT_KNOWLEDGE_ENABLED", "1")
-    assert optional_knowledge_tools(enabled=False) == []
+def test_optional_knowledge_tools_explicit_switches():
+    # When enabled=False, returns empty even if the setting is on
+    assert optional_knowledge_tools(KnowledgeSettings(enabled=True), enabled=False) == []
 
-    # When enabled=True, returns tools even if env is unset
-    monkeypatch.delenv("WRIGHT_KNOWLEDGE_ENABLED", raising=False)
-    tools = optional_knowledge_tools(enabled=True)
+    # When enabled=True (--with-rag), returns tools even if the setting is off
+    tools = optional_knowledge_tools(KnowledgeSettings(), enabled=True)
     assert len(tools) == 1
     assert tools[0].name == "knowledge_search"
 

@@ -398,7 +398,7 @@ def test_closed_local_session_can_be_replaced_without_losing_its_schedules(monke
     monkeypatch.setattr(assembly, "load_env", lambda: None)
     monkeypatch.setattr(assembly, "LLMClient", lambda **_: Model())
     monkeypatch.setattr(assembly, "load_mcp_configs", lambda _: [])
-    monkeypatch.setattr(assembly, "optional_knowledge_tools", list)
+    monkeypatch.setattr(assembly, "optional_knowledge_tools", lambda *args, **kwargs: [])
     monkeypatch.setattr(assembly, "load_lifecycle_manager", lambda *a, **k: SimpleNamespace(emit=lambda *a, **k: None))
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -515,7 +515,7 @@ def offline_manager(monkeypatch, tmp_path):
     monkeypatch.setattr(assembly, "load_env", lambda: None)
     monkeypatch.setattr(assembly, "LLMClient", lambda **_: Model())
     monkeypatch.setattr(assembly, "load_mcp_configs", lambda _: [])
-    monkeypatch.setattr(assembly, "optional_knowledge_tools", list)
+    monkeypatch.setattr(assembly, "optional_knowledge_tools", lambda *args, **kwargs: [])
     monkeypatch.setattr(assembly, "load_lifecycle_manager", lambda *a, **k: SimpleNamespace(emit=lambda *a, **k: None))
     root = tmp_path / "project"
     root.mkdir()

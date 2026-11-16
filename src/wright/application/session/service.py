@@ -999,8 +999,16 @@ class SessionService:
             "active_command_id": active_command,
             "active_run": active_run,
             "pending_interactions": self._interaction_snapshot(),
-            "models": list(available_models(str(self.runtime.session_state.model_name or ""))),
+            "models": list(available_models(
+                str(self.runtime.session_state.model_name or ""),
+                self._configured_models(),
+            )),
         }
+
+    def _configured_models(self) -> tuple[str, ...]:
+        # Test doubles of the runtime may not carry settings.
+        settings = getattr(self.runtime, "settings", None)
+        return settings.llm.models if settings is not None else ()
 
     def activity(self) -> dict[str, Any]:
         """Canonical execution projection for every interface.

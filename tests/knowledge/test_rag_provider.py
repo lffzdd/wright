@@ -6,10 +6,8 @@ from types import SimpleNamespace
 import pytest
 
 from wright.domain.model.knowledge import KnowledgeUnavailable
-from wright.infrastructure.knowledge.rag_provider import (
-    RagKnowledgeProvider,
-    knowledge_enabled,
-)
+from wright.domain.model.settings import KnowledgeSettings, WrightSettings
+from wright.infrastructure.knowledge.rag_provider import RagKnowledgeProvider
 from wright.infrastructure.tools.knowledge import build_knowledge_tools
 
 
@@ -197,7 +195,9 @@ def test_live_rag_provider_search_when_enabled():
     """显式 opt-in 的真实网络冒烟测试，不在普通回归中消耗 API 额度。"""
     if os.environ.get("WRIGHT_KNOWLEDGE_LIVE_TEST") != "1":
         pytest.skip("set WRIGHT_KNOWLEDGE_LIVE_TEST=1 to run the live RAG check")
-    provider = RagKnowledgeProvider.from_env()
+    from wright.application.composition.settings import load_settings
+
+    provider = RagKnowledgeProvider.from_settings(load_settings(None).knowledge)
     result = build_knowledge_tools(provider)[0].call(
         {"query": "AI Agent 的 ReAct 工作流程是什么？", "top_k": 2},
         None,
@@ -207,6 +207,6 @@ def test_live_rag_provider_search_when_enabled():
     assert any(item["source"] for item in result.data["hits"])
 
 
-def test_knowledge_disabled_by_default(monkeypatch):
-    monkeypatch.delenv("WRIGHT_KNOWLEDGE_ENABLED", raising=False)
-    assert knowledge_enabled() is False
+def test_knowledge_disabled_by_default():
+    assert WrightSettings().knowledge.enabled is False
+    assert KnowledgeSettings().enabled is False

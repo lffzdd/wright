@@ -689,7 +689,9 @@ class WrightTUI(App):
         if not self._model_change_available():
             return
         current = str(self.service.summary()["model"]) if self.service is not None else str(self.rt.llm.model)
-        model = await self.push_screen_wait(ModelModal(available_models(current), current))
+        settings = getattr(self.rt, "settings", None)
+        configured = settings.llm.models if settings is not None else ()
+        model = await self.push_screen_wait(ModelModal(available_models(current, configured), current))
         if model:
             self._set_model(model)
 

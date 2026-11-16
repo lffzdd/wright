@@ -15,9 +15,11 @@ from fastapi import (
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from ...application.composition.settings import settings_service
 from ...application.workspace.change_lock import ChangeBusyError
 from ...application.workspace.changes import ChangeConflict, git_action
 from ...core.preferences import load_preferences, save_preference
+from ...domain.model.settings import SettingsError
 from ...domain.model.workspace.worktree import WorktreeError
 from ..i18n import t
 from ..i18n.locale import LOCALE_LABELS, SUPPORTED_LOCALES, get_locale, set_locale
@@ -81,6 +83,13 @@ class PreferenceRequest(BaseModel):
     theme: Literal["dark", "light"] | None = None
     inspector_open: bool | None = None
     inspector_width: int | None = None
+
+
+class SettingUpdateRequest(BaseModel):
+    scope: Literal["user", "project"]
+    key: str
+    # null removes the key from that file.
+    value: Any = None
 
 
 class ChangeActionRequest(BaseModel):
@@ -151,7 +160,28 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
     @router.get("/project")
     def project(request: Request) -> dict[str, Any]:
         _require_auth(request, auth)
-        return manager.project()
+        try:
+            return manager.project()
+        except RuntimeManagerError as exc:
+            raise HTTPException(status_code=exc.status_code or 409, detail=str(exc)) from exc
+
+    @router.get("/settings")
+    def settings(request: Request) -> dict[str, Any]:
+        _require_auth(request, auth)
+        try:
+            return settings_service(manager.project_root).describe()
+        except SettingsError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @router.put("/settings")
+    def update_settings(body: SettingUpdateRequest, request: Request) -> dict[str, Any]:
+        _require_auth(request, auth)
+        service = settings_service(manager.project_root)
+        try:
+            service.update(body.scope, body.key, body.value)
+            return service.describe()
+        except SettingsError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.get("/sessions")
     def sessions(request: Request, all_projects: bool = False) -> list[dict[str, Any]]:

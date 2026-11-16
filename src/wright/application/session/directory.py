@@ -24,6 +24,7 @@ from ...domain.gateway.scheduling import JobNotFoundError
 from ...domain.model.llm.model_adapters import available_models, process_model_name
 from ...domain.model.session import HistoryRewriteError
 from ...domain.model.session.errors import CheckpointError
+from ...domain.model.settings import SettingsError
 from ...domain.model.workspace.project import ProjectContext
 from ...domain.model.workspace.worktree import ArchiveResult
 from ..composition.host import ApplicationHost, ProjectHostBusyError
@@ -33,6 +34,7 @@ from ..composition.runtime import (
     assemble_runtime,
     shutdown_runtime,
 )
+from ..composition.settings import load_settings
 from ..composition.stores import (
     copy_session_attachments,
     open_autonomy_store,
@@ -139,7 +141,11 @@ class SessionDirectory:
         self.close(victim.session_id)
 
     def project(self) -> dict[str, Any]:
-        base_model = process_model_name(getattr(self.base_args, "model", None))
+        try:
+            llm = load_settings(self.project_root).llm
+        except SettingsError as exc:
+            raise SessionDirectoryError(f"Could not load settings: {exc}", kind="settings") from exc
+        base_model = process_model_name(getattr(self.base_args, "model", None), llm.model)
         with self._lock:
             self._prune_closed_locked()
             active_count = len(self._sessions)
@@ -156,7 +162,7 @@ class SessionDirectory:
                 and self.worktrees.inspect(ProjectContext.local(self.project_root))["dirty"]
             ),
             "default_model": base_model,
-            "models": list(available_models(base_model)),
+            "models": list(available_models(base_model, llm.models)),
             **_git_fields(self.project_root),
         }
 
