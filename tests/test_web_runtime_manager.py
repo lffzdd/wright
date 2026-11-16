@@ -628,6 +628,19 @@ def test_all_project_history_has_stable_owners_and_explicit_actions_ignore_ui_se
     assert calls == []
 
 
+def test_open_session_listing_carries_its_last_saved_time(offline_manager):
+    # The sidebar sorts and labels sessions by saved_at; an open session
+    # without it showed no time and could not be ordered among closed ones.
+    manager, _calls = offline_manager
+    session = manager.create(environment="local")
+    session.submit("save a checkpoint", "save-command")
+    _wait_completed(session, "save-command")
+
+    row = next(item for item in manager.list_sessions() if item["session_id"] == session.session_id)
+    assert row["active"] is True
+    assert row["saved_at"]
+
+
 def test_worktree_history_restores_its_original_directory_and_missing_tree_stays_read_only(offline_manager):
     import shutil
     import subprocess

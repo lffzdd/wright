@@ -516,7 +516,12 @@ class SessionDirectory:
             }
         results = list(active.values())
         for saved in self.checkpoints.list_recent_sessions(limit=100):
-            if saved["session_id"] in active:
+            live = active.get(saved["session_id"])
+            if live is not None:
+                # The live summary has no clock of its own; the checkpoint's
+                # time lets lists order open sessions among closed ones.
+                if saved.get("saved_at"):
+                    live.setdefault("saved_at", saved["saved_at"])
                 continue
             results.append({
                 **saved,
