@@ -77,3 +77,13 @@ def _denied_path(output: str) -> str:
 
 def _inside(path: str, roots: list[str]) -> bool:
     return any(path == root or path.startswith(root.rstrip("/") + "/") for root in map(os.path.realpath, roots))
+
+
+def network_denial_message(denials: list[dict]) -> str:
+    """Name the hosts Wright's egress proxy refused, and how to allow one."""
+    hosts = ", ".join(f"{item.get('host')}:{item.get('port')}" for item in denials[:5])
+    return (
+        f"Wright blocked network access to {hosts}. The sandbox reaches the network only through "
+        "Wright's egress proxy, which asks about unknown hosts while the command runs in the "
+        "foreground. Allow the host (for example with a network host rule) and run the command again."
+    )

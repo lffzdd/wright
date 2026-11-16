@@ -267,6 +267,7 @@ export type PermissionResource = Record<string, unknown> & {
   execution_mode?: ExecutionMode;
   dialect?: string; path?: string; path_match?: string; scheme?: string; host?: string;
   port?: number; methods?: string[]; tool_name?: string; operations?: string[];
+  host_match?: string; allow_private?: boolean;
 };
 export type Grants = {
   version: string;

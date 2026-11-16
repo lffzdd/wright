@@ -11,11 +11,15 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 from ...model.tool_names import SHELL, canonical_tool_name
+from .hosts import format_authority, host_matches, is_private_literal, normalize_host
 from .scope import path_module
 
 PermissionMode = Literal["default", "acceptEdits", "bypass", "plan"]
 _VALID_MODES = ("default", "acceptEdits", "bypass", "plan")
 _NETWORK_TOOLS = frozenset({"http_request", "web_fetch"})
+# Host rules bind every channel that names a host: HTTP tools and Shell egress.
+HOST_RULE_TOOLS = frozenset({*_NETWORK_TOOLS, SHELL})
+ANY_TOOL = "*"
 _HTTP_SCHEMES = frozenset({"http", "https"})
 
 
@@ -37,6 +41,11 @@ class MatchContext:
     executable: str = ""
     executable_target: str = ""
     execution_mode: str = ""
+    # Shell egress: the host and port a sandboxed command connects to, and
+    # whether that destination is local or private (by literal or lookup).
+    network_host: str = ""
+    network_port: int = 0
+    network_private: bool = False
 
 
 @dataclass(frozen=True)
@@ -582,6 +591,8 @@ class PermissionRule:
     executable_target: str = ""
     path: str = ""
     path_match: str = "origin"
+    host_match: str = "exact"
+    allow_private: bool = False
 
     def __post_init__(self) -> None:
         # Legacy names (``execute_command`` …) keep their scope: a stored or
@@ -600,8 +611,15 @@ class PermissionRule:
                 not isinstance(item, str) for item in value
             ):
                 raise TypeError("Session rule collections must contain strings")
+    @property
+    def is_host_rule(self) -> bool:
+        """Host-level network rule: any method and path, every network channel."""
+        return self.kind == "network" and self.tool_name == ANY_TOOL
+
     def validate_grant(self) -> None:
         self.validate_value()
+        if self.is_host_rule:
+            _validate_host_rule(self.host, self.port, self.host_match, self.methods, self.scheme)
         if (
             self.unresolved
             or not self.tool_name
@@ -665,6 +683,8 @@ class PermissionRule:
             name, _, rest = raw.partition("(")
             tool_name = canonical_tool_name(name.strip())
             glob = rest[:-1].strip() or None
+            if tool_name == "network":
+                return cls.host_grant_from_text(glob or "")
             if tool_name == SHELL:
                 return cls(tool_name, glob, kind="shell", pattern=glob or "")
             if tool_name in _NETWORK_TOOLS:
@@ -735,12 +755,17 @@ class PermissionRule:
                 raise ValueError("Resource pattern must stay within its root")
             if kind == "file" and not pattern:
                 raise ValueError("file pattern must stay within its root")
-        for key in ("id", "project_id", "source", "cwd", "sandbox_key", "execution_mode", "scheme", "host", "pattern", "command_match", "dialect", "executable_target", "path", "path_match"):
+        for key in ("id", "project_id", "source", "cwd", "sandbox_key", "execution_mode", "scheme", "host", "pattern", "command_match", "dialect", "executable_target", "path", "path_match", "host_match"):
             if key in data and not isinstance(data[key], str):
                 raise TypeError(f"{key} must be a string")
         if any(not isinstance(method, str) or not method.isalpha() for method in methods):
             raise ValueError("HTTP methods must be nonempty names")
-        if kind == "network":
+        if kind == "network" and tool_name == ANY_TOOL:
+            host, port = data.get("host", ""), data.get("port", 0)
+            if not isinstance(port, int) or isinstance(port, bool) or not isinstance(data.get("allow_private", False), bool):
+                raise ValueError("Invalid network host rule")
+            _validate_host_rule(host, port, data.get("host_match", "exact"), tuple(methods), data.get("scheme", ""))
+        elif kind == "network":
             scheme, host, port = data.get("scheme", ""), data.get("host", ""), data.get("port", 0)
             if scheme not in _HTTP_SCHEMES or not isinstance(port, int) or isinstance(port, bool) or not 0 <= port <= 65535:
                 raise ValueError("Invalid network scheme or port")
@@ -776,6 +801,8 @@ class PermissionRule:
                 port=int(data.get("port", 0)),
                 methods=tuple(str(item).upper() for item in data.get("methods", ())),
                 path=path, path_match=path_match,
+                host_match=str(data.get("host_match", "exact")),
+                allow_private=bool(data.get("allow_private", False)),
                 **common,
             )
         if kind == "command":
@@ -837,6 +864,47 @@ class PermissionRule:
         )
 
     @classmethod
+    def host_grant(
+        cls,
+        host: str,
+        port: int,
+        *,
+        subdomains: bool = False,
+        allow_private: bool = False,
+    ) -> PermissionRule:
+        """Host-level rule shared by Shell egress, web_fetch and http_request."""
+        normalized = normalize_host(host)
+        if normalized is None:
+            raise ValueError("Network host rules require a plain host name or IP address")
+        rule = cls(ANY_TOOL, kind="network", host=normalized, port=port,
+                   host_match="subdomains" if subdomains else "exact", allow_private=allow_private)
+        rule.validate_grant()
+        return rule
+
+    @classmethod
+    def host_grant_from_text(cls, text: str) -> PermissionRule:
+        """``example.com``, ``*.example.com``, ``example.com:8443`` or ``[::1]:80``."""
+        value = text.strip()
+        subdomains = value.startswith("*.")
+        if subdomains:
+            value = value[2:]
+        port = 0
+        if value.startswith("["):
+            host, _, rest = value[1:].partition("]")
+            if rest:
+                if not rest.startswith(":") or not rest[1:].isdigit():
+                    raise ValueError("Invalid network host rule port")
+                port = int(rest[1:])
+        elif value.count(":") == 1:
+            host, _, raw_port = value.partition(":")
+            if not raw_port.isdigit():
+                raise ValueError("Invalid network host rule port")
+            port = int(raw_port)
+        else:
+            host = value
+        return cls.host_grant(host, port, subdomains=subdomains)
+
+    @classmethod
     def sandbox_network_grant(cls) -> PermissionRule:
         return cls(
             SHELL,
@@ -861,6 +929,8 @@ class PermissionRule:
                 methods=list(self.methods),
                 path=self.path, path_match=self.path_match,
             )
+            if self.is_host_rule:
+                payload.update(host_match=self.host_match, allow_private=self.allow_private)
         elif self.kind == "command":
             payload.update(argv=list(self.argv), command_match=self.command_match, dialect=self.dialect, executable_target=self.executable_target, operations=list(self.operations))
         elif self.kind == "sandbox_network":
@@ -888,6 +958,8 @@ class PermissionRule:
             return path_module(root).normpath(path_module(root).join(root, self.pattern))
         if self.kind == "directory":
             return self.resource_root(workspace)
+        if self.is_host_rule:
+            return self.host_text()
         if self.kind == "network":
             return (f"{self.scheme}://{self.host}:{self.port}" + (self.path if self.path_match == "exact" else "")) if self.host else f"{self.scheme}://*"
         if self.kind == "command":
@@ -903,6 +975,9 @@ class PermissionRule:
             scope = "any arguments" if self.command_match == "executable" else "argv prefix"
             boundary = "on the host without OS isolation" if self.execution_mode == "host" else "within the sandbox"
             return f"{shlex.join(self.argv)} ({scope}; includes scripts and subprocesses {boundary})"
+        if self.is_host_rule:
+            private = "; includes local and private addresses" if self.allow_private else ""
+            return f"network {self.host_text()} (any method and path; Shell, web_fetch and http_request{private})"
         if self.kind == "network" and not self.unresolved:
             methods = ", ".join(self.methods) or "no methods"
             return (
@@ -925,6 +1000,10 @@ class PermissionRule:
             return f"{self.tool_name} (explicit full-tool rule)"
         return self.legacy_text or self.tool_name
 
+    def host_text(self) -> str:
+        host = f"*.{self.host}" if self.host_match == "subdomains" else self.host
+        return format_authority(host, self.port) if self.port else host
+
     def covers(self, executable: str, executable_target: str, arguments: tuple[str, ...], execution_mode: str) -> bool:
         """Program identity only: Shell cwd stays in scope and the sandbox still bounds it."""
         return (self.kind == "command" and execution_mode == self.execution_mode
@@ -939,6 +1018,8 @@ class PermissionRule:
         effect: str = "allow",
         context: MatchContext | None = None,
     ) -> bool:
+        if self.is_host_rule:
+            return tool_name in HOST_RULE_TOOLS and _host_rule_matches(self, effect, context)
         if self.tool_name != tool_name and not (self.kind in {"file", "directory"} and self.tool_name == "*"):
             return False
         if self.unresolved:
@@ -970,6 +1051,41 @@ class PermissionRule:
         if self.subject_glob is None:
             return True
         return effect != "allow"
+
+
+def _validate_host_rule(host: object, port: object, host_match: object, methods: tuple, scheme: object) -> None:
+    if (not isinstance(host, str) or normalize_host(host) != host or host_match not in {"exact", "subdomains"}
+            or not isinstance(port, int) or isinstance(port, bool) or not 0 <= port <= 65535 or methods or scheme):
+        raise ValueError("Network host rules require a normalized host, a port (0 = any) and no methods")
+    if host_match == "subdomains" and "." not in host:
+        raise ValueError("Subdomain rules require a registrable domain such as example.com")
+
+
+def network_destination(context: MatchContext | None) -> tuple[str, int, bool] | None:
+    """Host, port and private flag of the destination a call reaches."""
+    if context is None:
+        return None
+    if context.network_host:
+        return context.network_host, context.network_port, context.network_private
+    origin = parse_http_origin(context.url) if context.url else None
+    if origin is None:
+        return None
+    host = normalize_host(origin[1])
+    if host is None:
+        return None
+    return host, origin[2], is_private_literal(host)
+
+
+def _host_rule_matches(rule: PermissionRule, effect: str, context: MatchContext | None) -> bool:
+    destination = network_destination(context)
+    if destination is None:
+        return False
+    host, port, private = destination
+    if not host_matches(rule.host, rule.host_match, host) or (rule.port and rule.port != port):
+        return False
+    # Local and private destinations need a rule that says so; deny and ask
+    # bind them regardless.
+    return effect != "allow" or rule.allow_private or not private
 
 
 def _network_matches(rule: PermissionRule, subject: str, context: MatchContext | None) -> bool:

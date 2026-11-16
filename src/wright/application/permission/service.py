@@ -25,6 +25,7 @@ from ...domain.policy.permission.types import (
     PermissionSubject,
 )
 from .checkpoint import CheckpointParticipant
+from .egress import ShellEgressPolicy
 from .resources import resource_change
 from .workflow import AuthorizationWorkflow
 
@@ -355,14 +356,37 @@ class PermissionService:
             if requires_execution:
                 if self.execution_factory is None:
                     raise RuntimeError("An authorized execution factory must be injected")
+                options = {}
+                if "shell" in grant.operations and grant.execution_mode == "sandbox":
+                    options["egress"] = self._egress_policy(session, grant, template, tool_call, scope)
                 execution = self.execution_factory(backend, grant, validator=validator,
-                    process_validator=self.execution_guard(session, snapshot, grant) if snapshot else None)
+                    process_validator=self.execution_guard(session, snapshot, grant) if snapshot else None, **options)
             network = None
             if requires_network:
                 if self.network_factory is None:
                     raise RuntimeError("An authorized network factory must be injected")
                 network = self.network_factory(grant, validator=validator)
             return AuthorizedInvocation(resolution, snapshot, snapshot.scope if snapshot else scope, execution, network, validator)
+
+    def _egress_policy(self, session, grant, workflow, tool_call, scope) -> ShellEgressPolicy:
+        """Per-host decisions for this command's egress proxy, from live rules."""
+        if session is not None:
+            def rules():
+                current = self.snapshot(session)
+                return current.settings, current.rules, current.scope
+
+            def commit(change):
+                self.commit(change, session)
+        else:
+            def rules():
+                return workflow.policy.settings, (), scope
+            commit = None
+        handler = workflow.approval_handler
+        background = tool_call.arguments.get("run_in_background") is True
+        approve = None
+        if handler is not None and not background:
+            approve = getattr(handler, "during_run", None) or handler
+        return ShellEgressPolicy(grant, rules=rules, approve=approve, commit=commit, tool_call=tool_call)
 
     def grant_resource(self, session, backend, resource, lifetime, expected_version):
         with self._repository.transaction():

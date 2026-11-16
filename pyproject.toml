@@ -55,7 +55,7 @@ packages = ["src/wright"]
 [tool.pytest.ini_options]
 pythonpath = ["src", "."]
 testpaths = ["tests"]
-markers = ["native_sandbox: real OS isolation acceptance (enabled explicitly in CI)"]
+markers = ["native_sandbox: real OS isolation acceptance (enabled explicitly in CI)", "real_resolver: use the system DNS resolver in network permission checks"]
 python_files = ["test_*.py"]
 
 [tool.ruff]

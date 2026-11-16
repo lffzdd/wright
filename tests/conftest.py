@@ -17,3 +17,13 @@ def isolated_permission_state(tmp_path, monkeypatch, request):
 def no_session_title_queries(monkeypatch):
     """Session naming is an extra model call; tests that count calls opt in explicitly."""
     monkeypatch.setenv("WRIGHT_AUTO_TITLE", "0")
+
+
+@pytest.fixture(autouse=True)
+def public_test_resolver(monkeypatch, request):
+    """HTTP tools check where a host resolves; tests use fake public hosts."""
+    if request.node.get_closest_marker("real_resolver"):
+        return
+    from wright.infrastructure.runtime import network
+
+    monkeypatch.setattr(network, "resolve_addresses", lambda host, port: ["93.184.215.14"])

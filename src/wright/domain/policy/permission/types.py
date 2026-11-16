@@ -50,6 +50,9 @@ class NetworkTarget:
     url: str
     method: str
     operation: PermissionOperation
+    # The destination may be local or private: the URL names such a host
+    # literally (so its approval was explicit) or a host rule allows it.
+    allow_private: bool = False
 
 
 @dataclass(frozen=True)

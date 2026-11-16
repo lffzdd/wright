@@ -32,6 +32,7 @@ class AuthorizedExecution:
         dynamic_cwd: bool = False,
         validator: Callable[[], None] | None = None,
         process_validator: Callable[[], None] | None = None,
+        egress=None,
     ):
         if backend.environment_id != grant.environment_id:
             raise ValueError("grant and execution backend use different environments")
@@ -44,6 +45,9 @@ class AuthorizedExecution:
         self._closed = False
         self._validator = validator
         self._process_validator = process_validator
+        # Decides per host for a sandboxed command's egress proxy; absent, the
+        # command stays offline.
+        self._egress = egress
 
     @property
     def environment_id(self) -> str:
@@ -51,6 +55,12 @@ class AuthorizedExecution:
 
     def close(self) -> None:
         self._closed = True
+
+    def end_interaction(self) -> None:
+        """The tool call has returned: later egress questions are answered without the user."""
+        end = getattr(self._egress, "end_interaction", None)
+        if callable(end):
+            end()
 
     def _ensure_open(self) -> None:
         if self._closed:
@@ -261,7 +271,8 @@ class AuthorizedExecution:
             # Pin the actual launch entry to the canonical program. Its contents
             # remain under the same host-binary trust boundary as other tools.
             command = shlex.join(grant.command_argv)
-        handle = self._backend.start_shell(command, cwd=cwd, grant=grant)
+        options = {"egress": self._egress} if self._egress is not None else {}
+        handle = self._backend.start_shell(command, cwd=cwd, grant=grant, **options)
         if self._process_validator is not None:
             import threading
 
