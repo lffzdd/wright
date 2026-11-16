@@ -82,6 +82,12 @@ class PreferenceRequest(BaseModel):
     theme: Literal["dark", "light"] | None = None
     inspector_open: bool | None = None
     inspector_width: int | None = None
+    sidebar_open: bool | None = None
+    sidebar_width: int | None = None
+
+
+INSPECTOR_WIDTH_RANGE = (280, 560)
+SIDEBAR_WIDTH_RANGE = (180, 400)
 
 
 class ChangeActionRequest(BaseModel):
@@ -135,6 +141,8 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
             and body.theme is None
             and body.inspector_open is None
             and body.inspector_width is None
+            and body.sidebar_open is None
+            and body.sidebar_width is None
         ):
             raise HTTPException(status_code=400, detail="at least one preference is required")
         if body.interface_language is not None:
@@ -144,9 +152,15 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
         if body.inspector_open is not None:
             save_preference("inspector_open", body.inspector_open)
         if body.inspector_width is not None:
-            if body.inspector_width < 280 or body.inspector_width > 560:
+            if _width_or_none(body.inspector_width, INSPECTOR_WIDTH_RANGE) is None:
                 raise HTTPException(status_code=400, detail="inspector_width out of range")
             save_preference("inspector_width", body.inspector_width)
+        if body.sidebar_open is not None:
+            save_preference("sidebar_open", body.sidebar_open)
+        if body.sidebar_width is not None:
+            if _width_or_none(body.sidebar_width, SIDEBAR_WIDTH_RANGE) is None:
+                raise HTTPException(status_code=400, detail="sidebar_width out of range")
+            save_preference("sidebar_width", body.sidebar_width)
         return _preference_view()
 
     @router.get("/project")
@@ -417,6 +431,13 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
     return router
 
 
+def _width_or_none(value: Any, bounds: tuple[int, int]) -> int | None:
+    # bool is an int subclass; a stored true/false is never a width.
+    if not isinstance(value, int) or isinstance(value, bool):
+        return None
+    return value if bounds[0] <= value <= bounds[1] else None
+
+
 def _preference_view() -> dict[str, Any]:
     stored = load_preferences()
     theme = stored.get("theme")
@@ -425,9 +446,9 @@ def _preference_view() -> dict[str, Any]:
     inspector = stored.get("inspector_open")
     if not isinstance(inspector, bool):
         inspector = True
-    inspector_width = stored.get("inspector_width")
-    if not isinstance(inspector_width, int) or inspector_width < 280 or inspector_width > 560:
-        inspector_width = None
+    sidebar = stored.get("sidebar_open")
+    if not isinstance(sidebar, bool):
+        sidebar = True
     return {
         "interface_language": get_locale(),
         # Unsaved choices let the browser pick (language, color scheme).
@@ -439,5 +460,7 @@ def _preference_view() -> dict[str, Any]:
         "note": t("web.language_note"),
         "theme": theme,
         "inspector_open": inspector,
-        "inspector_width": inspector_width,
+        "inspector_width": _width_or_none(stored.get("inspector_width"), INSPECTOR_WIDTH_RANGE),
+        "sidebar_open": sidebar,
+        "sidebar_width": _width_or_none(stored.get("sidebar_width"), SIDEBAR_WIDTH_RANGE),
     }

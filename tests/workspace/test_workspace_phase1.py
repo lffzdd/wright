@@ -585,6 +585,21 @@ def test_workspace_http_isolates_projects_and_preferences(tmp_path: Path, monkey
             headers={"origin": "http://testserver"},
         )
         assert rejected.status_code == 400
+        assert client.get("/api/v1/preferences").json()["sidebar_open"] is True
+        rail = client.put(
+            "/api/v1/preferences",
+            json={"sidebar_open": False, "sidebar_width": 300},
+            headers={"origin": "http://testserver"},
+        )
+        assert rail.status_code == 200
+        assert rail.json()["sidebar_open"] is False
+        assert rail.json()["sidebar_width"] == 300
+        narrow = client.put(
+            "/api/v1/preferences",
+            json={"sidebar_width": 100},
+            headers={"origin": "http://testserver"},
+        )
+        assert narrow.status_code == 400
         commands = client.get("/api/v1/commands")
         assert commands.status_code == 200
         assert any(item["name"] == "/help" for item in commands.json())
