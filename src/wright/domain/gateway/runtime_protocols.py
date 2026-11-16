@@ -86,7 +86,8 @@ class ExecutionBackend(Protocol):
         cancellation_check: Callable[[], bool] | None = None,
     ) -> Iterable[SearchMatch]: ...
 
-    def start_shell(self, command: str, *, cwd: ExecutionPath, grant: InvocationGrant) -> ProcessHandle: ...
+    def start_shell(self, command: str, *, cwd: ExecutionPath, grant: InvocationGrant,
+                    egress: EgressDecider | None = None) -> ProcessHandle: ...
 
 
 @runtime_checkable
@@ -139,6 +140,19 @@ class AuthorizedExecutionPort(Protocol):
     ) -> Iterable[SearchMatch]: ...
 
     def start_shell(self, command: str) -> ProcessHandle: ...
+
+
+@runtime_checkable
+class EgressDecider(Protocol):
+    """Answers, per connection, whether a sandboxed command may reach a host.
+
+    ``decide`` may wait for the user. ``still_allowed`` never prompts; open
+    tunnels call it periodically so revocation ends them.
+    """
+
+    def decide(self, host: str, port: int, *, private: bool) -> bool: ...
+
+    def still_allowed(self, host: str, port: int, *, private: bool) -> bool: ...
 
 
 @runtime_checkable

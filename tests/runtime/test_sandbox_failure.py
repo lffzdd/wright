@@ -13,7 +13,7 @@ def test_unavailable_sandbox_never_executes_the_command(tmp_path, monkeypatch):
     backend = LocalExecutionBackend(tmp_path, lambda: tmp_path)
     cwd = backend.cwd()
     grant = InvocationGrant(InvocationIdentity("test"), "local", cwd, frozenset({"shell"}), shell_readable=(cwd,), shell_writable=(cwd,))
-    def unavailable(*_):
+    def unavailable(*_, **__):
         raise SandboxUnavailable("Isolation unavailable")
     monkeypatch.setattr(sandbox, "launch", unavailable)
     command = "echo escaped > fallback.txt"

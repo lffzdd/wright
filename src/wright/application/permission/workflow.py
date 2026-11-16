@@ -460,7 +460,7 @@ class AuthorizationWorkflow:
             choice, access, selected_rule, session_rules, self.policy.settings, self.resolver.execution_mode,
         )
         return self.resolver.issue(arguments, access, targets, cwd, identity, reason, source, backend=backend, scope=scope,
-            changes=AuthorizationChange(tuple(added_session), tuple(persistent_rules), tuple(project_rules)), network_enabled=network_enabled, tool_name=tool_name, command_argv=command_argv, executable_target=executable_target, reason_code=reason_code, reason_params=reason_params)
+            changes=AuthorizationChange(tuple(added_session), tuple(persistent_rules), tuple(project_rules)), network_enabled=network_enabled, tool_name=tool_name, session_rules=(*session_rules, *added_session), command_argv=command_argv, executable_target=executable_target, reason_code=reason_code, reason_params=reason_params)
 
     @staticmethod
     def _command_argv(command: str, executable: str) -> tuple[str, ...]:

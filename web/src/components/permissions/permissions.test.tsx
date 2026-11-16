@@ -370,3 +370,30 @@ it("says the shared program caveat once for several program rules", () => {
   expect(document.querySelectorAll(".grant-footnote")).toHaveLength(1);
   expect(document.querySelectorAll(".grant-item small")).toHaveLength(0);
 });
+
+it("asks about a host a running command connects to and offers a session host rule", async () => {
+  const respond = vi.fn().mockResolvedValue(true);
+  render(<InteractionCard sessionId="s" interaction={{
+    request_id: "call:egress:1", kind: "permission", tool_name: "shell", operation: "network_connect",
+    subject: "pypi.org:443", command: "pip install requests", cwd: "/project", risk_flags: [],
+    reason_code: "permission.network_host_unknown", reason_params: { host: "pypi.org", port: "443" },
+    choices: [
+      { id: "allow_once", label: "Allow for this command", scope: "pypi.org:443", persistence: "" },
+      { id: "allow_session_network_host", label: "Session", scope: "network pypi.org:443", persistence: "", lifetime: "session", resource_kind: "network_host", operations: ["network_read", "network_write"], resource: { kind: "network", tool_name: "*", host: "pypi.org", port: 443 } },
+      { id: "deny", label: "Deny", scope: "", persistence: "" },
+    ],
+  }} respond={respond} />);
+  expect(screen.getByText("A running command wants to reach a host")).toBeTruthy();
+  expect(document.querySelector(".perm-target")?.textContent).toBe("pypi.org:443");
+  expect(screen.getByText("From: pip install requests")).toBeTruthy();
+  expect(screen.getByRole("button", { name: /Allow for this command/ })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: /Allow pypi.org:443 for this session/ }));
+  await waitFor(() => expect(respond).toHaveBeenCalledWith("call:egress:1", "allow_session_network_host"));
+});
+
+it("labels saved host rules as covering every network tool", () => {
+  const row = { id: "h", source: "session", lifetime: "session", resource_kind: "network", target: "pypi.org:443", operations: ["network_read", "network_write"], recursive: false, tool: "*",
+    resource: { kind: "network", tool_name: "*", host: "pypi.org", port: 443, methods: [], host_match: "exact", allow_private: false } };
+  expect(describeGrant(row)).toContain("Network host pypi.org:443");
+  expect(describeGrant(row)).not.toContain("GET");
+});

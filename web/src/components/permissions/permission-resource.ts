@@ -18,6 +18,10 @@ export function commandRuleDetails(resource: PermissionResource): string {
 }
 
 export function networkRuleLabel(resource: PermissionResource, fallback: string, methods?: string[]): string {
+  // Host rules (any tool, no methods) cover Shell egress, web_fetch and http_request alike.
+  if (resource.tool_name === "*") {
+    return t(resource.allow_private ? "web.grant_line.network_host_private" : "web.grant_line.network_host", { target: fallback });
+  }
   return t(resource.path_match === "exact" ? "web.grant_line.network_path" : "web.grant_line.network_origin", {
     target: fallback, methods: (resource.methods ?? methods)?.join(", ") || "GET",
   });

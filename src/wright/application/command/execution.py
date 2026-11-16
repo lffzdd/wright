@@ -31,7 +31,11 @@ from ..execution.identity import (
 )
 from ..execution.paging import bounded_page_limit, decode_cursor, encode_cursor
 from .output_log import CommandOutputLog, OutputSlice
-from .sandbox_denial import describe_sandbox_denial, sandbox_denial_message
+from .sandbox_denial import (
+    describe_sandbox_denial,
+    network_denial_message,
+    sandbox_denial_message,
+)
 
 logger = get_logger(__name__)
 
@@ -81,7 +85,18 @@ class CommandExecution:
         self._coordinator = None
         self._background_leases: dict[str, str] = {}
 
-    def execute(
+    def execute(self, *, execution, **options) -> CommandOutcome:
+        try:
+            return self._execute(execution=execution, **options)
+        finally:
+            # Once the call returns, nobody is waiting on it to answer
+            # questions; a command still running (backgrounded) is refused
+            # new hosts instead.
+            end = getattr(execution, "end_interaction", None)
+            if callable(end):
+                end()
+
+    def _execute(
         self,
         *,
         command: str,
@@ -199,6 +214,10 @@ class CommandExecution:
             data["command_id"] = command_id
         if record.disposition == "unknown":
             data["outcome"] = "unconfirmed"
+        network_denials = _network_denials(process)
+        if network_denials:
+            data["network_denials"] = network_denials
+            data["message"] = network_denial_message(network_denials)
         if process.returncode == 0:
             return CommandOutcome(True, data=data)
         denial = describe_sandbox_denial(page.text, getattr(execution, "grant", None))
@@ -556,6 +575,11 @@ class CommandExecution:
             view["outcome"] = status
         else:
             view["outcome"] = "waiting"
+        denials = _network_denials(live.process) if live is not None else []
+        if denials:
+            view["network_denials"] = denials
+            if not summary:
+                view["network_message"] = network_denial_message(denials)
         if record.cancel_requested and status == "running":
             view["message"] = (
                 "Termination was requested. The command has not exited yet."
@@ -622,6 +646,14 @@ class CommandExecution:
         if execution is None:
             return {"cwd": "."}
         return {"cwd": execution.display_path(execution.cwd())}
+
+
+def _network_denials(process) -> list[dict]:
+    collect = getattr(process, "network_denials", None)
+    try:
+        return list(collect()) if callable(collect) else []
+    except Exception:
+        return []
 
 
 def _bounded_offset(offset: int) -> int:

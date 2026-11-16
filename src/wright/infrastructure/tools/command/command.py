@@ -71,7 +71,11 @@ execute_command_tool = Tool(
     name="shell",
     approval_details=lambda args, cwd: {"command": str(args.get("command", ""))},
     description=(
-        "Execute a shell command in the workspace, offline and isolated by default. "
+        "Execute a shell command in the workspace, isolated by default. "
+        "On macOS and Linux the sandbox reaches the network only through Wright's egress proxy "
+        "(HTTP_PROXY/HTTPS_PROXY/ALL_PROXY are set): hosts allowed by rule connect, unknown hosts are "
+        "asked about while the command runs in the foreground and otherwise refused and listed in "
+        "network_denials. Programs that ignore proxy settings have no network. "
         "The working directory persists across calls (cd works) and is returned as cwd "
         "on every result — do not cd into the directory you are already in. "
         "Long-running commands auto-background after timeout and return a command_id. "
@@ -86,7 +90,7 @@ execute_command_tool = Tool(
                 "type": "string",
                 "description": "The shell command to execute",
             },
-            "network": {"type": "boolean", "default": False, "description": "Request network access for this invocation; requires separate approval and keeps file isolation"},
+            "network": {"type": "boolean", "default": False, "description": "Ask up front to let this command reach any public host (no per-host questions); requires separate approval and keeps file isolation. On Windows it is the only way to get network access."},
             "timeout": {
                 "type": "integer",
                 "description": "Timeout in seconds before auto-backgrounding (default: 20)",

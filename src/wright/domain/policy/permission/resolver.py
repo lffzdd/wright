@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 
 from ...gateway.execution import ExecutionPath, PathResolver
 from ...model.tool import ToolAccess, ToolCall
+from ...model.tool_names import SHELL
 from .approval import (
     ResolvedTarget,
 )
@@ -22,6 +23,7 @@ from .settings import (
     command_dialect,
     command_segments,
     direct_command_argv,
+    network_destination,
     parse_http_origin,
     relative_to_root,
 )
@@ -459,7 +461,9 @@ class PermissionResolver:
         command_argv: tuple[str, ...] = (),
         executable_target: str = "",
         tool_name: str = "",
+        session_rules: tuple[PermissionRule, ...] = (),
     ) -> PermissionResolution:
+        allow_rules = (*session_rules, *(self.policy.settings.allow if self.policy.settings else ()))
         grant_targets = tuple(
             GrantTarget(item.path, item.declaration.operation, item.declaration.recursive)
             for item in targets
@@ -480,7 +484,9 @@ class PermissionResolver:
             execution_mode=self.execution_mode,
             command_argv=command_argv,
             executable_target=executable_target,
-            network_targets=tuple(NetworkTarget(str(item.declaration.value), item.declaration.http_method or "GET", item.declaration.operation) for item in targets if item.declaration.kind == "url"),
+            network_targets=tuple(NetworkTarget(str(item.declaration.value), item.declaration.http_method or "GET", item.declaration.operation,
+                                                _private_allowed(str(item.declaration.value), allow_rules))
+                                  for item in targets if item.declaration.kind == "url"),
             denied_rules=tuple(rule for rule in (self.policy.settings.deny if self.policy.settings else ())
                                if rule.kind in {"file", "directory"} and rule.tool_name in {"*", tool_name}),
             origin=str(scope.origin),
@@ -513,6 +519,17 @@ class PermissionResolver:
             reason_code=reason_code,
             reason_params=_pairs(reason_params or {}),
         )
+
+
+def _private_allowed(url: str, rules: tuple[PermissionRule, ...]) -> bool:
+    destination = network_destination(MatchContext(url=url))
+    if destination is None:
+        return False
+    host, port, literal_private = destination
+    if literal_private:
+        return True
+    context = MatchContext(network_host=host, network_port=port, network_private=True)
+    return any(rule.is_host_rule and rule.allow_private and rule.matches(SHELL, host, context=context) for rule in rules)
 
 
 def sandbox_network_granted(

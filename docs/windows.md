@@ -26,6 +26,9 @@ Job Object，初始化前明确拒绝执行。首次运行 `uv run wright --sand
 或在权限页初始化；`--sandbox-status` 查看状态，`--sandbox-cleanup` 清理。
 日常命令不会自动请求管理员权限，也不会降级到无隔离进程。
 
+Windows 尚未接入 Shell 出口代理：沙箱命令要么离线，要么经批准访问全部网络，
+主机规则只约束 `web_fetch` 和 `http_request`。
+
 三平台原生隔离 CI 全部通过之前，Shell 支持仍处于待验收状态。
 完整权限语义、存储格式和验收入口见 [权限说明](permissions.md)。
 

@@ -20,7 +20,7 @@ import { useShellReadiness } from "./permissions";
 import { commandRuleDetails, commandRuleLabel, networkRuleLabel } from "./permission-resource";
 
 type Choice = NonNullable<Interaction["choices"]>[number];
-type Action = "shell" | "http" | "file_write" | "file_read" | "tool";
+type Action = "shell" | "network" | "http" | "file_write" | "file_read" | "tool";
 
 /** Reasons that only restate "this needs approval" add nothing to the card. */
 const GENERIC_REASONS = new Set(["permission.needs_approval", ""]);
@@ -30,6 +30,8 @@ const IMPLIED_FLAGS = new Set(["reads_files", "writes_files", "executes_shell", 
 function actionOf(interaction: Interaction): Action {
   const tool = interaction.tool_name || "";
   const operation = interaction.operation || "";
+  // A running sandboxed command asks to reach a host through the egress proxy.
+  if (operation === "network_connect") return "network";
   if (tool === "shell" || tool === "execute_command") return "shell";
   if (interaction.http_target || tool === "http_request") return "http";
   if (operation.includes("file_write") || ["write", "edit", "write_file", "edit_file"].includes(tool)) return "file_write";
@@ -39,6 +41,7 @@ function actionOf(interaction: Interaction): Action {
 
 function targetOf(interaction: Interaction, action: Action): string {
   if (action === "shell") return interaction.command || interaction.subject || "";
+  if (action === "network") return interaction.subject || "";
   if (action === "http" && interaction.http_target) return `${interaction.http_method || "GET"} ${interaction.http_target}`;
   if (interaction.targets?.length) return [...new Set(interaction.targets)].join("\n");
   return interaction.subject || interaction.tool_name || "";
@@ -78,6 +81,13 @@ export function describeChoice(choice: Choice, root?: string): string {
   if (kind === "sandbox_network") {
     return t("web.approval.rule_sandbox_network", { lifetime });
   }
+  if (kind === "network_host") {
+    const resource = choice.resource ?? {};
+    const host = String(resource.host ?? choice.scope);
+    const port = Number(resource.port ?? 0);
+    const authority = port ? (host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`) : host;
+    return t("web.approval.rule_network_host", { host: authority, lifetime });
+  }
   if (kind === "network") {
     // Scope from older prompts includes the method; structured resources keep
     // that method separate from the URL so authority is readable at a glance.
@@ -94,6 +104,8 @@ export function describeChoice(choice: Choice, root?: string): string {
  */
 export function quickChoice(choices: Choice[], outsideScope: boolean, network = false): Choice | undefined {
   const session = choices.filter((choice) => choice.lifetime === "session");
+  const host = session.find((choice) => choice.resource_kind === "network_host");
+  if (host) return host;
   if (network) {
     return session.find((choice) => choice.resource_kind === "sandbox_network");
   }
@@ -270,6 +282,8 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
             navigator.clipboard?.writeText(target).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1200); }).catch(() => undefined);
           }}>{copied ? <Check size={12} weight="bold" /> : <Copy size={12} />}</button>
         </div>
+        {action === "network" && interaction.command && <p className="approval-meta">{tr("web.approval.network_from", { command: interaction.command })}</p>}
+        {action === "network" && <p className="approval-meta">{tr("web.approval.network_host_note")}</p>}
         {action === "shell" && interaction.cwd && displayPath(interaction.cwd, root) !== "." && <p className="approval-meta">{tr("web.approval.in_folder", { path: displayPath(interaction.cwd, root) })}</p>}
         {action === "shell" && host && <p className="approval-warn">{tr("web.execution.host_help")}</p>}
         {action === "shell" && !host && Boolean(interaction.sandbox_readable?.length) && <div className="sandbox-scope">
@@ -308,7 +322,7 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
 
       <footer className="approval-actions">
         {once && <button type="button" className="perm-choice primary" disabled={busy || shellBlocked} onClick={() => onceId && choose(onceId)}>
-          <Check size={13} weight="bold" />{label(onceId, tr(network ? "web.allow_once_network" : "web.allow_once"))}<kbd>{isMac() ? "⌥↵" : "Alt+Enter"}</kbd>
+          <Check size={13} weight="bold" />{label(onceId, tr(network ? "web.allow_once_network" : action === "network" ? "web.approval.allow_for_command" : "web.allow_once"))}<kbd>{isMac() ? "⌥↵" : "Alt+Enter"}</kbd>
         </button>}
         {!longRule && sessionButton}
         {deny && <button type="button" className="perm-choice deny" disabled={busy} onClick={() => choose(deny.id)}>

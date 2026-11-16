@@ -36,6 +36,17 @@ class InteractiveApprovalHandler:
     def __call__(self, request: PermissionRequest) -> PermissionResponse:
         return self._approve(request)
 
+    def during_run(self, request: PermissionRequest) -> PermissionResponse:
+        """Ask while the tool is already running; it resumes running afterwards."""
+        try:
+            return self._approve(request)
+        finally:
+            if self._notify_phase is not None:
+                try:
+                    self._notify_phase(request.tool_call, "running")
+                except Exception:
+                    pass
+
     def _approve(self, request: PermissionRequest, validator=None) -> PermissionResponse:
         try:
             if self._notify_phase is not None:

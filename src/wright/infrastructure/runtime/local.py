@@ -27,8 +27,9 @@ from .process_group import OwnedProcessGroup
 class LocalProcessHandle:
     """Adapt a local subprocess to :class:`ProcessHandle`."""
 
-    def __init__(self, process: subprocess.Popen, backend: LocalExecutionBackend, cwd_file: Path):
+    def __init__(self, process: subprocess.Popen, backend: LocalExecutionBackend, cwd_file: Path, egress=None):
         self._process = process
+        self._egress = egress
         self._backend = backend
         self._cwd_file = cwd_file
         self._cwd_result: ExecutionPath | None = None
@@ -43,6 +44,18 @@ class LocalProcessHandle:
                     self._output.put(chunk)
             self._output.put(None)
         threading.Thread(target=collect, daemon=True).start()
+        if egress is not None:
+            def release():
+                # Background children keep the command's network until the
+                # whole process group is gone.
+                while self._group.alive():
+                    time.sleep(0.25)
+                egress.close()
+            threading.Thread(target=release, name="wright-egress-release", daemon=True).start()
+
+    def network_denials(self) -> list[dict]:
+        """Hosts the egress proxy refused for this command."""
+        return self._egress.denials() if self._egress is not None else []
 
     def read_output(self, max_bytes: int) -> bytes | None:
         if not self._pending:
@@ -79,6 +92,8 @@ class LocalProcessHandle:
 
     def terminate(self, *, grace_seconds: float = 2.0) -> bool:
         stopped = self._group.terminate(grace_seconds)
+        if self._egress is not None and not self.group_alive():
+            self._egress.close()
         if self._process.poll() is None:
             try:
                 self._process.wait(timeout=0.2)
@@ -354,24 +369,26 @@ class LocalExecutionBackend:
             return str(resolved)
         return str(candidate.absolute()) if os.access(resolved, os.X_OK) else None
 
-    def start_shell(self, command: str, *, cwd: ExecutionPath, grant) -> LocalProcessHandle:
-        if grant.execution_mode == "host":
-            from .host import launch
-        elif grant.execution_mode == "sandbox":
-            from .sandbox import launch
-        else:
+    def start_shell(self, command: str, *, cwd: ExecutionPath, grant, egress=None) -> LocalProcessHandle:
+        if grant.execution_mode not in {"sandbox", "host"}:
             raise ValueError("execution_mode must be sandbox or host")
         self._local(cwd)
         scratch = Path(tempfile.mkdtemp(prefix="wright-command-"))
         cwd_path = scratch / "cwd"
+        lease = None
         try:
-            process = launch(command, grant, scratch, cwd_path)
+            if grant.execution_mode == "host":
+                from .host import launch as host_launch
+                process = host_launch(command, grant, scratch, cwd_path)
+            else:
+                from .sandbox import launch as sandbox_launch
+                process, lease = sandbox_launch(command, grant, scratch, cwd_path, egress=egress)
         except Exception:
             shutil.rmtree(scratch)
             raise
         if hasattr(process, "read_output"):
             return process
-        return LocalProcessHandle(process, self, cwd_path)
+        return LocalProcessHandle(process, self, cwd_path, lease)
 
 
 def _open_nofollow(path: Path, flags: int) -> int:
