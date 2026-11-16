@@ -518,53 +518,53 @@ def test_workspace_rules_are_managed_without_a_running_session(tmp_path):
     assert client.get("/api/v1/workspaces/ws/rules").json()["rules"] == []
 
 
+
 def test_settings_routes_read_and_write_layers(tmp_path, monkeypatch):
     from wright.core.paths import project_settings_path, user_settings_path
 
     for name in ("OPENAI_MODEL", "OPENAI_BASE_URL"):
         monkeypatch.delenv(name, raising=False)
-    project = tmp_path / "repo"
-    project.mkdir()
-    static = tmp_path / "static"
-    static.mkdir()
-    (static / "index.html").write_text("<main>Wright</main>")
-    auth = BootstrapAuth("bootstrap-secret")
-    manager = FakeManager()
-    manager.project_root = project
-    client = TestClient(create_app(manager, auth, static_dir=static))
-    assert client.get("/api/v1/settings").status_code == 401
-    client.post(
-        "/api/v1/auth/exchange", json={"token": "bootstrap-secret"},
-        headers={"origin": "http://testserver"},
-    )
-    headers = {"origin": "http://testserver"}
+    client = _workspace_client(tmp_path)
+    project = tmp_path / "project"
 
     response = client.put(
-        "/api/v1/settings", json={"scope": "project", "key": "llm.model", "value": "p"},
-        headers=headers,
+        "/api/v1/workspaces/ws/settings", json={"scope": "project", "key": "llm.model", "value": "p"},
     )
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     items = {item["key"]: item for item in response.json()["settings"]}
     assert items["llm.model"]["value"] == "p"
     assert items["llm.model"]["source"] == "project"
     assert project_settings_path(project).is_file()
 
     refused = client.put(
-        "/api/v1/settings",
+        "/api/v1/workspaces/ws/settings",
         json={"scope": "project", "key": "llm.base_url", "value": "https://attacker.invalid"},
-        headers=headers,
     )
     assert refused.status_code == 400
     assert "user settings file" in refused.json()["detail"]
+    assert client.get("/api/v1/workspaces/missing/settings").status_code == 404
 
     assert client.put(
         "/api/v1/settings", json={"scope": "user", "key": "llm.base_url", "value": "http://127.0.0.1:9/v1"},
-        headers=headers,
     ).status_code == 200
-    assert client.get("/api/v1/settings").json()["paths"]["user"] == str(user_settings_path())
+    user_view = client.get("/api/v1/settings").json()
+    assert user_view["paths"] == {"user": str(user_settings_path()), "project": None}
+    assert client.put(
+        "/api/v1/settings", json={"scope": "project", "key": "llm.model", "value": "x"},
+    ).status_code == 400
     removed = client.put(
-        "/api/v1/settings", json={"scope": "user", "key": "llm.base_url", "value": None},
-        headers=headers,
+        "/api/v1/workspaces/ws/settings", json={"scope": "user", "key": "llm.base_url", "value": None},
     )
     items = {item["key"]: item for item in removed.json()["settings"]}
     assert items["llm.base_url"]["source"] == "default"
+
+    user_settings_path().write_text("{", encoding="utf-8")
+    assert client.get("/api/v1/workspaces/ws/settings").status_code == 409
+
+
+def test_settings_routes_require_auth(tmp_path):
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<main>Wright</main>")
+    client = TestClient(create_app(FakeManager(), BootstrapAuth("bootstrap-secret"), static_dir=static))
+    assert client.get("/api/v1/settings").status_code == 401

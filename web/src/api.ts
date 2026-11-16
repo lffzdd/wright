@@ -1,4 +1,4 @@
-import type { ChangeAction, ChangeActionResult, ChangePatch, ChangesSummary, ExecutionMode, FolderListing, GitChangeScope, Grants, ReviewSummary, SandboxStatus, SessionSummary, Snapshot } from "./types";
+import type { ChangeAction, ChangeActionResult, ChangePatch, ChangesSummary, ExecutionMode, FolderListing, GitChangeScope, Grants, ReviewSummary, RuntimeSettingsView, SandboxStatus, SessionSummary, SettingScope, Snapshot } from "./types";
 
 export class ApiError extends Error {
   constructor(message: string, public status: number, public latest?: Grants) { super(message); }
@@ -25,6 +25,10 @@ export async function bootstrap(): Promise<void> {
   history.replaceState(null, "", `${location.pathname}${location.search}`);
 }
 
+function settingsPath(projectId: string | null): string {
+  return projectId ? `/api/v1/workspaces/${encodeURIComponent(projectId)}/settings` : "/api/v1/settings";
+}
+
 export const api = {
   health: () => json<{ ok: boolean }>("/api/v1/health", { cache: "no-store" }),
   preferences: () => json<{
@@ -44,6 +48,9 @@ export const api = {
     inspector_width: number | null;
   }>("/api/v1/preferences", { method: "PUT", body: JSON.stringify(body) }),
   project: () => json<Record<string, unknown>>("/api/v1/project"),
+  // Without a project only the user settings file is in play.
+  runtimeSettings: (projectId: string | null) => json<RuntimeSettingsView>(settingsPath(projectId)),
+  setRuntimeSetting: (projectId: string | null, body: { scope: SettingScope; key: string; value: unknown }) => json<RuntimeSettingsView>(settingsPath(projectId), { method: "PUT", body: JSON.stringify(body) }),
   sessions: (allProjects = false) => json<SessionSummary[]>(`/api/v1/sessions${allProjects ? "?all_projects=true" : ""}`),
   snapshot: (id: string) => json<Snapshot>(`/api/v1/sessions/${id}/snapshot`),
   create: (body: Record<string, unknown>) => json<Snapshot & { submit_error?: string }>("/api/v1/sessions", { method: "POST", body: JSON.stringify(body) }),

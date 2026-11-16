@@ -334,3 +334,28 @@ export type FolderListing = {
   entries: Array<{ name: string; path: string; git: boolean }>;
   truncated: boolean;
 };
+
+export type SettingScope = "user" | "project";
+
+/** One typed runtime setting, as GET /settings describes it. */
+export type RuntimeSetting = {
+  key: string;
+  kind: "str" | "int" | "bool" | "choice" | "path" | "list";
+  choices: string[];
+  minimum: number | null;
+  description: string;
+  default: unknown;
+  value: unknown;
+  source: "default" | SettingScope | "env";
+  user_value: unknown;
+  project_value: unknown;
+  env: string[];
+  env_override: boolean;
+  scopes: SettingScope[];
+};
+
+export type RuntimeSettingsView = {
+  paths: { user: string; project: string | null };
+  settings: RuntimeSetting[];
+  warnings: string[];
+};

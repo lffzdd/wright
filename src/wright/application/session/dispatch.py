@@ -17,6 +17,7 @@ from ...domain.gateway.scheduling import JobRunLedger, SchedulingError
 from ...domain.model.attachment import AttachmentError
 from ..composition.job_runner import launch_job_run
 from ..composition.runtime import WrightRuntime
+from ..composition.settings import settings_service
 from ..execution.agent_operations import agent_completion_notice
 from ..execution.directory import (
     DirectoryWaitCancelled,
@@ -28,6 +29,8 @@ from ..session_runtime.loops import (
     SessionLoopRegistry,
     parse_loop_command,
 )
+from ..settings.command import USAGE as SETTINGS_USAGE
+from ..settings.command import run_settings_command
 from .history_projection import (
     current_run_id,
     latest_turn_history_id,
@@ -184,6 +187,11 @@ def _cmd_event(text: str, rt: WrightRuntime) -> None:
     _notice(rt, f"external event accepted (id={event_id})")
 
 
+def _cmd_settings(text: str, rt: WrightRuntime) -> None:
+    service = settings_service(rt.project_context.project_root)
+    _notice(rt, run_settings_command(text, service))
+
+
 def _cmd_loop(text: str, rt: WrightRuntime) -> None:
     registry = rt.services.loop_registry
     if registry is None:
@@ -197,6 +205,7 @@ SLASH_COMMANDS: dict[str, SlashCommand] = {
     "/history": SlashCommand("/history", "show prior turns", "/history [all|N]", _cmd_history),
     "/loop": SlashCommand("/loop", "create, list, or stop a loop", "/loop <interval|list|stop>", _cmd_loop),
     "/event": SlashCommand("/event", "emit an external event", "/event <name> [JSON]", _cmd_event),
+    "/settings": SlashCommand("/settings", "show or change runtime settings", SETTINGS_USAGE, _cmd_settings),
     "/attach": SlashCommand("/attach", "attach one or more images", "/attach PATH..."),
     "/attachments": SlashCommand("/attachments", "list pending images", "/attachments"),
     "/detach": SlashCommand("/detach", "remove a pending image", "/detach INDEX|all"),

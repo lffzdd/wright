@@ -84,16 +84,31 @@ These stay environment-only:
   settings have their own files; see [permissions.md](permissions.md).
 - Interface preferences (language, theme) in `~/.wright/preferences.json`.
 
-## Editing from the Web console
+## Editing settings
 
-`GET /api/v1/settings` lists every key with its effective value, the layer it
-came from (`default`, `user`, `project` or `env`), the raw value in each file,
-whether an environment variable overrides it, and which files may hold it.
+**Web console:** Settings → Runtime lists every key with its effective
+value and where it came from. Choose "User" or "Project" to pick which file
+an edit goes to; user-only keys are read-only in project scope.
 
-`PUT /api/v1/settings` with `{"scope": "user" | "project", "key": "llm.model",
-"value": ...}` writes one key; `"value": null` removes it. The server applies
-the same rules as loading: a project-scope write of a user-only key, a secret
-or an invalid value is refused with 400.
+**CLI and TUI:**
+
+```
+/settings                                 list keys, values and sources
+/settings set [--project] KEY VALUE       write to the user (or project) file
+/settings unset [--project] KEY           remove the key from that file
+```
+
+Values are parsed like environment variables: `true/false`, numbers, and
+comma-separated lists.
+
+**HTTP API:** `GET /api/v1/workspaces/{id}/settings` describes every key for
+that project: effective value, source layer (`default`, `user`, `project`,
+`env`), the raw value in each file, whether an environment variable
+overrides it, and which files may hold it. `PUT` with `{"scope": "user" |
+"project", "key": "llm.model", "value": ...}` writes one key, and
+`"value": null` removes it. `/api/v1/settings` does the same with no project
+(user file only). Writes follow the same rules as loading: a project-scope
+write of a user-only key, a secret or an invalid value is refused with 400.
 
 ## Adding a key
 

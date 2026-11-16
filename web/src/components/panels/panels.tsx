@@ -3,6 +3,7 @@ import { Brain, Clock, Plus, Scroll } from "@phosphor-icons/react";
 import { confirmDialog } from "../ui/dialogs";
 import { shortTime } from "../inspector/Inspector";
 import { CapabilityPage, EmptyState, Row, Segmented, Switch, Tabs, Tag } from "./capability";
+import { RuntimeSettings } from "./RuntimeSettings";
 import { INTERVAL_UNITS, describeInterval, splitInterval, toSeconds, type IntervalUnit } from "./interval";
 import { api } from "../../api";
 import { getLocale, useT } from "../../i18n";
@@ -454,10 +455,11 @@ export function SchedulesPage({ sessionId, projectId }: { sessionId: string | nu
 }
 
 export function SettingsPage({
-  theme, inspectorOpen, save,
+  theme, inspectorOpen, save, projectId = null,
 }: {
   theme: "dark" | "light";
   inspectorOpen: boolean;
+  projectId?: string | null;
   save: (patch: { theme?: "dark" | "light"; inspector_open?: boolean; interface_language?: string }) => Promise<void>;
 }) {
   const tr = useT();
@@ -486,5 +488,6 @@ export function SettingsPage({
         <Switch label={tr("web.inspector_open")} checked={inspectorOpen} onChange={(next) => { apply({ inspector_open: next }).catch(() => undefined); }} />
       </div>
     </section>
+    <RuntimeSettings projectId={projectId} />
   </CapabilityPage>;
 }

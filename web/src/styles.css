@@ -1153,10 +1153,26 @@ body.inspector-resizing * {
 .settings-row + .settings-row { border-top: 1px solid var(--border-subtle); }
 .settings-row .hint { margin-top: 2px; }
 .settings-label { color: var(--text-primary); font-size: var(--text-md); }
+.runtime-settings-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 12px 14px 0; }
+.runtime-settings-head h3 { padding: 0 0 4px; }
+.runtime-scope { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.runtime-path { padding: 6px 14px 0; font-family: var(--font-mono); overflow-wrap: anywhere; }
+.runtime-notice { padding: 6px 14px 0; }
+.runtime-group { display: flex; flex-direction: column; margin-top: 10px; border-top: 1px solid var(--border-subtle); }
+.runtime-group h4 { padding: 12px 14px 0; font-size: var(--text-sm); font-weight: 600; color: var(--text-secondary); }
+.runtime-meta { display: flex; flex-direction: column; min-width: 0; }
+.runtime-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.runtime-key { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); }
+.runtime-control { display: grid; grid-template-columns: 240px 48px; align-items: center; gap: 10px; flex-shrink: 0; justify-items: start; }
+.cap-page .runtime-control input:not([type="checkbox"]), .cap-page .runtime-control select { width: 100%; }
+.runtime-control .switch { justify-self: end; }
+.cap-page .runtime-control input:disabled, .cap-page .runtime-control select:disabled { opacity: 0.55; cursor: not-allowed; background: var(--bg-card-secondary); }
 @media (max-width: 640px) {
   .cap-head-inner, .cap-body { padding-left: 16px; padding-right: 16px; }
   .cap-head-inner { flex-direction: column; align-items: flex-start; padding-top: 20px; }
   .settings-row { flex-direction: column; align-items: flex-start; }
+  .runtime-settings-head { flex-direction: column; }
+  .runtime-control { width: 100%; grid-template-columns: minmax(0, 1fr) 48px; }
 }
 
 .form-error, .local-warning { color: var(--danger); font-size: var(--text-sm); }

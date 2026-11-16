@@ -879,7 +879,7 @@ export default function App() {
         {page === "memory" && <MemoryPage projectId={selectedProjectId || null} />}
         {page === "rules" && <RulesPage projectId={selectedProjectId || null} />}
         {page === "schedules" && <SchedulesPage sessionId={selected} projectId={selectedProjectId || null} />}
-        {page === "settings" && <SettingsPage theme={theme} inspectorOpen={inspectorOpen} save={savePreference} />}
+        {page === "settings" && <SettingsPage theme={theme} inspectorOpen={inspectorOpen} save={savePreference} projectId={selectedProjectId || null} />}
       </main> : <main className="conversation">
         {state ? <>
           <div className="conversation-head">

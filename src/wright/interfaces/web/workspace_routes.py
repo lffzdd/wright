@@ -68,6 +68,7 @@ from ...application.workspace.session_commands import (
 from ...core.paths import project_id
 from .auth import BootstrapAuth
 from .runtime_manager import RuntimeManager, RuntimeManagerError
+from .settings_routes import SettingUpdateRequest, describe_settings, update_setting
 
 
 class WorkspaceCreate(BaseModel):
@@ -510,6 +511,18 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
             return delete_episode(service, episode_id, bound_project_id=bound, confirm=body.confirm)
         except MemoryViewError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.get("/workspaces/{registered_id}/settings")
+    def workspace_settings(registered_id: str, request: Request) -> dict[str, Any]:
+        require(request)
+        return describe_settings(_project_root(manager, registered_id))
+
+    @router.put("/workspaces/{registered_id}/settings")
+    def put_workspace_setting(
+        registered_id: str, body: SettingUpdateRequest, request: Request,
+    ) -> dict[str, Any]:
+        require(request)
+        return update_setting(_project_root(manager, registered_id), body)
 
     @router.get("/workspaces/{registered_id}/rules")
     def rules(registered_id: str, request: Request) -> dict[str, Any]:
