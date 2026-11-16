@@ -91,9 +91,9 @@ it("offers higher directories in one row and saves the picked level", async () =
   }} respond={respond} />);
   fireEvent.click(screen.getByText("More options"));
   expect(screen.getAllByRole("radio")).toHaveLength(2);
-  const picker = screen.getByRole("combobox", { name: "Directory to allow" }) as HTMLSelectElement;
-  expect(Array.from(picker.options).map((option) => option.textContent)).toEqual(["/srv/shared/lib/", "/srv/shared/"]);
-  fireEvent.change(picker, { target: { value: "allow_session_directory_read_1" } });
+  fireEvent.click(screen.getByRole("button", { name: "Directory to allow" }));
+  expect(screen.getAllByRole("menuitemradio").map((option) => option.textContent)).toEqual(["/srv/shared/lib/", "/srv/shared/"]);
+  fireEvent.click(screen.getByRole("menuitemradio", { name: "/srv/shared/" }));
   expect(screen.getByText(/everything in \/srv\/shared\//)).toBeTruthy();
   fireEvent.click(screen.getByText("Save and allow"));
   await waitFor(() => expect(respond).toHaveBeenCalledWith("r", "allow_session_directory_read_1"));

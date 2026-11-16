@@ -57,7 +57,8 @@ describe("workspace panels", () => {
     const openSession = vi.fn();
     render(<SearchDialog sessionId={null} projectId="p" close={() => undefined} openFile={() => undefined} openSession={openSession} />);
     fireEvent.change(screen.getByLabelText("Search query"), { target: { value: "inspector" } });
-    fireEvent.change(screen.getByLabelText("Search kind"), { target: { value: "task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search kind" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Tasks" }));
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     fireEvent.click(await screen.findByRole("button", { name: "task Fix inspector" }));
     expect(openSession).toHaveBeenCalledWith("saved");
@@ -87,7 +88,8 @@ describe("workspace panels", () => {
     const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ results: [{ kind: "content", path: "a.py", line: 2, text: "return a" }] }) }));
     vi.stubGlobal("fetch", fetchMock);
     render(<SearchDialog sessionId={null} projectId="p" close={() => undefined} openFile={() => undefined} />);
-    fireEvent.change(screen.getByLabelText("Search kind"), { target: { value: "content" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search kind" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Content" }));
     fireEvent.change(screen.getByLabelText("Search query"), { target: { value: "return" } });
     expect(await screen.findByText("1 result")).toBeTruthy();
     expect(screen.getByText("return a")).toBeTruthy();
@@ -190,7 +192,8 @@ describe("workspace panels", () => {
     fireEvent.change(screen.getByLabelText("Schedule name"), { target: { value: "Digest" } });
     fireEvent.change(screen.getByLabelText("Schedule prompt"), { target: { value: "Summarize changes" } });
     fireEvent.change(screen.getByLabelText("Run every"), { target: { value: "3" } });
-    fireEvent.change(screen.getByLabelText("Interval unit"), { target: { value: "hours" } });
+    fireEvent.click(screen.getByRole("button", { name: "Interval unit" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "hours" }));
     fireEvent.click(screen.getByRole("button", { name: "Create schedule" }));
     await vi.waitFor(() => expect(bodies).toHaveLength(1));
     expect(bodies[0]).toMatchObject({ name: "Digest", trigger: { type: "interval", every_seconds: 10800 } });

@@ -73,7 +73,8 @@ describe("RuntimeSettings", () => {
     expect(screen.queryByRole("radio", { name: "Project" })).toBeNull();
 
     fireEvent.click(screen.getByRole("switch", { name: "Name sessions automatically" }));
-    fireEvent.change(screen.getByLabelText("API"), { target: { value: "chat" } });
+    fireEvent.click(screen.getByRole("button", { name: "API" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "chat" }));
     fireEvent.click(screen.getByRole("button", { name: "Reset" }));
     await vi.waitFor(() => expect(calls).toHaveLength(4));
     const bodies = calls.slice(1).map((call) => JSON.parse(String(call.init?.body)));

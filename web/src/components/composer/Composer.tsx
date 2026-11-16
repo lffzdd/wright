@@ -6,6 +6,7 @@ import { commandAfter } from "../../protocol";
 import type { Attachment, ExecutionMode, FileReference, ViewState } from "../../types";
 import { emptyDraft, type Draft } from "./draft";
 import { MenuButton } from "../ui/Menu";
+import { Select } from "../ui/Select";
 import { shortPath } from "../session/session";
 
 export function EnvironmentChoice({
@@ -283,24 +284,22 @@ export function Composer({
     </div>
     {policyControls && (
       <div className={`composer-advanced ${settingsOpen ? "open" : ""}`} id={`composer-settings-${sessionId}`}>
-        <select className="select select-mode" aria-label={tr("web.interaction_mode")} title={tr(`web.mode_help.${interactionMode}`)} value={interactionMode} onChange={(event) => onPolicy?.({ interaction_mode: event.target.value }).catch((error) => updateDraft(sessionId, (item) => ({ ...item, reason: String(error) })))}>
-          <option value="agent" title={tr("web.mode_help.agent")}>{tr("web.mode.agent")}</option>
-          <option value="plan" title={tr("web.mode_help.plan")}>{tr("web.mode.plan")}</option>
-          <option value="ask" title={tr("web.mode_help.ask")}>{tr("web.mode.ask")}</option>
-        </select>
-        <select className="select select-model" aria-label={tr("web.model")} value={currentModel} onChange={(event) => onModel?.(event.target.value)}>
-          {visibleModels(models, currentModel).map((model) => <option key={model} value={model}>{model}</option>)}
-        </select>
+        <Select className="select select-mode" ariaLabel={tr("web.interaction_mode")} title={tr(`web.mode_help.${interactionMode}`)} value={interactionMode} wide
+          onChange={(next) => onPolicy?.({ interaction_mode: next }).catch((error) => updateDraft(sessionId, (item) => ({ ...item, reason: String(error) })))}
+          options={(["agent", "plan", "ask"] as const).map((mode) => ({ value: mode, label: tr(`web.mode.${mode}`), hint: tr(`web.mode_help.${mode}`) }))} />
+        <Select className="select select-model" ariaLabel={tr("web.model")} value={currentModel} onChange={(next) => onModel?.(next)}
+          options={visibleModels(models, currentModel).map((model) => ({ value: model, label: model }))} />
         {executionMode === "host" && <span className="hint" title={tr("web.execution.host_help")}>{tr("web.execution.host")}</span>}
-        <select className="select select-permissions" aria-label={tr("web.permission_mode")}
+        <Select className="select select-permissions" wide ariaLabel={tr("web.permission_mode")}
           title={interactionMode === "agent" ? tr(permissionMode === "bypass" && executionMode === "host" ? "web.execution.host_bypass" : `web.perm_help.${permissionMode || "default"}`) : tr("web.perm_locked", { mode: tr(`web.mode.${interactionMode}`) })}
           disabled={interactionMode !== "agent"}
-          value={permissionMode || "default"} onChange={(event) => onPolicy?.({ permission_mode: event.target.value }).catch((error) => updateDraft(sessionId, (item) => ({ ...item, reason: String(error) })))}>
-          <option value="default" title={tr("web.perm_help.default")}>{tr("web.perm.default")}</option>
-          <option value="acceptEdits" title={tr("web.perm_help.acceptEdits")}>{tr("web.perm.acceptEdits")}</option>
-          <option value="bypass" title={tr(executionMode === "host" ? "web.execution.host_bypass" : "web.perm_help.bypass")}>{tr("web.perm.bypass")}</option>
-          {permissionMode === "plan" && <option value="plan" title={tr("web.perm_help.plan")}>{tr("web.perm.plan")}</option>}
-        </select>
+          value={permissionMode || "default"} onChange={(next) => onPolicy?.({ permission_mode: next }).catch((error) => updateDraft(sessionId, (item) => ({ ...item, reason: String(error) })))}
+          options={[
+            { value: "default", label: tr("web.perm.default") },
+            { value: "acceptEdits", label: tr("web.perm.acceptEdits") },
+            { value: "bypass", label: tr("web.perm.bypass") },
+            ...(permissionMode === "plan" ? [{ value: "plan", label: tr("web.perm.plan") }] : []),
+          ]} />
       </div>
     )}
   </form>;

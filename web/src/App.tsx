@@ -1,4 +1,4 @@
-import { Archive, Brain, Clock, Copy, DotsThree, DownloadSimple, Gear, GitBranch, MagnifyingGlass, Moon, PencilSimple, Scroll, SidebarSimple, Sun, Warning, X, XCircle } from "@phosphor-icons/react";
+import { Archive, Brain, ClipboardText, Clock, Copy, DotsThree, DownloadSimple, Gear, GitBranch, MagnifyingGlass, Moon, PencilSimple, Scroll, SidebarSimple, Sun, Warning, X, XCircle } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { api, ApiError, bootstrap } from "./api";
 import { browserLocale, setLocale, useT } from "./i18n";
@@ -931,7 +931,7 @@ export default function App() {
                 { label: tr("web.rename"), icon: <PencilSimple size={13} />, onSelect: () => setRenaming(state.session.session_id) },
                 { label: tr("web.copy_session_id"), icon: <Copy size={13} />, onSelect: () => { navigator.clipboard?.writeText(state.session.session_id).catch(() => undefined); } },
                 "separator",
-                { label: tr("web.copy_conversation"), icon: <Copy size={13} />, onSelect: () => { navigator.clipboard?.writeText(conversationMarkdown(headerTitle, state.timeline || [], tr)).catch(() => undefined); } },
+                { label: tr("web.copy_conversation"), icon: <ClipboardText size={13} />, onSelect: () => { navigator.clipboard?.writeText(conversationMarkdown(headerTitle, state.timeline || [], tr)).catch(() => undefined); } },
                 { label: tr("web.download_conversation"), icon: <DownloadSimple size={13} />, onSelect: () => downloadText(markdownFileName(headerTitle), conversationMarkdown(headerTitle, state.timeline || [], tr)) },
                 "separator",
                 { label: tr("web.archive"), icon: <Archive size={13} />, onSelect: () => { archiveSession().catch((error) => setFatal(String(error))); } },

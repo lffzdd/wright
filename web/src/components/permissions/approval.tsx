@@ -17,6 +17,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { present, t, useT } from "../../i18n";
 import type { Interaction } from "../../types";
 import { useShellReadiness } from "./permissions";
+import { Select } from "../ui/Select";
 import { commandRuleDetails, commandRuleLabel, networkRuleLabel } from "./permission-resource";
 
 type Choice = NonNullable<Interaction["choices"]>[number];
@@ -345,13 +346,11 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
             <input type="radio" name={`remember-${interaction.request_id}`} checked={selected?.id === choice.id} disabled={blocked} onChange={() => setPicked(choice.id)} />
             <span>{sentence(describeChoice(choice, root))}
               {choice.resource_kind === "directory" && (levels[directoryGroup(choice)]?.length ?? 0) > 1 && <><br />
-                <select className="approval-level" aria-label={tr("web.approval.directory_level")} value={choice.id} onChange={(event) => {
+                <Select className="approval-level" ariaLabel={tr("web.approval.directory_level")} value={choice.id} disabled={busy} onChange={(next) => {
                   const key = directoryGroup(choice);
-                  setLevelPick((current) => ({ ...current, [key]: event.target.value }));
-                  setPicked(event.target.value);
-                }}>
-                  {levels[directoryGroup(choice)].map((level) => <option key={level.id} value={level.id}>{`${displayPath(level.scope, root)}/`}</option>)}
-                </select></>}
+                  setLevelPick((current) => ({ ...current, [key]: next }));
+                  setPicked(next);
+                }} options={levels[directoryGroup(choice)].map((level) => ({ value: level.id, label: `${displayPath(level.scope, root)}/` }))} /></>}
               {choice.resource_kind === "directory" && <><br /><small>{tr("web.approval.directory_recursive")}</small></>}
               {choice.resource_kind === "sandbox_network" && <><br /><small>{tr("web.approval.sandbox_network_details")}</small></>}
               {(choice.resource_kind === "command" || choice.resource_kind === "shell") && <><br /><small>

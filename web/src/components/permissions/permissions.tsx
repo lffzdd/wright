@@ -169,11 +169,11 @@ export function PermissionGrantManualAdd({ sessionId, grants, update }: { sessio
           ]} />
           <label>{tr("web.path")}<input className="grant-path-input" required value={path} onChange={(event) => setPath(event.target.value)} placeholder={tr("web.path")} aria-label={tr("web.path")} /></label>
           <div className="grant-form-row">
-            <InlineSelect label={tr("web.operations")} value={write ? "write" : "read"} menuUp onChange={(next) => setWrite(next === "write")} options={[
+            <InlineSelect label={tr("web.operations")} value={write ? "write" : "read"} onChange={(next) => setWrite(next === "write")} options={[
               { value: "read", label: tr("web.read_only") },
               { value: "write", label: tr("web.read_write") },
             ]} />
-            <InlineSelect label={tr("web.lifetime")} value={lifetime} onChange={setLifetime} menuUp options={[
+            <InlineSelect label={tr("web.lifetime")} value={lifetime} onChange={setLifetime} options={[
               { value: "project", label: tr("web.lifetime.project") },
               { value: "session", label: tr("web.lifetime.session") },
               { value: "user", label: tr("web.lifetime.user") },

@@ -213,12 +213,52 @@ function compactToolBody(name: string, body: string, result?: Record<string, unk
   if (typeof source.objective === "string") return source.objective || "No active plan";
   if (Array.isArray(source.tasks)) return source.tasks.length ? `${source.tasks.length} tasks` : "No tasks";
   if (Array.isArray(source.schedules)) return source.schedules.length ? `${source.schedules.length} schedules` : "No schedules";
-  if (Array.isArray(source.memories) || Array.isArray(source.results)) {
+  if (Array.isArray(source.memories) || (toolCategory(name) === "memory" && Array.isArray(source.results))) {
     const count = (source.memories as unknown[] | undefined)?.length ?? (source.results as unknown[] | undefined)?.length ?? 0;
     return count ? `${count} memories` : "No memories";
   }
   if (typeof source.count === "number") return `${source.count} results`;
   return body;
+}
+
+type WebHit = { title: string; url: string; snippet: string };
+
+function httpUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+/** web_search (and similar) hits: title, URL, short snippet. Memory search results have no URL. */
+function webHits(source: Record<string, unknown> | null | undefined): WebHit[] | null {
+  if (!source || !Array.isArray(source.results)) return null;
+  const items = source.results as unknown[];
+  if (!items.every((item) => item && typeof item === "object" && ("url" in item || "snippet" in item))) return null;
+  return items.map((item) => {
+    const record = item as Record<string, unknown>;
+    return { title: textOf(record.title), url: textOf(record.url), snippet: textOf(record.snippet) };
+  });
+}
+
+function WebResults({ hits }: { hits: WebHit[] }) {
+  const tr = useT();
+  if (!hits.length) return <p className="empty-small">{tr("web.steps.no_results")}</p>;
+  return <div className="web-results">
+    {hits.map((hit, index) => {
+      const href = httpUrl(hit.url);
+      const title = hit.title || hit.url;
+      return <article className="web-hit" key={`${hit.url}-${index}`}>
+        {href
+          ? <a className="web-hit-title" href={href} target="_blank" rel="noopener noreferrer"><span>{title}</span><ArrowSquareOut size={12} aria-hidden="true" /></a>
+          : <span className="web-hit-title">{title}</span>}
+        {hit.url && hit.url !== title && <div className="web-hit-url mono">{hit.url}</div>}
+        {hit.snippet && <p className="web-hit-snippet">{hit.snippet}</p>}
+      </article>;
+    })}
+  </div>;
 }
 
 function exitCode(result: Record<string, unknown> | null | undefined, data: unknown): number | null {
@@ -536,6 +576,7 @@ export function ToolCard({
   const isDirectory = category === "directories";
   const isSearch = category === "searches";
   const matches = isSearch ? searchMatches(metricSource) : null;
+  const hits = category === "web" ? webHits(metricSource) : null;
   const directory = isDirectory && Array.isArray(metricSource?.entries) ? metricSource : null;
   const content = !isDirectory && !isSearch && family !== "shell" && family !== "edit" && typeof metricSource?.content === "string" ? metricSource.content : null;
   // A plan rule turning an update down is not a tool failure: the plan is unchanged and the model retries.
@@ -579,6 +620,7 @@ export function ToolCard({
           {phase === "failed" && code === null && !rejection && <span className={denied ? "denied-pill" : "fail-pill"}>{tr(denied ? "web.tool_denied" : "web.status.failed")}</span>}
           {directoryCount > 0 && phase === "succeeded" && <span className="step-meta">{tr("web.n_files", { count: directoryCount })}{durationLabel ? ` (${durationLabel})` : ""}</span>}
           {matches && phase === "succeeded" && <span className="step-meta">{tr("web.steps.match_count", { count: matches.length, files: new Set(matches.map((match) => String(match.path ?? ""))).size })}</span>}
+          {hits && phase === "succeeded" && <span className="step-meta">{tr("web.steps.result_count", { count: hits.length })}</span>}
           {family === "edit" && phase === "succeeded" && <span className="muted edit-summary">{t("web.applied")}</span>}
           {code !== null && code !== 0 && <span className="fail-pill">Exit {code}{testFailed ? ` (${tr("web.bug_confirmed")})` : ""}</span>}
           {plan && plan.steps.length > 0 && <span className="step-meta">{tr("web.plan.progress", { done: plan.steps.filter((step) => step.status === "completed").length, total: plan.steps.length })}</span>}
@@ -595,6 +637,7 @@ export function ToolCard({
           attempted={rejection && planFocus ? attemptedStatus(args, planFocus) : ""} />
           : directory ? <DirectoryTree source={directory} />
           : matches && phase === "succeeded" ? <SearchResults matches={matches} pattern={pattern} literal={metricSource?.fixed_string === true || args?.fixed_string === true} />
+          : hits && phase === "succeeded" ? <WebResults hits={hits} />
           : content !== null && isNumbered(content) ? <NumberedContent text={content} path={path} />
           : body && (family === "edit" ? <DiffBody text={body} /> : testFailed ? <TestFailureOutput text={body} /> : isNumbered(body) ? <NumberedContent text={body} path={path} /> : <PlainOutput body={body} failed={code !== null && code !== 0} structured={family !== "shell"} live={phase === "running"} />)}
         {Boolean(metricSource?.sandbox_denial) && <SandboxDenialHint denial={metricSource!.sandbox_denial as SandboxDenial} sessionId={sessionId} />}

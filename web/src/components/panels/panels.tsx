@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Brain, Clock, Plus, Scroll } from "@phosphor-icons/react";
 import { confirmDialog } from "../ui/dialogs";
+import { Select } from "../ui/Select";
 import { shortTime } from "../inspector/Inspector";
 import { CapabilityPage, EmptyState, Row, Segmented, Switch, Tabs, Tag } from "./capability";
 import { RuntimeSettings } from "./RuntimeSettings";
@@ -99,12 +100,8 @@ export function SearchDialog({
   return <Panel id="search-title" title={tr("web.panel.search")} close={close}>
     <div className="search-row">
       <input autoFocus aria-label="Search query" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) run(); }} placeholder={tr("web.search")} />
-      <select aria-label="Search kind" value={kind} onChange={(event) => setKind(event.target.value)}>
-        <option value="file">{tr("web.panel.kind_file")}</option>
-        <option value="content">{tr("web.panel.kind_content")}</option>
-        <option value="task">{tr("web.panel.kind_task")}</option>
-        <option value="symbol">{tr("web.panel.kind_symbol")}</option>
-      </select>
+      <Select className="field-select" ariaLabel="Search kind" value={kind} onChange={setKind}
+        options={["file", "content", "task", "symbol"].map((value) => ({ value, label: tr(`web.panel.kind_${value}`) }))} />
       <button type="button" className="button primary" onClick={() => run()}>{notice.tone === "busy" ? tr("web.panel.searching") : tr("web.panel.search")}</button>
     </div>
     <PanelNotice notice={notice} />
@@ -411,9 +408,8 @@ export function SchedulesPage({ sessionId, projectId }: { sessionId: string | nu
         <div className="dialog-field"><span>{tr("web.panel.run_every")}</span>
           <div className="interval-field">
             <input aria-label={tr("web.panel.run_every")} type="number" min={1} value={count} onChange={(event) => setCount(event.target.value)} />
-            <select aria-label={tr("web.panel.interval_unit")} value={unit} onChange={(event) => setUnit(event.target.value as IntervalUnit)}>
-              {INTERVAL_UNITS.map((value) => <option key={value} value={value}>{tr(`web.panel.unit.${value}`)}</option>)}
-            </select>
+            <Select className="field-select" ariaLabel={tr("web.panel.interval_unit")} value={unit} onChange={(next) => setUnit(next as IntervalUnit)}
+              options={INTERVAL_UNITS.map((value) => ({ value, label: tr(`web.panel.unit.${value}`) }))} />
           </div>
         </div>
         <div className="dialog-actions">

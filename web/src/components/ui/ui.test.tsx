@@ -6,6 +6,7 @@ import { AddWorkspaceDialog } from "../session/AddWorkspaceDialog";
 import { SessionRail } from "../session/SessionRail";
 import { confirmDialog, DialogHost, promptDialog } from "./dialogs";
 import { MenuButton } from "./Menu";
+import { Select } from "./Select";
 
 beforeEach(() => setLocale("en"));
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -50,6 +51,45 @@ describe("MenuButton", () => {
     fireEvent.click(trigger);
     fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
     expect(onSelect).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+});
+
+describe("Select", () => {
+  const options = [{ value: "a", label: "Alpha" }, { value: "b", label: "Beta", hint: "Second choice" }, { value: "c", label: "Gamma" }];
+
+  it("shows the current label and picks from an in-app menu", () => {
+    const onChange = vi.fn();
+    render(<Select ariaLabel="Letter" value="a" options={options} onChange={onChange} />);
+    const trigger = screen.getByRole("button", { name: "Letter" });
+    expect(trigger.textContent).toBe("Alpha");
+    fireEvent.click(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("menuitemradio", { name: "Alpha" }).getAttribute("aria-checked")).toBe("true");
+    expect(document.activeElement).toBe(screen.getByRole("menuitemradio", { name: "Alpha" }));
+    expect(screen.getByText("Second choice")).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /Beta/ }));
+    expect(onChange).toHaveBeenCalledWith("b");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("opens with arrow keys, closes on Escape, and ignores re-picking the current value", () => {
+    const onChange = vi.fn();
+    render(<Select ariaLabel="Letter" value="c" options={options} onChange={onChange} />);
+    const trigger = screen.getByRole("button", { name: "Letter" });
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(screen.getByRole("menuitemradio", { name: "Gamma" }));
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Gamma" }));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("stays closed when disabled", () => {
+    render(<Select ariaLabel="Letter" value="a" options={options} onChange={() => undefined} disabled />);
+    fireEvent.click(screen.getByRole("button", { name: "Letter" }));
     expect(screen.queryByRole("menu")).toBeNull();
   });
 });

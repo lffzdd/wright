@@ -3,6 +3,7 @@ import { api } from "../../api";
 import { useT } from "../../i18n";
 import type { RuntimeSetting, RuntimeSettingsView, SettingScope } from "../../types";
 import { Segmented, Switch, Tag } from "./capability";
+import { Select } from "../ui/Select";
 
 type Notice = { tone: "idle" | "busy" | "ok" | "error"; text: string };
 
@@ -137,11 +138,12 @@ function SettingControl({ item, label, stored, disabled, apply }: {
     return <Switch label={label} checked={checked} disabled={disabled} onChange={apply} />;
   }
   if (item.kind === "choice") {
-    return <select aria-label={label} disabled={disabled} value={typeof stored === "string" ? stored : ""}
-      onChange={(event) => apply(event.target.value || null)}>
-      <option value="">{tr("web.runtime.default_option", { value: display(item.default) })}</option>
-      {item.choices.map((choice) => <option key={choice} value={choice}>{choice}</option>)}
-    </select>;
+    return <Select className="field-select" ariaLabel={label} disabled={disabled} value={typeof stored === "string" ? stored : ""}
+      onChange={(next) => apply(next || null)}
+      options={[
+        { value: "", label: tr("web.runtime.default_option", { value: display(item.default) }) },
+        ...item.choices.map((choice) => ({ value: choice, label: choice })),
+      ]} />;
   }
   return <TextSetting item={item} label={label} stored={stored} disabled={disabled} apply={apply} />;
 }

@@ -13,19 +13,22 @@ export type MenuEntry = {
   checked?: boolean;
 } | "separator";
 
-type Anchor = { left: number; right: number; top: number; bottom: number };
+export type Anchor = { left: number; right: number; top: number; bottom: number };
 
 const GAP = 4;
 const EDGE = 8;
 
 /** A small floating menu positioned next to an anchor rect or a pointer position. */
-export function MenuPopover({ anchor, items, onClose, label, align = "end", wide = false }: {
+export function MenuPopover({ anchor, items, onClose, label, align = "end", wide = false, className = "", matchWidth = false }: {
   anchor: Anchor;
   items: MenuEntry[];
   onClose: (restoreFocus: boolean) => void;
   label?: string;
   align?: "start" | "end";
   wide?: boolean;
+  className?: string;
+  /** Make the menu at least as wide as the anchor (select-style triggers). */
+  matchWidth?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
@@ -40,7 +43,10 @@ export function MenuPopover({ anchor, items, onClose, label, align = "end", wide
     setPosition({ left, top });
   }, [anchor.left, anchor.right, anchor.top, anchor.bottom, align]);
   useEffect(() => {
-    ref.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+    const first = ref.current?.querySelector<HTMLButtonElement>('button[aria-checked="true"]:not(:disabled)')
+      ?? ref.current?.querySelector<HTMLButtonElement>("button:not(:disabled)");
+    first?.focus({ preventScroll: true });
+    first?.scrollIntoView?.({ block: "nearest" });
     const closeOutside = (event: PointerEvent) => {
       if (!ref.current?.contains(event.target as Node)) onClose(false);
     };
@@ -65,10 +71,13 @@ export function MenuPopover({ anchor, items, onClose, label, align = "end", wide
   };
   return createPortal(<div
     ref={ref}
-    className={`menu-popover${wide ? " wide" : ""}`}
+    className={`menu-popover${wide ? " wide" : ""}${className ? ` ${className}` : ""}`}
     role="menu"
     aria-label={label}
-    style={position ? { left: position.left, top: position.top } : { left: anchor.left, top: anchor.bottom + GAP, visibility: "hidden" }}
+    style={{
+      ...(position ? { left: position.left, top: position.top } : { left: anchor.left, top: anchor.bottom + GAP, visibility: "hidden" as const }),
+      ...(matchWidth ? { minWidth: Math.round(anchor.right - anchor.left) } : {}),
+    }}
     onKeyDown={onKeyDown}
     onClick={(event) => event.stopPropagation()}
     onContextMenu={(event) => event.preventDefault()}
@@ -92,7 +101,7 @@ export function MenuPopover({ anchor, items, onClose, label, align = "end", wide
   </div>, document.body);
 }
 
-function rectOf(element: Element): Anchor {
+export function rectOf(element: Element): Anchor {
   const { left, right, top, bottom } = element.getBoundingClientRect();
   return { left, right, top, bottom };
 }

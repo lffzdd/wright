@@ -226,7 +226,7 @@ describe("ToolCard states", () => {
     expect(document.querySelector(".term-body")).toBeNull();
   });
 
-  it("groups search hits by file and marks the pattern", () => {
+    it("groups search hits by file and marks the pattern", () => {
     const data = { matches: [
       { path: "a.py", line: 3, column: 1, text: "raise HostBusy()" },
       { path: "a.py", line: 9, column: 5, text: "except HostBusy:" },
@@ -237,6 +237,22 @@ describe("ToolCard states", () => {
     fireEvent.click(screen.getByRole("button"));
     expect([...document.querySelectorAll(".search-path > :first-child")].map((node) => node.textContent)).toEqual(["a.py", "b.py"]);
     expect([...document.querySelectorAll(".search-results mark")].map((node) => node.textContent)).toEqual(["HostBusy", "HostBusy", "HostBusy"]);
+  });
+
+  it("lists web_search hits as title, url and snippet instead of a memory count", () => {
+    const data = { results: [
+      { title: "DDD aggregates", url: "https://example.com/ddd", snippet: "An aggregate has one root." },
+      { title: "Deno 2", url: "https://deno.com/blog/v2", snippet: "Deno 2 is compatible with npm." },
+    ] };
+    render(<ToolCard name="web_search" phase="succeeded" args={{ query: "Domain-Driven Design" }} data={data} output={JSON.stringify(data)} />);
+    expect(screen.getByText("2 results")).toBeTruthy();
+    expect(screen.getByText("Domain-Driven Design")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button"));
+    expect(screen.queryByText("2 memories")).toBeNull();
+    const titles = [...document.querySelectorAll(".web-hit-title")].map((node) => node.textContent);
+    expect(titles).toEqual(["DDD aggregates", "Deno 2"]);
+    expect(screen.getByRole("link", { name: "DDD aggregates" }).getAttribute("href")).toBe("https://example.com/ddd");
+    expect(screen.getByText("An aggregate has one root.")).toBeTruthy();
   });
 
   it("shows read file content with a line-number gutter", () => {
