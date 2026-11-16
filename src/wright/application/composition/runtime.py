@@ -58,6 +58,7 @@ from ...infrastructure.tools.mcp_client import (
     load_mcp_configs,
 )
 from ...infrastructure.tools.skill_tools import resident_skill_tools
+from ...infrastructure.tools.web_search import optional_web_search_tools
 from ..agent import (
     Agent,
     AgentBackgroundRuntime,
@@ -88,10 +89,10 @@ from .memory_assembly import (
 from .settings import load_settings
 
 logger = get_logger(__name__)
-# The only keys a project .env can set; everything else belongs in ~/.wright/.env
+# The only keys a project .env can set; everything else belongs in ~/.wright/
 # or ~/.wright/settings.json. Non-secret ones here are legacy aliases of
 # project-safe settings (llm.model, llm.context_limit, llm.memory_model).
-_PROJECT_ENV_KEYS = frozenset({"OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_CONTEXT_LIMIT", "OPENAI_MEMORY_MODEL", "TAVILY_API_KEY"})
+_PROJECT_ENV_KEYS = frozenset({"OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_CONTEXT_LIMIT", "OPENAI_MEMORY_MODEL", "TAVILY_API_KEY", "BRAVE_API_KEY"})
 
 
 @dataclass
@@ -388,10 +389,10 @@ def _select_base_tools(config: RuntimeConfig, settings: WrightSettings) -> tuple
     knowledge_tools = optional_knowledge_tools(
         settings.knowledge, enabled=True if config.with_rag else None
     )
-    active_base_tools = base_tools
+    active_base_tools = [*base_tools, *optional_web_search_tools()]
     if config.mode == "general":
         coding_only = {"edit", "write", "shell"}
-        active_base_tools = [t for t in base_tools if t.name not in coding_only]
+        active_base_tools = [t for t in active_base_tools if t.name not in coding_only]
     return active_base_tools, knowledge_tools
 
 

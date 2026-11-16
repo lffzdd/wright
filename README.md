@@ -46,6 +46,15 @@ because a cloned repository or a sandboxed command can write those files.
 Environment variables such as `OPENAI_MODEL` still work and override both
 files. See [docs/settings.md](docs/settings.md) for every key.
 
+### Web search
+
+`web_search` is offered to the model only when a search provider key is set;
+`web_fetch` and `http_request` are always available. Supported providers are
+Tavily (`TAVILY_API_KEY`) and Brave Search (`BRAVE_API_KEY`). With several keys,
+set `WRIGHT_SEARCH_PROVIDER=tavily|brave` in `~/.wright/.env`; otherwise the
+first configured one wins. `TAVILY_BASE_URL` / `BRAVE_BASE_URL` point at a proxy
+and, like every endpoint setting, are ignored in a project `.env`.
+
 ## Run
 
 From the repo root:

@@ -33,7 +33,8 @@ from wright.infrastructure.tools.file import (
     read_file_tool,
     write_file_tool,
 )
-from wright.infrastructure.tools.web_tools import http_request_tool, web_search_tool
+from wright.infrastructure.tools.web_search import optional_web_search_tools
+from wright.infrastructure.tools.web_tools import http_request_tool
 
 
 class CountingRepository(FilePermissionRepository):
@@ -175,18 +176,25 @@ def test_changed_network_arguments_are_rejected_at_send(tmp_path, monkeypatch):
     assert not result.ok and not calls
 
 
-def test_search_post_keeps_read_semantics_and_credentials_out_of_grants(tmp_path, monkeypatch):
+@pytest.mark.parametrize('key_env,method,header,expected', [
+    ('TAVILY_API_KEY', 'POST', 'Authorization', 'Bearer {}'),
+    ('BRAVE_API_KEY', 'GET', 'X-Subscription-Token', '{}'),
+], ids=['tavily-post', 'brave-get'])
+def test_search_keeps_read_semantics_and_credentials_out_of_grants(tmp_path, monkeypatch, key_env, method, header, expected):
     sent = []
     secret = 'test-provider-credential'
-    monkeypatch.setenv('TAVILY_API_KEY', secret)
+    for name in ('TAVILY_API_KEY', 'BRAVE_API_KEY', 'WRIGHT_SEARCH_PROVIDER'):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(key_env, secret)
+    [web_search_tool] = optional_web_search_tools()
     def transport(method, url, **kwargs):
         sent.append((method, kwargs))
-        return httpx.Response(200, json={'results': []}, request=httpx.Request(method, url))
+        return httpx.Response(200, json={'results': [], 'web': {'results': []}}, request=httpx.Request(method, url))
     monkeypatch.setattr(httpx, 'request', transport)
     session, _, service, assembly = setup(tmp_path)
     result = dispatcher(session, assembly, web_search_tool).execute([ToolCall('web_search', {'query': 'query', 'max_results': 2}, 'c')])[0].result
-    assert result.ok and sent[0][0] == 'POST'
-    assert sent[0][1]['headers']['Authorization'] == f'Bearer {secret}'
+    assert result.ok and sent[0][0] == method
+    assert sent[0][1]['headers'][header] == expected.format(secret)
     assert secret not in repr(service.snapshot(session))
     assert secret not in user_permission_settings_path().read_text()
 

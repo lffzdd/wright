@@ -132,6 +132,10 @@ def test_assemble_runtime_mode_and_rag(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("OPENAI_BASE_URL", "http://127.0.0.1:9/v1")
     monkeypatch.delenv("WRIGHT_KNOWLEDGE_ENABLED", raising=False)
+    # Keep the repository's own .env from supplying a search key.
+    monkeypatch.chdir(tmp_path)
+    for name in ("TAVILY_API_KEY", "BRAVE_API_KEY", "WRIGHT_SEARCH_PROVIDER"):
+        monkeypatch.delenv(name, raising=False)
 
     # 1. Default Coding mode without RAG
     cfg_coding = RuntimeConfig(
@@ -148,6 +152,8 @@ def test_assemble_runtime_mode_and_rag(tmp_path, monkeypatch):
         assert "shell" in base_names
         assert "read" in base_names
         assert "knowledge_search" not in base_names
+        # No search provider configured: the model is not offered web_search.
+        assert "web_search" not in base_names
 
         content = rt_coding.session_state.message_records[0].message["content"]
         assert DEFAULT_CODING_ROLE in content
@@ -155,7 +161,8 @@ def test_assemble_runtime_mode_and_rag(tmp_path, monkeypatch):
     finally:
         shutdown_runtime(rt_coding)
 
-    # 2. General mode with RAG
+    # 2. General mode with RAG and a search provider
+    monkeypatch.setenv("TAVILY_API_KEY", "test-key")
     workspace_gen = tmp_path / "gen_space"
     workspace_gen.mkdir()
     cfg_general = RuntimeConfig(

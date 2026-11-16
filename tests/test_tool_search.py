@@ -11,6 +11,7 @@ from wright.domain.model.tool_definition import Tool
 from wright.domain.model.tool_runtime import ToolRuntime
 from wright.domain.protocol import encode_tools
 from wright.infrastructure.tools import tools as built_in_tools
+from wright.infrastructure.tools.web_search import optional_web_search_tools
 
 
 def _tool(name: str, description: str, *, deferred: bool = False) -> Tool:
@@ -186,7 +187,6 @@ def test_builtin_capabilities_use_hybrid_loading():
         "edit",
         "shell",
         "update_plan",
-        "web_search",
         "web_fetch",
         "http_request",
     }
@@ -207,10 +207,11 @@ def test_core_tools_are_baseline_and_follow_ups_are_deferred():
     class UnusedLLM:
         context_limit = 128_000
 
+    search = optional_web_search_tools({"TAVILY_API_KEY": "test"})
     tools = [
         *build_agent_tools(
             UnusedLLM(),
-            list(built_in_tools),
+            [*built_in_tools, *search],
             depth=0,
             max_depth=1,
             enable_scheduling=True,

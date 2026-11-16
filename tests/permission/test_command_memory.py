@@ -20,7 +20,10 @@ from wright.domain.policy.permission.settings import (
 from wright.domain.policy.permission.types import InvocationIdentity, PermissionResponse
 from wright.infrastructure.runtime.local import LocalExecutionBackend
 from wright.infrastructure.tools.command import execute_command_tool
-from wright.infrastructure.tools.web_tools import http_request_tool, web_search_tool
+from wright.infrastructure.tools.web_search import optional_web_search_tools
+from wright.infrastructure.tools.web_tools import http_request_tool
+
+[web_search_tool] = optional_web_search_tools({"TAVILY_API_KEY": "test"})
 
 
 @pytest.mark.parametrize(

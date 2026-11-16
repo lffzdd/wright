@@ -16,7 +16,9 @@ from wright.infrastructure.config.permission_store import FilePermissionReposito
 from wright.infrastructure.runtime import AuthorizedExecution, LocalExecutionBackend
 from wright.infrastructure.tools.command import execute_command_tool
 from wright.infrastructure.tools.knowledge import build_knowledge_tools
-from wright.infrastructure.tools.web_tools import web_search_tool
+from wright.infrastructure.tools.web_search import optional_web_search_tools
+
+[web_search_tool] = optional_web_search_tools({"TAVILY_API_KEY": "test"})
 
 
 @pytest.fixture

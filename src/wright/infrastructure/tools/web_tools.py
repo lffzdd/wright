@@ -1,38 +1,8 @@
-import os
 from typing import Any
 
 from ...domain.model.tool import AccessTarget, ToolAccess, ToolResult
 from ...domain.model.tool_definition import Tool
 from ..runtime.network import request_target
-
-SEARCH_ENDPOINT = "https://api.tavily.com/search"
-
-def web_search(query: str, max_results: int, *, network, timeout: int = 20):
-    resp = network.request(
-        "POST", SEARCH_ENDPOINT, operation="network_read",
-        headers={
-            "Authorization": f"Bearer {os.environ['TAVILY_API_KEY']}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "query": query,
-            "search_depth": "basic",
-            "include_answer": False,
-            "include_raw_content": False,
-            "max_results": max_results,
-        },
-        timeout=timeout,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-
-    results = []
-    for item in data.get("results", []):
-        title = item.get("title", "")
-        url = item.get("url", "")
-        content = item.get("content", "")
-        results.append({"title": title, "snippet": content, "url": url})
-    return ToolResult.success({"results": results})
 
 
 def http_request(
@@ -85,38 +55,6 @@ def _describe_http_request(args: dict) -> ToolAccess:
         reason=f"HTTP {method} request",
     )
 
-
-def _describe_web_search(args: dict) -> ToolAccess:
-    query = str(args.get("query", ""))
-    return ToolAccess(
-        frozenset({"network_read"}),
-        targets=(AccessTarget("provider", SEARCH_ENDPOINT, "network_read", kind="url", http_method="POST"),),
-        subject=query,
-        risk_flags=("network_read",),
-        reason="web search sends a query to the configured provider",
-    )
-
-
-web_search_tool = Tool(
-    name="web_search",
-    description="Search the web for information.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "query": {"type": "string", "description": "The search query"},
-            "max_results": {
-                "type": "integer",
-                "description": "Maximum number of results to return",
-            },
-        },
-        "required": ["query", "max_results"],
-    },
-    call=lambda args, runtime: web_search(**args, network=runtime.network),
-    access_descriptor=_describe_web_search,
-    required_capabilities=frozenset({"network"}),
-    approval_details=lambda args, cwd: {"http_method": "POST", "http_target": SEARCH_ENDPOINT},
-    is_concurrency_safe=lambda args: True,
-)
 
 http_request_tool = Tool(
     name="http_request",

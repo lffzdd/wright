@@ -29,10 +29,11 @@ from .file import (
 from .human_input import ask_user, ask_user_tool
 from .plan_tools import plan_tools
 from .web_fetch import web_fetch_tool
-from .web_tools import http_request_tool, web_search_tool
+from .web_tools import http_request_tool
 
 # Product tools stay on every request. Schedules, skills, episodes, loops, and
-# MCP catalogs pay one discovery round-trip through tool_search.
+# MCP catalogs pay one discovery round-trip through tool_search. web_search is
+# added by composition only when a search provider is configured.
 tools = [
     list_directory_tool,
     glob_tool,
@@ -42,7 +43,6 @@ tools = [
     edit_file_tool,
     execute_command_tool,
     *plan_tools,
-    web_search_tool,
     web_fetch_tool,
     http_request_tool,
 ]
@@ -72,7 +72,6 @@ __all__ = [
     "skill_tools",
     "tools",
     "web_fetch_tool",
-    "web_search_tool",
     "web_tools",
     "write_file_tool",
 ]
