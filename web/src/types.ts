@@ -181,7 +181,7 @@ export type ContextBreakdown = {
   exact?: boolean;
   total?: number;
   limit?: number | null;
-  system_prompt_contains_core_memory?: boolean;
+  system_prompt_contains_memory?: boolean;
   categories?: ContextCategory[];
   note?: string;
   /** Estimated before any request was assembled. */

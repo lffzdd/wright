@@ -1,66 +1,112 @@
-"""Domain policies for agent memory (core, semantic, episode)."""
+"""Pure rules for agent memory: writes, extraction, egress, lifecycle, episodes."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-
-from .core import CoreMemoryPolicy, CoreMemoryUpdateError
+from .egress import (
+    SHARED_RULE_FILES,
+    ProtectedItem,
+    SinkClass,
+    classify_command,
+    classify_sink,
+    decide,
+    describe_verdict,
+    outbound_text,
+    protected_items,
+    rules_file_requested,
+    scan,
+)
 from .episode import (
     EpisodeAdmission,
     EpisodePolicy,
     has_result_or_verification,
     is_delivered_answer,
 )
-from .semantic import (
+from .extract import (
     ExtractDecision,
+    ExtractPolicy,
     ExtractSignal,
     ProvenanceReview,
-    SemanticExtractPolicy,
-    SemanticMemoryPolicy,
-    bounded_safe_text,
-    is_safe_memory,
-    normalize_stored_scope,
-    record_in_read_scope,
     review_provenance,
-    scope_denial_message,
 )
+from .lexical import bm25_scores, tokenize
+from .lifecycle import (
+    FactAction,
+    commitment_lifecycle,
+    due_time,
+    episode_should_compact,
+    fact_lifecycle,
+    index_score,
+    is_due_soon,
+    parse_time,
+)
+from .secrets import bounded_safe_text, find_secrets, is_safe_memory
 from .user_text import (
     is_substantive_user_text,
     is_trivial_user_text,
     normalize_user_text,
 )
-
-
-@dataclass(frozen=True)
-class MemoryPolicy:
-    """Unified policy facade for memory management."""
-
-    episode: EpisodePolicy = field(default_factory=EpisodePolicy)
-    semantic: SemanticMemoryPolicy = field(default_factory=SemanticMemoryPolicy)
-    extract: SemanticExtractPolicy = field(default_factory=SemanticExtractPolicy)
-    core: CoreMemoryPolicy = field(default_factory=CoreMemoryPolicy)
-
+from .write import (
+    DUPLICATE_SIMILARITY,
+    RELATED_SIMILARITY,
+    classify_sensitivity,
+    coverage,
+    default_tier,
+    extract_markers,
+    has_remember_intent,
+    infer_origin,
+    looks_sensitive,
+    normalize_for_match,
+    normalize_markers,
+    similarity,
+)
 
 __all__ = [
-    "CoreMemoryPolicy",
-    "CoreMemoryUpdateError",
+    "DUPLICATE_SIMILARITY",
+    "RELATED_SIMILARITY",
+    "SHARED_RULE_FILES",
     "EpisodeAdmission",
     "EpisodePolicy",
     "ExtractDecision",
+    "ExtractPolicy",
     "ExtractSignal",
-    "MemoryPolicy",
+    "FactAction",
+    "ProtectedItem",
     "ProvenanceReview",
-    "SemanticExtractPolicy",
-    "SemanticMemoryPolicy",
+    "SinkClass",
+    "bm25_scores",
     "bounded_safe_text",
+    "classify_command",
+    "classify_sensitivity",
+    "classify_sink",
+    "commitment_lifecycle",
+    "coverage",
+    "decide",
+    "default_tier",
+    "describe_verdict",
+    "due_time",
+    "episode_should_compact",
+    "extract_markers",
+    "fact_lifecycle",
+    "find_secrets",
+    "has_remember_intent",
     "has_result_or_verification",
+    "index_score",
+    "infer_origin",
     "is_delivered_answer",
+    "is_due_soon",
     "is_safe_memory",
     "is_substantive_user_text",
     "is_trivial_user_text",
-    "normalize_stored_scope",
+    "looks_sensitive",
+    "normalize_for_match",
+    "normalize_markers",
     "normalize_user_text",
-    "record_in_read_scope",
+    "outbound_text",
+    "parse_time",
+    "protected_items",
     "review_provenance",
-    "scope_denial_message",
+    "rules_file_requested",
+    "scan",
+    "similarity",
+    "tokenize",
 ]

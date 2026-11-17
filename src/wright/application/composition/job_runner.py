@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from copy import copy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from wright.application.permission.workflow import AuthorizationWorkflow
@@ -42,10 +42,12 @@ from ..execution.directory import (
 from ..execution.identity import bind_identity
 from ..execution.roles import tools_for_role
 from ..execution.services import RuntimeServices
+from ..memory.egress import EgressGuard, LazyEgressGuard
 from ..scheduling.scheduler import JobScheduler
 from ..session_runtime.live_resources import RuntimeResources
 from ..session_runtime.publisher import open_session_events
 from ..tool_execution.capabilities import assemble_tool_capabilities
+from .memory_assembly import assemble_memory_service
 
 logger = get_logger(__name__)
 
@@ -376,6 +378,12 @@ def launch_job_run(
         RuntimeResources(child_session.session_id, commands=durable_commands),
         execution_journal_factory=child_journal_factory,
         permissions=permission_service,
+    )
+    # Unattended runs get the same egress check. With no one to ask, a hit
+    # skips that call; the deterministic layers run, the model judge does not.
+    child_assembly = replace(
+        child_assembly,
+        egress_guard=LazyEgressGuard(lambda: EgressGuard(assemble_memory_service())),
     )
     durable_profile = AgentProfile(
         "durable", frozenset(tool.name for tool in child_tools),

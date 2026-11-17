@@ -1,4 +1,4 @@
-"""Persistence adapters for episode and semantic memory and durable storage."""
+"""Persistence adapters for memory, sessions, and durable task storage."""
 
 from __future__ import annotations
 
@@ -8,52 +8,15 @@ from .autonomy_store import (
     AutonomyStore,
     AutonomyStoreError,
 )
-from .memory import (
-    CORE_MEMORY_FILE,
-    MEMORY_INDEX,
-    EpisodeNotFoundError,
-    EpisodeRecord,
-    EpisodeStatus,
-    EpisodeStore,
-    EpisodeStoreError,
-    FileCoreMemoryStore,
-    SemanticMemoryStore,
-    create_memory,
-    delete_memory,
-    ensure_memory_dir,
-    entrypoint_path,
-    get_memory,
-    memory_dir,
-    rebuild_index,
-    search_memories,
-    update_memory,
-    write_memory_file,
-)
+from .memory import SqliteMemoryStore, memory_dir
 from .session.repository import FileSessionRepository
 
 __all__ = [
-    "CORE_MEMORY_FILE",
-    "MEMORY_INDEX",
     "AutonomyNotFoundError",
     "AutonomyStore",
     "AutonomyStoreError",
     "CheckpointError",
-    "EpisodeNotFoundError",
-    "EpisodeRecord",
-    "EpisodeStatus",
-    "EpisodeStore",
-    "EpisodeStoreError",
-    "FileCoreMemoryStore",
     "FileSessionRepository",
-    "SemanticMemoryStore",
-    "create_memory",
-    "delete_memory",
-    "ensure_memory_dir",
-    "entrypoint_path",
-    "get_memory",
+    "SqliteMemoryStore",
     "memory_dir",
-    "rebuild_index",
-    "search_memories",
-    "update_memory",
-    "write_memory_file",
 ]

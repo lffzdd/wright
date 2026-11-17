@@ -229,36 +229,30 @@ def test_turn_handler_does_not_hold_the_agent() -> None:
 
 def test_memory_manager_does_not_construct_stores() -> None:
     text = (PACKAGE_ROOT / "application/memory/manager.py").read_text(encoding="utf-8")
-    assert "SemanticMemoryStore" not in text
-    assert "FileCoreMemoryStore" not in text
-    assert "EpisodeStore(" not in text
+    assert "SqliteMemoryStore" not in text
     assert "LlmContextSelector" not in text
     assembly = (PACKAGE_ROOT / "application/composition/memory_assembly.py").read_text(encoding="utf-8")
-    assert "SemanticMemoryStore" in assembly
+    assert "SqliteMemoryStore(" in assembly
     assert "def memory_tools" in assembly
+    assert "def egress_guard" in assembly
 
 
-def test_semantic_store_keeps_the_lock_around_replacement() -> None:
-    store = (PACKAGE_ROOT / "infrastructure/persistence/memory/semantic.py").read_text(
-        encoding="utf-8"
-    )
-    index = (PACKAGE_ROOT / "infrastructure/persistence/memory/semantic_index.py").read_text(
-        encoding="utf-8"
-    )
-    assert "class _StoreLock" in store
-    assert "_StoreLock(" not in index
-    create = store.split("def create_memory", 1)[1].split("\ndef ", 1)[0]
-    assert "with _StoreLock" in create
-    assert "_rebuild_index_unlocked" in create
-    exported = store.split("__all__ = [", 1)[1].split("]", 1)[0]
-    for name in (
-        "parse_frontmatter",
-        "dump_frontmatter",
-        "scan_memory_files",
-        "format_manifest",
-        "read_entrypoint",
-    ):
-        assert f'"{name}"' not in exported
+def test_memory_store_changes_rows_inside_transactions() -> None:
+    store = (PACKAGE_ROOT / "infrastructure/persistence/memory/sqlite_store.py").read_text(encoding="utf-8")
+    for method in ("def replace_fact", "def touch_facts", "def save_episode", "def upsert_space"):
+        body = store.split(method, 1)[1].split("\n    def ", 1)[0]
+        assert "with self.transaction()" in body, method
+
+
+def test_egress_check_runs_before_permission_and_in_every_dispatcher() -> None:
+    dispatch = (PACKAGE_ROOT / "application/tool_execution/dispatch.py").read_text(encoding="utf-8")
+    batch = dispatch.split("for batch in self._partition_original_calls(prepared):", 1)[1]
+    assert batch.index("self._egress_check(") < batch.index("self._prepare_invocation(")
+    # A failing check must hold the call, never let it through.
+    check = dispatch.split("def _egress_check", 1)[1].split("\n    def ", 1)[0]
+    assert 'EgressVerdict("ask"' in check
+    capabilities = (PACKAGE_ROOT / "application/tool_execution/capabilities.py").read_text(encoding="utf-8")
+    assert "services.egress_guard" in capabilities
 
 
 def test_session_repository_keeps_io_separate_from_codec() -> None:

@@ -188,12 +188,11 @@ export default function App() {
       ]);
       if (!current) return;
       const memory = memoryResult.status === "fulfilled" ? memoryResult.value : null;
-      const core = memory?.core && typeof memory.core === "object" ? memory.core as Record<string, unknown> : {};
-      const semantic = Array.isArray(memory?.semantic) ? memory.semantic : [];
-      const episodes = Array.isArray(memory?.episodes) ? memory.episodes : [];
+      const facts = Array.isArray(memory?.facts) ? memory.facts as Array<Record<string, unknown>> : [];
+      const commitments = Array.isArray(memory?.commitments) ? memory.commitments as Array<Record<string, unknown>> : [];
       setCapabilityCounts({
         memory: memoryResult.status === "fulfilled"
-          ? [core.human_profile, core.project_anchor].filter((value) => typeof value === "string" && value.trim().length > 0).length + semantic.length + episodes.length
+          ? facts.filter((fact) => fact.status === "active" || fact.status === "quarantined").length + commitments.filter((item) => item.status === "open").length
           : null,
         rules: rulesResult.status === "fulfilled"
           ? (rulesResult.value.rules ?? []).filter((rule) => typeof rule.id === "string" && rule.id.length > 0).length

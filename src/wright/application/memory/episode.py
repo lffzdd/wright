@@ -24,6 +24,7 @@ from .turn_snapshot import (
     root_run_identity,
     terminal_status,
     turn_evidence,
+    turn_links,
     turn_tools,
     turn_usage,
     turn_verification,
@@ -88,6 +89,7 @@ def episode_from_session(
         project_root=str(project_root),
         root_run_id=root_run_id,
         termination_reason=reason,
+        links={key: tuple(value) for key, value in turn_links(session_state).items()},
     )
 
 

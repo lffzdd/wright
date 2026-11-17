@@ -42,6 +42,7 @@ class CapabilityAssembly:
     workspace_dir: Path
     cwd_provider: Callable[[], Path]
     permissions: PermissionService
+    egress_guard: Any = None
 
 
 def assemble_tool_capabilities(
@@ -150,6 +151,7 @@ def assemble_tool_capabilities(
         workspace,
         cwd,
         permissions,
+        services.egress_guard if services is not None else None,
     )
 
 

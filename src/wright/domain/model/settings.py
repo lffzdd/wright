@@ -116,7 +116,7 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
     ),
     SettingSpec(
         "llm.memory_model", "str", "", env=("OPENAI_MEMORY_MODEL",), project_safe=True,
-        description="Cheaper model for memory selection and session titles; empty uses llm.model.",
+        description="Cheaper model for memory recall, fact extraction, the memory egress check and session titles; empty uses llm.model.",
     ),
     SettingSpec(
         "llm.context_limit", "int", 128000, env=("OPENAI_CONTEXT_LIMIT",),

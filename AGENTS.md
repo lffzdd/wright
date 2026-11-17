@@ -31,7 +31,7 @@ WRIGHT_SANDBOX_INTEGRATION=1 uv run pytest -q tests/runtime/test_native_sandbox.
 - 子 Agent 和多 Agent：[docs/multiagent-control-plane.md](docs/multiagent-control-plane.md)
 - Agent 和 Shell 任务的统一控制入口：[docs/unified-task-runtime.md](docs/unified-task-runtime.md)
 - 定时任务和调度：[docs/long-running-autonomy.md](docs/long-running-autonomy.md)
-- 长期记忆：[docs/core-memory.md](docs/core-memory.md)、[docs/episode-memory.md](docs/episode-memory.md)、[docs/semantic-memory.md](docs/semantic-memory.md)
+- 长期记忆和出口检查：[docs/memory.md](docs/memory.md)
 - Skills 和知识检索：[docs/skills-and-knowledge.md](docs/skills-and-knowledge.md)
 - 生命周期钩子和 trace：[docs/lifecycle-hooks-and-traces.md](docs/lifecycle-hooks-and-traces.md)
 - Windows 兼容和文件锁：[docs/windows.md](docs/windows.md)
@@ -63,7 +63,7 @@ WRIGHT_SANDBOX_INTEGRATION=1 uv run pytest -q tests/runtime/test_native_sandbox.
 - `application/agent`：单个 Agent 的回合循环和上下文组装；`session`：会话级的队列、分发和命令。
 - `application/tool_execution`：一次工具调用（分发、审批）；`command`：shell 命令的执行和输出；`execution`：执行 ID、同一目录下工作的排队、进程内共享的运行时服务。
 - `domain/model` 放数据模型，`domain/policy` 放规则（权限、上下文预算、护栏），`domain/gateway` 放给 `infrastructure` 实现的接口。
-- `memory` 是长期记忆（core、episode、semantic）；`knowledge` 是文档 RAG 检索。
+- `memory` 是长期记忆（事实、episode、承诺）和出口检查；`knowledge` 是文档 RAG 检索。
 - `infrastructure/persistence` 存会话、记忆、任务运行记录等持久状态；`storage` 存附件、产物和 skills 文件。
 - `infrastructure/runtime` 是命令执行后端和沙箱；`infrastructure/tools` 是各工具的具体实现。
 

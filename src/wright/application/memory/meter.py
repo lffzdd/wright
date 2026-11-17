@@ -59,7 +59,7 @@ class InjectionObservation:
     rendered_episode_ids: tuple[str, ...] = ()
     budget_skipped_ids: tuple[str, ...] = ()
     injected_episode_ids: tuple[str, ...] = ()
-    semantic_estimated_tokens: int = 0
+    fact_estimated_tokens: int = 0
     episode_estimated_tokens: int = 0
     context_omitted: bool = False
 
@@ -69,7 +69,7 @@ class InjectionObservation:
             "rendered_episode_ids": list(self.rendered_episode_ids),
             "budget_skipped_ids": list(self.budget_skipped_ids),
             "injected_episode_ids": list(self.injected_episode_ids),
-            "semantic_estimated_tokens": self.semantic_estimated_tokens,
+            "fact_estimated_tokens": self.fact_estimated_tokens,
             "episode_estimated_tokens": self.episode_estimated_tokens,
             "context_omitted": self.context_omitted,
         }
@@ -148,7 +148,7 @@ class MemoryMeter:
         selected_episode_ids: tuple[str, ...] = (),
         rendered_episode_ids: tuple[str, ...] = (),
         budget_skipped_ids: tuple[str, ...] = (),
-        semantic_estimated_tokens: int = 0,
+        fact_estimated_tokens: int = 0,
         episode_estimated_tokens: int = 0,
         omitted: bool = False,
     ) -> None:
@@ -160,7 +160,7 @@ class MemoryMeter:
                 rendered_episode_ids=rendered_episode_ids,
                 budget_skipped_ids=budget_skipped_ids,
                 injected_episode_ids=injected,
-                semantic_estimated_tokens=semantic_estimated_tokens,
+                fact_estimated_tokens=fact_estimated_tokens,
                 episode_estimated_tokens=sent_episode_tokens,
                 context_omitted=omitted,
             )

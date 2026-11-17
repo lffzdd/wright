@@ -84,6 +84,7 @@ from .host import ApplicationHost
 from .lifecycle_loader import load_lifecycle_manager
 from .memory_assembly import (
     assemble_memory_manager,
+    egress_guard,
     memory_tools,
 )
 from .settings import load_settings
@@ -673,6 +674,9 @@ def assemble_runtime(
         selector_llm=selector_llm,
         session_repository=checkpoint_store,
     )
+    # Every tool call that can send text off the machine is checked against
+    # memory first, for this agent and every subagent sharing these services.
+    services.egress_guard = egress_guard(memory_manager)
     skill_registry = SkillRegistry(skill_directories(workspace_dir))
     # 注册与 schema 暴露分开：加载器常驻注册，有技能时才出现在当轮 schema 和目录里。
     skill_tools = resident_skill_tools(skill_registry)

@@ -306,7 +306,7 @@ export function toolCategory(name: string, kind?: string): StepCategory {
   // Follow-ups on a background command: shell_output, shell_kill, list_commands (and older names).
   if (lowered.startsWith("shell_") || /_commands?$/.test(lowered)) return "commands";
   // Memory and knowledge lookups are recall, not code search, even when named "search_*".
-  if (/memory|episode|knowledge/.test(lowered)) return "memory";
+  if (/memory|episode|knowledge|commitment/.test(lowered)) return "memory";
   if (lowered.includes("plan")) return "plans";
   if (isDirectoryTool(lowered)) return "directories";
   if (/grep|glob|search/.test(lowered)) return "searches";

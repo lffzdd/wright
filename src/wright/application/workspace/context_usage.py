@@ -26,12 +26,12 @@ _CATEGORIES = (
 
 def classify_context(view: Any) -> dict[str, Any]:
     totals = dict.fromkeys(_CATEGORIES, 0)
-    contains_core = False
+    contains_memory = False
     for entry in getattr(view, "entries", ()) or ():
         message = entry.message
         content = message.get("content") if isinstance(message, dict) else ""
-        if isinstance(content, str) and "<CORE_MEMORY>" in content and message.get("role") == "system":
-            contains_core = True
+        if isinstance(content, str) and "<MEMORY_CONTEXT>" in content and message.get("role") == "system":
+            contains_memory = True
         bucket = _bucket(entry)
         totals[bucket] += estimate_message_tokens(message if isinstance(message, dict) else {})
     totals["tool_schemas"] = int(getattr(view, "tool_schema_tokens", 0) or 0)
@@ -43,7 +43,7 @@ def classify_context(view: Any) -> dict[str, Any]:
         "exact": False,
         "total": total,
         "limit": limit,
-        "system_prompt_contains_core_memory": contains_core,
+        "system_prompt_contains_memory": contains_memory,
         "categories": [
             {
                 "id": name,
@@ -107,7 +107,7 @@ def empty_context(limit: int | None) -> dict[str, Any]:
         "exact": False,
         "total": 0,
         "limit": limit,
-        "system_prompt_contains_core_memory": False,
+        "system_prompt_contains_memory": False,
         "categories": [{"id": name, "tokens": 0, "share": 0} for name in _CATEGORIES],
         "note": "No model request has been assembled for this session yet.",
     }
@@ -122,7 +122,7 @@ def _bucket(entry: Any) -> str:
         return "system_prompt"
     if role == "tool":
         return "tool_output"
-    if "wright-semantic-recall" in content or "wright-episode-recall" in content:
+    if "wright-fact-recall" in content or "wright-episode-recall" in content:
         return "memory"
     if "<skill-catalog>" in content:
         return "rules"

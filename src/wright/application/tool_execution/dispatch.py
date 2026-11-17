@@ -23,6 +23,7 @@ from ...domain.gateway.runtime_protocols import (
 from ...domain.gateway.runtime_types import ExecutionPath
 from ...domain.gateway.tool_executor import IToolExecutor
 from ...domain.model.agent import CapabilitySnapshot
+from ...domain.model.memory import EgressHit, EgressVerdict
 from ...domain.model.tool import (
     ToolCall,
     ToolExecutionOutcome,
@@ -37,10 +38,15 @@ from ...domain.policy import (
     AccessScope,
     InvocationIdentity,
     PermissionApprovalHandler,
+    PermissionChoice,
     PermissionPolicy,
+    PermissionPrompt,
+    PermissionRequest,
     PermissionResolution,
     PermissionSubject,
 )
+from ...domain.policy.memory import describe_verdict
+from ...domain.policy.permission import normalize_response
 from .capabilities import CapabilityAssembly
 from .executor import ConcurrentToolExecutor
 from .validation import validate_tool_arguments
@@ -158,6 +164,7 @@ class ToolDispatchService:
         self.workspace_dir = assembly.workspace_dir
         self.cwd_provider = assembly.cwd_provider
         self.permissions = assembly.permissions
+        self.egress_guard = getattr(assembly, "egress_guard", None)
 
     @property
     def backend(self) -> ExecutionBackend:
@@ -275,6 +282,111 @@ class ToolDispatchService:
                 else self.runtime.emit_output
             ),
         )
+
+    def _egress_check(self, call: ToolCall, tool: Tool) -> ToolResult | None:
+        """Hold calls that would carry private memory off the machine (docs/memory.md).
+
+        Runs before permission so a refused call never asks for a second
+        approval. Any failure here holds the call instead of letting it pass.
+        """
+        guard = self.egress_guard
+        if guard is None:
+            return None
+        cwd = self._current_cwd()
+        try:
+            access = tool.describe_access(call.arguments)
+            write_paths = [
+                str((cwd / target.value) if not Path(target.value).is_absolute() else Path(target.value))
+                for target in access.targets
+                if target.operation == "file_write" and target.value
+            ]
+            project_root = str(
+                getattr(self.session, "project_root", None)
+                or getattr(self.session, "workspace_dir", None)
+                or self.workspace_dir
+            )
+            verdict = guard.inspect_call(
+                tool_name=call.name,
+                operations=sorted(access.operations),
+                arguments=dict(call.arguments),
+                write_paths=write_paths,
+                project_root=project_root,
+                session=self.session,
+            )
+        except Exception as exc:
+            logger.warning("egress check raised for %s: %s", call.name, type(exc).__name__)
+            verdict = EgressVerdict("ask", (EgressHit("personal", "check_failed", type(exc).__name__),))
+        if verdict.allowed:
+            return None
+        detail = describe_verdict(verdict)
+        data = {
+            "reason_code": "memory.egress_" + verdict.action,
+            "egress": [hit.to_dict() for hit in verdict.hits],
+        }
+        self._emit_lifecycle("permission_decision", {
+            "tool_name": call.name,
+            "tool_call_id": call.id,
+            "decision": "egress_" + verdict.action,
+            "reason": verdict.reason,
+            "risk_flags": ["memory_egress"],
+            "source": "memory_egress",
+        })
+        if verdict.action == "reject":
+            return ToolResult.fail(
+                "Egress check refused this call: it contains a credential. Credentials never leave the "
+                "machine, even with approval. Use an environment variable or ask the user to do it.\n" + detail,
+                data=data,
+            )
+        handler = self.permission_workflow.approval_handler
+        held = (
+            "Egress check held this call: it may carry private memory to a place others can see.\n"
+            + detail
+            + "\nRemove that content and try again, or ask the user whether it may be included."
+        )
+        if handler is None:
+            return ToolResult.fail(held + "\nNo one is available to approve it, so it was skipped.", data=data)
+        try:
+            backend_cwd = self._execution_backend.cwd()
+            prompt = PermissionPrompt(
+                request_id=call.id or f"egress:{call.name}",
+                tool_name=call.name,
+                subject="Private memory in outgoing content",
+                reason="This call may send private memory to a place others can see.",
+                risk_flags=("memory_egress",),
+                targets=tuple(hit.snippet for hit in verdict.hits[:6]),
+                choices=(
+                    PermissionChoice("allow_once", "Allow once", "This call only", "Not saved"),
+                    PermissionChoice("deny", "Deny", "Do not run; the agent removes the content", "Not saved"),
+                ),
+                principal=self.capabilities.scope.agent_task_id or self.capabilities.scope.session_id,
+                operation="memory egress",
+                grant_summary="This call only; no rule is saved",
+                preview=detail,
+                cwd=str(backend_cwd.value),
+                risk_level="elevated",
+            )
+            request = PermissionRequest(
+                call,
+                dict(call.arguments),
+                access,
+                (),
+                backend_cwd,
+                self._access_scope(),
+                InvocationIdentity(
+                    self.capabilities.scope.session_id,
+                    self.capabilities.scope.run_id,
+                    call.id,
+                    self.capabilities.scope.agent_task_id,
+                ),
+                prompt,
+            )
+            response = normalize_response(handler(request))
+        except Exception as exc:
+            logger.warning("egress approval failed: %s", type(exc).__name__)
+            return ToolResult.fail(held, data=data)
+        if response.choice == "allow_once":
+            return None
+        return ToolResult.fail(held + "\nThe user denied it.", data=data)
 
     def _prepare_invocation(
         self,
@@ -508,6 +620,10 @@ class ToolDispatchService:
                             ToolResult.fail(err=f"Unknown tool: {effective_call.name}"),
                         )
                     )
+                    continue
+                egress_error = self._egress_check(effective_call, tool)
+                if egress_error is not None:
+                    prepared_batch.append((idx, None, effective_call, egress_error))
                     continue
                 prepared_invocation = self._prepare_invocation(
                     original_call, effective_call, tool

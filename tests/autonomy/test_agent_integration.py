@@ -9,8 +9,11 @@ from wright.application.agent import (
 )
 from wright.application.composition.agent_factory import create_agent
 from wright.application.composition.job_runner import _RunJournal, launch_job_run
+from wright.application.composition.memory_assembly import assemble_memory_manager
+from wright.application.composition.memory_assembly import (
+    memory_tools as build_memory_tools,
+)
 from wright.application.execution.services import RuntimeServices
-from wright.application.memory.memory_service import MemoryService
 from wright.application.permission.workflow import AuthorizationWorkflow
 from wright.application.scheduling.scheduler import JobScheduler
 from wright.application.tool_execution.schedule import schedule_tools
@@ -25,12 +28,10 @@ from wright.domain.policy import (
     PermissionSettings,
 )
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
-from wright.infrastructure.persistence.memory import EpisodeStore, SemanticMemoryStore
 from wright.infrastructure.storage.skill_registry import SkillRegistry
 from wright.infrastructure.storage.skills import write_skill
 from wright.infrastructure.tools.human_input import ask_user_tool
 from wright.infrastructure.tools.knowledge import build_knowledge_tools
-from wright.infrastructure.tools.memory import build_memory_tools
 from wright.infrastructure.tools.skill_tools import build_skill_tools
 
 
@@ -189,11 +190,7 @@ def test_durable_run_does_not_block_root_user_input(tmp_path):
 def test_durable_session_omits_ask_user_and_schedule_tools(tmp_path):
     workspace, store, session, scheduler, events, background, services = _runtime(tmp_path)
     run_id = _claim_run(store)
-    memory_tools = build_memory_tools(
-        service=MemoryService(
-            SemanticMemoryStore(tmp_path / "memory"), EpisodeStore(tmp_path / "memory")
-        )
-    )
+    memory_tools = build_memory_tools(assemble_memory_manager(None, directory=tmp_path / "memory"))
     write_skill(
         tmp_path / "skills",
         "release-check",
@@ -238,8 +235,9 @@ def test_durable_session_omits_ask_user_and_schedule_tools(tmp_path):
     assert "cancel_schedule_run" not in names
     assert "get_agent" not in names
     assert "list_commands" not in names
-    assert "create_memory" not in names
-    assert "search_memory" not in names
+    assert "memory_write" not in names
+    assert "memory_search" not in names
+    assert "commitment_create" not in names
     assert "knowledge_search" not in names
     assert "skill" not in names
     assert "list_skills" not in names

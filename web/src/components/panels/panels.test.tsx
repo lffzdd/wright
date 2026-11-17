@@ -96,26 +96,26 @@ describe("workspace panels", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it("shows the current core memory section so saving does not silently replace it", async () => {
-    const puts: Array<Record<string, unknown>> = [];
+  it("lists facts with their space and tier, and confirms a quarantined one", async () => {
+    const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      if (init?.method === "PUT") puts.push(JSON.parse(String(init.body)));
+      calls.push(`${init?.method ?? "GET"} ${url}`);
       return { ok: true, statusText: "OK", json: async () => ({
-        core: { persona: "Persona", human_profile: "Prefers Chinese replies.", project_anchor: "Wright is a coding agent.", persona_editable: false },
-        semantic: [], episodes: [],
+        facts: [
+          { id: "f-1", content: "Answer in Chinese.", kind: "preference", space_id: "global", tier: "pinned", status: "active", sensitivity: "personal", origin: "user_stated", revision: 1 },
+          { id: "f-2", content: "Deploy host is db.corp.internal.", kind: "fact", space_id: "repo:p", tier: "archived", status: "quarantined", sensitivity: "none", origin: "external", revision: 1 },
+        ],
+        episodes: [], commitments: [], changes: [],
       }) };
     }));
     render(<MemoryPage projectId="ws" />);
-    expect(await screen.findByText("Prefers Chinese replies.")).toBeTruthy();
+    expect(await screen.findByText("Answer in Chinese.")).toBeTruthy();
     expect(vi.mocked(fetch).mock.calls[0][0]).toBe("/api/v1/workspaces/ws/memory");
-    expect(screen.getByText("Wright is a coding agent.")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Edit Project anchor" }));
-    const editor = screen.getByRole("textbox", { name: "Project anchor" }) as HTMLTextAreaElement;
-    expect(editor.value).toBe("Wright is a coding agent.");
-    fireEvent.change(editor, { target: { value: "Wright is a coding agent. Uses DDD layers." } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await vi.waitFor(() => expect(puts).toHaveLength(1));
-    expect(puts[0]).toMatchObject({ section: "project_anchor", content: "Wright is a coding agent. Uses DDD layers.", mode: "replace" });
+    expect(screen.getByText("pinned")).toBeTruthy();
+    expect(screen.getByText("needs confirmation")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Deploy host is db.corp.internal." }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Confirm" }));
+    await vi.waitFor(() => expect(calls).toContain("POST /api/v1/workspaces/ws/memory/facts/f-2/confirm"));
   });
 
   it("explains that memory needs a workspace instead of showing an unusable form", () => {
@@ -125,23 +125,19 @@ describe("workspace panels", () => {
     expect(screen.queryByRole("tablist")).toBeNull();
   });
 
-  it("lists semantic memories under their tab and edits one in place", async () => {
+  it("edits a fact in place with the revision it read", async () => {
     const patches: Array<Record<string, unknown>> = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
       if (init?.method === "PATCH") patches.push(JSON.parse(String(init.body)));
       return { ok: true, statusText: "OK", json: async () => ({
-        core: null,
-        semantic: [{ id: "m1", name: "No global pip", content: "Use uv, never pip install globally.", type: "feedback", revision: 2, status: "active" }],
-        episodes: [],
+        facts: [{ id: "f-1", content: "Use uv, never pip install globally.", kind: "feedback", space_id: "repo:p", tier: "indexed", status: "active", sensitivity: "none", origin: "user_stated", revision: 2 }],
+        episodes: [], commitments: [], changes: [],
       }) };
     }));
     render(<MemoryPage projectId="ws" />);
-    fireEvent.click(await screen.findByRole("tab", { name: /Semantic\s*1/ }));
-    expect(screen.getByText("Use uv, never pip install globally.")).toBeTruthy();
-    expect(screen.getByText("rev 2")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Actions for No global pip" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for Use uv, never pip install globally." }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Edit" }));
-    const editor = screen.getByLabelText("Replace No global pip") as HTMLTextAreaElement;
+    const editor = screen.getByLabelText("Edit fact") as HTMLTextAreaElement;
     expect(editor.value).toBe("Use uv, never pip install globally.");
     fireEvent.change(editor, { target: { value: "Use uv only." } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));

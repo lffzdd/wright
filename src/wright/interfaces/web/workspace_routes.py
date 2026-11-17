@@ -25,12 +25,13 @@ from ...application.workspace.git_status import summarize_git
 from ...application.workspace.journal import ChangeJournalError, SessionChangeJournal
 from ...application.workspace.memory_view import (
     MemoryViewError,
-    create_semantic,
-    delete_episode,
-    delete_semantic,
+    confirm_fact,
+    create_fact,
+    forget,
     project_memory,
-    update_core,
-    update_semantic,
+    revert_change,
+    update_commitment,
+    update_fact,
 )
 from ...application.workspace.rules import (
     RuleError,
@@ -125,20 +126,26 @@ class RuleBody(BaseModel):
     expected_version: str
 
 
-class CoreBody(BaseModel):
-    section: str
+class FactBody(BaseModel):
     content: str
-    mode: str = "append"
+    kind: str = "fact"
+    subject: str = "other"
+    space: str = ""
+    why: str = ""
+    pin: bool = False
 
 
-class SemanticBody(BaseModel):
-    name: str
-    content: str
-    description: str = ""
-    type: str = "project"
-    scope: str = "project"
-    confirm: bool = False
+class FactPatchBody(BaseModel):
+    content: str | None = None
+    why: str | None = None
+    kind: str | None = None
+    tier: str | None = None
+    shareable: bool | None = None
     expected_revision: int | None = None
+
+
+class CommitmentBody(BaseModel):
+    status: str
 
 
 class SkillBody(BaseModel):
@@ -445,70 +452,60 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
         except MemoryViewError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    @router.put("/workspaces/{registered_id}/memory/core")
-    def put_core(registered_id: str, body: CoreBody, request: Request) -> dict[str, Any]:
+    @router.post("/workspaces/{registered_id}/memory/facts")
+    def post_fact(registered_id: str, body: FactBody, request: Request) -> dict[str, Any]:
         require(request)
         service, bound = memory_scope(registered_id)
         try:
-            return update_core(service, bound_project_id=bound, section=body.section, content=body.content, mode=body.mode)
-        except MemoryViewError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    @router.post("/workspaces/{registered_id}/memory/semantic")
-    def post_semantic(registered_id: str, body: SemanticBody, request: Request) -> dict[str, Any]:
-        require(request)
-        service, bound = memory_scope(registered_id)
-        try:
-            return create_semantic(
-                service,
-                bound_project_id=bound,
-                name=body.name,
-                content=body.content,
-                description=body.description,
-                type_=body.type,
-                scope=body.scope,
+            return create_fact(
+                service, bound_project_id=bound, content=body.content, kind=body.kind,
+                subject=body.subject, space=body.space, why=body.why, pin=body.pin,
             )
         except MemoryViewError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @router.patch("/workspaces/{registered_id}/memory/semantic/{memory_id}")
-    def patch_semantic(registered_id: str, memory_id: str, body: SemanticBody, request: Request) -> dict[str, Any]:
+    @router.patch("/workspaces/{registered_id}/memory/facts/{fact_id}")
+    def patch_fact(registered_id: str, fact_id: str, body: FactPatchBody, request: Request) -> dict[str, Any]:
         require(request)
-        if body.expected_revision is None:
-            raise HTTPException(status_code=400, detail="expected_revision is required")
         service, bound = memory_scope(registered_id)
-        fields = {
-            "name": body.name,
-            "content": body.content,
-            "description": body.description,
-            "type_": body.type,
-        }
         try:
-            return update_semantic(
-                service,
-                memory_id,
-                bound_project_id=bound,
-                expected_revision=body.expected_revision,
-                fields=fields,
-            )
+            return update_fact(service, fact_id, bound_project_id=bound, fields=body.model_dump(exclude_none=True))
         except MemoryViewError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @router.delete("/workspaces/{registered_id}/memory/semantic/{memory_id}")
-    def remove_semantic(registered_id: str, memory_id: str, body: ConfirmBody, request: Request) -> dict[str, Any]:
+    @router.post("/workspaces/{registered_id}/memory/facts/{fact_id}/confirm")
+    def post_confirm_fact(registered_id: str, fact_id: str, request: Request) -> dict[str, Any]:
         require(request)
         service, bound = memory_scope(registered_id)
         try:
-            return delete_semantic(service, memory_id, bound_project_id=bound, confirm=body.confirm)
+            return confirm_fact(service, fact_id, bound_project_id=bound)
         except MemoryViewError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @router.delete("/workspaces/{registered_id}/memory/episodes/{episode_id}")
-    def remove_episode(registered_id: str, episode_id: str, body: ConfirmBody, request: Request) -> dict[str, Any]:
+    @router.delete("/workspaces/{registered_id}/memory/items/{item_id}")
+    def remove_memory_item(registered_id: str, item_id: str, body: ConfirmBody, request: Request) -> dict[str, Any]:
         require(request)
         service, bound = memory_scope(registered_id)
         try:
-            return delete_episode(service, episode_id, bound_project_id=bound, confirm=body.confirm)
+            return forget(service, item_id, bound_project_id=bound, confirm=body.confirm)
+        except MemoryViewError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.patch("/workspaces/{registered_id}/memory/commitments/{commitment_id}")
+    def patch_commitment(registered_id: str, commitment_id: str, body: CommitmentBody, request: Request) -> dict[str, Any]:
+        require(request)
+        service, bound = memory_scope(registered_id)
+        try:
+            return update_commitment(service, commitment_id, bound_project_id=bound, status=body.status)
+        except MemoryViewError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/workspaces/{registered_id}/memory/changes/{change_id}/revert")
+    def post_revert_change(registered_id: str, change_id: int, request: Request) -> dict[str, Any]:
+        require(request)
+        service, _bound = memory_scope(registered_id)
+        try:
+            return revert_change(service, change_id)
         except MemoryViewError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

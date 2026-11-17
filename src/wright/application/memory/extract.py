@@ -1,4 +1,4 @@
-"""Extract durable semantic memories from one turn snapshot.
+"""Extract durable facts from one turn snapshot.
 
 The model sees bounded, labeled sources. A citation is checked against that
 set. Assistant-only claims are not stored. This module does not read a later
@@ -14,27 +14,29 @@ from typing import Any
 from ...core.logger import get_logger
 from ...domain.model.llm import UsageRecord
 from ...domain.model.memory import (
-    SEMANTIC_MEMORY_TYPES,
-    TYPES_SECTION,
-    WHAT_NOT_TO_SAVE,
+    FACT_KINDS,
+    FACT_SUBJECTS,
     SourceLocator,
     encode_locator,
+    repo_space_id,
 )
 from ...domain.policy.memory import (
+    ExtractPolicy,
     ExtractSignal,
-    SemanticExtractPolicy,
     review_provenance,
 )
+from .dto import WriteRequest
 from .llm_util import SideQueryResult
+from .prompt import KINDS_SECTION, WHAT_NOT_TO_SAVE
 
 logger = get_logger(__name__)
 
 MAX_EXTRACT_CHARS = 8_000
 _TRUNCATED = "…(truncated)"
 
-EXTRACT_SYSTEM_PROMPT = f"""After a conversation between an AI agent and a user, extract memories worth keeping across sessions.
+EXTRACT_SYSTEM_PROMPT = f"""After a conversation between an AI agent and a user, extract facts worth keeping across sessions.
 
-{TYPES_SECTION}
+{KINDS_SECTION}
 
 {WHAT_NOT_TO_SAVE}
 
@@ -42,18 +44,19 @@ Every source is labeled with an id and a kind. kind=user_statement is something 
 
 Extract only what is clearly worth keeping. If nothing qualifies, return an empty list.
 source_refs must be ids that appear in the input. Do not invent ids.
-A user or feedback memory must cite at least one user_statement.
+A preference or feedback fact must cite at least one user_statement.
 Do not save a conclusion supported only by assistant statements.
-Automatic writes belong only to the current project. Do not fill in scope and do not try to make the memory global.
-An update memory_id must come from the updatable list. Read-only global memories cannot be updated and cannot be rewritten as project memories.
-Do not fill in memory_id for a create. A memory with the same name does not overwrite an existing record.
+Facts are stored in the current project's space. Do not try to make them global.
+Never extract health, money, relationship, belief, legal or identity-document details.
+To replace an existing fact that is now wrong, use action=supersede with its id from the replaceable list.
+markers are distinctive words (names, hostnames, code names) that would reveal this fact if they appeared elsewhere.
 
 Output strict JSON only:
-{{"memories": [
-  {{"memory_id": "existing-id (update only)", "name": "short topic", "description": "one sentence",
-    "type": "{' | '.join(SEMANTIC_MEMORY_TYPES)}",
-    "content": "memory body", "action": "create | update | skip",
-    "source_refs": ["source id"]}}
+{{"facts": [
+  {{"action": "create | supersede | skip", "supersedes": "f-... (supersede only)",
+    "kind": "{' | '.join(FACT_KINDS)}", "subject": "{' | '.join(FACT_SUBJECTS)}",
+    "content": "one self-contained statement", "why": "why it matters (optional)",
+    "markers": ["optional"], "source_refs": ["source id"]}}
 ]}}"""
 
 
@@ -74,7 +77,7 @@ def extract_from_snapshot(
     query,
     directory,
     service,
-    policy: SemanticExtractPolicy | None = None,
+    policy: ExtractPolicy | None = None,
 ) -> ExtractOutcome:
     """Run the gate and, when it says so, one model call. Never raises."""
     try:
@@ -83,7 +86,7 @@ def extract_from_snapshot(
             query=query,
             directory=directory,
             service=service,
-            policy=policy or SemanticExtractPolicy(),
+            policy=policy or ExtractPolicy(),
         )
     except Exception as exc:
         logger.info("memory_extract failure_type=%s", type(exc).__name__)
@@ -102,7 +105,7 @@ def _extract(snapshot, *, query, directory, service, policy) -> ExtractOutcome:
     decision = policy.decide(signals, verification=verification)
     if not decision.should_extract:
         return ExtractOutcome("skipped", decision.reason_codes or ("skipped",))
-    manifest, updatable_ids, readonly = service.extraction_manifest(project_id)
+    manifest, updatable_ids, readonly = _extraction_manifest(service, project_id)
     evidence = episode.get("evidence") if isinstance(episode.get("evidence"), list) else []
     packet, included_ids, offered_ids = _packet(
         evidence,
@@ -132,7 +135,7 @@ def _extract(snapshot, *, query, directory, service, policy) -> ExtractOutcome:
             duration_ms=result.duration_ms,
             model=result.model,
         )
-    memories = payload.get("memories", []) if isinstance(payload, dict) else None
+    memories = payload.get("facts", []) if isinstance(payload, dict) else None
     if not isinstance(memories, list):
         return ExtractOutcome(
             "invalid",
@@ -282,10 +285,10 @@ def _packet(
             line = f"[{evidence_id} kind={kind}] {summary}"
         entries.append((evidence_id, line))
     readonly_text = readonly if len(readonly) <= 1_500 else readonly[:1_500] + _TRUNCATED
-    readonly_block = "Read-only global memories (cannot update, and cannot rewrite them as project memories):\n" + readonly_text + "\n\n"
+    readonly_block = "Read-only global facts (cannot be replaced from here):\n" + readonly_text + "\n\n"
     source_header = "Sources (cite only ids that appear below; do not invent ids):\n"
     omitted = "Some sources were omitted for budget. Ids that do not appear cannot be cited.\n"
-    intro = "Updatable memories (update only these ids; they belong to the current project):\n"
+    intro = "Replaceable facts (supersede only these ids; they belong to the current project):\n"
 
     def pack(update_lines: list[str], source_lines: list[str], dropped: bool) -> str:
         update_body = "\n".join(update_lines) if update_lines else "(none)"
@@ -363,6 +366,16 @@ def _locator_token(item: dict[str, Any], episode: dict[str, Any]) -> str | None:
     ))
 
 
+def _extraction_manifest(service, project_id: str) -> tuple[str, tuple[str, ...], str]:
+    space_id = repo_space_id(project_id)
+    service.ensure_repo_space(project_id)
+    project_facts = service.list_facts(space_ids=[space_id])
+    global_facts = service.list_facts(space_ids=["global"])
+    manifest = "\n".join(f"- {item.id} | {item.kind} | {item.summary}" for item in project_facts)
+    readonly = "\n".join(f"- {item.id} | {item.kind} | {item.summary}" for item in global_facts) or "(none)"
+    return manifest, tuple(item.id for item in project_facts), readonly
+
+
 def _save_memories(
     memories: list[Any],
     kinds: dict[str, str],
@@ -382,6 +395,8 @@ def _save_memories(
         if isinstance(item, dict) and isinstance(item.get("id"), str)
     }
     offered = set(updatable_ids)
+    space_id = repo_space_id(project_id)
+    episode_id = str(episode.get("id") or "")
     for item in memories:
         if written >= 5:
             break
@@ -392,24 +407,23 @@ def _save_memories(
         action = item.get("action")
         if action == "skip":
             continue
-        if action not in {"create", "update"}:
+        if action not in {"create", "supersede"}:
             rejected += 1
             reasons.append("invalid_action")
             continue
-        name = item.get("name")
-        type_ = item.get("type")
+        kind = item.get("kind")
         content = item.get("content")
-        refs = item.get("source_refs")
-        if not (isinstance(name, str) and name and isinstance(content, str) and content):
+        if not (isinstance(content, str) and content.strip()):
             rejected += 1
             reasons.append("invalid_item")
             continue
-        if type_ not in SEMANTIC_MEMORY_TYPES:
+        if kind not in FACT_KINDS:
             rejected += 1
-            reasons.append("invalid_type")
+            reasons.append("invalid_kind")
             continue
+        refs = item.get("source_refs")
         review = review_provenance(
-            memory_type=str(type_),
+            kind=str(kind),
             source_refs=refs if isinstance(refs, list) else [],
             kinds=kinds,
         )
@@ -430,32 +444,27 @@ def _save_memories(
             rejected += 1
             reasons.append("incomplete_locator")
             continue
-        memory_id = str(item.get("memory_id") or "") if action == "update" else ""
-        if action == "update" and memory_id not in offered:
+        supersedes = str(item.get("supersedes") or "") if action == "supersede" else ""
+        if action == "supersede" and supersedes not in offered:
             rejected += 1
-            reasons.append("memory_not_in_manifest")
+            reasons.append("fact_not_in_manifest")
             continue
-        _record, error = service.record_extracted(
-            name=str(name),
-            content=str(content),
-            type_=str(type_),
-            description=str(item.get("description") or ""),
-            origin=review.origin,
-            source_refs=tuple(tokens),
-            project_id=project_id,
-            memory_id=memory_id,
-            action=action,
-            updatable_ids=updatable_ids,
-        )
-        if error is not None:
+        markers = item.get("markers")
+        subject = item.get("subject")
+        outcome = service.write_fact(WriteRequest(
+            content=content,
+            kind=str(kind),
+            space_id=space_id,
+            subject=str(subject) if subject in FACT_SUBJECTS else "other",
+            why=str(item.get("why") or ""),
+            markers=tuple(str(value) for value in markers) if isinstance(markers, list) else (),
+            supersedes=supersedes,
+            sources=tuple(dict.fromkeys([episode_id, *tokens])) if episode_id else tuple(tokens),
+            actor="extractor",
+        ))
+        if not outcome.ok:
             rejected += 1
-            reasons.append(error if error in {
-                "memory_not_in_manifest",
-                "scope_not_writable",
-                "revision_conflict",
-                "inactive_not_writable",
-                "create_with_memory_id",
-            } else "write_rejected")
+            reasons.append(outcome.status)
             continue
         written += 1
     return written, rejected, reasons

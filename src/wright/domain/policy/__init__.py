@@ -5,11 +5,8 @@ from __future__ import annotations
 from .context_policy import ContextPolicy, TokenBudgetPolicy
 from .guardrail_policy import GuardrailPolicy
 from .memory import (
-    CoreMemoryPolicy,
     EpisodePolicy,
-    MemoryPolicy,
-    SemanticExtractPolicy,
-    SemanticMemoryPolicy,
+    ExtractPolicy,
     is_delivered_answer,
     is_safe_memory,
 )
@@ -47,14 +44,13 @@ __all__ = [
     "AccessTarget",
     "AuthorizationChange",
     "ContextPolicy",
-    "CoreMemoryPolicy",
     "EpisodePolicy",
+    "ExtractPolicy",
     "FallbackApprovalHandler",
     "GrantTarget",
     "GuardrailPolicy",
     "InvocationGrant",
     "InvocationIdentity",
-    "MemoryPolicy",
     "PathClass",
     "PermissionApprovalHandler",
     "PermissionChoice",
@@ -69,8 +65,6 @@ __all__ = [
     "PermissionRule",
     "PermissionSettings",
     "PermissionSubject",
-    "SemanticExtractPolicy",
-    "SemanticMemoryPolicy",
     "TokenBudgetPolicy",
     "ToolAccess",
     "UserInteractionHandler",
