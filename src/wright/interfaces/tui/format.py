@@ -128,10 +128,23 @@ def _format_diff(diff_text: str) -> Text:
             t.append(line + "\n", style="dim")
     return t
 
+def _display_diff(tool: ToolView) -> str | None:
+    display = tool.display
+    if isinstance(display, dict) and isinstance(display.get("diff"), str):
+        return display["diff"]
+    return None
+
+
 def _tool_body(tool: ToolView) -> Any:
     parts: list[Any] = []
     args = tool.arguments
-    if args:
+    patch = _display_diff(tool)
+    if patch is not None:
+        if patch.strip():
+            parts.append(_format_diff(patch))
+        else:
+            parts.append(Text("(no changes)", style="dim italic"))
+    elif args:
         if isinstance(args, dict) and "command" in args and isinstance(args["command"], str):
             parts.append(Text(f"$ {args['command']}", style="bold cyan"))
         elif isinstance(args, dict) and tool.name == "edit":
@@ -157,7 +170,7 @@ def _tool_body(tool: ToolView) -> Any:
             except Exception:
                 parts.append(Text(_json_text(args), style="dim"))
 
-    if tool.output:
+    if tool.output and patch is None:
         lines = tool.output.splitlines()
         clipped = lines[-_COMMAND_OUTPUT_LINES:]
         prefix = "" if len(lines) <= _COMMAND_OUTPUT_LINES else "…\n"
@@ -172,7 +185,7 @@ def _tool_body(tool: ToolView) -> Any:
             present(tool.display_code, tool.display_params, fallback=t("tool.error_line", error=tool.error)),
             style="bold red",
         ))
-    elif tool.result is not None:
+    elif tool.result is not None and patch is None:
         if isinstance(tool.result, (dict, list)):
             try:
                 parts.append(Group(Text(t("tool.result"), style="bold dim"), RichJSON.from_data(tool.result)))

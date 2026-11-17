@@ -293,6 +293,17 @@ def test_tui_renderer_tracks_tools_without_app():
     renderer.on_tool_result(call, ToolResult.success({"files": ["a.py"]}))
     assert renderer.tools[0].status == "done"
     assert renderer.tools[0].result == {"files": ["a.py"]}
+    assert renderer.tools[0].display is None
+    renderer.on_tool_result(
+        ToolCall("write", {"file": "a.txt", "content": "secret"}, "c2"),
+        ToolResult.success(
+            {"message": "File written", "file": "a.txt", "chars": 6},
+            display={"diff": "+hello\n", "additions": 1, "deletions": 0},
+        ),
+    )
+    written = renderer.tools[1]
+    assert written.display["diff"] == "+hello\n"
+    assert written.result == {"message": "File written", "file": "a.txt", "chars": 6}
 
 
 def test_tui_prompter_fail_closed_without_a_hub():
@@ -548,6 +559,23 @@ def test_tool_body_renders_edit_file_replacement():
     rendered_text = "".join(str(r) for r in body.renderables)
     assert "line1" in rendered_text
     assert "line2" in rendered_text
+
+
+def test_tool_body_prefers_display_diff_over_arguments_and_result():
+    from wright.interfaces.tui.view_models import ToolView
+
+    tool = ToolView(
+        key="1",
+        name="write",
+        arguments={"file": "app.py", "content": "secret payload"},
+        status="done",
+        result={"message": "File written", "file": "app.py", "chars": 14},
+        display={"diff": "--- a/app.py\n+++ b/app.py\n@@ -0,0 +1 @@\n+visible\n", "additions": 1, "deletions": 0},
+    )
+    rendered_text = str(_tool_body(tool))
+    assert "visible" in rendered_text
+    assert "secret payload" not in rendered_text
+    assert "File written" not in rendered_text
 
 
 def test_assistant_block_markdown_and_draft():

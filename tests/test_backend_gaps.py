@@ -106,11 +106,14 @@ def test_successful_edit_result_and_bytes_agree(tmp_path, newline):
     after = before.replace("old", f"new{newline}extra")
     assert path.read_bytes() == after.encode()
     assert result.data["additions"] == 2 and result.data["deletions"] == 1
-    assert "@@ -1,3 +1,4 @@" in result.data["diff"]
+    assert "diff" not in result.data
+    assert "@@ -1,3 +1,4 @@" in result.display["diff"]
+    assert result.display["additions"] == 2 and result.display["deletions"] == 1
     no_change = edit_file("file.txt", "new", "new", runtime=runtime)
-    assert no_change.ok and no_change.data["diff"] == ""
+    assert no_change.ok and no_change.display["diff"] == ""
+    assert "diff" not in no_change.data
     failure = edit_file("file.txt", "missing", "new", runtime=runtime)
-    assert not failure.ok and "diff" not in failure.data
+    assert not failure.ok and "diff" not in (failure.data or {}) and failure.display is None
 
 
 def test_plan_timestamps_are_stable_across_pause_resume_and_restore(monkeypatch):
@@ -710,8 +713,10 @@ def test_scripted_web_session_projects_diff_wait_policy_and_history(
             for rule in write_policy["rules"]
         )
         data = edit_event.payload["data"]
+        display = edit_event.payload["display"]
         assert data["additions"] == 2 and data["deletions"] == 1
-        assert "@@ -1,3 +1,4 @@" in data["diff"]
+        assert "diff" not in data
+        assert "@@ -1,3 +1,4 @@" in display["diff"]
         assert path.read_bytes() == b"first\r\nnew\r\nextra\r\nlast"
         current = client.get(f"/api/v1/sessions/{session_id}/snapshot").json()
         completed = current["plan"]["steps"][0]
@@ -721,7 +726,7 @@ def test_scripted_web_session_projects_diff_wait_policy_and_history(
         timeline_edit = next(
             item for item in current["timeline"] if item.get("name") == "edit"
         )
-        assert timeline_edit["result"]["data"]["diff"] == data["diff"]
+        assert timeline_edit["result"]["display"]["diff"] == display["diff"]
         assert timeline_edit["phase"] == "succeeded"
         assert timeline_edit["result"] == {
             key: value for key, value in edit_event.payload.items() if key not in {"call_id", "name"}
@@ -744,7 +749,7 @@ def test_scripted_web_session_projects_diff_wait_policy_and_history(
         historic_edit = next(
             item for item in history["timeline"] if item.get("name") == "edit"
         )
-        assert historic_edit["result"]["data"]["diff"] == data["diff"]
+        assert historic_edit["result"]["display"]["diff"] == display["diff"]
         assert historic_edit["result"] == timeline_edit["result"]
     finally:
         manager.shutdown()

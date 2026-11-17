@@ -11,11 +11,13 @@ from .common import (
     _detect_encoding,
     _path_lock,
     _relative_file,
+    _remembered_file_view,
     _safe_path,
     _stamp_write_view,
     _unread_or_stale,
     _write_text,
 )
+from .diff import edit_diff
 
 
 def write_file(
@@ -47,16 +49,24 @@ def write_file(
             encoding = (
                 _detect_encoding(safe_path, runtime) if existing.kind == "file" else "utf-8"
             )
+            viewed = (
+                _remembered_file_view(runtime, safe_path)
+                if existing.kind == "file"
+                else None
+            )
+            before = viewed.content if viewed is not None else ""
             _backend(runtime).ensure_directory(safe_path.parent)
             _write_text(safe_path, content, encoding, runtime)
             _stamp_write_view(safe_path, runtime, content)
 
+        relative = _relative_file(safe_path, runtime)
         return ToolResult.success(
             {
                 "message": "File written",
-                "file": _relative_file(safe_path, runtime),
+                "file": relative,
                 "chars": len(content),
-            }
+            },
+            display=edit_diff(before, content, relative),
         )
     except Exception as e:
         return ToolResult.fail(str(e))

@@ -27,3 +27,15 @@ def public_test_resolver(monkeypatch, request):
     from wright.infrastructure.runtime import network
 
     monkeypatch.setattr(network, "resolve_addresses", lambda host, port: ["93.184.215.14"])
+
+
+@pytest.fixture(autouse=True)
+def clear_web_tool_caches():
+    from wright.infrastructure.tools.web_fetch import clear_web_fetch_cache
+    from wright.infrastructure.tools.web_search import clear_web_search_cache
+
+    clear_web_fetch_cache()
+    clear_web_search_cache()
+    yield
+    clear_web_fetch_cache()
+    clear_web_search_cache()

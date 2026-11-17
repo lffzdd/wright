@@ -72,6 +72,7 @@ class RendererEventSubscriber:
                 ok=bool(payload.get("ok")),
                 err=str(payload.get("err", "")),
                 data=payload.get("data"),
+                display=payload.get("display"),
             )
             self.renderer.on_tool_result(call, result)
         elif event.type == "usage.request":

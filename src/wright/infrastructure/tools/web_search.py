@@ -11,6 +11,9 @@ from __future__ import annotations
 import html
 import os
 import re
+import threading
+import time
+from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -26,9 +29,15 @@ logger = get_logger(__name__)
 
 DEFAULT_RESULTS = 5
 MAX_RESULTS = 10
+MAX_TITLE = 120
+MAX_SNIPPET = 300
 PROVIDER_ENV = "WRIGHT_SEARCH_PROVIDER"
+_CACHE_TTL = 300.0
+_CACHE_MAX = 64
 
 _TAG = re.compile(r"<[^>]+>")
+_cache_lock = threading.Lock()
+_cache: OrderedDict[tuple, tuple[float, list[dict[str, str]]]] = OrderedDict()
 
 
 @dataclass(frozen=True)
@@ -55,6 +64,38 @@ class SearchProvider:
 
 def _clean(text: Any) -> str:
     return html.unescape(_TAG.sub("", str(text or ""))).strip()
+
+
+def _clip(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[:limit].rstrip()
+
+
+def _canonical_url(url: Any) -> str | None:
+    raw = str(url or "").strip()
+    if not raw:
+        return None
+    try:
+        return request_target("GET", raw)
+    except (PermissionError, ValueError, httpx.InvalidURL):
+        return None
+
+
+def _finalize_results(items: list[dict[str, str]], limit: int) -> list[dict[str, str]]:
+    seen: set[str] = set()
+    out: list[dict[str, str]] = []
+    for item in items:
+        url = _canonical_url(item.get("url", ""))
+        if url is None or url in seen:
+            continue
+        seen.add(url)
+        out.append({
+            "title": _clip(item.get("title") or "", MAX_TITLE),
+            "url": url,
+            "snippet": _clip(item.get("snippet") or "", MAX_SNIPPET),
+        })
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _tavily_request(endpoint: str, query: str, count: int) -> SearchRequest:
@@ -167,9 +208,43 @@ def _request(config: WebSearchConfig, args: dict) -> SearchRequest:
     return config.provider.build(config.endpoint, query, _count(args.get("max_results", DEFAULT_RESULTS)))
 
 
+def clear_web_search_cache() -> None:
+    with _cache_lock:
+        _cache.clear()
+
+
+def _cache_get(key: tuple) -> list[dict[str, str]] | None:
+    now = time.monotonic()
+    with _cache_lock:
+        item = _cache.get(key)
+        if item is None:
+            return None
+        expires, value = item
+        if expires <= now:
+            _cache.pop(key, None)
+            return None
+        _cache.move_to_end(key)
+        return [dict(entry) for entry in value]
+
+
+def _cache_put(key: tuple, value: list[dict[str, str]]) -> None:
+    stored = [dict(entry) for entry in value]
+    with _cache_lock:
+        _cache[key] = (time.monotonic() + _CACHE_TTL, stored)
+        _cache.move_to_end(key)
+        while len(_cache) > _CACHE_MAX:
+            _cache.popitem(last=False)
+
+
 def web_search(config: WebSearchConfig, args: dict, *, network, timeout: int = 20) -> ToolResult:
-    if not str(args.get("query", "")).strip():
+    query = str(args.get("query", "")).strip()
+    if not query:
         return ToolResult.fail("query must not be empty")
+    count = _count(args.get("max_results", DEFAULT_RESULTS))
+    key = (config.provider.name, config.endpoint, query, count)
+    cached = _cache_get(key)
+    if cached is not None:
+        return ToolResult.success({"results": cached})
     request = _request(config, args)
     kwargs: dict[str, Any] = {"headers": config.provider.auth_headers(config.api_key), "timeout": timeout}
     if request.params is not None:
@@ -183,7 +258,9 @@ def web_search(config: WebSearchConfig, args: dict, *, network, timeout: int = 2
         data = resp.json()
     except ValueError:
         return ToolResult.fail(f"{config.provider.name} search returned a non-JSON response")
-    return ToolResult.success({"results": config.provider.parse(data)})
+    results = _finalize_results(config.provider.parse(data), count)
+    _cache_put(key, results)
+    return ToolResult.success({"results": results})
 
 
 def build_web_search_tool(config: WebSearchConfig) -> Tool:
@@ -241,9 +318,12 @@ def optional_web_search_tools(env: Mapping[str, str] | None = None) -> list[Tool
 __all__ = [
     "DEFAULT_RESULTS",
     "MAX_RESULTS",
+    "MAX_SNIPPET",
+    "MAX_TITLE",
     "PROVIDERS",
     "WebSearchConfig",
     "build_web_search_tool",
+    "clear_web_search_cache",
     "optional_web_search_tools",
     "resolve_search_config",
     "web_search",

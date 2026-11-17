@@ -8,6 +8,8 @@ from wright.infrastructure.runtime.network import request_target
 from wright.infrastructure.tools.web_search import (
     DEFAULT_RESULTS,
     MAX_RESULTS,
+    MAX_SNIPPET,
+    MAX_TITLE,
     build_web_search_tool,
     optional_web_search_tools,
     resolve_search_config,
@@ -157,3 +159,71 @@ def test_provider_http_error_is_a_readable_failure_without_the_key():
     assert not result.ok
     assert "401" in result.err and "tavily" in result.err.lower()
     assert "very-secret" not in result.err
+
+
+def test_results_are_deduped_by_canonical_url_and_invalid_urls_dropped():
+    tool = _tool({"TAVILY_API_KEY": "t"})
+    network = _Network(_json({"results": [
+        {"title": "A", "url": "https://example.com/x#frag", "content": "one"},
+        {"title": "B", "url": "https://example.com/x", "content": "two"},
+        {"title": "C", "url": "file:///etc/passwd", "content": "no"},
+        {"title": "D", "url": "https://other.test/y", "content": "yes"},
+    ]}))
+
+    result = tool.call({"query": "q", "max_results": 10}, _Runtime(network))
+
+    assert result.data["results"] == [
+        {"title": "A", "url": "https://example.com/x", "snippet": "one"},
+        {"title": "D", "url": "https://other.test/y", "snippet": "yes"},
+    ]
+
+
+def test_title_and_snippet_are_clipped():
+    tool = _tool({"TAVILY_API_KEY": "t"})
+    network = _Network(_json({"results": [{
+        "title": "T" * (MAX_TITLE + 40),
+        "url": "https://example.com/long",
+        "content": "S" * (MAX_SNIPPET + 80),
+    }]}))
+
+    [item] = tool.call({"query": "q"}, _Runtime(network)).data["results"]
+
+    assert item["title"] == "T" * MAX_TITLE
+    assert item["snippet"] == "S" * MAX_SNIPPET
+
+
+class _SeqNetwork:
+    def __init__(self, responses: list[httpx.Response]) -> None:
+        self.responses = list(responses)
+        self.calls: list[dict] = []
+
+    def request(self, method, url, *, operation, params=None, **kwargs):
+        self.calls.append({"method": method, "url": url, "operation": operation, "params": params, **kwargs})
+        return self.responses.pop(0)
+
+
+def test_successful_search_is_cached_for_the_same_query_and_count():
+    tool = _tool({"TAVILY_API_KEY": "t"})
+    network = _Network(_json({"results": [{"title": "Py", "url": "https://python.org", "content": "Python"}]}))
+
+    first = tool.call({"query": "python", "max_results": 3}, _Runtime(network))
+    second = tool.call({"query": "python", "max_results": 3}, _Runtime(network))
+    tool.call({"query": "python", "max_results": 4}, _Runtime(network))
+
+    assert first.data == second.data
+    assert len(network.calls) == 2
+
+
+def test_provider_failures_are_not_cached():
+    tool = _tool({"TAVILY_API_KEY": "t"})
+    network = _SeqNetwork([
+        _json({"detail": "no"}, status=503),
+        _json({"results": [{"title": "Ok", "url": "https://ok.test/", "content": "yes"}]}),
+    ])
+
+    failed = tool.call({"query": "q"}, _Runtime(network))
+    ok = tool.call({"query": "q"}, _Runtime(network))
+
+    assert not failed.ok
+    assert ok.ok and ok.data["results"][0]["url"] == "https://ok.test/"
+    assert len(network.calls) == 2

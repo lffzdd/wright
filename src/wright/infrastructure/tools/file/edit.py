@@ -169,13 +169,19 @@ def edit_file(
             _write_text(safe_path, updated, encoding, runtime)
             _stamp_write_view(safe_path, runtime, updated)
 
-        return ToolResult.success({
-            "message": "File updated",
-            "file": _relative_file(safe_path, runtime),
-            "replacements": replacements,
-            **({"edits": len(planned)} if batched else {}),
-            **edit_diff(content, updated, _relative_file(safe_path, runtime)),
-        })
+        relative = _relative_file(safe_path, runtime)
+        patch = edit_diff(content, updated, relative)
+        return ToolResult.success(
+            {
+                "message": "File updated",
+                "file": relative,
+                "replacements": replacements,
+                "additions": patch["additions"],
+                "deletions": patch["deletions"],
+                **({"edits": len(planned)} if batched else {}),
+            },
+            display=patch,
+        )
     except Exception as e:
         return ToolResult.fail(str(e))
 

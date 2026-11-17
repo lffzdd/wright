@@ -21,7 +21,10 @@ from wright.domain.policy.permission.types import (
     InvocationIdentity,
     NetworkTarget,
 )
-from wright.infrastructure.runtime.network import AuthorizedNetwork
+from wright.infrastructure.runtime.network import (
+    AuthorizedNetwork,
+    is_permitted_redirect,
+)
 
 
 def config(**lists) -> PermissionConfiguration:
@@ -123,6 +126,37 @@ def test_egress_decision_order():
 def grant_with(target: NetworkTarget) -> InvocationGrant:
     cwd = ExecutionPath("local", "/")
     return InvocationGrant(InvocationIdentity("s"), "local", cwd, frozenset({"network_read"}), network_targets=(target,))
+
+
+def test_same_host_redirect_is_allowed_only_via_the_approved_origin():
+    sent = []
+    approved = "https://example.com/page"
+    network = AuthorizedNetwork(
+        grant_with(NetworkTarget(approved, "GET", "network_read")),
+        transport=lambda method, url, **k: sent.append((method, url, k)) or "ok",
+        resolver=lambda host, port: ["93.184.215.14"],
+    )
+    assert is_permitted_redirect(approved, "https://example.com/new")
+    assert is_permitted_redirect(approved, "https://www.example.com/page")
+    assert is_permitted_redirect("http://example.com/page", "https://example.com/page")
+    assert is_permitted_redirect("http://example.com/page", "https://www.example.com/page")
+    assert not is_permitted_redirect(approved, "https://evil.test/page")
+    assert not is_permitted_redirect(approved, "http://example.com/page")
+    assert network.request("GET", "https://example.com/new", operation="network_read", redirect_of=approved) == "ok"
+    with pytest.raises(PermissionError, match="host"):
+        network.request("GET", "https://evil.test/page", operation="network_read", redirect_of=approved)
+    with pytest.raises(PermissionError):
+        network.request("GET", "https://example.com/new", operation="network_read")
+    assert sent == [("GET", "https://example.com/new", {"params": None, "follow_redirects": False})]
+    http_origin = "http://example.com/page"
+    upgraded = AuthorizedNetwork(
+        grant_with(NetworkTarget(http_origin, "GET", "network_read")),
+        transport=lambda *a, **k: "ok",
+        resolver=lambda host, port: ["93.184.215.14"],
+    )
+    assert upgraded.request(
+        "GET", "https://example.com/page", operation="network_read", redirect_of=http_origin,
+    ) == "ok"
 
 
 def test_http_tools_refuse_names_that_resolve_privately():

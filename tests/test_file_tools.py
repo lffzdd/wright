@@ -13,6 +13,7 @@ from wright.domain.model.tool import ToolCall
 from wright.domain.policy import (
     PermissionResponse,
 )
+from wright.domain.protocol import build_tool_results_messages
 from wright.infrastructure.tools.file import (
     FILE_UNCHANGED,
     FileView,
@@ -322,6 +323,35 @@ def test_write_file_creates_without_a_prior_read(tmp_path):
     result = write_file("a.txt", "hello\n", runtime=runtime)
     assert result.ok
     assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "hello\n"
+
+
+def test_write_and_edit_put_the_patch_in_display_not_model_data(tmp_path):
+    runtime = _runtime(tmp_path)
+    created = write_file("a.txt", "hello\n", runtime=runtime)
+    assert created.ok
+    assert created.data == {"message": "File written", "file": "a.txt", "chars": 6}
+    assert "diff" not in created.data
+    assert created.display["additions"] == 1 and created.display["deletions"] == 0
+    assert "+hello" in created.display["diff"]
+    message = build_tool_results_messages([
+        (ToolCall("write", {"file": "a.txt", "content": "hello\n"}, "c1"), created),
+    ])[0]
+    assert "display" not in message["content"]
+    assert "+hello" not in message["content"]
+
+    overwritten = write_file("a.txt", "world\n", runtime=runtime)
+    assert overwritten.ok
+    assert "diff" not in overwritten.data
+    assert "-hello" in overwritten.display["diff"]
+    assert "+world" in overwritten.display["diff"]
+
+    edited = edit_file("a.txt", "world\n", "there\n", runtime=runtime)
+    assert edited.ok
+    assert "diff" not in edited.data
+    assert edited.data["additions"] == 1 and edited.data["deletions"] == 1
+    assert "-world" in edited.display["diff"] and "+there" in edited.display["diff"]
+    assert "display" not in edited.to_model_dict()
+    assert "diff" not in edited.to_model_dict()["data"]
 
 
 def test_write_file_requires_a_complete_read_to_overwrite(tmp_path):

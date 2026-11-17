@@ -57,6 +57,35 @@ describe("backend data in workspace panels", () => {
     expect(parsed.lines).toHaveLength(7);
   });
 
+  it("renders write diffs from display and does not dump the model payload", () => {
+    render(toolCardFromState({
+      call_id: "w", name: "write", phase: "succeeded",
+      arguments: { file: "tmp/a.py", content: "secret payload" },
+      data: { message: "File written", file: "tmp/a.py", chars: 14 },
+      display: {
+        diff: "--- a/tmp/a.py\n+++ b/tmp/a.py\n@@ -0,0 +1 @@\n+visible\n",
+        additions: 1, deletions: 0, diff_truncated: false,
+      },
+    }, undefined, undefined, true));
+    expect(screen.getByText("+1")).toBeTruthy();
+    expect(screen.getByText("−0")).toBeTruthy();
+    expect(screen.getByText("visible")).toBeTruthy();
+    expect(screen.queryByText("File written")).toBeNull();
+    expect(screen.queryByText("secret payload")).toBeNull();
+  });
+
+  it("prefers display.diff over compact edit data", () => {
+    render(toolCardFromState({
+      call_id: "e", name: "edit", phase: "succeeded",
+      arguments: { file: "a.py" },
+      data: { message: "File updated", replacements: 1, additions: 1, deletions: 1 },
+      display: { diff: "-old line\n+new line", additions: 1, deletions: 1, diff_truncated: false },
+    }, undefined, undefined, true));
+    expect(screen.getByText("old line")).toBeTruthy();
+    expect(screen.getByText("new line")).toBeTruthy();
+    expect(screen.queryByText("File updated")).toBeNull();
+  });
+
   it("renders explicit zero-change diffs and approval audit text", () => {
     render(toolCardFromState({ call_id: "c", name: "edit", phase: "succeeded", data: { diff: "", additions: 0, deletions: 0, diff_truncated: false } }, undefined, undefined, true));
     expect(screen.getByText("No textual diff.")).toBeTruthy();

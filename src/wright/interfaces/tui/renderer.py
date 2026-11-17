@@ -201,6 +201,7 @@ class TUIRenderer(Renderer):
             ok = bool(tool_result.get("ok")) if isinstance(tool_result, dict) else False
             block.status = "done" if ok else "error"
             if isinstance(tool_result, dict):
+                block.display = tool_result.get("display")
                 if ok:
                     block.result = tool_result.get("data")
                     block.error = ""

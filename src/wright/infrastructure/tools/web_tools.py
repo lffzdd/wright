@@ -58,7 +58,11 @@ def _describe_http_request(args: dict) -> ToolAccess:
 
 http_request_tool = Tool(
     name="http_request",
-    description="Make an HTTP request and return the response.",
+    description=(
+        "Call an HTTP API with a custom method, headers, or body. "
+        "Returns the raw response (text is truncated at 4000 characters). "
+        "Use web_fetch to read a web page as readable text."
+    ),
     parameters={
         "type": "object",
         "properties": {

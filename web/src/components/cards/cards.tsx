@@ -261,6 +261,23 @@ function WebResults({ hits }: { hits: WebHit[] }) {
   </div>;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+/** Prefer ToolResult.display.diff, then data.diff for older sessions. */
+function editDiffSource(
+  family: string,
+  data: Record<string, unknown> | null | undefined,
+  display: unknown,
+): Record<string, unknown> | null | undefined {
+  if (family !== "edit") return data;
+  const shown = asRecord(display);
+  if (typeof shown?.diff === "string") return shown;
+  if (typeof data?.diff === "string") return data;
+  return shown ?? data;
+}
+
 function exitCode(result: Record<string, unknown> | null | undefined, data: unknown): number | null {
   const source = result ?? (data && typeof data === "object" ? data as Record<string, unknown> : null);
   if (!source) return null;
@@ -569,8 +586,9 @@ export function ToolCard({
   const raw = output || (result ? (typeof result.output === "string" ? result.output : JSON.stringify(result, null, 2)) : "");
   const metricSource = data && typeof data === "object" ? data as Record<string, unknown> : result;
   const denied = phase === "failed" && (metricSource?.permission as { decision?: unknown } | undefined)?.decision === "deny";
-  const hasDiff = family === "edit" && typeof metricSource?.diff === "string";
-  const body = hasDiff ? metricSource.diff as string : compactToolBody(name, raw, result ?? (data && typeof data === "object" ? data as Record<string, unknown> : null));
+  const diffSource = editDiffSource(family, metricSource, display);
+  const hasDiff = family === "edit" && typeof diffSource?.diff === "string";
+  const body = hasDiff ? diffSource.diff as string : compactToolBody(name, raw, result ?? (data && typeof data === "object" ? data as Record<string, unknown> : null));
   const lowered = name.toLowerCase();
   const category = toolCategory(name, kind);
   const isDirectory = category === "directories";
@@ -586,8 +604,8 @@ export function ToolCard({
   const open = toggled ?? (!denied && !rejection && (phase === "failed" || phase === "running" || (family === "edit" && Boolean(live))));
   const Icon = failed && !denied ? X : toolIcon(name, category);
   const bodyLines = body.split("\n").filter(Boolean);
-  const added = family === "edit" && typeof metricSource?.additions === "number" ? metricSource.additions : family === "edit" ? bodyLines.filter((line) => line.startsWith("+")).length : 0;
-  const deleted = family === "edit" && typeof metricSource?.deletions === "number" ? metricSource.deletions : family === "edit" ? bodyLines.filter((line) => line.startsWith("-")).length : 0;
+  const added = family === "edit" && typeof diffSource?.additions === "number" ? diffSource.additions : family === "edit" ? bodyLines.filter((line) => line.startsWith("+")).length : 0;
+  const deleted = family === "edit" && typeof diffSource?.deletions === "number" ? diffSource.deletions : family === "edit" ? bodyLines.filter((line) => line.startsWith("-")).length : 0;
   const directoryCount = family === "read" && isDirectoryTool(name)
     ? directoryEntryCount(result, data) || (typeof result?.output === "string" && !result.output.trim().startsWith("{") ? bodyLines.length : 0)
     : 0;
@@ -642,7 +660,7 @@ export function ToolCard({
           : body && (family === "edit" ? <DiffBody text={body} /> : testFailed ? <TestFailureOutput text={body} /> : isNumbered(body) ? <NumberedContent text={body} path={path} /> : <PlainOutput body={body} failed={code !== null && code !== 0} structured={family !== "shell"} live={phase === "running"} />)}
         {Boolean(metricSource?.sandbox_denial) && <SandboxDenialHint denial={metricSource!.sandbox_denial as SandboxDenial} sessionId={sessionId} />}
         {hasDiff && !body && <p className="empty-small">{tr("web.no_diff")}</p>}
-        {hasDiff && metricSource?.diff_truncated === true && <p className="hint" role="status">{tr("web.diff_truncated")}</p>}
+        {hasDiff && diffSource?.diff_truncated === true && <p className="hint" role="status">{tr("web.diff_truncated")}</p>}
       </div>}
     </section>
   </div>;

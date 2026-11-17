@@ -1,4 +1,4 @@
-"""Bounded display diff from the actual contents of a successful edit."""
+"""Bounded display diff from the actual contents of a successful file write."""
 
 from __future__ import annotations
 

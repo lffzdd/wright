@@ -23,6 +23,20 @@ from ..rendering.contracts import Renderer
 from ..rendering.history import collect_history_entries
 
 
+def _format_diff(diff_text: str) -> Text:
+    styled = Text()
+    for line in diff_text.splitlines():
+        if line.startswith("+") and not line.startswith("+++"):
+            styled.append(line + "\n", style="green")
+        elif line.startswith("-") and not line.startswith("---"):
+            styled.append(line + "\n", style="red")
+        elif line.startswith("@@"):
+            styled.append(line + "\n", style="cyan")
+        else:
+            styled.append(line + "\n", style="dim")
+    return styled
+
+
 def _tool_error(result: dict) -> str:
     data = result.get("data") if isinstance(result.get("data"), dict) else {}
     code = str(data.get("display_code") or "")
@@ -145,8 +159,17 @@ class ConsoleRenderer(Renderer):
                 padding=(0, 1),
             )
         if block.result.get("ok"):
+            display = block.result.get("display")
+            if isinstance(display, dict) and isinstance(display.get("diff"), str):
+                body = (
+                    _format_diff(display["diff"])
+                    if display["diff"].strip()
+                    else Text("(no changes)", style="dim italic")
+                )
+            else:
+                body = self._json_body(block.result.get("data"))
             return Panel(
-                self._json_body(block.result.get("data")),
+                body,
                 title=f"[bold]✅ {name}[/bold]",
                 title_align="left",
                 border_style="green",
