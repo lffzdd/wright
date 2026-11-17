@@ -26,7 +26,8 @@ def _is_persisted_memory_recall(message: dict[str, Any]) -> bool:
     if not isinstance(content, str) or not content.lstrip().startswith("<system-reminder"):
         return False
     return (
-        "wright-semantic-recall" in content
+        "wright-fact-recall" in content
+        or "wright-semantic-recall" in content
         or "wright-episode-recall" in content
     )
 

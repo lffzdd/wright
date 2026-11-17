@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from wright.application.composition.stores import open_autonomy_store, skill_store
-from wright.application.memory.memory_service import MemoryService
+from wright.application.memory.service import MemoryService
 from wright.application.permission.resources import resource_change
 from wright.application.permission.service import PermissionService
 from wright.application.workspace.catalog import WorkspaceCatalog
@@ -33,9 +33,8 @@ from wright.application.workspace.grants import list_grants
 from wright.application.workspace.journal import SessionChangeJournal
 from wright.application.workspace.memory_view import (
     MemoryViewError,
-    create_semantic,
-    delete_episode,
-    delete_semantic,
+    create_fact,
+    forget,
     project_memory,
 )
 from wright.application.workspace.modes import (
@@ -70,7 +69,7 @@ from wright.domain.policy.permission.settings import PermissionSettings
 from wright.domain.policy.permission.types import ToolAccess
 from wright.infrastructure.config.permission_store import FilePermissionRepository
 from wright.infrastructure.persistence.autonomy_store import AutonomyStore
-from wright.infrastructure.persistence.memory import EpisodeStore, SemanticMemoryStore
+from wright.infrastructure.persistence.memory import SqliteMemoryStore
 from wright.infrastructure.runtime import LocalExecutionBackend
 from wright.interfaces.web.auth import BootstrapAuth
 from wright.interfaces.web.runtime_manager import RuntimeManager
@@ -86,9 +85,9 @@ class _Message:
 def test_context_categories_are_exclusive_estimates():
     view = SimpleNamespace(
         entries=(
-            _Message("system", "You are helpful.\n<CORE_MEMORY>anchor</CORE_MEMORY>"),
+            _Message("system", "<MEMORY_CONTEXT>\nanchor\n</MEMORY_CONTEXT>\nYou are helpful."),
             _Message("user", "<skill-catalog>review</skill-catalog>", "transient"),
-            _Message("user", "wright-semantic-recall: note"),
+            _Message("user", "wright-fact-recall: note"),
             _Message("assistant", "hello"),
             _Message("tool", "file contents"),
         ),
@@ -99,7 +98,7 @@ def test_context_categories_are_exclusive_estimates():
     tokens = [item["tokens"] for item in report["categories"]]
     assert report["kind"] == "tokenizer_estimate"
     assert report["exact"] is False
-    assert report["system_prompt_contains_core_memory"] is True
+    assert report["system_prompt_contains_memory"] is True
     assert sum(tokens) == report["total"]
     by_id = {item["id"]: item["tokens"] for item in report["categories"]}
     assert by_id["tool_schemas"] == 4
@@ -308,26 +307,23 @@ def test_memory_and_rules_are_project_scoped(tmp_path: Path, monkeypatch):
     two = tmp_path / "two"
     one.mkdir()
     two.mkdir()
-    service = MemoryService(
-        semantic_store=SemanticMemoryStore(tmp_path / "memory"),
-        episode_store=EpisodeStore(tmp_path / "memory"),
-    )
-    created = create_semantic(
+    service = MemoryService(SqliteMemoryStore(tmp_path / "memory"))
+    created = create_fact(
         service,
         bound_project_id=project_id(one),
-        name="note",
         content="only one",
-        description="scoped",
-        type_="project",
-        scope="project",
+        kind="constraint",
+        subject="project",
     )
     visible = project_memory(service, bound_project_id=project_id(one))
     hidden = project_memory(service, bound_project_id=project_id(two))
-    assert any(item.get("id") == created["id"] for item in visible["semantic"])
-    assert all(item.get("id") != created["id"] for item in hidden["semantic"])
+    assert any(item.get("id") == created["id"] for item in visible["facts"])
+    assert all(item.get("id") != created["id"] for item in hidden["facts"])
+    with pytest.raises(MemoryViewError, match="another project"):
+        forget(service, created["id"], bound_project_id=project_id(two), confirm=True)
     with pytest.raises(Exception, match="confirmation"):
-        delete_semantic(service, created["id"], bound_project_id=project_id(one), confirm=False)
-    assert delete_semantic(service, created["id"], bound_project_id=project_id(one), confirm=True)["deleted"]
+        forget(service, created["id"], bound_project_id=project_id(one), confirm=False)
+    assert forget(service, created["id"], bound_project_id=project_id(one), confirm=True)["deleted"]
 
     saved = save_rule(one, skill_store(), "review-notes", scope="project", description="Review notes", body="Be precise.")
     assert saved["id"] == "review-notes"
@@ -746,16 +742,16 @@ def test_episode_delete_is_scoped_to_the_bound_project():
 
     class Episodes:
         def get_episode(self, episode_id):
-            return SimpleNamespace(id=episode_id, project_id="other"), None
+            return SimpleNamespace(id=episode_id, project_id="other")
 
-        def delete_episode(self, episode_id):
+        def forget(self, episode_id, **_kwargs):
             deleted.append(episode_id)
-            return SimpleNamespace(id=episode_id), None
+            return [episode_id]
 
     with pytest.raises(MemoryViewError, match="another project"):
-        delete_episode(Episodes(), "ep-1", bound_project_id="mine", confirm=True)
+        forget(Episodes(), "ep-1", bound_project_id="mine", confirm=True)
     assert deleted == []
-    assert delete_episode(Episodes(), "ep-1", bound_project_id="other", confirm=True)["deleted"]
+    assert forget(Episodes(), "ep-1", bound_project_id="other", confirm=True)["deleted"]
     assert deleted == ["ep-1"]
 
 

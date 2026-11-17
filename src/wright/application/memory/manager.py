@@ -12,10 +12,15 @@ from typing import TYPE_CHECKING, Any
 
 from ...core.logger import get_logger
 from ...core.paths import project_id
-from ...domain.model.memory import EpisodeRecord, EpisodeStoreError
+from ...domain.model.memory import (
+    GLOBAL_SPACE_ID,
+    EpisodeRecord,
+    EpisodeStoreError,
+    repo_space_id,
+)
 from ...domain.policy.memory import (
     EpisodePolicy,
-    SemanticExtractPolicy,
+    ExtractPolicy,
     is_delivered_answer,
 )
 from .dto import MemoryContextDTO
@@ -23,16 +28,24 @@ from .episode import snapshot_from_session
 from .extract import extract_from_snapshot
 from .llm_util import metered_events, run_side_query
 from .meter import MemoryMeter
-from .prompt import build_memory_instructions, project_core_memory
+from .prompt import build_memory_instructions
+from .recall import (
+    build_resident,
+    prepare_turn_context,
+    project_resident,
+    reproject_facts,
+)
+from .service import MemoryService
 from .turn_snapshot import (
     apply_task_update,
     live_agent_tasks,
+    real_user_texts,
     sync_snapshot_agents,
+    turn_tool_texts,
 )
 
 if TYPE_CHECKING:
     from ...domain.gateway.llm_gateway import ILLMProvider
-    from .memory_service import MemoryService
 
 logger = get_logger(__name__)
 
@@ -48,31 +61,49 @@ class MemoryManager:
         *,
         selector_llm: ILLMProvider | None = None,
         episode_policy: EpisodePolicy | None = None,
-        semantic_policy: SemanticExtractPolicy | None = None,
+        extract_policy: ExtractPolicy | None = None,
         session_repository: Any = None,
     ) -> None:
         self.usage_observer = None
         self.llm = llm
         self.selector_llm = selector_llm or llm
         self.episode_policy = episode_policy or EpisodePolicy()
-        self.semantic_policy = semantic_policy or SemanticExtractPolicy()
+        self.extract_policy = extract_policy or ExtractPolicy()
         self.session_repository = session_repository
         self.meter = MemoryMeter()
         self._side_call: dict[str, Any] | None = None
         self.directory = directory
         self._service = service
         self._project_root: Path | None = None
+        self._personal_space = ""
+        self._session_state: Any = None
         self._recall_by_turn: dict[str, MemoryContextDTO] = {}
-
-    @property
-    def episode_store(self):
-        return self._service.episode_store
+        self._consolidated = False
 
     @property
     def current_project_id(self) -> str:
         if self._project_root is None:
             return ""
         return project_id(self._project_root)
+
+    @property
+    def repo_space_id(self) -> str:
+        project = self.current_project_id
+        return repo_space_id(project) if project else ""
+
+    @property
+    def current_space_id(self) -> str:
+        """Where writes go by default: an entered personal space, else the project, else global."""
+        return self._personal_space or self.repo_space_id or GLOBAL_SPACE_ID
+
+    @property
+    def readable_space_ids(self) -> tuple[str, ...]:
+        spaces = [GLOBAL_SPACE_ID]
+        if self.repo_space_id:
+            spaces.append(self.repo_space_id)
+        if self._personal_space:
+            spaces.append(self._personal_space)
+        return tuple(spaces)
 
     def bind_project(self, project_root: Path) -> None:
         """Bind the session's stable project root. cwd is not consulted.
@@ -81,6 +112,41 @@ class MemoryManager:
         """
         self._project_root = Path(project_root).expanduser().resolve()
         self._recall_by_turn.clear()
+        try:
+            self._service.ensure_repo_space(self.current_project_id, str(self._project_root))
+        except Exception as exc:
+            logger.info("memory_bind failure_type=%s", type(exc).__name__)
+        if not self._consolidated:
+            self._consolidated = True
+            try:
+                self._service.consolidate_if_due()
+            except Exception as exc:
+                logger.info("memory_consolidate failure_type=%s", type(exc).__name__)
+
+    def enter_space(self, name: str) -> str:
+        space = self._service.ensure_personal_space(name)
+        self._personal_space = space.id
+        self._recall_by_turn.clear()
+        return space.id
+
+    def leave_space(self) -> str:
+        left = self._personal_space
+        self._personal_space = ""
+        self._recall_by_turn.clear()
+        return left
+
+    def turn_sources(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """(user texts, tool output texts) of the current turn, for origin checks."""
+        session = self._session_state
+        if session is None:
+            return (), ()
+        try:
+            return tuple(real_user_texts(session)), tuple(turn_tool_texts(session))
+        except Exception:
+            return (), ()
+
+    def observe_session(self, session_state: Any) -> None:
+        self._session_state = session_state
 
     @property
     def service(self) -> MemoryService:
@@ -123,31 +189,37 @@ class MemoryManager:
 
     def instructions(self) -> str:
         """Static memory instructions for the system prompt."""
-        return build_memory_instructions(self.directory)
+        return build_memory_instructions()
+
+    def resident_block(self) -> str:
+        try:
+            return build_resident(
+                self.service,
+                space_ids=self.readable_space_ids,
+                current_space=self.current_space_id,
+                now=self.service.clock(),
+            ).text
+        except Exception as exc:
+            logger.info("memory_resident failure_type=%s", type(exc).__name__)
+            return ""
 
     def project_system_prompt(self, system_prompt: str) -> str:
-        """Read current core memory for one request without changing history."""
-        core_block = ""
-        try:
-            memory = self.service.get_core_memory(self.current_project_id)
-            if memory is not None:
-                core_block = memory.render_block()
-        except Exception as exc:
-            logger.info("core_memory_read failure_type=%s", type(exc).__name__)
-        return project_core_memory(system_prompt, core_block)
+        """Prefix the resident memory block on a request copy; history is not changed."""
+        return project_resident(system_prompt, self.resident_block())
 
     def recall_for_turn(self, session_state: Any) -> MemoryContextDTO:
-        """Recall once per user turn. A semantic write refreshes text without a new selector."""
+        """Recall once per user turn. A memory write refreshes the chosen facts without a new selector call."""
+        self._session_state = session_state
         key = self._recall_key(session_state)
         current = project_id(_project_root_of(session_state))
         cached = self._recall_by_turn.get(key) if key else None
-        if cached is not None and cached.project_id != current:
+        if cached is not None and (cached.project_id != current or cached.space_ids != self.readable_space_ids):
             cached = None
             self._recall_by_turn.pop(key, None)
-        if cached is not None and cached.semantic_generation == self.service.semantic_generation:
+        if cached is not None and cached.generation == self.service.generation:
             return cached
         if cached is not None:
-            context = self.service.reproject_semantic(cached)
+            context = reproject_facts(self.service, cached)
             self._recall_by_turn[key] = context
             return context
         context = self._prepare_context(
@@ -172,7 +244,7 @@ class MemoryManager:
             selected_episode_ids=context.selected_episode_ids,
             rendered_episode_ids=context.rendered_episode_ids,
             budget_skipped_ids=context.budget_skipped_episode_ids,
-            semantic_estimated_tokens=context.semantic_estimated_tokens,
+            fact_estimated_tokens=context.fact_estimated_tokens,
             episode_estimated_tokens=context.episode_estimated_tokens,
             omitted=omitted,
         )
@@ -197,7 +269,7 @@ class MemoryManager:
         if not isinstance(episode_id, str):
             return None
         try:
-            return self.episode_store.get(episode_id)
+            return self.service.get_episode(episode_id)
         except EpisodeStoreError:
             return None
 
@@ -292,8 +364,14 @@ class MemoryManager:
     ) -> MemoryContextDTO:
         self._side_call = None
         try:
-            context = self.service.prepare_memory_context(
-                task, project_id=project_id, session_id=session_id, include_recent=include_recent,
+            resident = build_resident(
+                self.service, space_ids=self.readable_space_ids,
+                current_space=self.current_space_id, now=self.service.clock(),
+            )
+            context = prepare_turn_context(
+                self.service, task, space_ids=self.readable_space_ids, project_id=project_id,
+                exclude_fact_ids=resident.pinned_ids, include_recent=include_recent,
+                session_id=session_id, policy=self.episode_policy,
             )
         except Exception as exc:
             logger.info("episode_recall failure_type=%s", type(exc).__name__)
@@ -367,7 +445,7 @@ class MemoryManager:
             query=self._side_query,
             directory=self.directory,
             service=self.service,
-            policy=self.semantic_policy,
+            policy=self.extract_policy,
         )
         self._store_receipt(session_state, root_run_id, {
             "status": outcome.status,
@@ -460,7 +538,7 @@ class MemoryManager:
             logger.info("episode_skip reason=%s", decision.skip_reason or "skipped")
             return None
         try:
-            saved = self.episode_store.save(episode)
+            saved = self.service.save_episode(episode)
         except Exception as exc:
             logger.info("episode_persist_failed type=%s", type(exc).__name__)
             self._upsert_pending(session_state, snapshot)

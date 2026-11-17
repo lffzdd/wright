@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 EpisodeStatus = Literal["completed", "failed", "cancelled"]
 EPISODE_STATUSES = frozenset({"completed", "failed", "cancelled"})
 EPISODE_ID_RE = re.compile(r"ep-[A-Za-z0-9_-]{1,180}")
-EPISODE_SCHEMA_VERSION = 3
+EPISODE_SCHEMA_VERSION = 4
 PROJECT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,180}")
 EpisodeSearchScope = Literal["current_project", "all_projects"]
 EPISODE_SEARCH_SCOPES = frozenset({"current_project", "all_projects"})
@@ -34,6 +34,8 @@ MAX_EPISODE_VERIFICATIONS = 100
 MAX_EPISODE_AGENTS = 64
 MAX_EPISODE_EVIDENCE = 80
 MAX_EVIDENCE_TEXT = 500
+MAX_EPISODE_LINKS = 20
+LINK_KINDS = ("commits", "prs")
 
 
 class EpisodeStoreError(ValueError):
@@ -222,8 +224,11 @@ def _parse_evidence(value: Any) -> tuple[EvidenceRef, ...]:
 class EpisodeRecord:
     """One finished user turn: goal, terminal status, answer text, and execution trace.
 
-    Records are schema version 3 and always name a project. ``evidence`` may be
-    empty when the turn had no locators. Older files are not read.
+    Records always name a project; the repo space is ``repo:<project_id>``.
+    ``evidence`` may be empty when the turn had no locators. ``links`` points
+    at commits and PRs the turn produced, so the episode does not have to copy
+    what git already records. ``compacted`` means consolidation dropped the
+    execution trace and kept only the summary.
     """
 
     id: str
@@ -245,6 +250,12 @@ class EpisodeRecord:
     root_run_id: str = ""
     termination_reason: str = ""
     evidence: tuple[EvidenceRef, ...] = ()
+    links: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    compacted: bool = False
+
+    @property
+    def space_id(self) -> str:
+        return f"repo:{self.project_id}" if self.project_id else ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -267,6 +278,8 @@ class EpisodeRecord:
             "verification": list(self.verification),
             "evidence": [item.to_dict() for item in self.evidence],
             "usage": dict(self.usage),
+            "links": {key: list(value) for key, value in self.links.items()},
+            "compacted": self.compacted,
         }
 
     @classmethod
@@ -366,7 +379,24 @@ class EpisodeRecord:
                 ),
             },
             evidence=_parse_evidence(value.get("evidence")),
+            links=_parse_links(value.get("links")),
+            compacted=bool(value.get("compacted", False)),
         )
+
+
+def _parse_links(value: Any) -> dict[str, tuple[str, ...]]:
+    if not value:
+        return {}
+    if not isinstance(value, dict):
+        raise EpisodeStoreError("invalid episode links")
+    links: dict[str, tuple[str, ...]] = {}
+    for key in LINK_KINDS:
+        items = value.get(key) or []
+        if not isinstance(items, list) or not all(isinstance(item, str) for item in items):
+            raise EpisodeStoreError("invalid episode links")
+        if items:
+            links[key] = tuple(item[:300] for item in items[:MAX_EPISODE_LINKS])
+    return links
 
 
 def episode_fact_pieces(episode: EpisodeRecord) -> dict[str, str]:
@@ -431,9 +461,11 @@ __all__ = [
     "EPISODE_SEARCH_SCOPES",
     "EPISODE_STATUSES",
     "EVIDENCE_ID_RE",
+    "LINK_KINDS",
     "MAX_EPISODE_AGENTS",
     "MAX_EPISODE_EVIDENCE",
     "MAX_EPISODE_GOAL_CHARS",
+    "MAX_EPISODE_LINKS",
     "MAX_EPISODE_OUTCOME_CHARS",
     "MAX_EPISODE_TOOLS",
     "MAX_EPISODE_VERIFICATIONS",

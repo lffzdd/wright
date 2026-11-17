@@ -1,19 +1,17 @@
-"""Domain gateway ports for memory subsystems (core, semantic, episode)."""
+"""Domain ports for agent memory."""
 
 from __future__ import annotations
 
-from .core import ICoreMemoryStore
-from .episode import IEpisodeStore
+from .egress import IEgressGuard
 from .evidence import EvidenceRead, IEpisodeEvidenceSource
 from .selector import IContextSelector, SelectorChoice
-from .semantic import ISemanticMemoryStore
+from .store import IMemoryStore
 
 __all__ = [
     "EvidenceRead",
     "IContextSelector",
-    "ICoreMemoryStore",
+    "IEgressGuard",
     "IEpisodeEvidenceSource",
-    "IEpisodeStore",
-    "ISemanticMemoryStore",
+    "IMemoryStore",
     "SelectorChoice",
 ]

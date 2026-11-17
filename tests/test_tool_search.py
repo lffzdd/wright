@@ -200,9 +200,12 @@ def test_builtin_capabilities_use_hybrid_loading():
     } == core
 
 
-def test_core_tools_are_baseline_and_follow_ups_are_deferred():
+def test_core_tools_are_baseline_and_follow_ups_are_deferred(tmp_path):
     from wright.application.agent import build_agent_tools
-    from wright.infrastructure.tools.memory import build_memory_tools
+    from wright.application.composition.memory_assembly import (
+        assemble_memory_manager,
+        memory_tools,
+    )
 
     class UnusedLLM:
         context_limit = 128_000
@@ -216,7 +219,7 @@ def test_core_tools_are_baseline_and_follow_ups_are_deferred():
             max_depth=1,
             enable_scheduling=True,
         ),
-        *build_memory_tools(),
+        *memory_tools(assemble_memory_manager(None, directory=tmp_path / "memory")),
     ]
     by_name = {tool.name: tool for tool in tools}
     baseline = {
@@ -226,17 +229,20 @@ def test_core_tools_are_baseline_and_follow_ups_are_deferred():
         "wait_agent",
         "shell_output",
         "shell_kill",
-        "create_memory",
-        "search_memory",
+        "memory_write",
+        "memory_search",
+        "memory_read",
     }
     deferred = {
         "get_agent_tree",
         "get_agent",
         "cancel_agent",
         "list_commands",
-        "get_memory",
-        "update_memory",
-        "delete_memory",
+        "memory_update",
+        "memory_forget",
+        "memory_space",
+        "commitment_create",
+        "commitment_update",
         "create_schedule",
         "get_schedule",
         "list_schedules",

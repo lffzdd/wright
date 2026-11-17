@@ -64,7 +64,7 @@ describe("summarizeSteps", () => {
 
 describe("stepCategory", () => {
   it("keeps web, memory and plan tools out of code search", () => {
-    const names = ["grep", "glob", "web_search", "http_request", "search_memory", "search_episodes", "knowledge_search", "update_core_memory", "update_plan", "replan", "ask_user", "manage_loop", "mcp_tool"];
+    const names = ["grep", "glob", "web_search", "http_request", "memory_search", "memory_read", "knowledge_search", "memory_write", "update_plan", "replan", "ask_user", "manage_loop", "mcp_tool"];
     const steps = names.map((name) => stepFromItem(item(name, "tool", { name })));
     expect(steps.map(stepCategory)).toEqual(["searches", "searches", "web", "web", "memory", "memory", "memory", "memory", "plans", "plans", "tools", "tools", "tools"]);
   });

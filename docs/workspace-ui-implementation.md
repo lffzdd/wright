@@ -19,12 +19,12 @@ Changes 当前行为和验收标准见 [Changes 功能约定](changes-contract.m
 | 全局搜索 | C | `search_files`、`search_content`（`kind=content`）、`search_symbols`（`kind=symbol`）、`search_tasks`。符号来自 Python `ast` 或 js/ts/go/rs 的定义正则，不是正文检索。 |
 | 执行时间线 | B | `timeline.project_timeline` 读 `message_records` 和 `tool_executions`。文本、工具、`shell`、`edit`/`write`、待处理交互分别投影。身份是消息 id、call id、request id。快照带 `timeline`，并保留原有 `stream_id` / `last_seq`。 |
 | 计划、已访问文件、子 Agent | A + B | 计划仍是 `plan_manager.snapshot()`。`accessed_files` 来自工具参数里的路径。`subagents` 来自 `AgentControlPlane.tree()`，不用正文推断完成。 |
-| Memory & Rules | A + B | 记忆走 `MemoryService`，项目 id 取会话自己的 `project_root`。核心画像只读；`human_profile` / `project_anchor` 可改。语义记忆和 episode 删除要 `confirm`。规则是 skill 文件，走 `write_skill` / `scan_skills`。`allowed-tools` 只是建议，不授予权限。覆盖和删除都要确认。 |
+| Memory & Rules | A + B | 记忆走 `MemoryService`，项目 id 取会话自己的 `project_root`，只能改全局、个人空间和本项目的记录。删除要 `confirm`，见 [memory.md](memory.md)。规则是 skill 文件，走 `write_skill` / `scan_skills`。`allowed-tools` 只是建议，不授予权限。覆盖和删除都要确认。 |
 | 定时任务 | A + C | 创建、修改、暂停、恢复、删除走 `SchedulingService` 和会话上的共享 `AutonomyStore`。项目级 `GET /workspaces/{id}/schedules` 以及 `POST .../schedules/{id}/{pause\|resume\|update\|delete}` 直接读写项目任务库，会话关闭后状态仍在。有执行记录的删除保留 `cancelled` 行。 |
 | 模型、Agent/Plan/Ask、权限策略 | A + C | 模型仍是 `POST /sessions/{id}/model`。`POST /sessions/{id}/policy` 在会话空闲且没有待回答交互时写入 `interaction_mode` 和 `permission_mode`，下一次权限决议生效，不改已经发出的调用授权。Ask 的操作集是读、内部读、网络读、用户交互；Plan 再加 `plan_update`。两者同时收紧工具名单。`bypass` 不能放宽这两层，拒绝规则和受保护路径仍然优先。 |
 | 输入、图片、文件、@、/ | A + C | 图片仍走附件接口。非图片走 `POST /sessions/{id}/documents`，文件存在会话状态目录，提交时把文本内联进已接受的命令载荷。`GET /commands` 只列出 `dispatch_slash` 真正执行的命令。`@` 选择使用文件搜索和文件读取接口，组合输入框留给下一阶段。 |
 | 权限请求、问答、授权管理 | A + C | 请求和回答仍是 websocket `interaction.respond`，带 `command_id`。`GET /sessions/{id}/grants` 列出会话规则、持久规则和额外目录，并写明剩余边界。撤销和新增都要 `confirm`，且会话必须空闲。单次授权是当次决议，不另存一条永久规则。 |
-| Context | C | `classify_context` 按实际组装的消息、工具 schema 和输出预留分桶，各类相加等于估计总量。`kind=tokenizer_estimate`，`exact=false`。快照里的 `usage` 仍是供应方计费，并标了 `kind=provider_billing`。系统提示里的核心记忆只作标记，不重复计数。 |
+| Context | C | `classify_context` 按实际组装的消息、工具 schema 和输出预留分桶，各类相加等于估计总量。`kind=tokenizer_estimate`，`exact=false`。快照里的 `usage` 仍是供应方计费，并标了 `kind=provider_billing`。系统提示里的常驻记忆块只作标记，不重复计数。 |
 | Changes、diff、Accept、Revert | A + C | 工具写入仍然立刻落盘。`GET /sessions/{id}/changes` 仍是只读 git diff。任务审阅是 `SessionChangeJournal`：Accept 只把 `review` 记为 `accepted`，不重写字节；Revert 用任务第一次改动前的字节恢复。外部修改造成哈希不一致时整批拒绝。失败时已恢复的文件写回 after 字节。不用 `git reset --hard` 或 `git clean`。 |
 | 设置、语言、主题、检查器 | A + C | `GET/PUT /preferences` 保留界面语言。`theme`（`dark`/`light`）和 `inspector_open` 会写入并在当前客户端应用。空请求拒绝。不读写凭据。 |
 

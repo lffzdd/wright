@@ -34,7 +34,7 @@ QUEUE = Path(os.environ.get("FAKE_LLM_QUEUE", "queue.json"))
 LOG = Path(os.environ.get("FAKE_LLM_LOG", "requests.jsonl"))
 _LOCK = threading.Lock()
 _AUX_REPLY = {
-    "content": json.dumps({"selected_memories": [], "selected_episodes": []}),
+    "content": json.dumps({"selected_facts": [], "selected_episodes": []}),
     "finish_reason": "stop",
 }
 

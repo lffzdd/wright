@@ -48,6 +48,40 @@ def real_user_texts(session_state: Any) -> list[str]:
     return texts
 
 
+_COMMIT_LINE = re.compile(r"^\[[^\]\s]+(?: \(root-commit\))? ([0-9a-f]{7,40})\]", re.MULTILINE)
+_PR_URL = re.compile(r"https://(?:github\.com|gitlab\.com)/[\w.-]+/[\w.-]+/(?:pull|merge_requests)/\d+")
+MAX_TOOL_TEXT = 20_000
+
+
+def turn_tool_texts(session_state: Any) -> list[str]:
+    """Tool results of the active turn. Used to tell copied text from the user's words."""
+    start = int(getattr(session_state, "active_turn_start_message_index", 0))
+    texts: list[str] = []
+    for record in list(getattr(session_state, "message_records", []))[start:]:
+        message = getattr(record, "message", {})
+        if not isinstance(message, dict) or message.get("role") != "tool":
+            continue
+        text = _message_text(record)
+        if text:
+            texts.append(text[:MAX_TOOL_TEXT])
+    return texts
+
+
+def turn_links(session_state: Any) -> dict[str, list[str]]:
+    """Commits and PRs this turn produced, read from tool output."""
+    commits: list[str] = []
+    prs: list[str] = []
+    for text in turn_tool_texts(session_state):
+        commits.extend(match.group(1) for match in _COMMIT_LINE.finditer(text))
+        prs.extend(match.group(0) for match in _PR_URL.finditer(text))
+    links: dict[str, list[str]] = {}
+    if commits:
+        links["commits"] = list(dict.fromkeys(commits))[:20]
+    if prs:
+        links["prs"] = list(dict.fromkeys(prs))[:20]
+    return links
+
+
 def live_agent_tasks(session_state: Any, root_turn_id: str) -> bool:
     """True when that turn's task tree still has a non-terminal agent."""
 

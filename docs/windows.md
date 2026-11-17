@@ -8,9 +8,10 @@ uv run wright --help
 uv run wright --no-open
 ```
 
-配置、项目注册表、核心记忆、语义记忆、episode 和 ApplicationHost
+配置、项目注册表和 ApplicationHost
 统一使用 `wright.infrastructure.file_lock.FileLock`，通过 `portalocker`
 获取操作系统级排他锁。项目代码不直接导入 `fcntl`。
+长期记忆是 SQLite 数据库，由 SQLite 自己的文件锁处理并发。
 
 - 存储写入等待其他进程释放锁，没有固定的等待超时。
 - ApplicationHost 非阻塞获取锁，同一执行目录的第二个实例立即报错。

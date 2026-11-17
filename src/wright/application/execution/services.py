@@ -24,3 +24,5 @@ class RuntimeServices:
     loop_registry: SessionLoopRegistry | None = None
     # Managed artifact store; tool output images are registered here.
     artifact_store: Any = None
+    # Memory egress check (IEgressGuard); None when memory is not assembled.
+    egress_guard: Any = None

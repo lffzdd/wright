@@ -187,8 +187,8 @@ class ModelTurnRunner:
         if callable(recall_for_turn):
             recall = recall_for_turn(self.session_state)
             reminders = list(reminders)
-            if recall.semantic_text:
-                reminders.append({"role": "user", "content": recall.semantic_text})
+            if recall.fact_text:
+                reminders.append({"role": "user", "content": recall.fact_text})
             if recall.episode_text:
                 optional_reminders.append({"role": "user", "content": recall.episode_text})
         view = self.context_builder.build(

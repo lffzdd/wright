@@ -12,10 +12,10 @@ class SelectorChoice:
 
     ``failed`` means the response as a whole is unusable. Episode injection
     must then stay empty. ``episodes_usable`` is false when the episode field
-    itself has the wrong shape, even if semantic ids parsed.
+    itself has the wrong shape, even if fact ids parsed.
     """
 
-    memory_ids: tuple[str, ...] = ()
+    fact_ids: tuple[str, ...] = ()
     episode_ids: tuple[str, ...] = ()
     failed: bool = False
     episodes_usable: bool = True
@@ -23,14 +23,14 @@ class SelectorChoice:
 
 
 class IContextSelector(ABC):
-    """One shared selection request over semantic and episode candidates."""
+    """One shared selection request over fact and episode candidates."""
 
     @abstractmethod
     def select(
         self,
         *,
         task: str,
-        semantic_manifest: str,
+        fact_manifest: str,
         episode_manifest: str,
     ) -> SelectorChoice:
         """Return candidate ids. Invalid responses set ``failed``."""

@@ -43,14 +43,14 @@ CHILD_EXCLUDED_TOOLS = frozenset({
 # Extra removals for an unattended durable worker. Memory and external search
 # stay off that worker even when a child of the interactive root could see them.
 DURABLE_EXCLUDED_TOOLS = CHILD_EXCLUDED_TOOLS | frozenset({
-    "create_memory",
-    "get_memory",
-    "update_memory",
-    "delete_memory",
-    "search_memory",
-    "search_episodes",
-    "get_episode",
-    "delete_episode",
+    "memory_write",
+    "memory_update",
+    "memory_forget",
+    "memory_search",
+    "memory_read",
+    "memory_space",
+    "commitment_create",
+    "commitment_update",
     "knowledge_search",
 })
 

@@ -8,10 +8,8 @@ from pathlib import Path
 import pytest
 
 from wright.application.agent.context import _is_persisted_memory_recall
-from wright.application.memory.prompt import (
-    build_memory_instructions,
-    project_core_memory,
-)
+from wright.application.memory.prompt import build_memory_instructions
+from wright.application.memory.recall import project_resident
 from wright.application.skills.prompt import catalog_reminder
 from wright.domain.model.skills import SkillMeta
 from wright.domain.model.tool import ToolAccess
@@ -99,8 +97,8 @@ def test_model_instructions_ignore_interface_language():
 
 
 def test_user_and_skill_text_stay_in_their_own_language(tmp_path: Path):
-    instructions = build_memory_instructions(tmp_path)
-    projected = project_core_memory(instructions, "用户喜欢用中文写提交说明")
+    instructions = build_memory_instructions()
+    projected = project_resident(instructions, "<MEMORY_CONTEXT>\n- 用户喜欢用中文写提交说明\n</MEMORY_CONTEXT>")
     assert "Long-term memory" in projected
     assert "用户喜欢用中文写提交说明" in projected
     catalog = catalog_reminder([
@@ -120,7 +118,7 @@ def test_user_and_skill_text_stay_in_their_own_language(tmp_path: Path):
     }
     current = {
         "role": "user",
-        "content": '<system-reminder source="wright-semantic-recall">\n用户记得这件事\n</system-reminder>',
+        "content": '<system-reminder source="wright-fact-recall">\n用户记得这件事\n</system-reminder>',
     }
     assert _is_persisted_memory_recall(old) is False
     assert _is_persisted_memory_recall(current) is True

@@ -1,168 +1,64 @@
-"""store.py 的纯文件操作单测(不碰 LLM)。"""
-
-import os
-from pathlib import Path
+from __future__ import annotations
 
 import pytest
 
-from wright.domain.model.memory import (
-    SEMANTIC_SCHEMA_VERSION,
-    SemanticMemoryNotFoundError,
-    SemanticMemoryRecord,
-)
-from wright.infrastructure.persistence.memory.semantic import (
-    create_memory,
-    delete_memory,
-    get_memory,
-    rebuild_index,
-    search_memories,
-    update_memory,
-    write_memory_file,
-)
-from wright.infrastructure.persistence.memory.semantic_document import (
-    MAX_INDEX_LINES,
-    dump_frontmatter,
-    parse_frontmatter,
-    slugify,
-)
-from wright.infrastructure.persistence.memory.semantic_index import (
-    format_manifest,
-    read_entrypoint,
-    read_memories_for_surfacing,
-    scan_memory_files,
+from tests.memory.helpers import episode
+from wright.domain.model.memory import Fact, MemoryConflictError, Space
+from wright.infrastructure.persistence.memory import SqliteMemoryStore
+from wright.infrastructure.persistence.memory.sqlite_store import (
+    MAX_EPISODES_PER_PROJECT,
 )
 
 
-def test_frontmatter_round_trip(tmp_path: Path):
-    record = SemanticMemoryRecord(
-        id="mem-user",
-        name="user-role",
-        description="user is a data scientist",
-        type="user",
-        content="正文内容\n第二行",
-        created_at="2026-01-01T00:00:00+00:00",
-        updated_at="2026-01-01T00:00:00+00:00",
-        path=tmp_path / "mem-user.md",
-        schema_version=SEMANTIC_SCHEMA_VERSION,
-        scope="global",
-        status="active",
-        revision=1,
+def _fact(fact_id: str = "f-0000000000000001", **changes) -> Fact:
+    base = Fact(
+        id=fact_id, space_id="global", kind="preference", subject="user", content="Answer in Chinese.",
+        origin="user_stated", sensitivity="personal", tier="indexed", status="active",
+        created_at="2026-11-01T00:00:00+00:00", updated_at="2026-11-01T00:00:00+00:00",
     )
-    text = dump_frontmatter(record)
-    fm, body = parse_frontmatter(text)
-    assert fm["name"] == "user-role"
-    assert fm["description"] == "user is a data scientist"
-    assert fm["type"] == "user"
-    assert body.strip() == "正文内容\n第二行"
+    return base.evolve(**changes)
 
 
-def test_parse_frontmatter_missing_returns_empty():
-    fm, body = parse_frontmatter("没有 frontmatter 的纯文本")
-    assert fm == {}
-    assert body == "没有 frontmatter 的纯文本"
+def test_store_round_trips_and_reopens(tmp_path):
+    store = SqliteMemoryStore(tmp_path)
+    store.upsert_space(Space("global", "global", "global", "t"))
+    store.insert_fact(_fact())
+    store.close()
+    reopened = SqliteMemoryStore(tmp_path)
+    assert reopened.get_fact("f-0000000000000001").content == "Answer in Chinese."
+    assert [item.id for item in reopened.list_spaces()] == ["global"]
 
 
-def test_slugify():
-    assert slugify("User Role!") == "user-role"
-    assert slugify("  多个   空格 ") != ""  # 非空兜底
-    assert slugify("!!!") == "memory"
+def test_stale_revision_is_refused(tmp_path):
+    store = SqliteMemoryStore(tmp_path)
+    store.insert_fact(_fact())
+    store.replace_fact(_fact(content="v2", revision=2), expected_revision=1)
+    with pytest.raises(MemoryConflictError):
+        store.replace_fact(_fact(content="v3", revision=3), expected_revision=1)
+    assert store.get_fact("f-0000000000000001").content == "v2"
 
 
-def test_scan_sorts_newest_first_and_skips_index(tmp_path: Path):
-    import time
-
-    write_memory_file("old", "old one", "user", "x", directory=tmp_path)
-    time.sleep(0.01)
-    write_memory_file("new", "new one", "feedback", "y", directory=tmp_path)
-    # MEMORY.md 必须被跳过
-    (tmp_path / "MEMORY.md").write_text("- [old](old.md)\n", encoding="utf-8")
-
-    headers = scan_memory_files(tmp_path)
-    names = [h.filename for h in headers]
-    assert "MEMORY.md" not in names
-    assert names == ["new.md", "old.md"]  # mtime 倒序
-    assert headers[0].type == "feedback"
-    assert headers[0].description == "new one"
+def test_failed_transaction_leaves_nothing_behind(tmp_path):
+    store = SqliteMemoryStore(tmp_path)
+    with pytest.raises(RuntimeError), store.transaction():
+        store.insert_fact(_fact())
+        raise RuntimeError("boom")
+    assert store.get_fact("f-0000000000000001") is None
 
 
-def test_rebuild_index_lists_each_memory(tmp_path: Path):
-    write_memory_file("alpha", "first", "user", "a", directory=tmp_path)
-    write_memory_file("beta", "second", "project", "b", directory=tmp_path)
-    index_path = rebuild_index(tmp_path)
-    content = index_path.read_text(encoding="utf-8")
-    assert "[alpha](alpha.md) — first" in content
-    assert "[beta](beta.md) — second" in content
+def test_touch_does_not_bump_revision(tmp_path):
+    store = SqliteMemoryStore(tmp_path)
+    store.insert_fact(_fact())
+    store.touch_facts(["f-0000000000000001"], "2026-11-02T00:00:00+00:00")
+    fact = store.get_fact("f-0000000000000001")
+    assert (fact.use_count, fact.revision, fact.last_used_at) == (1, 1, "2026-11-02T00:00:00+00:00")
 
 
-def test_rebuild_index_empty(tmp_path: Path):
-    rebuild_index(tmp_path)
-    content = (tmp_path / "MEMORY.md").read_text(encoding="utf-8")
-    assert "no memories" in content
-
-
-def test_read_entrypoint_truncates(tmp_path: Path):
-    lines = "\n".join(f"- line {i}" for i in range(MAX_INDEX_LINES + 50))
-    (tmp_path / "MEMORY.md").write_text(lines, encoding="utf-8")
-    out = read_entrypoint(tmp_path)
-    assert "Warning:" in out
-    # 截断后正文行数不超过上限
-    body_lines = [l for l in out.splitlines() if l.startswith("- line")]
-    assert len(body_lines) <= MAX_INDEX_LINES
-
-
-def test_read_entrypoint_missing_returns_empty(tmp_path: Path):
-    assert read_entrypoint(tmp_path) == ""
-
-
-def test_format_manifest(tmp_path: Path):
-    write_memory_file("a", "desc a", "user", "x", directory=tmp_path)
-    manifest = format_manifest(scan_memory_files(tmp_path))
-    assert "[user] a.md: desc a" in manifest
-
-
-def test_read_memories_for_surfacing(tmp_path: Path):
-    p = write_memory_file("a", "desc", "user", "正文 X", directory=tmp_path)
-    block = read_memories_for_surfacing([p])
-    assert "### a.md" in block
-    assert "正文 X" in block
-
-
-def test_semantic_memory_crud_keeps_stable_unicode_id_and_index(tmp_path: Path):
-    created = create_memory(
-        "用户偏好", "用户偏好的包管理器", "user", "优先使用 uv", tmp_path, scope="global"
-    )
-    assert created.id.startswith("mem-")
-    assert created.id != "用户偏好"
-    assert created.scope == "global"
-    if os.name != "nt":  # Windows chmod only controls the read-only flag.
-        assert created.path.stat().st_mode & 0o777 == 0o600
-
-    again = create_memory("用户偏好", "重复", "user", "另一条正文", tmp_path, scope="global")
-    assert again.id != created.id
-    assert get_memory(created.id, tmp_path).content == "优先使用 uv"
-
-    updated = update_memory(
-        created.id,
-        name="Python 工具偏好",
-        description="更新后的描述",
-        content="优先使用 uv，除非项目明确要求其它工具",
-        directory=tmp_path,
-        expected_revision=created.revision,
-    )
-    assert updated.id == created.id  # 改展示名不会破坏已有引用
-    assert updated.name == "Python 工具偏好"
-    assert updated.created_at == created.created_at
-    assert updated.updated_at >= created.updated_at
-    assert updated.revision == created.revision + 1
-    assert search_memories("uv", type_="user", directory=tmp_path) == [updated]
-
-    deleted = delete_memory(created.id, tmp_path)
-    assert deleted.id == created.id
-    assert created.id not in (tmp_path / "MEMORY.md").read_text(encoding="utf-8")
-    with pytest.raises(SemanticMemoryNotFoundError):
-        delete_memory(created.id, tmp_path)
-
-
-def test_memory_id_rejects_path_traversal(tmp_path: Path):
-    with pytest.raises(Exception, match="memory_id"):
-        update_memory("../outside", content="x", directory=tmp_path, expected_revision=0)
+def test_episodes_insert_once_and_keep_the_newest(tmp_path):
+    store = SqliteMemoryStore(tmp_path)
+    first = episode("ep-a", goal="first")
+    store.save_episode(first)
+    assert store.save_episode(episode("ep-a", goal="second")).goal == "first"
+    for index in range(MAX_EPISODES_PER_PROJECT + 2):
+        store.save_episode(episode(f"ep-{index:04d}", created_at=f"2026-10-{(index % 28) + 1:02d}T{index % 24:02d}:00:00+00:00"))
+    assert len(store.list_episodes(project_ids=["proj-a"])) == MAX_EPISODES_PER_PROJECT

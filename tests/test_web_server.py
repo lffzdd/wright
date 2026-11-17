@@ -488,19 +488,25 @@ def _workspace_client(tmp_path):
 def test_workspace_memory_is_editable_without_a_running_session(tmp_path):
     client = _workspace_client(tmp_path)
 
-    saved = client.put("/api/v1/workspaces/ws/memory/core", json={"section": "human_profile", "content": "Prefers uv.", "mode": "replace"})
-    assert saved.status_code == 200, saved.text
-    created = client.post("/api/v1/workspaces/ws/memory/semantic", json={"name": "No global pip", "content": "Use uv only.", "type": "feedback", "scope": "project"})
+    created = client.post("/api/v1/workspaces/ws/memory/facts", json={"content": "Use uv only.", "kind": "feedback"})
     assert created.status_code == 200, created.text
+    fact = created.json()
+    assert fact["origin"] == "user_stated"
+    assert fact["space_id"].startswith("repo:")
 
+    pinned = client.patch(f"/api/v1/workspaces/ws/memory/facts/{fact['id']}", json={"tier": "pinned"})
+    assert pinned.status_code == 200, pinned.text
     listed = client.get("/api/v1/workspaces/ws/memory").json()
-    assert listed["core"]["human_profile"] == "Prefers uv."
-    assert [item["name"] for item in listed["semantic"]] == ["No global pip"]
+    assert [(item["content"], item["tier"]) for item in listed["facts"]] == [("Use uv only.", "pinned")]
+    assert [item["action"] for item in listed["changes"]][:2] == ["update", "create"]
 
-    memory_id = created.json()["id"]
-    removed = client.request("DELETE", f"/api/v1/workspaces/ws/memory/semantic/{memory_id}", json={"confirm": True})
+    undone = client.post(f"/api/v1/workspaces/ws/memory/changes/{listed['changes'][0]['id']}/revert")
+    assert undone.status_code == 200, undone.text
+    assert client.get("/api/v1/workspaces/ws/memory").json()["facts"][0]["tier"] == "indexed"
+
+    removed = client.request("DELETE", f"/api/v1/workspaces/ws/memory/items/{fact['id']}", json={"confirm": True})
     assert removed.status_code == 200
-    assert client.get("/api/v1/workspaces/ws/memory").json()["semantic"] == []
+    assert client.get("/api/v1/workspaces/ws/memory").json()["facts"] == []
     assert client.get("/api/v1/workspaces/missing/memory").status_code == 404
     assert TestClient(client.app).get("/api/v1/workspaces/ws/memory").status_code == 401
 
