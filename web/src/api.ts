@@ -90,6 +90,8 @@ export const api = {
   registerWorkspace: (path: string) => json<Record<string, unknown>>("/api/v1/workspaces", { method: "POST", body: JSON.stringify({ path }) }),
   selectWorkspace: (projectId: string) => json<Record<string, unknown>>("/api/v1/workspaces/select", { method: "POST", body: JSON.stringify({ project_id: projectId }) }),
   unregisterWorkspace: (projectId: string) => json<Record<string, unknown>>(`/api/v1/workspaces/${projectId}`, { method: "DELETE" }),
+  /** Read-only git status of a registered project, for sessions whose runtime is not running. */
+  workspaceChanges: (projectId: string) => json<ChangesSummary>(`/api/v1/workspaces/${projectId}/changes`),
   workspaceTree: (projectId: string, path = "") => json<{ path: string; entries: Array<{ name: string; path: string; kind: string; size: number | null }> }>(`/api/v1/workspaces/${projectId}/tree?path=${encodeURIComponent(path)}`),
   workspaceFile: (projectId: string, path: string) => json<{ path: string; content: string; binary: boolean; line_count?: number }>(`/api/v1/workspaces/${projectId}/file?path=${encodeURIComponent(path)}`),
   workspaceSessions: (projectId: string) => json<SessionSummary[]>(`/api/v1/workspaces/${projectId}/sessions`),

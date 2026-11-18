@@ -1,6 +1,6 @@
-import { ArrowsOutSimple, ArrowClockwise, ChatCircle, Info, X } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowCounterClockwise, ArrowsInLineVertical, ArrowsOutLineVertical, CaretRight, Check, Eye, Info, Minus } from "@phosphor-icons/react";
 import { confirmDialog } from "../ui/dialogs";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../../api";
 import { DiffViewer, type DiffFeedbackLine } from "../../DiffViewer";
 import { useT } from "../../i18n";
@@ -18,7 +18,11 @@ const views: ChangeView[] = ["git", "session"];
 // Staged first, as it is what a commit will contain.
 const gitGroups: GitChangeScope[] = ["staged", "unstaged"];
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
-const same = (a: Selection | null, b: Selection | null) => !!a && !!b && a.group === b.group && a.path === b.path;
+const keyOf = (selection: Selection) => `${selection.group}\u0000${selection.path}`;
+/** One open file's diff. `refresh` is the listing refresh it was fetched for, so a refresh refetches it. */
+type PatchState = { refresh: number; loading: boolean; value?: ChangePatch; error?: string };
+/** Past this many files, "expand all" would fire too many diff requests at once. */
+const EXPAND_ALL_LIMIT = 30;
 const splitPath = (path: string) => { const index = path.lastIndexOf("/"); return index < 0 ? ["", path] : [path.slice(0, index + 1), path.slice(index + 1)]; };
 // Build output that is regenerated rather than reviewed line by line.
 const generatedPatterns = [/(^|\/)static\/assets\//, /(^|\/)(dist|build)\//, /\.min\.(js|css)$/, /\.map$/];
@@ -34,7 +38,7 @@ export function DiffBar({ add, del }: { add: number; del: number }) {
   return <span className="diff-bar" aria-hidden="true">{Array.from({ length: 5 }, (_, index) => <i key={index} className={index < green ? "add" : index < green + red ? "del" : ""} />)}</span>;
 }
 
-export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFeedback, focus }: {
+export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFeedback, focus, onOpenFile }: {
   sessionId: string;
   /** A file to open once the listing has it; a new request reopens it. */
   focus?: { path: string; request: number } | null;
@@ -42,6 +46,7 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
   onCount: (count: number) => void;
   onWorkingChanges?: (changes: ChangesSummary["changes"]) => void;
   onFeedback?: (feedback: string) => void;
+  onOpenFile?: (path: string) => void;
 }) {
   const tr = useT();
   const [view, setView] = useState<ChangeView>("git");
@@ -49,37 +54,41 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
-  const [selected, setSelected] = useState<Selection | null>(null);
-  const [detail, setDetail] = useState<{ owner: string; selection: Selection; value: ChangePatch } | null>(null);
-  const [patchLoading, setPatchLoading] = useState(false);
-  const [patchError, setPatchError] = useState("");
+  // Several files can be open at once, as in a code host's review page.
+  const [expanded, setExpanded] = useState<Selection[]>([]);
+  const [patches, setPatches] = useState<Record<string, PatchState>>({});
   const [actionPending, setActionPending] = useState(false);
   const [note, setNote] = useState("");
   const [commitMessage, setCommitMessage] = useState("");
-  const [wide, setWide] = useState(false);
-  const [feedback, setFeedback] = useState<{ path: string; line?: DiffFeedbackLine } | null>(null);
+  const [feedback, setFeedback] = useState<{ group: Group; path: string; line?: DiffFeedbackLine } | null>(null);
   const [feedbackText, setFeedbackText] = useState("");
   const generation = useRef(0);
-  const wideRef = useRef<HTMLDivElement>(null);
-  const expandRef = useRef<HTMLButtonElement>(null);
   const countRef = useRef(onCount);
   const workingRef = useRef(onWorkingChanges);
   countRef.current = onCount;
   workingRef.current = onWorkingChanges;
+  const sessionBusy = state.connection !== "connected" || ["running", "queued", "waiting_for_input", "cancelling"].includes(state.session.execution ?? state.session.status);
+  const wasBusy = useRef(false);
 
   useEffect(() => { setCommitMessage(""); }, [sessionId]);
 
   useEffect(() => {
     ++generation.current;
-    setListing(null); setSelected(null); setDetail(null); setPatchError(""); setNote("");
-    setActionPending(false); setWide(false); setFeedback(null); setFeedbackText("");
+    setListing(null); setExpanded([]); setPatches({}); setNote("");
+    setActionPending(false); setFeedback(null); setFeedbackText("");
     countRef.current(0);
     return () => { ++generation.current; };
   }, [sessionId, view]);
 
   useEffect(() => {
+    if (wasBusy.current && !sessionBusy) setRefresh((value) => value + 1);
+    wasBusy.current = sessionBusy;
+  }, [sessionBusy]);
+
+  useEffect(() => {
     let current = true;
-    setLoading(true); setError("");
+    if (!listing || listing.view !== view || listing.owner !== sessionId) setLoading(true);
+    setError("");
     const read = async (): Promise<Listing> => {
       if (view === "session") {
         const result = await api.review(sessionId);
@@ -105,33 +114,41 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
     void read().then((result) => {
       if (!current) return;
       setListing(result); countRef.current(new Set(Object.values(result.groups).flatMap((group) => group?.rows.map((row) => row.path) ?? [])).size); setLoading(false);
-      setSelected((selection) => selection && result.groups[selection.group]?.rows.some((row) => row.path === selection.path) ? selection : null);
+      setExpanded((open) => {
+        const kept = open.filter((selection) => result.groups[selection.group]?.rows.some((row) => row.path === selection.path));
+        return kept.length === open.length ? open : kept;
+      });
     }).catch((reason) => {
       if (!current) return;
       setError(message(reason)); setLoading(false); setListing(null); countRef.current(0);
     });
     return () => { current = false; };
-  }, [sessionId, view, refresh, state.session.status, state.session.execution, state.connection]);
+  }, [sessionId, view, refresh]);
 
+  // Fetch each open file's diff once per listing refresh; an old diff stays on screen while it reloads.
+  const expandedKey = expanded.map(keyOf).join("\u0001");
   useEffect(() => {
-    let current = true;
-    setDetail(null); setPatchError(""); setPatchLoading(!!selected);
-    setFeedback(null); setFeedbackText("");
-    if (selected) {
-      const request = selected.group === "session" ? api.reviewPatch(sessionId, selected.path) : api.patch(sessionId, selected.path, selected.group);
+    const owner = generation.current;
+    for (const selection of expanded) {
+      const key = keyOf(selection);
+      const entry = patches[key];
+      if (entry && entry.refresh === refresh) continue;
+      setPatches((current) => ({ ...current, [key]: { refresh, loading: true, value: current[key]?.value } }));
+      const request = selection.group === "session" ? api.reviewPatch(sessionId, selection.path) : api.patch(sessionId, selection.path, selection.group);
       void request.then((value) => {
-        if (current) { setDetail({ owner: sessionId, selection: selected, value }); setPatchLoading(false); }
-      }).catch((reason) => { if (current) { setPatchError(message(reason)); setPatchLoading(false); } });
+        if (generation.current === owner) setPatches((current) => current[key]?.refresh === refresh ? { ...current, [key]: { refresh, loading: false, value } } : current);
+      }).catch((reason) => {
+        if (generation.current === owner) setPatches((current) => current[key]?.refresh === refresh ? { ...current, [key]: { refresh, loading: false, error: message(reason) } } : current);
+      });
     }
-    return () => { current = false; };
-  }, [selected?.group, selected?.path, sessionId, refresh]);
+    // `patches` is read, not watched: a fetch result must not start another fetch.
+  }, [expandedKey, sessionId, refresh]);
 
-  useEffect(() => {
-    if (!wide) return;
-    wideRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
-    return () => { if (expandRef.current?.isConnected) expandRef.current.focus(); };
-  }, [wide]);
-  useEffect(() => { if (!selected) setWide(false); }, [selected]);
+  const isOpen = (selection: Selection) => expanded.some((item) => item.group === selection.group && item.path === selection.path);
+  const toggleOpen = (selection: Selection) => {
+    setExpanded((open) => isOpen(selection) ? open.filter((item) => !(item.group === selection.group && item.path === selection.path)) : [...open, selection]);
+    if (feedback && feedback.group === selection.group && feedback.path === selection.path) { setFeedback(null); setFeedbackText(""); }
+  };
 
   const handledFocus = useRef(0);
   useEffect(() => {
@@ -139,8 +156,30 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
     const group = gitGroups.find((item) => listing.groups[item]?.rows.some((row) => row.path === focus.path));
     if (!group) return;
     handledFocus.current = focus.request;
-    setSelected({ group, path: focus.path });
+    const selection = { group, path: focus.path };
+    setExpanded((open) => open.some((item) => item.group === group && item.path === focus.path) ? open : [...open, selection]);
+    setFocusTarget(keyOf(selection));
   }, [focus, listing, sessionId]);
+  // Bring a file opened from elsewhere into view once its row is rendered.
+  const [focusTarget, setFocusTarget] = useState<string | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!focusTarget) return;
+    const row = [...(panelRef.current?.querySelectorAll<HTMLElement>("[data-change-key]") ?? [])].find((item) => item.dataset.changeKey === focusTarget);
+    if (row) { row.scrollIntoView?.({ block: "start" }); setFocusTarget(null); }
+  });
+  // File heads stick under the panel header, whatever height it wraps to.
+  const topRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const top = topRef.current, panel = panelRef.current;
+    if (!top || !panel) return;
+    const apply = () => panel.style.setProperty("--changes-top", `${top.offsetHeight}px`);
+    apply();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(apply);
+    observer.observe(top);
+    return () => observer.disconnect();
+  }, []);
 
   const owned = listing?.owner === sessionId && listing.view === view ? listing : null;
   const groupsShown: Group[] = view === "session" ? ["session"] : gitGroups;
@@ -148,13 +187,13 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
   const revisionOf = (group: Group) => owned?.groups[group]?.revision;
   const allRows = groupsShown.flatMap(rowsOf);
   const fileCount = new Set(allRows.map((row) => row.path)).size;
-  const selectedRow = selected ? rowsOf(selected.group).find((row) => row.path === selected.path) : undefined;
-  const patch = detail?.owner === sessionId && same(detail.selection, selected) ? detail.value : null;
-  const stalePatch = !!selected && !!patch?.revision && !!revisionOf(selected.group) && patch.revision !== revisionOf(selected.group);
-  const execution = state.session.execution ?? state.session.status;
-  const runtimeBusy = state.connection !== "connected" || ["running", "queued", "waiting_for_input", "cancelling"].includes(execution);
+  const patchOf = (selection: Selection) => patches[keyOf(selection)];
+  const staleOf = (selection: Selection) => {
+    const value = patchOf(selection)?.value;
+    return !!value?.revision && !!revisionOf(selection.group) && value.revision !== revisionOf(selection.group);
+  };
+  const runtimeBusy = sessionBusy;
   const blocked = (group: Group) => actionPending || runtimeBusy || loading || !!error || !revisionOf(group);
-  const fileBlocked = (group: Group) => blocked(group) || stalePatch || patchLoading || !!patchError || !patch;
   const stats = useMemo(() => sumStats(allRows), [allRows]);
   const canUndo = (row: Row) => row.review?.can_revert === true;
   const canStage = (row: Row) => row.capabilities?.stage ?? true;
@@ -172,7 +211,7 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
 
   const act = async (action: ChangeAction | "undo", group: Group, targets: Row[], hunk?: number) => {
     const revision = revisionOf(group);
-    if (blocked(group) || (hunk !== undefined && (stalePatch || !patch)) || !revision) return;
+    if (blocked(group) || (hunk !== undefined && (!targets[0] || staleOf({ group, path: targets[0].path }) || !patchOf({ group, path: targets[0].path })?.value)) || !revision) return;
     const paths = pathsFor(group, targets);
     if (action !== "commit" && !paths.length) return;
     // Taken before any confirmation: the user may switch sessions while a dialog is open.
@@ -201,33 +240,26 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
     } finally { if (generation.current === owner) setActionPending(false); }
   };
 
-  const fileActions = (group: Group, row: Row) => group === "session"
-    ? <button type="button" className="button" disabled={fileBlocked(group) || !canUndo(row)} title={row.reason || undefined} onClick={() => void act("undo", group, [row])}>{tr("web.changes.undo")}</button>
-    : group === "staged"
-      ? <button type="button" className="button" disabled={fileBlocked(group) || !canUnstage(row)} title={row.reason || undefined} onClick={() => void act("unstage", group, [row])}>{tr("web.changes.unstage")}</button>
-      : <>
-        <button type="button" className="button" disabled={fileBlocked(group) || !canStage(row)} title={row.reason || undefined} onClick={() => void act("stage", group, [row])}>{tr("web.changes.stage")}</button>
-        <button type="button" className="button changes-danger" disabled={fileBlocked(group) || !canDiscard(row)} title={row.reason || undefined} onClick={() => void act("discard", group, [row])}>{tr("web.changes.discard")}</button>
-      </>;
-
-  const hunkSupported = selected && selectedRow && selected.group !== "session" && !selectedRow.old_path && !patch?.binary && !patch?.truncated && selectedRow.capabilities?.hunk === true;
-  const hunkActions = hunkSupported ? (hunk: number) => <>
-    <button type="button" className="text-button" disabled={blocked(selected.group) || stalePatch} onClick={() => void act(selected.group === "staged" ? "unstage" : "stage", selected.group, [selectedRow], hunk)}>{tr(selected.group === "staged" ? "web.changes.unstage_hunk" : "web.changes.stage_hunk")}</button>
-    {selected.group === "unstaged" && <button type="button" className="text-button changes-danger" disabled={blocked(selected.group) || stalePatch} onClick={() => void act("discard", selected.group, [selectedRow], hunk)}>{tr("web.changes.discard_hunk")}</button>}
-  </> : undefined;
+  const hunkActionsFor = (group: Group, row: Row, patch: ChangePatch | undefined, stale: boolean) => {
+    const supported = group !== "session" && !row.old_path && !!patch && !patch.binary && !patch.truncated && row.capabilities?.hunk === true;
+    if (!supported) return undefined;
+    return (hunk: number) => <>
+      <button type="button" className="text-button" disabled={blocked(group) || stale} onClick={() => void act(group === "staged" ? "unstage" : "stage", group, [row], hunk)}>{tr(group === "staged" ? "web.changes.unstage_hunk" : "web.changes.stage_hunk")}</button>
+      {group === "unstaged" && <button type="button" className="text-button changes-danger" disabled={blocked(group) || stale} onClick={() => void act("discard", group, [row], hunk)}>{tr("web.changes.discard_hunk")}</button>}
+    </>;
+  };
 
   const groupLabel = (group: Group) => tr(`web.changes.scope.${group}`);
   const addFeedback = () => {
-    if (!feedback || !selected || !feedbackText.trim() || !onFeedback) return;
+    if (!feedback || !feedbackText.trim() || !onFeedback) return;
     const line = feedback.line;
     const lineNumber = line?.side === "old" ? line.oldLine : line?.newLine;
     const location = `${feedback.path}${lineNumber != null ? `:${lineNumber} (${tr(`web.changes.${line?.side}`)})` : ""}`;
     const context = line ? `\n> ${line.content.replace(/\n/g, "\n> ")}\n` : "\n";
-    setWide(false);
-    onFeedback(`${tr("web.changes.feedback_context", { scope: groupLabel(selected.group) })}\n${location}${context}\n${feedbackText.trim()}`);
+    onFeedback(`${tr("web.changes.feedback_context", { scope: groupLabel(feedback.group) })}\n${location}${context}\n${feedbackText.trim()}`);
     setFeedback(null); setFeedbackText(""); setNote(tr("web.changes.feedback_added"));
   };
-  const feedbackForm = feedback && <form className="changes-feedback" onSubmit={(event) => { event.preventDefault(); addFeedback(); }}>
+  const feedbackForm = (group: Group, path: string) => feedback && feedback.group === group && feedback.path === path && <form className="changes-feedback" onSubmit={(event) => { event.preventDefault(); addFeedback(); }}>
     <strong>{tr("web.changes.feedback_title", { path: feedback.path })}</strong>
     {feedback.line && <small>{tr("web.changes.feedback_line", { side: tr(`web.changes.${feedback.line.side}`), line: (feedback.line.side === "old" ? feedback.line.oldLine : feedback.line.newLine) ?? "" })}</small>}
     {feedback.line && <pre>{feedback.line.content}</pre>}
@@ -235,56 +267,86 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
     <div className="changes-actions"><button type="submit" className="button" disabled={!feedbackText.trim()}>{tr("web.changes.add_feedback")}</button><button type="button" className="text-button" onClick={() => setFeedback(null)}>{tr("web.changes.feedback_cancel")}</button></div>
   </form>;
 
-  const diffBody = selected && <>
-    <div className="changes-detail-head"><strong title={selected.path}>{selected.path}{view === "git" && <small className="changes-detail-group"> · {groupLabel(selected.group)}</small>}</strong><div className="changes-actions">{selectedRow && fileActions(selected.group, selectedRow)}{onFeedback && <button type="button" className="button" onClick={() => { setFeedback({ path: selected.path }); setFeedbackText(""); }}><ChatCircle size={13} />{tr("web.changes.feedback")}</button>}</div></div>
-    {selectedRow?.reason && <p className="hint">{selectedRow.reason}</p>}
-    {patchError ? <p className="form-error" role="alert">{patchError}</p> : patchLoading ? <p className="hint" role="status">{tr("web.inspector_loading")}</p> : patch?.binary ? <p className="hint">{tr("web.changes.binary")}</p> : patch?.truncated ? <p className="hint">{tr("web.changes.large")}</p> : patch?.unavailable ? <p className="hint">{tr("web.changes.unavailable")}</p> : patch && <DiffViewer patch={patch.patch} filename={selected.path} renderHunkActions={hunkActions} onLineFeedback={onFeedback ? (line) => { setFeedback({ path: selected.path, line }); setFeedbackText(""); } : undefined} />}
-    {patch?.reason && <p className="hint">{patch.reason}</p>}
-    {stalePatch && <p className="form-error" role="alert">{tr("web.changes.diff_changed")}</p>}
-    {feedbackForm}
-  </>;
+  const diffBody = (group: Group, row: Row) => {
+    const selection = { group, path: row.path };
+    const entry = patchOf(selection);
+    const patch = entry?.value;
+    const stale = staleOf(selection);
+    return <>
+      {row.reason && <p className="hint">{row.reason}</p>}
+      {entry?.error ? <p className="form-error" role="alert">{entry.error}</p>
+        : !patch ? <p className="hint" role="status">{tr("web.inspector_loading")}</p>
+        : patch.binary ? <p className="hint">{tr("web.changes.binary")}</p>
+        : patch.truncated ? <p className="hint">{tr("web.changes.large")}</p>
+        : patch.unavailable ? <p className="hint">{tr("web.changes.unavailable")}</p>
+        : <DiffViewer embedded patch={patch.patch} filename={row.path} renderHunkActions={hunkActionsFor(group, row, patch, stale)} onLineFeedback={onFeedback ? (line) => { setFeedback({ group, path: row.path, line }); setFeedbackText(""); } : undefined} />}
+      {patch?.reason && <p className="hint">{patch.reason}</p>}
+      {stale && <p className="form-error" role="alert">{tr("web.changes.diff_changed")}</p>}
+      {feedbackForm(group, row.path)}
+    </>;
+  };
 
-  const bulkButton = (group: Group, action: ChangeAction, label: string, danger = false) => <button type="button" className={`button${danger ? " changes-danger changes-bulk-danger" : ""}`} disabled={blocked(group) || bulkBlocked(group, action) || !targetsFor(group, action).length} title={bulkBlocked(group, action) ? tr("web.changes.bulk_unavailable") : undefined} onClick={() => void act(action, group, targetsFor(group, action))}>{label}</button>;
+  const bulkButton = (group: Group, action: ChangeAction, label: string, danger = false) => <button type="button" className={`btn btn-sm${danger ? " btn-ghost changes-danger changes-bulk-danger" : " btn-outline"}`} disabled={blocked(group) || bulkBlocked(group, action) || !targetsFor(group, action).length} title={bulkBlocked(group, action) ? tr("web.changes.bulk_unavailable") : undefined} onClick={() => void act(action, group, targetsFor(group, action))}>{label}</button>;
   const groupActions = (group: Group) => group === "session"
-    ? <button type="button" className="button" disabled={blocked(group) || !targetsFor(group, "undo").length} onClick={() => void act("undo", group, targetsFor(group, "undo"))}>{tr("web.changes.undo_count", { count: targetsFor(group, "undo").length })}</button>
+    ? <button type="button" className="btn btn-sm btn-ghost" disabled={blocked(group) || !targetsFor(group, "undo").length} onClick={() => void act("undo", group, targetsFor(group, "undo"))}>{tr("web.changes.undo_count", { count: targetsFor(group, "undo").length })}</button>
     : group === "staged" ? bulkButton(group, "unstage", tr("web.changes.unstage_all"))
-    : <>{bulkButton(group, "stage", tr("web.changes.stage_all"))}{bulkButton(group, "discard", tr("web.changes.discard_all"), true)}</>;
+    : <>{bulkButton(group, "discard", tr("web.changes.discard_all"), true)}{bulkButton(group, "stage", tr("web.changes.stage_all"))}</>;
   const groupBlockedHint = (group: Group) => group === "staged" ? bulkBlocked(group, "unstage") : group === "unstaged" && (bulkBlocked(group, "stage") || bulkBlocked(group, "discard"));
-
-  // The diff opens under its row, so a long list never pushes it out of view.
-  const detailSection = selected && <section className="changes-detail" hidden={wide} aria-label={tr("web.changes.selected_file")}>
-    <div className="changes-expand"><button type="button" className="text-button" ref={expandRef} disabled={patchLoading || !!patchError || !patch} onClick={() => setWide(true)}><ArrowsOutSimple size={13} />{tr("web.expand_diff")}</button></div>{!wide && diffBody}
-  </section>;
 
   const fileRow = (group: Group, row: Row) => {
     const selection = { group, path: row.path };
     const badge = rowState(row);
     const [dir, name] = splitPath(row.path);
     const letter = kindLetter(row.status);
-    const active = same(selected, selection);
-    return <div className="changes-file-item" key={`${group}:${row.path}`}>
-      <button type="button" className={`changes-file${active ? " selected" : ""}`} aria-pressed={active} aria-label={[`${letter} ${row.old_path ? `${row.old_path} → ` : ""}${row.path}`, badge, row.binary ? "BIN" : `+${row.additions ?? 0} −${row.deletions ?? 0}`].filter(Boolean).join(", ")} onClick={() => setSelected(active ? null : selection)}>
-        <span className={`changes-kind kind-${letter}`} title={row.status}>{letter}</span>
-        <span className="changes-file-name" title={row.old_path ? `${row.old_path} → ${row.path}` : row.path}>
-          <span className="changes-file-path"><strong>{name}</strong><span className="changes-file-dir">{dir}</span></span>
-          {(badge || row.old_path) && <span className="changes-file-meta">{row.old_path && <small>{row.old_path} →</small>}{badge && <small className="changes-file-state">{badge}</small>}</span>}
+    const active = isOpen(selection);
+    const rowBusy = blocked(group);
+    const iconAction = (label: string, enabled: boolean, run: () => void, glyph: ReactNode) =>
+      <button type="button" className="icon-btn sm" aria-label={`${label} ${row.path}`} title={row.reason || label} disabled={rowBusy || !enabled} onClick={() => void run()}>{glyph}</button>;
+    const rowActions = <>
+      {onOpenFile && <button type="button" className="icon-btn sm" aria-label={tr("web.changes.view_file")} title={tr("web.changes.view_file")} onClick={() => onOpenFile(row.path)}><Eye size={14} /></button>}
+      {group === "session"
+        ? iconAction(tr("web.changes.undo"), canUndo(row), () => act("undo", group, [row]), <ArrowCounterClockwise size={14} />)
+        : group === "staged"
+          ? iconAction(tr("web.changes.unstage"), canUnstage(row), () => act("unstage", group, [row]), <Minus size={14} />)
+          : <>
+            {iconAction(tr("web.changes.discard"), canDiscard(row), () => act("discard", group, [row]), <ArrowCounterClockwise size={14} />)}
+            {iconAction(tr("web.changes.stage"), canStage(row), () => act("stage", group, [row]), <Check size={14} />)}
+          </>}
+    </>;
+    const fileLabel = [`${letter} ${row.old_path ? `${row.old_path} → ` : ""}${row.path}`, badge, row.binary ? "BIN" : `+${row.additions ?? 0} −${row.deletions ?? 0}`].filter(Boolean).join(", ");
+    const toggle = () => toggleOpen(selection);
+    return <div className={`diff-file changes-file-item${active ? "" : " is-collapsed"}`} key={`${group}:${row.path}`} data-change-key={keyOf(selection)}>
+      <div className={`diff-file-head changes-file-head changes-file${active ? " selected" : ""}`} role="button" tabIndex={0} aria-pressed={active} aria-label={fileLabel}
+        onClick={(event) => { if ((event.target as HTMLElement).closest(".diff-actions")) return; toggle(); }}
+        onKeyDown={(event) => { if (event.target !== event.currentTarget) return; if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); } }}>
+        <CaretRight className="chev" size={14} aria-hidden="true" />
+        <span className={`badge ${letter} changes-kind kind-${letter}`} title={row.status}>{letter}</span>
+        <span className="path changes-file-path" title={row.old_path ? `${row.old_path} → ${row.path}` : row.path}>
+          <bdi><span className="changes-file-dir">{dir}</span><b>{name}</b></bdi>
         </span>
-        <span className="changes-file-stats">{row.binary ? "BIN" : row.truncated ? "…" : <><span className="stat-add">+{row.additions ?? 0}</span><span className="stat-del">−{row.deletions ?? 0}</span></>}</span>
-      </button>
-      {active && detailSection}
+        {(badge || row.old_path) && <span className="changes-file-meta">{row.old_path && <small>{row.old_path} →</small>}{badge && <small className="changes-file-state">{badge}</small>}</span>}
+        <span className="diff-stat changes-file-stats">{row.binary ? "BIN" : row.truncated ? "…" : <><span className="add stat-add">+{row.additions ?? 0}</span><span className="del stat-del">−{row.deletions ?? 0}</span></>}</span>
+        <span className="diff-actions">{rowActions}</span>
+      </div>
+      {/* The diff opens under its row, so a long list never pushes it out of view. */}
+      {active && <section className="changes-detail" aria-label={tr("web.changes.selected_file")}>{diffBody(group, row)}</section>}
     </div>;
   };
 
+  // With a single non-empty group its bulk actions sit in the panel header, as one review list.
+  const filledGroups = groupsShown.filter((group) => rowsOf(group).length > 0);
+  const soloGroup = filledGroups.length === 1 ? filledGroups[0] : null;
   const groupSection = (group: Group) => {
     const rows = rowsOf(group);
     if (!rows.length) return null;
     return <section className="changes-group" key={group} aria-label={groupLabel(group)}>
-      <div className="changes-group-head">
-        {view === "git" && <span className="changes-group-title">{groupLabel(group)}<small>{rows.length}</small></span>}
+      {group !== soloGroup && <div className="changes-group-head">
+        <span className="changes-group-title">{groupLabel(group)}<small>{rows.length}</small></span>
+        <span className="grow" />
         <div className="changes-actions">{groupActions(group)}</div>
-      </div>
-      {group === "session" && unavailableUndo > 0 && <p className="hint">{tr("web.changes.undo_unavailable", { count: unavailableUndo })}</p>}
-      {groupBlockedHint(group) && <p className="hint">{tr("web.changes.bulk_unavailable")}</p>}
+      </div>}
+      {group !== soloGroup && group === "session" && unavailableUndo > 0 && <p className="hint">{tr("web.changes.undo_unavailable", { count: unavailableUndo })}</p>}
+      {group !== soloGroup && groupBlockedHint(group) && <p className="hint">{tr("web.changes.bulk_unavailable")}</p>}
       {(() => {
         const generated = rows.filter((row) => isGenerated(row.path));
         // A lone generated file is not worth a fold.
@@ -293,7 +355,7 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
         const generatedStats = sumStats(folded);
         return <>
           {visible.length > 0 && <div className="changes-file-list">{visible.map((row) => fileRow(group, row))}</div>}
-          {folded.length > 0 && <details className="changes-generated" open={folded.some((row) => same(selected, { group, path: row.path })) || undefined}>
+          {folded.length > 0 && <details className="changes-generated" open={folded.some((row) => isOpen({ group, path: row.path })) || undefined}>
             <summary><span>{tr("web.changes.generated", { count: folded.length })}</span><span className="changes-file-stats"><span className="stat-add">+{generatedStats.add}</span><span className="stat-del">−{generatedStats.del}</span></span></summary>
             <div className="changes-file-list">{folded.map((row) => fileRow(group, row))}</div>
           </details>}
@@ -305,36 +367,46 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
     </section>;
   };
 
-  return <div className="changes-panel">
-    <div className="changes-toolbar">
-      <SegmentedControl className="changes-view-switch" value={view} ariaLabel={tr("web.changes.scope")}
-        describedBy={`changes-scope-help-${sessionId}`} disabled={actionPending}
-        options={views.map((value) => ({ value, label: tr(`web.changes.view.${value}`), title: tr(`web.changes.help.${value}`) }))}
-        onChange={setView} />
-      <div className="changes-toolbar-actions">
-        <span className="changes-scope-info" title={tr(`web.changes.help.${view}`)} aria-hidden="true"><Info size={15} /></span>
-        <button type="button" className="icon-button" aria-label={tr("web.changes.refresh")} title={tr("web.changes.refresh")} disabled={loading || actionPending} onClick={() => setRefresh((value) => value + 1)}><ArrowClockwise size={15} /></button>
+  const expandable = allRows.filter((row) => !isGenerated(row.path));
+  const allOpen = expandable.length > 0 && expandable.every((row) => groupsShown.some((group) => isOpen({ group, path: row.path })));
+  const toggleAll = () => {
+    if (allOpen) { setExpanded([]); return; }
+    setExpanded(groupsShown.flatMap((group) => rowsOf(group).filter((row) => !isGenerated(row.path)).map((row) => ({ group, path: row.path }))));
+  };
+  const showSummary = !!owned && !error && owned.git !== false && allRows.length > 0;
+
+  return <div className="changes-panel" ref={panelRef}>
+    <div className="changes-top" ref={topRef}>
+      <div className="changes-toolbar">
+        <SegmentedControl className="changes-view-switch" value={view} ariaLabel={tr("web.changes.scope")}
+          describedBy={`changes-scope-help-${sessionId}`} disabled={actionPending}
+          options={views.map((value) => ({ value, label: tr(`web.changes.view.${value}`), title: tr(`web.changes.help.${value}`) }))}
+          onChange={setView} />
+        <div className="changes-toolbar-actions">
+          <span className="changes-scope-info" title={tr(`web.changes.help.${view}`)} aria-hidden="true"><Info size={14} /></span>
+          {expandable.length > 0 && expandable.length <= EXPAND_ALL_LIMIT && <button type="button" className="icon-btn sm" onClick={toggleAll}
+            aria-label={tr(allOpen ? "web.changes.collapse_all" : "web.changes.expand_all")} title={tr(allOpen ? "web.changes.collapse_all" : "web.changes.expand_all")}>
+            {allOpen ? <ArrowsInLineVertical size={14} /> : <ArrowsOutLineVertical size={14} />}</button>}
+          <button type="button" className="icon-btn sm" aria-label={tr("web.changes.refresh")} title={tr("web.changes.refresh")} disabled={loading || actionPending} aria-busy={loading} onClick={() => setRefresh((value) => value + 1)}><ArrowClockwise size={14} className={loading ? "spin" : undefined} /></button>
+        </div>
       </div>
+      {showSummary && <div className="changes-summary pane-head">
+        <b>{tr("web.changes.count", { count: fileCount })}</b>
+        <span className="diff-stat"><span className="add stat-add">+{stats.add}</span><span className="del stat-del">−{stats.del}</span></span>
+        <span className="grow" />
+        {soloGroup && <div className="changes-actions">{groupActions(soloGroup)}</div>}
+      </div>}
     </div>
     {/* What the scope covers is reference, not news: a tooltip for sight, a description for screen readers. */}
     <p className="sr-only" id={`changes-scope-help-${sessionId}`}>{tr(`web.changes.help.${view}`)}</p>
-    {owned && !error && owned.git !== false && <div className="changes-summary"><span>{tr("web.changes.count", { count: fileCount })}</span><span className="diff-stats"><span className="stat-add">+{stats.add}</span><span className="stat-del">−{stats.del}</span><DiffBar add={stats.add} del={stats.del} /></span></div>}
     {runtimeBusy && <p className="hint">{tr("web.changes.busy")}</p>}
-    {loading && <p className="hint" role="status">{tr("web.inspector_loading")}</p>}
+    {loading && !owned && <p className="hint" role="status">{tr("web.inspector_loading")}</p>}
     {error && <p className="form-error" role="alert">{error}</p>}
-    {note && !wide && <p className="changes-note" role="status">{note}</p>}
+    {note && <p className="changes-note" role="status">{note}</p>}
     {owned?.git === false && <p className="hint">{tr("web.changes.no_git")}</p>}
-    {!loading && owned && !error && owned.git !== false && !allRows.length && <p className="empty-small">{tr(`web.changes.empty.${view === "git" ? "working" : "session"}`)}</p>}
+    {!loading && owned && !error && owned.git !== false && !allRows.length && <div className="pane-empty"><Check size={26} aria-hidden="true" /><p className="empty-small">{tr(`web.changes.empty.${view === "git" ? "working" : "session"}`)}</p></div>}
+    {soloGroup === "session" && unavailableUndo > 0 && <p className="hint">{tr("web.changes.undo_unavailable", { count: unavailableUndo })}</p>}
+    {soloGroup && groupBlockedHint(soloGroup) && <p className="hint">{tr("web.changes.bulk_unavailable")}</p>}
     {owned?.git !== false && groupsShown.map(groupSection)}
-    {!selected && allRows.length > 0 && <p className="hint">{tr("web.changes.select")}</p>}
-    {wide && selected && <div className="wide-diff changes-wide" ref={wideRef} role="dialog" aria-modal="true" aria-label={selected.path} onKeyDown={(event) => {
-      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setWide(false); }
-      if (event.key !== "Tab") return;
-      event.stopPropagation();
-      const controls = Array.from(wideRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), textarea:not([disabled]), [tabindex="0"]') ?? []);
-      const first = controls[0], last = controls[controls.length - 1];
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-    }}><div className="changes-wide-head"><span>{groupLabel(selected.group)}</span><div className="changes-actions"><button type="button" className="icon-button" aria-label={tr("web.close")} onClick={() => setWide(false)}><X size={16} /></button><button type="button" className="icon-button" aria-label={tr("web.changes.refresh")} disabled={loading || actionPending} onClick={() => setRefresh((value) => value + 1)}><ArrowClockwise size={15} /></button></div></div>{note && <p className="changes-note" role="status">{note}</p>}{error && <p className="form-error" role="alert">{error}</p>}{diffBody}</div>}
   </div>;
 }

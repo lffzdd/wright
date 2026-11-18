@@ -30,11 +30,24 @@ describe("segmentTimeline", () => {
       ["r"], ["tool:q"], ["tool:t1", "tool:t2"],
     ]);
   });
+
+  it("keeps each edit out of the surrounding steps so its diff stays in view", () => {
+    const segments = segmentTimeline([
+      item("t1", "tool", { name: "read", call_id: "t1" }),
+      item("t2", "tool", { name: "grep", call_id: "t2" }),
+      item("e1", "edit", { name: "edit", call_id: "e1" }),
+      item("e2", "tool", { name: "write_file", call_id: "e2" }),
+      item("t3", "shell", { name: "shell", call_id: "t3" }),
+    ]);
+    expect(segments.map((segment) => segment.type === "item" ? segment.item.id : segment.steps.map((step) => step.key))).toEqual([
+      ["tool:t1", "tool:t2"], ["tool:e1"], ["tool:e2"], ["tool:t3"],
+    ]);
+  });
 });
 
 describe("summarizeSteps", () => {
   it("counts each kind of tool call, failures and time", () => {
-    const [segment] = segmentTimeline([
+    const steps = [
       item("r", "reasoning", { duration_ms: 500 }),
       item("d", "tool", { name: "ls", phase: "succeeded", duration_ms: 20 }),
       item("f1", "tool", { name: "read", phase: "succeeded" }),
@@ -43,9 +56,8 @@ describe("summarizeSteps", () => {
       item("s", "shell", { name: "shell", phase: "failed", duration_ms: 1000 }),
       item("e", "edit", { name: "edit", phase: "running" }),
       item("p", "tool", { name: "update_plan", phase: "succeeded" }),
-    ]);
-    if (segment.type !== "steps") throw new Error("expected steps");
-    const summary = summarizeSteps(segment.steps);
+    ].map(stepFromItem);
+    const summary = summarizeSteps(steps);
     expect(summaryCategories(summary)).toEqual([["directories", 1], ["reads", 2], ["searches", 1], ["commands", 1], ["edits", 1], ["plans", 1]]);
     expect(summary).toMatchObject({ reasoning: 1, failed: 1, running: true, durationMs: 1520 });
   });

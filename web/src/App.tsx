@@ -1,12 +1,13 @@
-import { Archive, Brain, ClipboardText, Clock, Copy, DotsThree, DownloadSimple, Gear, GitBranch, MagnifyingGlass, Moon, PencilSimple, Scroll, SidebarSimple, Sun, Warning, X, XCircle } from "@phosphor-icons/react";
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { BookOpen, Brain, Bug, Clock, Compass, Gear, GitBranch, Lightning, MagnifyingGlass, Moon, Scroll, Sun, Warning, X } from "@phosphor-icons/react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { api, ApiError, bootstrap } from "./api";
 import { browserLocale, setLocale, useT } from "./i18n";
 import { paintTheme, paintedTheme, systemTheme } from "./theme";
 import { parseEvent } from "./protocol";
 import { applyEvent } from "./reducer";
 import type { FileReference, SessionSummary, Snapshot, ViewState } from "./types";
-import { Composer, EnvironmentChoice } from "./components/composer/Composer";
+import { RunStatus } from "./components/composer/RunStatus";
+import { Composer, ComposerHints, EnvironmentChoice } from "./components/composer/Composer";
 import { emptyDraft, type Draft } from "./components/composer/draft";
 import { Inspector, type InspectorTab } from "./components/inspector/Inspector";
 import { InspectorResizeHandle } from "./components/inspector/InspectorResizeHandle";
@@ -19,9 +20,8 @@ import { SessionRail } from "./components/session/SessionRail";
 import { conversationMarkdown, markdownFileName, rewindImpact, sessionTitle } from "./components/session/session";
 import { AddWorkspaceDialog } from "./components/session/AddWorkspaceDialog";
 import { confirmDialog, DialogHost, promptDialog } from "./components/ui/dialogs";
-import { InlineRename } from "./components/ui/InlineRename";
-import { MenuButton } from "./components/ui/Menu";
-import { InteractionDock, Timeline, type MessageActions } from "./components/timeline/Timeline";
+import { CopyIcon, LogoMark, PanelIcon, ShareIcon, SidebarIcon } from "./components/ui/chromeIcons";
+import { InteractionDock, QueuedCommands, Timeline, type MessageActions } from "./components/timeline/Timeline";
 import { OpenFileContext } from "./components/code/openFile";
 
 
@@ -46,6 +46,66 @@ type CapabilityCounts = { memory: number | null; rules: number | null; schedules
 type Panel = null | "search";
 /** A capability screen that replaces the conversation in the main area. */
 type Page = null | "memory" | "rules" | "schedules" | "settings";
+
+function HeaderTitle({ value, hint, onCommit, onBegin, editRef }: {
+  value: string;
+  hint: string;
+  onCommit: (next: string) => void;
+  onBegin?: () => void;
+  editRef?: { current: (() => void) | null };
+}) {
+  const node = useRef<HTMLSpanElement>(null);
+  const editing = useRef(false);
+  const armed = useRef(false);
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  useLayoutEffect(() => {
+    const el = node.current;
+    if (!el || editing.current) return;
+    if (el.textContent !== value) el.textContent = value;
+  }, [value]);
+  const begin = () => {
+    const el = node.current;
+    if (!el || el.contentEditable === "true") return;
+    onBegin?.();
+    editing.current = true;
+    armed.current = false;
+    el.setAttribute("contenteditable", "true");
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    window.setTimeout(() => { armed.current = true; }, 0);
+  };
+  const finish = (save: boolean) => {
+    const el = node.current;
+    if (!el || el.contentEditable !== "true") return;
+    const text = el.textContent?.trim() ?? "";
+    el.removeAttribute("contenteditable");
+    editing.current = false;
+    armed.current = false;
+    if (save && text && text !== valueRef.current) onCommit(text);
+    else el.textContent = valueRef.current;
+  };
+  if (editRef) editRef.current = begin;
+  return <span
+    ref={node}
+    className="title"
+    role="heading"
+    aria-level={1}
+    title={hint}
+    tabIndex={0}
+    spellCheck={false}
+    onClick={begin}
+    onKeyDown={(event) => {
+      if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+      if (event.key === "Enter") { event.preventDefault(); if (editing.current) finish(true); else begin(); }
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); finish(false); }
+    }}
+    onBlur={() => { if (armed.current) finish(true); }}
+  >{value}</span>;
+}
 
 
 export default function App() {
@@ -84,6 +144,7 @@ export default function App() {
   const pageRef = useRef(page);
   pageRef.current = page;
   const [renaming, setRenaming] = useState<string | null>(null);
+  const beginHeaderRename = useRef<(() => void) | null>(null);
   const [addingWorkspace, setAddingWorkspace] = useState(false);
   const [callFocus, setCallFocus] = useState<{ sessionId: string; callId: string; request: number } | null>(null);
   const [inspectorTab, setInspectorTab] = useState<{ tab: InspectorTab; request: number } | undefined>(undefined);
@@ -688,6 +749,16 @@ export default function App() {
     }
     await refreshSessions();
   };
+  const closeSession = async (session: { session_id: string }) => {
+    const summary = sessions.find((item) => item.session_id === session.session_id) ?? (state?.session.session_id === session.session_id ? state.session : session);
+    if (!await confirmDialog({ title: tr("web.close_title", { label: sessionTitle(summary, tr) }), message: tr("web.close_help"), confirmLabel: tr("web.close_session"), danger: true })) return;
+    await api.close(session.session_id);
+    if (selected === session.session_id) {
+      setSelected(null);
+      setState(null);
+    }
+    await refreshSessions();
+  };
   const renameSession = async (session: { session_id: string; user_goal?: string }, title: string) => {
     setRenaming(null);
     const next = title;
@@ -800,11 +871,10 @@ export default function App() {
   const dirty = workspaceId.current === launchId.current ? Number(project?.uncommitted_count ?? 0) : 0;
   const projectName = String(selectedWorkspace?.name ?? project?.name ?? tr("web.local"));
   const launchProject = String(project?.project_id ?? "");
-  const planSteps = state?.plan.steps ?? [];
-  const currentStep = planSteps.findIndex((step) => ["in_progress", "running", "active"].includes(step.status));
-  const selectedProgress = planSteps.length && planSteps.some((step) => step.status !== "completed")
-    ? tr("web.step_of", { current: currentStep >= 0 ? currentStep + 1 : Math.min(planSteps.length, planSteps.filter((step) => step.status === "completed").length + 1), total: planSteps.length })
-    : "";
+  // Sessions waiting on the person, counted in the tab title so a background tab still asks.
+  useEffect(() => {
+    document.title = tabTitle(sessions, state);
+  }, [sessions, state]);
 
   if (fatal && !project) return <main className="fatal"><Warning size={28} /><h1>{tr("web.fatal_title")}</h1><p>{fatal}</p><button className="button primary" onClick={() => location.reload()}>{tr("web.reload")}</button></main>;
   const connection = state?.connection ?? (booted ? "idle" : "connecting");
@@ -831,25 +901,12 @@ export default function App() {
   // The session list refreshes on its own, so a title named after the first turn shows up here too.
   const listed = state ? sessions.find((item) => item.session_id === state.session.session_id) : undefined;
   const headerTitle = state ? sessionTitle(listed?.user_goal ? { ...state.session, user_goal: listed.user_goal } : state.session, tr) : "";
+  const railExpanded = compactViewport ? railOpen : sidebarOpen;
+  const railToggle = <button type="button" className={`icon-button icon-btn rail-toggle${railExpanded && !compactViewport ? " on" : ""}`} onClick={toggleRail} aria-label={tr(railExpanded ? "web.close_sessions" : "web.open_sessions")} aria-expanded={railExpanded} title={tr("web.toggle_sessions_title")}><SidebarIcon /></button>;
+  const inspectorShown = compactViewport ? inspectorOpen && narrowInspector : inspectorOpen;
+  const statusPill = statusVisible ? <span className={`top-agent-state run-pill ${statusClass === "running" ? "running" : statusClass === "waiting" || statusClass === "waiting-input" || statusClass === "queued" ? "waiting" : statusClass}`} role="status"><span className="dot" />{statusText}</span> : null;
+  const branchChip = branch ? <span className="branch-pill chip" title={branch}><GitBranch size={12} /><span>{branch}</span>{dirty > 0 ? <span className="dirty">{tr("web.uncommitted", { count: dirty })}</span> : null}</span> : null;
   return <div className="app-viewport">
-    <header className="topbar">
-      <div className="brand">
-        <button type="button" className="icon-button rail-toggle" onClick={toggleRail} aria-label={tr((compactViewport ? railOpen : sidebarOpen) ? "web.close_sessions" : "web.open_sessions")} aria-expanded={compactViewport ? railOpen : sidebarOpen} title={tr("web.toggle_sessions_title")}><SidebarSimple size={14} /></button>
-        <span className="brand-mark">W</span>
-        <strong>Wright</strong>
-        <span className="sep">/</span>
-        <span className="crumb" title={String(selectedWorkspace?.root ?? project?.project_root ?? "")}>{projectName}</span>
-      </div>
-      <div className="top-center">
-        {branch && <div className="branch-pill"><GitBranch size={12} /><span>{branch}</span>{dirty > 0 ? <span className="dirty">{tr("web.uncommitted", { count: dirty })}</span> : null}</div>}
-        <button type="button" className="search-trigger" onClick={() => setPanel("search")}><MagnifyingGlass size={14} /><span>{tr("web.search")}</span><kbd className="kbd">{tr("web.shortcut_key", { key: "K" })}</kbd></button>
-      </div>
-      <div className="top-status">
-        {statusVisible && <span className={`top-agent-state ${statusClass}`} role="status"><span className={`dot ${statusPulse ? "pulse" : ""}`} />{statusText}</span>}
-        <button type="button" className="icon-button" title={tr("web.theme")} onClick={() => savePreference({ theme: theme === "dark" ? "light" : "dark" }).catch((error) => setFatal(String(error)))}>{theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}</button>
-        {!page && state && selected ? <button type="button" className="icon-button" aria-label={tr((compactViewport ? inspectorOpen && narrowInspector : inspectorOpen) ? "web.close_inspector" : "web.open_inspector")} aria-expanded={compactViewport ? inspectorOpen && narrowInspector : inspectorOpen} aria-controls="workspace-inspector" onClick={toggleInspector}><SidebarSimple size={14} /></button> : null}
-      </div>
-    </header>
     <div
       className="workspace-grid"
       data-inspector={!page && state && selected && inspectorOpen ? "open" : "closed"}
@@ -857,13 +914,16 @@ export default function App() {
       style={{ "--inspector-width": `${inspectorWidth}px`, "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
     >
       <SessionRail
+        projectName={projectName}
+        projectRoot={String(selectedWorkspace?.root ?? project?.project_root ?? "")}
+        search={<button type="button" className="search-trigger sb-search" onClick={() => setPanel("search")}><MagnifyingGlass size={14} className="ic" /><span>{tr("web.search_bar")}</span><kbd className="kbd">{tr("web.shortcut_key", { key: "K" })}</kbd></button>}
+        footer={<button type="button" className="icon-button" title={tr("web.theme")} aria-label={tr("web.theme")} onClick={() => savePreference({ theme: theme === "dark" ? "light" : "dark" }).catch((error) => setFatal(String(error)))}>{theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}</button>}
         sessions={sessions}
         selected={page ? null : selected}
         onSelect={(session) => selectSession(session).catch((error) => setFatal(String(error)))}
         onCreate={() => { setPage(null); setBrowsing("draft"); setSelected(null); setState(null); remember(null); }}
         open={railOpen}
         collapsed={!sidebarOpen && !compactViewport}
-        selectedProgress={selectedProgress}
         connectionLatency={serverLatency}
         workspaces={workspaces}
         onSelectWorkspace={(projectId) => {
@@ -889,6 +949,7 @@ export default function App() {
         onRenameCancel={() => setRenaming(null)}
         onRenameSubmit={(session, title) => renameSession(session, title).catch((error) => setFatal(String(error)))}
         onArchive={(session) => archiveSession(session.session_id).catch((error) => setFatal(String(error)))}
+        onClose={(session) => closeSession(session).catch((error) => setFatal(String(error)))}
         nav={<>
           <button type="button" className={`nav-row${page === "memory" ? " selected" : ""}`} aria-current={page === "memory" ? "page" : undefined} onClick={() => { setPage("memory"); setRailOpen(false); }}><Brain size={14} />{tr("web.memory")}{capabilityCounts.memory !== null && capabilityCounts.memory > 0 && <span className="nav-count">{capabilityCounts.memory}</span>}</button>
           <button type="button" className={`nav-row${page === "rules" ? " selected" : ""}`} aria-current={page === "rules" ? "page" : undefined} onClick={() => { setPage("rules"); setRailOpen(false); }}><Scroll size={14} />{tr("web.rules")}{capabilityCounts.rules !== null && capabilityCounts.rules > 0 && <span className="nav-count">{capabilityCounts.rules}</span>}</button>
@@ -913,43 +974,51 @@ export default function App() {
         onCommit={commitSidebarWidth}
       /> : null}
       {page ? <main className="conversation capability-main">
+        <div className="capability-rail">{railToggle}</div>
         {page === "memory" && <MemoryPage projectId={selectedProjectId || null} />}
         {page === "rules" && <RulesPage projectId={selectedProjectId || null} />}
         {page === "schedules" && <SchedulesPage sessionId={selected} projectId={selectedProjectId || null} />}
         {page === "settings" && <SettingsPage theme={theme} inspectorOpen={inspectorOpen} save={savePreference} projectId={selectedProjectId || null} />}
       </main> : <main className="conversation">
         {state ? <>
-          <div className="conversation-head">
-            <div className="task-heading">
-              {renaming === state.session.session_id
-                ? <InlineRename className="heading-rename" value={headerTitle} label={tr("web.rename_prompt")} onSubmit={(title) => renameSession(state.session, title).catch((error) => setFatal(String(error)))} onCancel={() => setRenaming(null)} />
-                : <h1 title={headerTitle} onDoubleClick={() => setRenaming(state.session.session_id)}>{headerTitle}</h1>}
+          <header className="conversation-head topbar">
+            {railToggle}
+            <div className="task-heading crumbs">
+              <span className="head-crumb repo" title={projectName}>{projectName}</span>
+              <span className="head-sep sep" aria-hidden="true">/</span>
+              <HeaderTitle
+                key={state.session.session_id}
+                value={headerTitle}
+                hint={tr("web.rename_click")}
+                editRef={beginHeaderRename}
+                onBegin={() => setRenaming(null)}
+                onCommit={(title) => renameSession(state.session, title).catch((error) => setFatal(String(error)))}
+              />
+              {branchChip}
             </div>
+            <span className="spacer" />
             <div className="task-status">
-              <MenuButton label={tr("web.session_actions")} items={() => [
-                { label: tr("web.rename"), icon: <PencilSimple size={13} />, onSelect: () => setRenaming(state.session.session_id) },
-                { label: tr("web.copy_session_id"), icon: <Copy size={13} />, onSelect: () => { navigator.clipboard?.writeText(state.session.session_id).catch(() => undefined); } },
-                "separator",
-                { label: tr("web.copy_conversation"), icon: <ClipboardText size={13} />, onSelect: () => { navigator.clipboard?.writeText(conversationMarkdown(headerTitle, state.timeline || [], tr)).catch(() => undefined); } },
-                { label: tr("web.download_conversation"), icon: <DownloadSimple size={13} />, onSelect: () => downloadText(markdownFileName(headerTitle), conversationMarkdown(headerTitle, state.timeline || [], tr)) },
-                "separator",
-                { label: tr("web.archive"), icon: <Archive size={13} />, onSelect: () => { archiveSession().catch((error) => setFatal(String(error))); } },
-                { label: tr("web.close_session"), icon: <XCircle size={13} />, danger: true, onSelect: () => {
-                  const sessionId = state.session.session_id;
-                  confirmDialog({ title: tr("web.close_title", { label: headerTitle }), message: tr("web.close_help"), confirmLabel: tr("web.close_session"), danger: true }).then((ok) => {
-                    if (!ok) return;
-                    return api.close(sessionId).then(() => { setSelected(null); setState(null); refreshSessions(); });
-                  }).catch((error) => setFatal(String(error)));
-                } },
-              ]}><DotsThree size={16} weight="bold" /></MenuButton>
+              {statusPill}
+              <button type="button" className="icon-button icon-btn" aria-label={tr("web.copy_conversation")} title={tr("web.copy_conversation")} onClick={() => { navigator.clipboard?.writeText(conversationMarkdown(headerTitle, state.timeline || [], tr)).catch(() => undefined); }}><CopyIcon /></button>
+              <button type="button" className="icon-button icon-btn" aria-label={tr("web.export_conversation")} title={tr("web.export_conversation")} onClick={() => {
+                const timeline = state.timeline || [];
+                if (!timeline.some((item) => item.kind === "text" && item.text?.trim())) return;
+                downloadText(markdownFileName(headerTitle), conversationMarkdown(headerTitle, timeline, tr));
+              }}><ShareIcon /></button>
+              {selected && <button type="button" className={`icon-button icon-btn${inspectorShown ? " on" : ""}`} aria-label={tr(inspectorShown ? "web.close_inspector" : "web.open_inspector")} aria-expanded={inspectorShown} aria-controls="workspace-inspector" title={tr(inspectorShown ? "web.close_inspector" : "web.open_inspector")} onClick={toggleInspector}><PanelIcon /></button>}
             </div>
-          </div>
+          </header>
           <OpenFileContext.Provider value={openFileAt}>
           <Timeline
             key={state.session.session_id}
             state={state}
             revealCall={callFocus?.sessionId === state.session.session_id ? callFocus : null}
             messageActions={messageActions}
+            onViewChanges={() => {
+              setInspectorTab((previous) => ({ tab: "changes", request: (previous?.request ?? 0) + 1 }));
+              openInspector();
+            }}
+            onSuggest={(text) => updateDraft(state.session.session_id, (current) => ({ ...current, prompt: text }))}
             respond={(requestId, answer) => {
               return respondToInteraction(requestId, answer);
             }}
@@ -958,6 +1027,7 @@ export default function App() {
               sendCommand({ type: "turn.cancel_queued", command_id: id, target_command_id: targetCommandId }).catch(() => undefined);
             }}
           >
+          {(jump) => <>
           {browsing === "preview" && <p className="hint conversation-footnote">{state.session.recoverable === false ? tr("web.history_unavailable") : tr("web.history_view")}</p>}
           {browsing === "live" && state.pending_interactions.length > 0 && (
             <InteractionDock
@@ -968,6 +1038,19 @@ export default function App() {
             />
           )}
           <div className="composer-wrap">
+            <div className="composer-inner">
+            {jump}
+            {browsing === "live" && <RunStatus state={state} onStop={() => {
+              const id = cancelId.current ?? crypto.randomUUID();
+              cancelId.current = id;
+              sendCommand({ type: "turn.cancel", command_id: id }).then((outcome) => {
+                if (outcome === "accepted" || outcome === "rejected") cancelId.current = null;
+              }).catch(() => undefined);
+            }} />}
+            {browsing === "live" && <QueuedCommands items={state.queued_commands} onCancel={(targetCommandId) => {
+              const id = crypto.randomUUID();
+              sendCommand({ type: "turn.cancel_queued", command_id: id, target_command_id: targetCommandId }).catch(() => undefined);
+            }} />}
             <Composer
               key={state.session.session_id}
               sessionId={state.session.session_id}
@@ -1019,20 +1102,36 @@ export default function App() {
                 await sendCommand({ type: "turn.cancel_all", command_id: id });
               }}
             />
+            <ComposerHints />
+            </div>
           </div>
+          </>}
           </Timeline>
           </OpenFileContext.Provider>
         </> : selected ? <p className="hint" role="status">{tr("web.loading_session")}</p> : <>
-          <div className="conversation-head"><div className="task-heading"><h1>{tr("web.no_session")}</h1></div></div>
+          <div className="conversation-head topbar">{railToggle}<div className="task-heading crumbs"><h1>{tr("web.no_session")}</h1>{branchChip}</div></div>
           <div className="conversation-body welcome-body">
           <div className="conversation-scroll">
           <div className="conversation-main">
-          <div className="timeline welcome-pane">
-            <h2 className="welcome-title">{tr("web.welcome_title", { name: projectName })}</h2>
-            <p className="hint">{tr("web.welcome_help")}</p>
+          <div className="timeline welcome-pane empty">
+            <span className="welcome-mark logo" aria-hidden="true"><LogoMark size={24} /></span>
+            <h1 className="welcome-title">{tr("web.welcome_today")}</h1>
+            <p className="hint">{tr("web.welcome_help", { name: projectName })}</p>
+            <div className="welcome-starters sugs">
+              {([
+                ["explain", Compass],
+                ["fix_test", Bug],
+                ["review", BookOpen],
+                ["tests", Lightning],
+              ] as const).map(([key, Icon]) => <button type="button" key={key} className="welcome-starter sug" onClick={() => updateDraft(draftKey, (current) => ({ ...current, prompt: tr(`web.starter.${key}.prompt`) }))}>
+                <b><Icon className="ic" size={15} aria-hidden="true" />{tr(`web.starter.${key}.title`)}</b>
+                <span>{tr(`web.starter.${key}.help`)}</span>
+              </button>)}
+            </div>
             <EnvironmentChoice sessionId={draftKey} draft={draft} updateDraft={updateDraft} git={Boolean(project?.git)} workLabel={selectedWorkspace?.root ?? (typeof project?.project_root === "string" ? project.project_root : "")} />
           </div>
           <div className="composer-wrap">
+            <div className="composer-inner">
             <Composer
               key={draftKey}
               sessionId={draftKey}
@@ -1051,6 +1150,8 @@ export default function App() {
               submit={(commandId, prompt, attachmentIds, documentIds, references) => beginTurn(draftKey, commandId, prompt, attachmentIds, documentIds ?? [], references ?? [])}
               cancel={async () => undefined}
             />
+            <ComposerHints />
+            </div>
           </div>
           </div>
           </div>
@@ -1067,6 +1168,17 @@ export default function App() {
       }} onResume={resumeSelected} onFeedback={(feedback) => {
         const owner = selected;
         updateDraft(owner, (current) => ({ ...current, prompt: `${current.prompt.trimEnd()}${current.prompt.trim() ? "\n\n" : ""}${feedback}` }));
+        if (compactViewport) closeInspector();
+        requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus());
+      }} onReference={(path) => {
+        const owner = selected;
+        const name = path.split("/").pop() || path;
+        const project_id = selectedProjectId;
+        updateDraft(owner, (current) => {
+          const references = current.references ?? [];
+          if (references.some((item) => item.path === path)) return current;
+          return { ...current, references: [...references, { kind: "file", path, name, project_id }] };
+        });
         if (compactViewport) closeInspector();
         requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus());
       }} /> : null}
@@ -1091,6 +1203,17 @@ export default function App() {
     }} />}
     <DialogHost />
   </div>;
+}
+
+/**
+ * "(n) Wright" while n sessions wait on an approval or answer. The open
+ * session's own stream is fresher than the list, so it decides for itself.
+ */
+export function tabTitle(sessions: Array<{ session_id: string; pending_interactions?: number }>, open: ViewState | null): string {
+  const waiting = new Set(sessions.filter((item) => item.pending_interactions).map((item) => item.session_id));
+  if (open?.pending_interactions.length) waiting.add(open.session.session_id);
+  else if (open) waiting.delete(open.session.session_id);
+  return waiting.size ? `(${waiting.size}) Wright` : "Wright";
 }
 
 function downloadText(fileName: string, text: string) {

@@ -1,11 +1,13 @@
-import { ArrowDown } from "@phosphor-icons/react";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { ArrowDown, X } from "@phosphor-icons/react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { MarkdownContent } from "../../Markdown";
 import { present, useT } from "../../i18n";
 import type { ViewState } from "../../types";
 import { AssistantMessage, InteractionCard, ReasoningRow, UserMessage, toolCardFromState } from "../cards/cards";
 import { RevealCallContext, StepGroup, type RevealCall } from "./StepGroup";
 import { appendStep, segmentTimeline, stepFromTool, type Segment } from "./steps";
+import { TurnFooter } from "./TurnFooter";
+import { summarizeTurns, turnKeys } from "./turnSummary";
 import { ConversationOutline, OUTLINE_DOCK_MIN_ITEMS, OUTLINE_TEXT_AT, TimelineTOC, useTimelineTOC } from "./toc";
 
 export function InteractionDock({ sessionId, pending, respond, root }: {
@@ -66,8 +68,24 @@ export type MessageActions = {
 
 const persisted = (id: string) => /^msg_\d+$/.test(id);
 
-export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, children, revealCall, messageActions }: {
+export function QueuedCommands({ items, onCancel }: { items: ViewState["queued_commands"]; onCancel: (commandId: string) => void }) {
+  const tr = useT();
+  if (!items.length) return null;
+  return <div className="queue">
+    {items.map((item, index) => <div className="queue-item q-item" key={item.command_id}>
+      <span className="q-tag">{tr("web.queue_n", { n: index + 1 })}</span>
+      <span className="q-text">{item.prompt}</span>
+      <button type="button" className="icon-button" onClick={() => onCancel(item.command_id)} aria-label={tr("web.remove_queued")}><X size={13} /></button>
+    </div>)}
+  </div>;
+}
+
+export function Timeline({ state, respond, userLabel, timestamp, children, revealCall, messageActions, onViewChanges, onSuggest }: {
   state: ViewState;
+  /** Opens the Changes view from a turn's summary line. */
+  onViewChanges?: () => void;
+  /** Puts a suggested follow-up into the composer. */
+  onSuggest?: (text: string) => void;
   /** Shown only while the session is idle; omitted for read-only history. */
   messageActions?: MessageActions;
   /** A tool call to scroll to, open and highlight; a new `request` repeats it. */
@@ -76,7 +94,8 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
   cancelQueued: (commandId: string) => void;
   userLabel?: string;
   timestamp?: string;
-  children?: ReactNode;
+  /** Foot content. Pass a function to mount the jump control inside `.composer-inner`. */
+  children?: ReactNode | ((jump: ReactNode) => ReactNode);
 }) {
   const tr = useT();
   const scroller = useRef<HTMLDivElement>(null);
@@ -213,6 +232,89 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
   const lastReply = [...timeline].reverse().find((item) => item.kind === "text" && item.role === "assistant");
   const regenerateReplyId = editableId && lastReply && timeline.indexOf(lastReply) > lastUserIndex ? lastReply.id : undefined;
   const outlineCompact = toc.items.length < OUTLINE_DOCK_MIN_ITEMS;
+  // Each finished turn closes with a summary under its last reply.
+  const keys = turnKeys(timeline);
+  const turnSummaries = summarizeTurns(timeline, keys);
+  const keyOf = new Map(timeline.map((item, index) => [item.id, keys[index]]));
+  // While a turn runs, the newest turn is still open and gets no footer yet.
+  const openKey = state.active_turn ? keys[keys.length - 1] : undefined;
+  // The summary goes after the turn's last segment, whatever kind it is.
+  const segmentKey = (segment: Segment) => {
+    const id = segment.type === "steps" ? segment.steps.find((step) => step.item)?.item?.id : segment.item.id;
+    return id ? keyOf.get(id) : undefined;
+  };
+  const closingSegment = new Map<string, number>();
+  segments.forEach((segment, index) => {
+    const key = segmentKey(segment);
+    if (segment.type === "item" && segment.item.role === "user") return;
+    if (key && key !== openKey && key !== activeTurn) closingSegment.set(key, index);
+  });
+  const lastAssistantOf = (key: string) => {
+    for (let index = timeline.length - 1; index >= 0; index -= 1) {
+      const item = timeline[index];
+      if (keys[index] === key && item.kind === "text" && item.role === "assistant" && item.text) return item;
+    }
+    return undefined;
+  };
+  const footerAt = (segment: Segment, index: number) => {
+    const key = segmentKey(segment);
+    const summary = key && closingSegment.get(key) === index ? turnSummaries.get(key) : undefined;
+    if (!summary || !key) return null;
+    const reply = lastAssistantOf(key);
+    const canRegenerate = Boolean(actions && editableId && reply && reply.id === regenerateReplyId);
+    return <TurnFooter
+      key={`${key}:footer`}
+      summary={summary}
+      onViewChanges={onViewChanges}
+      onSuggest={onSuggest}
+      onCopy={reply?.text ? () => { navigator.clipboard?.writeText(reply.text || "").catch(() => undefined); } : undefined}
+      onRegenerate={canRegenerate ? () => actions?.regenerate(editableId!) : undefined}
+    />;
+  };
+  const renderSegment = (segment: Segment, index: number) => {
+        if (segment.type === "steps") return <StepGroup key={segment.key} steps={segment.steps} live={turnRunning && (pendingPrompt ? false : index > lastPrompt)} sessionId={state.session?.session_id} entering={entering} />;
+        const item = segment.item;
+        if (item.kind === "text" && item.role === "user") return <UserMessage key={item.id} text={item.text || ""} userLabel={userLabel} timestamp={timestamp} tocId={item.id} interjection={item.interjection} enter={entering(item.turn_id !== undefined && !item.interjection ? `user:${item.turn_id}` : item.id)} onEdit={actions && item.id === editableId ? () => actions.edit(item.id, item.text || "") : undefined} />;
+        if (item.kind === "text") {
+          // A settled turn's footer carries regenerate; don't offer it twice.
+          const footerKey = keyOf.get(item.id);
+          const footerHasRegenerate = Boolean(footerKey && closingSegment.has(footerKey) && turnSummaries.has(footerKey));
+          const reply = <AssistantMessage key={item.id} text={item.text || ""} enter={entering(item.turn_id !== undefined ? `reply:${item.turn_id}` : item.id)} onRegenerate={actions && editableId && item.id === regenerateReplyId && !footerHasRegenerate ? () => actions.regenerate(editableId) : undefined} onFork={actions && persisted(item.id) ? () => actions.fork(item.id) : undefined} />;
+          return reply;
+        }
+        if (item.kind === "status") return <TurnOutcome key={item.id} status={item.status} detail={item.text} enter={entering(item.id)} />;
+        return null;
+  };
+  const isUserSegment = (segment: Segment): segment is Extract<Segment, { type: "item" }> => (
+    segment.type === "item" && segment.item.kind === "text" && segment.item.role === "user"
+  );
+  const renderTurnGroups = () => {
+    const nodes: ReactNode[] = [];
+    let index = 0;
+    while (index < segments.length) {
+      const segment = segments[index];
+      if (isUserSegment(segment)) {
+        nodes.push(<Fragment key={segment.item.id}>{renderSegment(segment, index)}</Fragment>);
+        index += 1;
+        continue;
+      }
+      const key = segmentKey(segment) || `turn:${index}`;
+      const group: Array<{ segment: Segment; index: number }> = [];
+      while (index < segments.length) {
+        const next = segments[index];
+        if (isUserSegment(next)) break;
+        if ((segmentKey(next) || `turn:${index}`) !== key) break;
+        group.push({ segment: next, index });
+        index += 1;
+      }
+      const last = group[group.length - 1];
+      nodes.push(<div className="turn" key={key}>
+        {group.map((entry) => <Fragment key={entry.segment.type === "steps" ? entry.segment.key : entry.segment.item.id}>{renderSegment(entry.segment, entry.index)}</Fragment>)}
+        {last ? footerAt(last.segment, last.index) : null}
+      </div>);
+    }
+    return nodes;
+  };
   const lastOutlineSessionRef = useRef<string | undefined>(state.session.session_id);
   useEffect(() => {
     if (lastOutlineSessionRef.current === state.session.session_id) return;
@@ -222,55 +324,52 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
   useEffect(() => {
     if (outlineCompact) setLabelsOff(true);
   }, [outlineCompact]);
+  const jump = <button type="button" className={`jump${stuck ? "" : " show"}`} aria-hidden={stuck || undefined} tabIndex={stuck ? -1 : undefined} onClick={() => { stick.current = true; setStuck(true); scroller.current?.scrollTo?.({ top: scroller.current.scrollHeight }); }}><ArrowDown size={14} weight="bold" aria-hidden="true" />{tr("web.jump_bottom")}</button>;
+  const foot = typeof children === "function" ? children(jump) : <>{jump}{children}</>;
   return <RevealCallContext.Provider value={revealCall ?? null}><div className="conversation-stage" ref={stageRef} data-labels={labelsOff ? "off" : undefined} data-compact={outlineCompact ? "true" : undefined}>
     <div
       className="conversation-stream"
       data-outline={outlineCompact || labelsOff || narrow ? "ticks" : "dock"}
     >
     <div className="conversation-body">
+    <div className="conversation-scroll-pane">
     <div className="conversation-scroll" ref={scroller} onScroll={onScroll}>
     <div className="conversation-main">
     <div className="timeline">
     <TimelineTOC {...toc} />
     {!timeline.length && !state.history.length && !state.active_turn && <p className="empty-small">{tr("web.empty_timeline")}</p>}
     {timeline.length > 0 ? <>
-      {segments.map((segment, index) => {
-        if (segment.type === "steps") return <StepGroup key={segment.key} steps={segment.steps} live={turnRunning && (pendingPrompt ? false : index > lastPrompt)} sessionId={state.session?.session_id} entering={entering} />;        const item = segment.item;
-        if (item.kind === "text" && item.role === "user") return <UserMessage key={item.id} text={item.text || ""} userLabel={userLabel} timestamp={timestamp} tocId={item.id} interjection={item.interjection} enter={entering(item.turn_id !== undefined && !item.interjection ? `user:${item.turn_id}` : item.id)} onEdit={actions && item.id === editableId ? () => actions.edit(item.id, item.text || "") : undefined} />;
-        if (item.kind === "text") return <AssistantMessage key={item.id} text={item.text || ""} enter={entering(item.turn_id !== undefined ? `reply:${item.turn_id}` : item.id)} onRegenerate={actions && editableId && item.id === regenerateReplyId ? () => actions.regenerate(editableId) : undefined} onFork={actions && persisted(item.id) ? () => actions.fork(item.id) : undefined} />;
-        if (item.kind === "status") return <TurnOutcome key={item.id} status={item.status} detail={item.text} enter={entering(item.id)} />;
-        return null;
-      })}
+      {renderTurnGroups()}
       {pendingPrompt && <UserMessage text={pendingPrompt} userLabel={userLabel} timestamp={timestamp} tocId={activeTurn ? `${activeTurn}:user` : "pending-user"} enter={entering(activeTurn ? `user:${activeTurn}` : "pending-user")} />}
-      {liveSegments.map((segment) => segment.type === "steps" && <StepGroup key={segment.key} steps={segment.steps} live={turnRunning} sessionId={state.session?.session_id} entering={entering} />)}
-      {liveText && <AssistantMessage text={liveText} enter={entering(activeTurn ? `reply:${activeTurn}` : "live-reply")} />}
-      {state.active_turn && !liveText && !liveTools.length && !timeline.some((item) => item.turn_id !== undefined && item.turn_id === state.active_turn?.turn_id && item.role === "assistant") && <p className="empty-small working-indicator">{tr("web.working")}</p>}
-    </> : <>
-      {state.history.map((turn, index) => <div className="turn" key={turn.turn_id || index}>
-        {turn.user && <UserMessage text={turn.user} tocId={turn.turn_id || `history-${index}`} />}
-        {turn.tools?.map((tool) => toolCardFromState(tool, state.session?.session_id))}
-        {turn.status === "failed" && <p className="form-error">{tr("web.turn_failed")}</p>}
-        {turn.status === "cancelled" && <p className="form-error">{tr("web.turn_cancelled")}</p>}
-        {turn.assistant ? <AssistantMessage text={turn.assistant} /> : turn.status === "failed" || turn.status === "cancelled" ? null : <p className="empty-small">{tr("web.no_answer")}</p>}
-      </div>)}
-      {state.active_turn && <div className="turn">
-        {state.active_turn.prompt && <UserMessage text={state.active_turn.prompt} tocId={state.active_turn.turn_id ? `${state.active_turn.turn_id}:user` : "active-user"} />}
-        {state.active_turn.tools.map((tool) => toolCardFromState(tool, state.session?.session_id, undefined, true))}
-        {state.active_turn.reasoning && <ReasoningRow text={state.active_turn.reasoning} />}
-        {state.active_turn.content ? <AssistantMessage text={state.active_turn.content} /> : <p className="empty-small">{tr("web.working")}</p>}
+      {(liveSegments.length > 0 || liveText || (state.active_turn && !liveText && !liveTools.length && !timeline.some((item) => item.turn_id !== undefined && item.turn_id === state.active_turn?.turn_id && item.role === "assistant"))) && <div className="turn">
+        {liveSegments.map((segment) => segment.type === "steps" && <StepGroup key={segment.key} steps={segment.steps} live={turnRunning} sessionId={state.session?.session_id} entering={entering} />)}
+        {liveText && <AssistantMessage text={liveText} streaming enter={entering(activeTurn ? `reply:${activeTurn}` : "live-reply")} />}
+        {state.active_turn && !liveText && !liveTools.length && !timeline.some((item) => item.turn_id !== undefined && item.turn_id === state.active_turn?.turn_id && item.role === "assistant") && <p className="empty-small working-indicator">{tr("web.working")}</p>}
       </div>}
+    </> : <>
+      {state.history.map((turn, index) => <Fragment key={turn.turn_id || index}>
+        {turn.user && <UserMessage text={turn.user} tocId={turn.turn_id || `history-${index}`} />}
+        <div className="turn">
+          {turn.tools?.map((tool) => toolCardFromState(tool, state.session?.session_id))}
+          {turn.status === "failed" && <p className="form-error">{tr("web.turn_failed")}</p>}
+          {turn.status === "cancelled" && <p className="form-error">{tr("web.turn_cancelled")}</p>}
+          {turn.assistant ? <AssistantMessage text={turn.assistant} /> : turn.status === "failed" || turn.status === "cancelled" ? null : <p className="empty-small">{tr("web.no_answer")}</p>}
+        </div>
+      </Fragment>)}
+      {state.active_turn && <>
+        {state.active_turn.prompt && <UserMessage text={state.active_turn.prompt} tocId={state.active_turn.turn_id ? `${state.active_turn.turn_id}:user` : "active-user"} />}
+        <div className="turn">
+          {state.active_turn.tools.map((tool) => toolCardFromState(tool, state.session?.session_id, undefined, true))}
+          {state.active_turn.reasoning && <ReasoningRow text={state.active_turn.reasoning} live />}
+          {state.active_turn.content ? <AssistantMessage text={state.active_turn.content} /> : <p className="empty-small">{tr("web.working")}</p>}
+        </div>
+      </>}
     </>}
     {state.session.execution === "queued" && <p className="hint queue-reason" role="status">{tr("web.queued_reason", { reason: state.session.queue_reason || tr("web.queued_default") })}</p>}
     {(state.agents ?? []).map((agent) => <section className="agent-progress" key={agent.task_id}><strong>Subagent {agent.task_id} · {agent.status}</strong>{agent.content && <MarkdownContent content={agent.content} />}</section>)}
-    {state.queued_commands.map((item) => <div className="queue-item" key={item.command_id}><span>{item.prompt}</span><button type="button" className="button" onClick={() => cancelQueued(item.command_id)}>{tr("web.remove_queued")}</button></div>)}
     {state.notices.filter((notice, index, all) => notice.code !== "notice.context_compact" || !all.slice(index + 1).some((item) => item.code === notice.code)).slice(-5).map((notice) => <div className="system-notice" role="status" key={notice.id}>{present(notice.code, notice.params, notice.text)}</div>)}
     {revealMissed && <p className="hint reveal-missed" role="status">{tr("web.reveal_call_missing")}</p>}
-    {!stuck && <button type="button" className="button jump" onClick={() => { stick.current = true; setStuck(true); scroller.current?.scrollTo?.({ top: scroller.current.scrollHeight }); }}><ArrowDown size={12} weight="bold" aria-hidden="true" />{tr("web.jump_bottom")}</button>}
     </div>
-    </div>
-    </div>
-    <div className="conversation-main conversation-main-foot">
-    {children}
     </div>
     </div>
     <ConversationOutline
@@ -282,6 +381,11 @@ export function Timeline({ state, respond, cancelQueued, userLabel, timestamp, c
       onLabelsOff={() => setLabelsOff(true)}
       onLabelsOn={() => setLabelsOff(false)}
     />
+    </div>
+    <div className="conversation-main conversation-main-foot">
+    {foot}
+    </div>
+    </div>
     </div>
   </div></RevealCallContext.Provider>;
 }

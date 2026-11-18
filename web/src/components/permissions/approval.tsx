@@ -156,6 +156,12 @@ function sentence(text: string): string {
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
 }
 
+/**
+ * Number keys answer the card only after it has been up this long, so a digit
+ * typed in the composer just as the card takes focus cannot approve anything.
+ */
+export const DIGIT_ARM_MS = 600;
+
 function isMac(): boolean {
   return typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
 }
@@ -176,6 +182,7 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
   const [copied, setCopied] = useState(false);
   const sending = useRef(false);
   const card = useRef<HTMLElement>(null);
+  const armedAt = useRef(0);
 
   const action = actionOf(interaction);
   const target = targetOf(interaction, action);
@@ -225,7 +232,10 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
     ...risks.filter((flag) => !IMPLIED_FLAGS.has(flag) && flag !== "path_outside_scope"),
   ];
 
-  useEffect(() => { card.current?.focus({ preventScroll: true }); }, [interaction.request_id]);
+  useEffect(() => {
+    armedAt.current = Date.now() + DIGIT_ARM_MS;
+    card.current?.focus({ preventScroll: true });
+  }, [interaction.request_id]);
 
   const choose = (choiceId: string) => {
     if (sending.current) return;
@@ -252,14 +262,15 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
     : quick?.resource_kind === "directory" ? tr("web.approval.directory_recursive") : "";
   const quickNote = quickDetails && tr("web.approval.quick_note", { details: quickDetails });
   const longRule = Boolean(quick) && describeChoice(quick as Choice, root).length > 56;
-  const sessionButton = quick && (!network || quick.resource_kind === "sandbox_network") && <button type="button" className={`perm-choice session ${longRule ? "long" : ""}`} disabled={busy || shellBlocked} onClick={() => choose(quick.id)} title={describeChoice(quick, root)}>
-    {label(quick.id, tr("web.approval.allow_quick", { rule: describeChoice(quick, root) }))}
+  const quickShown = Boolean(quick) && (!network || quick?.resource_kind === "sandbox_network");
+  const sessionButton = quick && quickShown && <button type="button" className={`perm-choice session btn ${longRule ? "long" : ""}`} disabled={busy || shellBlocked} onClick={() => choose(quick.id)} title={describeChoice(quick, root)}>
+    {label(quick.id, tr("web.approval.allow_quick", { rule: describeChoice(quick, root) }))}<kbd>2</kbd>
   </button>;
 
   return <div className="tl-indent">
     <section
       ref={card}
-      className={`approval-card ${elevated ? "elevated" : ""}`}
+      className={`approval-card perm ${elevated ? "elevated" : ""}`}
       role="alert"
       aria-labelledby={`approval-${interaction.request_id}`}
       tabIndex={-1}
@@ -267,17 +278,22 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
         if (event.target instanceof HTMLElement && event.target.closest("input,select,textarea")) return;
         if (event.key === "Escape" && deny) { event.preventDefault(); choose(deny.id); }
         if (event.altKey && event.key === "Enter" && onceId) { event.preventDefault(); choose(onceId); }
+        if (!event.altKey && !event.metaKey && !event.ctrlKey && !event.repeat && /^[123]$/.test(event.key) && Date.now() >= armedAt.current) {
+          const id = event.key === "1" ? onceId : event.key === "2" ? (quickShown ? quick?.id : undefined) : deny?.id;
+          if (id) { event.preventDefault(); choose(id); }
+        }
       }}
     >
-      <header className="approval-head">
+      <header className="approval-head perm-head">
         <ShieldWarning size={16} weight="fill" className="approval-icon" aria-hidden="true" />
-        <h3 id={`approval-${interaction.request_id}`}>{tr(`web.approval.ask.${action}`, { tool: interaction.tool_name || "" })}</h3>
-        <span className="approval-waiting"><span className="dot pulse" />{tr("web.approval.waiting")}</span>
+        <h3 id={`approval-${interaction.request_id}`}>{tr("web.approval.headline")}</h3>
+        {interaction.tool_name && <span className="tool-tag mono">{interaction.tool_name}</span>}
+        <span className="hint-k">{tr("web.approval.digit_hint")}</span>
       </header>
 
       <div className="approval-body">
-        <div className={`approval-target ${action === "shell" ? "is-command" : ""}`}>
-          {action === "shell" && <span className="approval-prompt" aria-hidden="true">$</span>}
+        <div className={`approval-target perm-cmd ${action === "shell" ? "is-command" : ""}`}>
+          {action === "shell" && <span className="approval-prompt pr" aria-hidden="true">$ </span>}
           <code className="perm-target" title={target}>{shownTarget}</code>
           <button type="button" className="icon-button approval-copy" aria-label={tr("web.copy_target")} onClick={() => {
             navigator.clipboard?.writeText(target).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1200); }).catch(() => undefined);
@@ -297,9 +313,10 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
           {interaction.preview_truncated && <p role="status" className="hint">{tr("web.preview_truncated")}</p>}
         </details>}
 
-        {(badges.length > 0 || reason) && <div className="approval-facts">
+        {reason && <p className="perm-why">{reason}</p>}
+
+        {badges.length > 0 && <div className="approval-facts">
           {badges.map((flag) => <span key={flag} className={`approval-badge ${flag === "path_outside_scope" || flag.includes("delete") ? "warn" : ""}`}>{tr(`web.risk_flag.${flag}`)}</span>)}
-          {reason && <span className="approval-reason">{reason}</span>}
         </div>}
 
         {action === "shell" && shellBlocked && <div className="shell-readiness" role="status">
@@ -321,13 +338,13 @@ export function PermissionApproval({ sessionId, interaction, respond, root }: {
         <small className="audit-note">{tr("web.audit_recorded")}</small>
       </div>
 
-      <footer className="approval-actions">
-        {once && <button type="button" className="perm-choice primary" disabled={busy || shellBlocked} onClick={() => onceId && choose(onceId)}>
-          <Check size={13} weight="bold" />{label(onceId, tr(network ? "web.allow_once_network" : action === "network" ? "web.approval.allow_for_command" : "web.allow_once"))}<kbd>{isMac() ? "⌥↵" : "Alt+Enter"}</kbd>
+      <footer className="approval-actions perm-actions">
+        {once && <button type="button" className="perm-choice primary btn primary" disabled={busy || shellBlocked} onClick={() => onceId && choose(onceId)}>
+          <Check size={13} weight="bold" />{label(onceId, tr(network ? "web.allow_once_network" : action === "network" ? "web.approval.allow_for_command" : "web.allow_once"))}<kbd title={isMac() ? "⌥↵" : "Alt+Enter"}>1</kbd>
         </button>}
         {!longRule && sessionButton}
-        {deny && <button type="button" className="perm-choice deny" disabled={busy} onClick={() => choose(deny.id)}>
-          <X size={12} weight="bold" />{label(deny.id, tr("permission.choice.deny"))}<kbd>Esc</kbd>
+        {deny && <button type="button" className="perm-choice deny btn ghost danger" disabled={busy} onClick={() => choose(deny.id)}>
+          <X size={12} weight="bold" />{label(deny.id, tr("permission.choice.deny"))}<kbd title="Esc">3</kbd>
         </button>}
         {remembered.length > 0 && <button type="button" className="text-button perm-more" aria-expanded={more} onClick={() => setMore((value) => !value)}>
           {tr(more ? "web.approval.fewer_options" : "web.approval.more_options")}

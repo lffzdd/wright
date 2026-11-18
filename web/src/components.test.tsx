@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { marked } from "marked";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { t } from "./i18n";
@@ -299,12 +299,6 @@ describe("SessionRail", () => {
     expect(screen.getAllByRole("button", { name: /Other project task/ })).toHaveLength(1);
   });
 
-  it("shows no live dot when no open session is working", () => {
-    const { container } = render(rail([]));
-    expect(screen.getByText("Recent sessions")).toBeTruthy();
-    expect(container.querySelector(".live-dot")).toBeNull();
-  });
-
   const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
   it("orders open and closed sessions together by recency and marks only live or failed ones", () => {
@@ -319,34 +313,52 @@ describe("SessionRail", () => {
     />);
     const titles = [...container.querySelectorAll(".session-title")].map((node) => node.textContent);
     expect(titles).toEqual(["New closed", "Running now", "Broken", "Old open"]);
-    expect(screen.getByRole("button", { name: /Old open/ }).textContent).toContain("2h");
+    expect(screen.getByRole("button", { name: /Old open/ }).textContent).toContain("1 hr ago");
     expect(container.querySelectorAll(".status-dot")).toHaveLength(1);
     expect(container.querySelector(".status-dot.running")).toBeTruthy();
     expect(container.querySelectorAll(".recent-mark.fail")).toHaveLength(1);
   });
 
-  it("keeps the selected session visible when the list is cut short", () => {
-    const sessions = Array.from({ length: 8 }, (_, index) => ({ session_id: `s${index}`, user_goal: `Task ${index}`, status: "closed", active: false, saved_at: ago(index + 1) }));
-    render(<SessionRail sessions={sessions} selected="s7" onSelect={vi.fn()} onCreate={vi.fn()} open />);
-    expect(screen.getByRole("button", { name: /Task 7/ })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Task 6/ })).toBeNull();
-    expect(screen.getByRole("button", { name: "Show all 2" })).toBeTruthy();
+  it("groups sessions under date headings without cutting the list short", () => {
+    const days = (count: number) => { const date = new Date(); date.setDate(date.getDate() - count); return date.toISOString(); };
+    const sessions = [
+      { session_id: "t", user_goal: "Today task", status: "closed", active: false, saved_at: ago(1) },
+      { session_id: "y", user_goal: "Yesterday task", status: "closed", active: false, saved_at: days(1) },
+      { session_id: "o", user_goal: "Old task", status: "closed", active: false, saved_at: days(90) },
+      ...Array.from({ length: 8 }, (_, index) => ({ session_id: `s${index}`, user_goal: `Task ${index}`, status: "closed", active: false, saved_at: ago(index + 2) })),
+    ];
+    const { container } = render(<SessionRail sessions={sessions} selected={null} onSelect={vi.fn()} onCreate={vi.fn()} open />);
+    expect([...container.querySelectorAll(".sb-group")].map((node) => node.textContent)).toEqual(["Today", "Yesterday", "Earlier"]);
+    expect(within(screen.getByRole("region", { name: "Today" })).getAllByRole("button", { name: /task|Task/ })).toHaveLength(9);
+    expect(screen.getByRole("button", { name: /Yesterday task/ }).textContent).toMatch(/Yesterday \d\d:\d\d/);
+    expect(screen.getByRole("button", { name: /Task 3/ }).textContent).toContain("5 min ago");
+    expect(screen.getByRole("button", { name: /Old task/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
   });
 
-  it("folds a workspace from its row and starts a session there from its + button", () => {
+  it("lists only the current project and switches projects from the menu at the top", () => {
     const onSelectWorkspace = vi.fn();
-    render(<SessionRail
-      sessions={[{ session_id: "a", user_goal: "Listed task", project_id: "one", status: "closed", active: false, saved_at: ago(1) }]}
+    const onRegisterWorkspace = vi.fn();
+    const { container } = render(<SessionRail
+      sessions={[
+        { session_id: "a", user_goal: "One task", project_id: "one", status: "closed", active: false, saved_at: ago(1) },
+        { session_id: "b", user_goal: "Two task", project_id: "two", status: "running", active: true, execution: "running", saved_at: ago(2) },
+      ]}
       selected={null} onSelect={vi.fn()} onCreate={vi.fn()} open
-      workspaces={[{ project_id: "one", name: "One" }]} onSelectWorkspace={onSelectWorkspace}
+      workspaces={[{ project_id: "one", name: "One", root: "/code/one", selected: true }, { project_id: "two", name: "Two", root: "/code/two" }]}
+      onSelectWorkspace={onSelectWorkspace} onRegisterWorkspace={onRegisterWorkspace}
     />);
-    const row = screen.getByRole("button", { name: "One" });
-    expect(row.getAttribute("aria-expanded")).toBe("true");
-    fireEvent.click(row);
-    expect(row.getAttribute("aria-expanded")).toBe("false");
-    expect(onSelectWorkspace).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "New session in One" }));
-    expect(onSelectWorkspace).toHaveBeenCalledWith("one");
+    expect(screen.getByRole("button", { name: /One task/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Two task/ })).toBeNull();
+    expect(container.querySelector(".ws-elsewhere")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Switch project: One" }));
+    expect(screen.getByRole("menuitemradio", { name: /One/ }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("menuitemradio", { name: /Two/ }).textContent).toContain("1 working");
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /Two/ }));
+    expect(onSelectWorkspace).toHaveBeenCalledWith("two");
+    fireEvent.click(screen.getByRole("button", { name: "Switch project: One" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Add project…" }));
+    expect(onRegisterWorkspace).toHaveBeenCalledOnce();
   });
 });
 
@@ -365,5 +377,21 @@ describe("DiffViewer", () => {
     expect(screen.getByText("-1")).toBeDefined();
     expect(screen.getByText("added line")).toBeDefined();
     expect(screen.getByText("deleted line")).toBeDefined();
+  });
+
+  it("hides patch meta and the header when embedded in Changes", () => {
+    const patch = `diff --git a/file.py b/file.py
+index 111..222 100644
+--- a/file.py
++++ b/file.py
+@@ -1 +1 @@
+-old
++new`;
+    render(<DiffViewer patch={patch} filename="file.py" embedded />);
+    expect(screen.queryByText("file.py")).toBeNull();
+    expect(screen.queryByText("Copy patch")).toBeNull();
+    expect(screen.queryByText(/diff --git/)).toBeNull();
+    expect(screen.queryByText(/index /)).toBeNull();
+    expect(screen.getByText("new")).toBeDefined();
   });
 });

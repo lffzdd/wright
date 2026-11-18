@@ -1,5 +1,6 @@
-import { ArrowSquareOut, ArrowsClockwise, ArrowsSplit, BookOpen, Brain, CaretDown, ChatCircleDots, Check, Circle, Copy, File, FileText, FolderSimple, Globe, Lightbulb, ListChecks, MagnifyingGlass, Minus, PaperPlaneRight, PencilSimple, TerminalWindow, Warning, Wrench, X, type Icon as PhosphorIcon } from "@phosphor-icons/react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ArrowSquareOut, ArrowsClockwise, ArrowsSplit, BookOpen, Brain, CaretDown, CaretRight, ChatCircleDots, Check, Circle, Copy, Eye, File, FilePlus, FileText, FolderSimple, Globe, ListChecks, MagnifyingGlass, Minus, PaperPlaneRight, PencilSimple, ShieldCheck, TerminalWindow, Warning, Wrench, X, type Icon as PhosphorIcon } from "@phosphor-icons/react";
+import { useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { RevealCallContext } from "../timeline/revealCall";
 import { MarkdownContent } from "../../Markdown";
 import { api } from "../../api";
 import { parseDiff } from "../../diff";
@@ -7,7 +8,7 @@ import { present, t, useT } from "../../i18n";
 import type { Interaction, TimelineItem, ToolState } from "../../types";
 import { PermissionApproval } from "../permissions/approval";
 import { CodeView } from "../code/CodeView";
-import { languageForPath } from "../code/highlight";
+import { languageForPath, useHighlight } from "../code/highlight";
 import { useOpenFile } from "../code/openFile";
 import { Expandable, StructuredOutput, parseJsonOutput } from "./StructuredOutput";
 
@@ -26,19 +27,37 @@ function arg(record: Record<string, unknown> | undefined, keys: string[]): strin
   return "";
 }
 
-function DiffBody({ text }: { text: string }) {
+/** Diff rows an edit card shows before "Show all"; the rest stays one click away. */
+export const DIFF_PREVIEW_ROWS = 16;
+
+function DiffBody({ text, limit, path }: { text: string; limit?: number; path?: string }) {
+  const tr = useT();
+  const [all, setAll] = useState(false);
+  const parsed = parseDiff(text).lines;
+  // Highlight the code lines as one block so multi-line constructs colour right.
+  const codeRows = parsed.filter((line) => line.type !== "hunk" && line.type !== "meta");
+  const tokens = useHighlight(codeRows.map((line) => line.content).join("\n"), languageForPath(path));
+  const tokenAt = new Map(codeRows.map((line, index) => [line, tokens?.[index]]));
   const lines = text.split(/\r?\n/).filter((line) => line.length > 0);
   const structured = /^@@ /m.test(text) || (lines.length > 0 && lines.every((line) => line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")));
   if (!structured) return <pre className="term-body">{text}</pre>;
+  const rows = parsed;
+  // Only cap when it hides a meaningful amount; a couple of extra rows just show.
+  const capped = !all && typeof limit === "number" && rows.length > limit + 4;
   return <div className="diff-body">
-    {parseDiff(text).lines.map((line, index) => line.type === "hunk" || line.type === "meta"
+    {(capped ? rows.slice(0, limit) : rows).filter((line) => !(line.type === "meta" && /^(---|\+\+\+) /.test(line.content))).map((line, index) => line.type === "hunk" || line.type === "meta"
       ? <div className="diff-meta" key={index}>{line.content}</div>
       : <div className={line.type === "add" ? "diff-add" : line.type === "del" ? "diff-del" : "diff-ctx"} key={index}>
         <span className="diff-line diff-line-old">{line.oldNum ?? ""}</span>
         <span className="diff-line diff-line-new">{line.newNum ?? ""}</span>
         <span className="diff-mark">{line.type === "add" ? "+" : line.type === "del" ? "-" : " "}</span>
-        <span className="diff-text">{line.content || " "}</span>
+        <span className="diff-text">{tokenAt.get(line)?.length
+          ? tokenAt.get(line)!.map((token, at) => <span key={at} className="cv-tok" style={token.style as CSSProperties}>{token.content}</span>)
+          : line.content || " "}</span>
       </div>)}
+    {capped && <button type="button" className="diff-more" onClick={() => setAll(true)}>
+      <CaretDown size={11} aria-hidden="true" />{tr("web.diff_show_all", { count: rows.length - limit! })}
+    </button>}
   </div>;
 }
 
@@ -79,10 +98,19 @@ function formatSize(size: number): string {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function DirectoryTree({ source }: { source: Record<string, unknown> }) {
+function DirectoryTree({ source, globStyle }: { source: Record<string, unknown>; globStyle?: boolean }) {
   const tr = useT();
   const entries = source.entries as DirectoryEntry[];
   if (!entries.length) return <p className="empty-small">{tr("web.dir_empty")}</p>;
+  if (globStyle) {
+    return <div className="glob-list">
+      {entries.map((entry, index) => {
+        const name = String(entry.name ?? entry.path ?? "");
+        return <div key={`${name}-${index}`}><File size={13} aria-hidden="true" /><span>{name}</span></div>;
+      })}
+      {source.truncated === true && <div className="muted">…</div>}
+    </div>;
+  }
   return <div className="dir-tree">
     {entries.map((entry, index) => {
       const name = String(entry.name ?? entry.path ?? "");
@@ -127,27 +155,21 @@ function Highlighted({ text, pattern }: { text: string; pattern: RegExp | null }
   return <>{parts}</>;
 }
 
-/** Search hits grouped by file, with the pattern marked in each line. A hit opens its file at that line. */
+/** Search hits, one line each: file, line number, the line with the pattern marked. A hit opens its file there. */
 function SearchResults({ matches, pattern, literal }: { matches: SearchMatch[]; pattern: string; literal: boolean }) {
   const tr = useT();
   const openFile = useOpenFile();
   if (!matches.length) return <p className="empty-small">{tr("web.steps.no_matches")}</p>;
-  const files = new Map<string, SearchMatch[]>();
-  for (const match of matches) {
-    const path = String(match.path ?? "");
-    files.set(path, [...(files.get(path) ?? []), match]);
-  }
   const regex = highlighter(pattern, literal);
   return <div className="search-results">
-    {[...files].map(([path, hits]) => {
-      const lines = hits.filter((hit) => typeof hit.line === "number")
-        .map((hit) => ({ num: hit.line as number, text: textOf(hit.text), content: <Highlighted text={textOf(hit.text)} pattern={regex} /> }));
-      return <div className="search-file" key={path}>
-        <div className="search-path">
-          {openFile ? <button type="button" className="text-button mono" onClick={() => openFile(path)} title={tr("web.open_in_files")}>{path}</button> : <span className="mono">{path}</span>}
-          <span className="search-count">{hits.length}</span>
-        </div>
-        <CodeView lines={lines} label={path} onLine={openFile ? (line) => openFile(path, line) : undefined} />
+    {matches.map((hit, index) => {
+      const path = String(hit.path ?? "");
+      const line = typeof hit.line === "number" ? hit.line : undefined;
+      const open = openFile ? () => openFile(path, line) : undefined;
+      return <div className={`grep-row search-hit${open ? " clickable" : ""}`} key={index} onClick={open} title={open ? tr("web.open_in_files") : undefined}>
+        <span className="search-hit-path mono">{path}</span>
+        <span className="search-hit-line mono">{line ?? ""}</span>
+        <span className="search-hit-text mono"><Highlighted text={textOf(hit.text).trim()} pattern={regex} /></span>
       </div>;
     })}
   </div>;
@@ -285,6 +307,46 @@ function exitCode(result: Record<string, unknown> | null | undefined, data: unkn
   return typeof value === "number" ? value : null;
 }
 
+/** Display titles aligned with backend tool names where possible. */
+const REFERENCE_TOOL_LABELS: Record<string, string> = {
+  read: "Read", read_file: "Read",
+  grep: "Grep", ripgrep: "Grep",
+  glob: "Glob", glob_file_search: "Glob",
+  write: "Write", write_file: "Write",
+  edit: "Edit", edit_file: "Edit", apply_patch: "Edit", search_replace: "Edit",
+  shell: "Shell", bash: "Shell", run_command: "Shell", execute_command: "Shell",
+  ls: "List", list_dir: "List", list_directory: "List",
+};
+
+/** "web_fetch" -> "WebFetch": the tool's name as a short title. */
+export function toolLabel(name: string): string {
+  const key = name.toLowerCase();
+  if (REFERENCE_TOOL_LABELS[key]) return REFERENCE_TOOL_LABELS[key];
+  if (/^read[_-]/.test(key)) return "Read";
+  if (/^write[_-]/.test(key)) return "Write";
+  if (/glob/.test(key)) return "Glob";
+  if (/grep/.test(key)) return "Grep";
+  return name.split(/[_\-\s]+/).filter(Boolean).map((part) => part[0].toUpperCase() + part.slice(1)).join("");
+}
+
+/** Reference `TOOLS[].compact` + default-open kind (`read` | `grep` | `glob` | `edit` | `write` | `shell`). */
+export function referenceToolKind(name: string, kind?: string): string {
+  const key = name.toLowerCase();
+  const family = toolFamily(name, kind);
+  if (/^write/.test(key) || key === "write_file") return "write";
+  if (family === "edit") return "edit";
+  if (family === "shell") return "shell";
+  if (/glob/.test(key)) return "glob";
+  if (/grep/.test(key) || (family === "read" && /search/.test(key))) return "grep";
+  if (family === "read" && (key.startsWith("read") || isDirectoryTool(key))) return isDirectoryTool(key) && !/glob/.test(key) ? "glob" : "read";
+  if (isDirectoryTool(key)) return "glob";
+  return "tool";
+}
+
+export function referenceToolCompact(kind: string): boolean {
+  return kind === "read" || kind === "grep" || kind === "glob";
+}
+
 export function toolFamily(name: string, kind?: string): "shell" | "edit" | "read" | "tool" {
   const normalized = name.toLowerCase();
   if (kind === "shell" || normalized === "execute_command" || normalized === "shell") return "shell";
@@ -314,17 +376,23 @@ export function toolCategory(name: string, kind?: string): StepCategory {
   return "tools";
 }
 
-function toolIcon(name: string, category: StepCategory): PhosphorIcon {
+function toolIcon(name: string, category: StepCategory, refKind?: string): PhosphorIcon {
   const lowered = name.toLowerCase();
+  if (refKind === "write") return FilePlus;
+  if (refKind === "edit") return PencilSimple;
+  if (refKind === "shell") return TerminalWindow;
+  if (refKind === "read") return Eye;
+  if (refKind === "grep") return MagnifyingGlass;
+  if (refKind === "glob") return FolderSimple;
   switch (category) {
     case "commands": return TerminalWindow;
-    case "edits": return PencilSimple;
+    case "edits": return /^write/.test(lowered) ? FilePlus : PencilSimple;
     case "web": return Globe;
     case "memory": return lowered.includes("knowledge") ? BookOpen : Brain;
     case "plans": return ListChecks;
     case "directories": return FolderSimple;
-    case "searches": return MagnifyingGlass;
-    case "reads": return FileText;
+    case "searches": return /glob/.test(lowered) ? FolderSimple : MagnifyingGlass;
+    case "reads": return Eye;
     default:
       if (lowered === "ask_user") return ChatCircleDots;
       if (lowered.includes("loop")) return ArrowsClockwise;
@@ -343,16 +411,16 @@ export function UserMessage({ text, userLabel, timestamp, tocId, enter, interjec
     <div className="msg-card">
       <div className="msg-card-head">
         <span><strong>{userLabel || tr("web.you")}</strong> <span className="muted">{tr(interjection ? "web.user_interjection" : "web.user_instruction")}</span></span>
-        {timestamp && <span className="mono muted">{timestamp}</span>}
+        {timestamp && <span className="mono muted u-meta">{timestamp}</span>}
       </div>
       <p className="msg-body">{parts.map((part, index) => part.startsWith("@") ? <span className="prompt-reference" key={`${part}-${index}`}>{part}</span> : part)}</p>
     </div>
   </div>;
 }
 
-export function AssistantMessage({ text, enter, onRegenerate, onFork }: { text: string; enter?: boolean; onRegenerate?: () => void; onFork?: () => void }) {
+export function AssistantMessage({ text, enter, onRegenerate, onFork, streaming }: { text: string; enter?: boolean; onRegenerate?: () => void; onFork?: () => void; streaming?: boolean }) {
   const tr = useT();
-  return <div className={`msg-row assistant-msg${enter ? " enter" : ""}`}>
+  return <div className={`msg-row assistant-msg${enter ? " enter" : ""}${streaming ? " streaming" : ""}`}>
     <div className="msg-card">
       <div className="msg-body"><MarkdownContent content={text} /></div>
       <div className="msg-actions">
@@ -390,37 +458,42 @@ function MessageCopyButton({ text, label }: { text: string; label: string }) {
   </button>;
 }
 
-export function SummaryRow({ text, durationMs, enter }: { text: string; durationMs?: number | null; enter?: boolean }) {
-  const [open, setOpen] = useState(false);
+/** Expand only while the call is in flight; fold once it finishes. */
+function defaultToolExpanded(phase: string | undefined): boolean {
+  return phase === "running";
+}
+
+export function SummaryRow({ text, durationMs, enter, live }: { text: string; durationMs?: number | null; enter?: boolean; live?: boolean }) {
   const tr = useT();
+  const running = Boolean(live) && typeof durationMs !== "number";
+  const defaultOpen = running;
+  const [toggled, setToggled] = useState<boolean | null>(null);
+  const open = toggled ?? defaultOpen;
   const durationLabel = typeof durationMs === "number" ? formatDuration(durationMs) : "";
   const preview = text.replace(/\s+/g, " ").trim();
+  const label = running ? tr("web.run.thinking") : durationLabel ? tr("web.thought_for", { duration: durationLabel }) : tr("web.steps.reasoning");
   return <div className={`tl-indent${enter ? " enter" : ""}`}>
-    <section className={`tool-card reasoning-card ${open ? "open" : ""}`}>
-      <button
-        type="button"
-        className="tool-card-head"
-        aria-expanded={open}
+    <details
+      className={`think reasoning-card${running ? " running" : ""}${open ? " open" : ""}`}
+      open={open}
+    >
+      <summary
         aria-label={open ? tr("web.reasoning_collapse") : tr("web.reasoning_expand")}
-        onClick={() => setOpen((value) => !value)}
+        onClick={(event) => {
+          event.preventDefault();
+          setToggled(!(toggled ?? defaultOpen));
+        }}
       >
-        <span className="tool-title">
-          <span className="step-icon reasoning" aria-hidden="true"><Lightbulb size={12} /></span>
-          <span className="reasoning-label">{tr("web.steps.reasoning")}</span>
-          {!open && preview && <span className="reasoning-snippet">{preview}</span>}
-        </span>
-        <span className="tool-meta">
-          {durationLabel && <span className="step-meta">{durationLabel}</span>}
-          <CaretDown size={12} className={open ? "" : "collapsed"} aria-hidden="true" />
-        </span>
-      </button>
-      {open && preview && <ReasoningBody text={text} />}
-    </section>
+        <CaretRight size={12} className="chev" aria-hidden="true" />
+        <span className="lbl">{label}</span>
+      </summary>
+      {preview ? <div className="think-body"><ReasoningBody text={text} inline /></div> : null}
+    </details>
   </div>;
 }
 
 /** Scrollable reasoning text; the bottom fades only while more text is below. */
-function ReasoningBody({ text }: { text: string }) {
+function ReasoningBody({ text, inline }: { text: string; inline?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const [fade, setFade] = useState(false);
   const update = () => {
@@ -428,11 +501,12 @@ function ReasoningBody({ text }: { text: string }) {
     if (el) setFade(el.scrollHeight - el.clientHeight - el.scrollTop > 2);
   };
   useEffect(update, [text]);
-  return <div className="tool-card-body"><div ref={ref} className={`reasoning-body${fade ? " fade-end" : ""}`} onScroll={update}>{text}</div></div>;
+  const body = <div ref={ref} className={`reasoning-body${fade ? " fade-end" : ""}`} onScroll={update}>{text}</div>;
+  return inline ? body : <div className="tool-card-body">{body}</div>;
 }
 
-export function ReasoningRow({ text, durationMs, enter }: { text: string; durationMs?: number | null; enter?: boolean }) {
-  return <SummaryRow text={text} durationMs={durationMs} enter={enter} />;
+export function ReasoningRow({ text, durationMs, enter, live }: { text: string; durationMs?: number | null; enter?: boolean; live?: boolean }) {
+  return <SummaryRow text={text} durationMs={durationMs} enter={enter} live={live} />;
 }
 
 /** Number of entries an ls result reports, from its data. */
@@ -529,6 +603,60 @@ function PlanMark({ status }: { status: string }) {
  * For a rejected update, the step it tried to change shows the status it asked
  * for, and the step that stood in the way is marked as the blocker.
  */
+function planRowClass(status: string): string {
+  if (status === "completed" || status === "skipped") return "done";
+  if (status === "in_progress" || status === "blocked") return "active";
+  return "todo";
+}
+
+/** Standalone plan card (reference `.plan-card`), distinct from expandable tool rows. */
+export function PlanTimelineCard({ plan, rejection, body, enter, callId }: {
+  plan: PlanView;
+  rejection?: PlanRejection | null;
+  body?: string;
+  enter?: boolean;
+  callId?: string;
+}) {
+  const tr = useT();
+  const done = plan.steps.filter((step) => step.status === "completed").length;
+  return <div className={`tl-indent${enter ? " enter" : ""}`} data-call-id={callId}>
+    <section className="plan-card">
+      <div className="pc-head"><ListChecks size={14} aria-hidden="true" />{tr("web.plan.title")}<span className="count">{tr("web.plan.count", { done, total: plan.steps.length })}</span></div>
+      <ul className="todo plan-checklist">
+        {plan.steps.map((step) => <li key={step.id || step.title} className={[planRowClass(step.status), step.status].filter(Boolean).join(" ")}>
+          <span className="cb" aria-hidden="true">{step.status === "completed" ? <Check size={10} weight="bold" /> : null}</span>
+          <span className="tx">{step.title}</span>
+        </li>)}
+      </ul>
+      {rejection && body && <p className="plan-rejection">{body}</p>}
+    </section>
+  </div>;
+}
+
+function PermissionDoneLine({ command, decision, rule }: { command: string; decision: "allow" | "deny"; rule?: string }) {
+  const tr = useT();
+  return <div className={`perm-done${decision === "deny" ? " deny" : ""}`}>
+    {decision === "deny" ? <X size={14} aria-hidden="true" /> : <ShieldCheck size={14} aria-hidden="true" />}
+    {tr(decision === "deny" ? "web.perm_done.deny" : rule ? "web.perm_done.always" : "web.perm_done.allow")} · <code className="mono">{command}</code>
+    {rule && <> · {tr("web.perm_done.rule_added")} <code className="mono">{rule}</code></>}
+  </div>;
+}
+
+function PermissionAutoLine({ rule }: { rule: string }) {
+  const tr = useT();
+  return <div className="auto-ok"><ShieldCheck size={14} aria-hidden="true" />{tr("web.perm_auto.rule")} <code className="mono">{rule}</code></div>;
+}
+
+function planCardPayload(name: string, phase: string | undefined, args: Record<string, unknown> | undefined, display: unknown, data: unknown, result: Record<string, unknown> | null | undefined) {
+  const metricSource = data && typeof data === "object" ? data as Record<string, unknown> : result;
+  const rejection = phase === "failed" && toolCategory(name) === "plans" ? planRejection(display) : null;
+  const planSource = display && typeof display === "object" ? display as Record<string, unknown> : metricSource;
+  const plan = toolCategory(name) === "plans" && (phase !== "failed" || rejection) ? planOf(planSource) : null;
+  if (!plan || !plan.steps.length) return null;
+  const body = typeof metricSource?.err === "string" ? metricSource.err : typeof result?.err === "string" ? result.err : "";
+  return { plan, rejection, body: rejection ? body : "" };
+}
+
 function PlanChecklist({ plan, focusId, blockerIds = [], attempted = "" }: { plan: PlanView; focusId?: string; blockerIds?: string[]; attempted?: string }) {
   const tr = useT();
   const role = (step: PlanStep) => focusId === step.id ? " focus" : blockerIds.includes(step.id) ? " blocker" : focusId ? " dim" : "";
@@ -578,14 +706,32 @@ export function ToolCard({
 }) {
   const tr = useT();
   const family = toolFamily(name, kind);
+  const reveal = useContext(RevealCallContext);
   const [toggled, setToggled] = useState<boolean | null>(null);
+  const phaseRef = useRef(phase);
+  useEffect(() => {
+    if (phaseRef.current === "running" && phase !== "running") setToggled(null);
+    phaseRef.current = phase;
+  }, [phase]);
+  useEffect(() => {
+    if (reveal && callId && reveal.callId === callId) setToggled(true);
+  }, [reveal?.callId, reveal?.request, callId]);
   const command = arg(args, ["command", "cmd"]);
+  const pathArg = arg(args, ["path", "file", "file_path", "target", "directory"]);
   const path = arg(args, ["path", "file", "file_path", "target", "directory"]);
   const pattern = family === "shell" || family === "edit" ? "" : arg(args, ["pattern", "query", "regex"]);
   const code = family === "shell" ? exitCode(result, data) : null;
   const raw = output || (result ? (typeof result.output === "string" ? result.output : JSON.stringify(result, null, 2)) : "");
   const metricSource = data && typeof data === "object" ? data as Record<string, unknown> : result;
-  const denied = phase === "failed" && (metricSource?.permission as { decision?: unknown } | undefined)?.decision === "deny";
+  const permission = metricSource?.permission as { decision?: unknown; rule?: string; auto?: boolean } | undefined;
+  const denied = phase === "failed" && permission?.decision === "deny";
+  if (permission?.auto && permission.rule && phase === "succeeded") {
+    return <div className={`tl-indent${enter ? " enter" : ""}`} data-call-id={callId || undefined}><PermissionAutoLine rule={String(permission.rule)} /></div>;
+  }
+  if (denied) {
+    const label = command || pathArg || name;
+    return <div className={`tl-indent${enter ? " enter" : ""}`} data-call-id={callId || undefined}><PermissionDoneLine command={label} decision="deny" /></div>;
+  }
   const diffSource = editDiffSource(family, metricSource, display);
   const hasDiff = family === "edit" && typeof diffSource?.diff === "string";
   const body = hasDiff ? diffSource.diff as string : compactToolBody(name, raw, result ?? (data && typeof data === "object" ? data as Record<string, unknown> : null));
@@ -600,9 +746,9 @@ export function ToolCard({
   // A plan rule turning an update down is not a tool failure: the plan is unchanged and the model retries.
   const rejection = phase === "failed" && category === "plans" ? planRejection(display) : null;
   const failed = !rejection && (phase === "failed" || (code !== null && code !== 0));
-  // Derived until the person toggles it, so a live card and a reloaded one agree.
-  const open = toggled ?? (!denied && !rejection && (phase === "failed" || phase === "running" || (family === "edit" && Boolean(live))));
-  const Icon = failed && !denied ? X : toolIcon(name, category);
+  const refKind = referenceToolKind(name, kind);
+  const open = toggled ?? (!denied && !rejection && defaultToolExpanded(phase));
+  const Icon = toolIcon(name, category, refKind);
   const bodyLines = body.split("\n").filter(Boolean);
   const added = family === "edit" && typeof diffSource?.additions === "number" ? diffSource.additions : family === "edit" ? bodyLines.filter((line) => line.startsWith("+")).length : 0;
   const deleted = family === "edit" && typeof diffSource?.deletions === "number" ? diffSource.deletions : family === "edit" ? bodyLines.filter((line) => line.startsWith("-")).length : 0;
@@ -619,48 +765,62 @@ export function ToolCard({
   const focusId = rejection ? rejection.params.step_id : typeof args?.step_id === "string" ? args.step_id : undefined;
   const planFocus = plan && focusId ? plan.steps.find((step) => step.id === focusId) : undefined;
   const planHeadline = plan ? (planFocus?.title ?? plan.objective) : "";
+  const compact = referenceToolCompact(refKind) || (refKind === "tool" && (category === "web" || category === "directories"));
+  const status = phase === "running" ? "running" : failed && !denied ? "error" : phase === "succeeded" ? "done" : phase || "";
+  const metaParts: ReactNode[] = [];
+  if (family === "edit" && phase !== "failed" && (phase === "succeeded" || added + deleted > 0)) metaParts.push(<><span className="edit-add">+{added}</span> <span className="edit-del">−{deleted}</span></>);
+  if (directoryCount > 0 && phase === "succeeded") metaParts.push(tr("web.n_files", { count: directoryCount }));
+  if (matches && phase === "succeeded") metaParts.push(tr("web.steps.match_count", { count: matches.length, files: new Set(matches.map((match) => String(match.path ?? ""))).size }));
+  if (hits && phase === "succeeded") metaParts.push(tr("web.steps.result_count", { count: hits.length }));
+  if (readRange) metaParts.push(tr("web.n_lines", { count: readRange.end - readRange.start + 1 }));
+  if (plan && plan.steps.length > 0) metaParts.push(tr("web.plan.progress", { done: plan.steps.filter((step) => step.status === "completed").length, total: plan.steps.length }));
+  if (code !== null && code !== 0) metaParts.push(<span className="edit-del">exit {code}{testFailed ? ` (${tr("web.bug_confirmed")})` : ""}</span>);
+  if (durationLabel) metaParts.push(durationLabel);
+  if (plan && plan.steps.length > 0) {
+    return <PlanTimelineCard plan={plan} rejection={rejection} body={rejection ? body : ""} enter={enter} callId={callId} />;
+  }
   return <div className={`tl-indent${enter ? " enter" : ""}`} data-call-id={callId || undefined}>
-    <section className={`tool-card ${open ? "open" : ""}`}>
-      <button type="button" className="tool-card-head" aria-expanded={open} onClick={() => setToggled(!open)}>
-        <span className="tool-title">
-          <span className={`step-icon ${category}${failed && !denied ? " failed" : ""}`} aria-hidden="true"><Icon size={13} weight={failed && !denied ? "bold" : "regular"} /></span>
-          {family === "shell" ? <span className="mono command">{command || name}</span> : <>
-            {family !== "edit" && <span className="tool-name">{name}</span>}
-            {pattern && <span className="mono tool-pattern" title={pattern}>{pattern}</span>}
-            {path && <span className={`mono path ${family === "edit" ? "path-strong" : ""}`}>{path}</span>}
-            {readRange && <span className="mono read-range">{readRange.start === readRange.end ? `L${readRange.start}` : `L${readRange.start}–${readRange.end}`}</span>}
-            {planHeadline && <span className="plan-headline">{planFocus && <PlanMark status={planFocus.status} />}<span>{planHeadline}</span></span>}
-            {family === "edit" && phase !== "failed" && (phase === "succeeded" || added + deleted > 0) && <><span className="edit-add">+{added}</span><span className="edit-del">−{deleted}</span></>}
-          </>}
-        </span>
+    <section className={`tool tool-card${compact ? " compact" : ""}${open ? " open" : ""}`} data-status={status} data-kind={refKind}>
+      <button type="button" className="tool-card-head tool-head" aria-expanded={open} onClick={() => setToggled(!(toggled ?? open))}>
+        <span className="tool-ic" aria-hidden="true"><Icon size={14} /></span>
+        <span className="tool-name">{toolLabel(name)}</span>
+        {family === "shell"
+          ? <span className="tool-arg mono" title={command || name}>{command || name}</span>
+          : (pattern || path) && <span className="tool-arg mono" title={[pattern, path].filter(Boolean).join(" ")}>
+            {pattern}{pattern && path ? <span className="tool-arg-dim"> {path}</span> : path}
+          </span>}
+        {planHeadline && <span className="plan-headline">{planFocus && <PlanMark status={planFocus.status} />}<span>{planHeadline}</span></span>}
         <span className="tool-meta">
           {rejection && <span className="denied-pill">{tr("web.plan.not_applied")}</span>}
           {phase === "failed" && code === null && !rejection && <span className={denied ? "denied-pill" : "fail-pill"}>{tr(denied ? "web.tool_denied" : "web.status.failed")}</span>}
-          {directoryCount > 0 && phase === "succeeded" && <span className="step-meta">{tr("web.n_files", { count: directoryCount })}{durationLabel ? ` (${durationLabel})` : ""}</span>}
-          {matches && phase === "succeeded" && <span className="step-meta">{tr("web.steps.match_count", { count: matches.length, files: new Set(matches.map((match) => String(match.path ?? ""))).size })}</span>}
-          {hits && phase === "succeeded" && <span className="step-meta">{tr("web.steps.result_count", { count: hits.length })}</span>}
-          {family === "edit" && phase === "succeeded" && <span className="muted edit-summary">{t("web.applied")}</span>}
-          {code !== null && code !== 0 && <span className="fail-pill">Exit {code}{testFailed ? ` (${tr("web.bug_confirmed")})` : ""}</span>}
-          {plan && plan.steps.length > 0 && <span className="step-meta">{tr("web.plan.progress", { done: plan.steps.filter((step) => step.status === "completed").length, total: plan.steps.length })}</span>}
-          {durationLabel && directoryCount === 0 && <span className="step-meta">{durationLabel}</span>}
-          <CaretDown size={12} className={open ? "" : "collapsed"} />
+          {metaParts.map((part, index) => <span key={index} className="tool-meta-part">{part}</span>)}
         </span>
+        <span className="tool-st" aria-hidden="true">
+          {phase === "running" ? <span className="spin" />
+            : failed && !denied ? <X size={14} weight="bold" />
+              : phase === "succeeded" ? <Check size={14} weight="bold" /> : null}
+        </span>
+        <CaretRight size={14} className="tool-chev" aria-hidden="true" />
       </button>
-      {open && <div className={`tool-card-body${failed && !denied ? " failed" : ""}`}>
-        {family === "shell" && command && <div className="term-cmd">$ {command}</div>}
-        {readRange && path && <ReadToolbar path={path} line={readRange.start} />}
-        {rejection && body && <p className="plan-rejection">{body}</p>}
-        {plan ? <PlanChecklist plan={plan} focusId={planFocus?.id}
-          blockerIds={rejection ? BLOCKER_PARAMS.map((key) => rejection.params[key]).filter(Boolean) : []}
-          attempted={rejection && planFocus ? attemptedStatus(args, planFocus) : ""} />
-          : directory ? <DirectoryTree source={directory} />
-          : matches && phase === "succeeded" ? <SearchResults matches={matches} pattern={pattern} literal={metricSource?.fixed_string === true || args?.fixed_string === true} />
-          : hits && phase === "succeeded" ? <WebResults hits={hits} />
-          : content !== null && isNumbered(content) ? <NumberedContent text={content} path={path} />
-          : body && (family === "edit" ? <DiffBody text={body} /> : testFailed ? <TestFailureOutput text={body} /> : isNumbered(body) ? <NumberedContent text={body} path={path} /> : <PlainOutput body={body} failed={code !== null && code !== 0} structured={family !== "shell"} live={phase === "running"} />)}
-        {Boolean(metricSource?.sandbox_denial) && <SandboxDenialHint denial={metricSource!.sandbox_denial as SandboxDenial} sessionId={sessionId} />}
-        {hasDiff && !body && <p className="empty-small">{tr("web.no_diff")}</p>}
-        {hasDiff && diffSource?.diff_truncated === true && <p className="hint" role="status">{tr("web.diff_truncated")}</p>}
+      {open && <div className={`tool-card-body tool-body${failed && !denied ? " failed" : ""}`}>
+        {family === "shell" ? <div className="term">
+          {command && <div className="term-cmd"><span className="term-prompt">$ </span>{command}</div>}
+          {rejection && body && <p className="plan-rejection">{body}</p>}
+          {body && (testFailed ? <TestFailureOutput text={body} /> : <PlainOutput body={body} failed={code !== null && code !== 0} structured={false} live={phase === "running"} />)}
+          {code !== null && phase !== "running" && <div className={`term-exit${code !== 0 ? " failed" : ""}`}>{tr("web.exit_code", { code })}</div>}
+          {Boolean(metricSource?.sandbox_denial) && <SandboxDenialHint denial={metricSource!.sandbox_denial as SandboxDenial} sessionId={sessionId} />}
+        </div> : <>
+          {readRange && path && <ReadToolbar path={path} line={readRange.start} />}
+          {rejection && body && <p className="plan-rejection">{body}</p>}
+          {directory ? <DirectoryTree source={directory} globStyle={refKind === "glob"} />
+            : matches && phase === "succeeded" ? <SearchResults matches={matches} pattern={pattern} literal={metricSource?.fixed_string === true || args?.fixed_string === true} />
+            : hits && phase === "succeeded" ? <WebResults hits={hits} />
+            : content !== null && isNumbered(content) ? <NumberedContent text={content} path={path} />
+            : body && (family === "edit" ? <DiffBody text={body} limit={DIFF_PREVIEW_ROWS} path={path} /> : testFailed ? <TestFailureOutput text={body} /> : isNumbered(body) ? <NumberedContent text={body} path={path} /> : <PlainOutput body={body} failed={code !== null && code !== 0} structured live={phase === "running"} />)}
+          {Boolean(metricSource?.sandbox_denial) && <SandboxDenialHint denial={metricSource!.sandbox_denial as SandboxDenial} sessionId={sessionId} />}
+          {hasDiff && !body && <p className="empty-small">{tr("web.no_diff")}</p>}
+          {hasDiff && diffSource?.diff_truncated === true && <p className="hint" role="status">{tr("web.diff_truncated")}</p>}
+        </>}
       </div>}
     </section>
   </div>;
@@ -746,11 +906,16 @@ export function toolCardFromTimeline(item: TimelineItem, sessionId?: string, ent
   };
   if (tool.name === "ask_user") return <QuestionRecord key={item.id} args={tool.arguments} data={tool.data} phase={item.phase} enter={enter} />;
   const data = tool.data && typeof tool.data === "object" ? tool.data as Record<string, unknown> : null;
+  const planPayload = planCardPayload(tool.name, item.phase, tool.arguments, tool.display, tool.data, data);
+  if (planPayload) return <PlanTimelineCard key={item.id} callId={tool.call_id} plan={planPayload.plan} rejection={planPayload.rejection} body={planPayload.body} enter={enter} />;
   return <ToolCard key={item.id} callId={tool.call_id} name={tool.name} phase={item.phase} args={tool.arguments} result={data} display={tool.display} duration={item.duration_ms} output={toolOutput(tool)} kind={item.kind} sessionId={sessionId} enter={enter} live={live} />;
 }
 
 export function toolCardFromState(tool: ToolState, sessionId?: string, enter?: boolean, live?: boolean) {
   if (tool.name === "ask_user") return <QuestionRecord key={tool.call_id} args={tool.arguments} data={tool.data} phase={tool.phase} enter={enter} />;
+  const data = tool.data && typeof tool.data === "object" ? tool.data as Record<string, unknown> : null;
+  const planPayload = planCardPayload(tool.name, tool.phase, tool.arguments, tool.display, tool.data, data);
+  if (planPayload) return <PlanTimelineCard key={tool.call_id} callId={tool.call_id} plan={planPayload.plan} rejection={planPayload.rejection} body={planPayload.body} enter={enter} />;
   return <ToolCard key={tool.call_id} callId={tool.call_id} name={tool.name} phase={tool.phase} args={tool.arguments} data={tool.data} display={tool.display} output={toolOutput(tool)} sessionId={sessionId} enter={enter} live={live} />;
 }
 

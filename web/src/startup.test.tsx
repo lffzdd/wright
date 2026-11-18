@@ -152,7 +152,11 @@ describe("web startup", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Fix Redis leak" })).toBeTruthy());
     expect(screen.getByLabelText("Message Wright").hasAttribute("disabled")).toBe(false);
     expect(screen.queryByText(/Offline/)).toBeNull();
-    fireEvent.click(within(document.querySelector(".conversation-head") as HTMLElement).getByRole("button", { name: "Session actions" }));
+    const head = document.querySelector(".conversation-head") as HTMLElement;
+    expect(within(head).getByRole("button", { name: "Copy conversation as Markdown" })).toBeTruthy();
+    expect(within(head).getByRole("button", { name: "Export conversation" })).toBeTruthy();
+    expect(within(head).queryByRole("button", { name: "Session actions" })).toBeNull();
+    fireEvent.click(within(document.querySelector(".sidebar") as HTMLElement).getByRole("button", { name: "Session actions" }));
     expect(screen.getByRole("menuitem", { name: "Rename" })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "Archive" })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "Stop and close" })).toBeTruthy();

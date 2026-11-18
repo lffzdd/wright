@@ -51,10 +51,19 @@ export function isQuestionStep(step: Step): boolean {
   return step.kind === "tool" && step.name === "ask_user";
 }
 
+/**
+ * Steps that stand on their own instead of folding into a group: questions
+ * are decisions, and edits are the result the person came for, so their diff
+ * stays in the record rather than behind a one-line summary.
+ */
+export function isStandaloneStep(step: Step): boolean {
+  return isQuestionStep(step) || (step.kind === "tool" && toolCategory(step.name, step.toolKind) === "edits");
+}
+
 /** Adds a step to the run it continues, or starts a new run. */
 export function appendStep(segments: Segment[], step: Step): void {
   const last = segments[segments.length - 1];
-  if (isQuestionStep(step)) segments.push({ type: "steps", key: step.key, turnId: step.turnId, steps: [step], standalone: true });
+  if (isStandaloneStep(step)) segments.push({ type: "steps", key: step.key, turnId: step.turnId, steps: [step], standalone: true });
   else if (last?.type === "steps" && !last.standalone) last.steps.push(step);
   else segments.push({ type: "steps", key: step.key, turnId: step.turnId, steps: [step] });
 }
@@ -62,7 +71,7 @@ export function appendStep(segments: Segment[], step: Step): void {
 /**
  * Splits a timeline into messages and runs of consecutive process steps.
  * Approval records render nothing, so they do not split a run; questions
- * stand on their own.
+ * and edits stand on their own.
  */
 export function segmentTimeline(items: TimelineItem[]): Segment[] {
   const segments: Segment[] = [];

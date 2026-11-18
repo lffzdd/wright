@@ -93,10 +93,9 @@ export function MenuPopover({ anchor, items, onClose, label, align = "end", wide
         disabled={item.disabled}
         onClick={() => { onClose(true); item.onSelect(); }}
       >
-        {item.checked !== undefined
-          ? <span className="menu-icon">{item.checked ? <Check size={12} weight="bold" /> : null}</span>
-          : item.icon ? <span className="menu-icon">{item.icon}</span> : null}
+        {item.icon ? <span className="menu-icon ic">{item.icon}</span> : null}
         <span className="menu-copy"><span className="menu-label">{item.label}</span>{item.hint && <span className="menu-hint">{item.hint}</span>}</span>
+        {item.checked ? <span className="menu-check mi-check"><Check size={14} weight="bold" /></span> : null}
       </button>)}
   </div>, document.body);
 }

@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../../api";
 import { setLocale } from "../../i18n";
@@ -41,6 +41,26 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("Changes user workflow", () => {
+  it("lays out each file as a restored-style head with git actions on the row", async () => {
+    render(panel());
+    const row = await screen.findByRole("button", { name: /M\s*src\/a.txt/ });
+    expect(row.querySelector(".chev")).toBeTruthy();
+    expect(row.querySelector(".changes-file-dir")?.textContent).toBe("src/");
+    expect(row.querySelector("b")?.textContent).toBe("a.txt");
+    expect(row.closest(".diff-file")?.classList.contains("is-collapsed")).toBe(true);
+    expect(screen.queryByRole("button", { name: "View file src/a.txt" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Discard src/a.txt" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Stage src/a.txt" })).toBeTruthy();
+  });
+
+  it("opens the file from the row eye without expanding the diff", async () => {
+    const onOpenFile = vi.fn();
+    render(<ChangesPanel sessionId="a" state={view()} onCount={() => undefined} onOpenFile={onOpenFile} />);
+    fireEvent.click(await screen.findByRole("button", { name: "View file" }));
+    expect(onOpenFile).toHaveBeenCalledWith("src/a.txt");
+    expect(screen.queryByRole("region", { name: "Selected file" })).toBeNull();
+  });
+
   it("lists staged and unstaged changes as separate groups and marks a partially staged file in both", async () => {
     git([
       { path: "src/a.txt", status: "M", unstaged: true, additions: 1, deletions: 0 },
@@ -54,7 +74,7 @@ describe("Changes user workflow", () => {
     expect(screen.getAllByText("Partially staged")).toHaveLength(2);
     expect(screen.getByText("New")).toBeTruthy();
     expect(screen.getByText("2 files")).toBeTruthy();
-    expect(staged.querySelector("strong")?.textContent).toBe("a.txt");
+    expect(staged.querySelector("b")?.textContent).toBe("a.txt");
     expect(staged.querySelector(".changes-file-dir")?.textContent).toBe("src/");
   });
 
@@ -74,9 +94,47 @@ describe("Changes user workflow", () => {
     const row = screen.getByRole("button", { name: /M src\/app.ts/ });
     fireEvent.click(row);
     const detail = await screen.findByRole("region", { name: "Selected file" });
-    expect(row.parentElement?.contains(detail)).toBe(true);
+    expect(row.closest(".diff-file")?.contains(detail)).toBe(true);
     fireEvent.click(row);
     expect(screen.queryByRole("region", { name: "Selected file" })).toBeNull();
+  });
+
+  it("keeps several diffs open at once and expands or collapses them all", async () => {
+    git([
+      { path: "src/a.txt", status: "M", unstaged: true, additions: 1, deletions: 1 },
+      { path: "src/b.txt", status: "M", unstaged: true, additions: 1, deletions: 1 },
+    ]);
+    vi.mocked(api.patch).mockImplementation(async (_id, path) => ({ ...patch(), path, patch: `--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+${path} new\n` }));
+    render(panel());
+    fireEvent.click(await screen.findByRole("button", { name: /M src\/a.txt/ }));
+    fireEvent.click(screen.getByRole("button", { name: /M src\/b.txt/ }));
+    expect(await screen.findByText("src/a.txt new")).toBeTruthy();
+    expect(await screen.findByText("src/b.txt new")).toBeTruthy();
+    expect(screen.getAllByRole("region", { name: "Selected file" })).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Collapse all diffs" }));
+    expect(screen.queryByRole("region", { name: "Selected file" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Expand all diffs" }));
+    expect(screen.getAllByRole("region", { name: "Selected file" })).toHaveLength(2);
+    // Reopening reuses the diffs fetched for this listing.
+    expect(api.patch).toHaveBeenCalledTimes(2);
+  });
+
+  it("puts a lone group's bulk actions in the summary header", async () => {
+    render(panel());
+    await screen.findByRole("button", { name: /M\s*src\/a.txt/ });
+    const head = document.querySelector(".changes-summary")!;
+    expect(within(head as HTMLElement).getByRole("button", { name: "Stage all" })).toBeTruthy();
+    expect(document.querySelector(".changes-group-head")).toBeNull();
+  });
+
+  it("keeps the file list on screen when the session starts running", async () => {
+    const { rerender } = render(panel());
+    expect(await screen.findByRole("button", { name: /M\s*src\/a.txt/ })).toBeTruthy();
+    const calls = vi.mocked(api.changes).mock.calls.length;
+    rerender(panel({ ...view(), session: { ...view().session, execution: "running" } }));
+    expect(screen.getByRole("button", { name: /M\s*src\/a.txt/ })).toBeTruthy();
+    expect(screen.queryByText("Loading…")).toBeNull();
+    expect(vi.mocked(api.changes).mock.calls.length).toBe(calls);
   });
 
   it("acts on the staged part of a file with the staged revision", async () => {
@@ -87,8 +145,8 @@ describe("Changes user workflow", () => {
     fireEvent.click(staged.querySelector(".changes-file")!);
     await screen.findByText("later new");
     expect(api.patch).toHaveBeenCalledWith("a", "src/a.txt", "staged");
-    expect(screen.queryByRole("button", { name: "Stage" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Unstage" }));
+    expect(within(staged).queryByRole("button", { name: /^Stage src\/a.txt$/ })).toBeNull();
+    fireEvent.click(within(staged).getByRole("button", { name: "Unstage src/a.txt" }));
     await waitFor(() => expect(api.changeAction).toHaveBeenCalledWith("a", expect.objectContaining({ action: "unstage", scope: "staged", paths: ["src/a.txt"], expected_revision: "s1" })));
   });
 
@@ -103,7 +161,7 @@ describe("Changes user workflow", () => {
     expect(await screen.findByText("No uncommitted changes.")).toBeTruthy();
     expect(api.review).not.toHaveBeenCalled();
     scope("session");
-    expect(await screen.findByRole("button", { name: /agent.txt/ })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /M\s*agent.txt/ })).toBeTruthy();
     expect(screen.queryByText("existing.txt")).toBeNull();
     expect(screen.queryByText("outside.txt")).toBeNull();
     expect(screen.queryByText("No uncommitted changes.")).toBeNull();
@@ -143,7 +201,7 @@ describe("Changes user workflow", () => {
     render(panel());
     await openFile();
     await screen.findByText("later new");
-    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    fireEvent.click(screen.getByRole("button", { name: "Discard src/a.txt" }));
     expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("Files will return to the staged version"));
     expect(api.changeAction).not.toHaveBeenCalled();
   });
@@ -153,7 +211,7 @@ describe("Changes user workflow", () => {
     render(panel());
     await openFile();
     expect(await screen.findByText("The diff changed after the list loaded. Refresh before acting.")).toBeTruthy();
-    expect((screen.getByRole("button", { name: "Stage" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getAllByRole("button", { name: "Stage hunk" }).every((button) => (button as HTMLButtonElement).disabled)).toBe(true);
   });
 
   it("undoes a rename pair from a session revision without sending a Git discard", async () => {
@@ -181,8 +239,9 @@ describe("Changes user workflow", () => {
     render(panel(view(), feedback));
     await openFile();
     await screen.findByText("later new");
-    fireEvent.click(screen.getByRole("button", { name: "Expand diff" }));
-    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Expand diff" })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByText(/diff --git/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Comment on New line 20" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Give feedback" }), { target: { value: "Keep the original wording here" } });
     fireEvent.click(screen.getByRole("button", { name: "Add to message" }));
@@ -197,7 +256,7 @@ describe("Changes user workflow", () => {
     git([], summary().changes);
     render(panel());
     await screen.findByText("Commit message");
-    await screen.findByRole("button", { name: /src\/a.txt/ });
+    await screen.findByRole("button", { name: /M\s*src\/a.txt/ });
     const commit = screen.getByRole("button", { name: "Commit staged changes" }) as HTMLButtonElement;
     expect(commit.disabled).toBe(true);
     fireEvent.change(screen.getByLabelText("Commit message"), { target: { value: "Fix parser" } });

@@ -172,6 +172,14 @@ export type TimelineItem = {
   duration_ms?: number | null;
   order?: number;
   interaction?: Interaction;
+  /**
+   * Turn totals on the turn's closing status item. Not sent by the server yet;
+   * the turn footer shows each one once it arrives.
+   */
+  turn_elapsed_ms?: number | null;
+  turn_usage?: { input_tokens?: number | null; output_tokens?: number | null; cache_read_tokens?: number | null; cost_usd?: number | null } | null;
+  /** Follow-up prompts the agent suggests after a turn; not sent by the server yet. */
+  suggestions?: string[];
 };
 
 export type ContextCategory = { id: string; tokens: number; share: number };

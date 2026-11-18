@@ -1,8 +1,8 @@
 import { CaretDown } from "@phosphor-icons/react";
-import { useRef, useState, type KeyboardEvent } from "react";
+import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { MenuPopover, rectOf, type Anchor } from "./Menu";
 
-export type SelectOption = { value: string; label: string; hint?: string; disabled?: boolean };
+export type SelectOption = { value: string; label: string; hint?: string; icon?: ReactNode; disabled?: boolean };
 
 /** Styled replacement for a native `<select>`: a trigger button plus the shared floating menu. */
 export function Select({ value, options, onChange, ariaLabel, labelledBy, title, disabled = false, className = "", wide = false, placeholder }: {
@@ -45,6 +45,7 @@ export function Select({ value, options, onChange, ariaLabel, labelledBy, title,
         if (anchor) setAnchor(null); else open();
       }}
     >
+      {current?.icon && <span className="select-icon ic" aria-hidden="true">{current.icon}</span>}
       <span className="select-value">{current?.label ?? placeholder ?? value}</span>
       <CaretDown className="select-caret" size={10} weight="bold" aria-hidden="true" />
     </button>
@@ -59,6 +60,7 @@ export function Select({ value, options, onChange, ariaLabel, labelledBy, title,
       items={options.map((option) => ({
         label: option.label,
         hint: option.hint,
+        icon: option.icon,
         disabled: option.disabled,
         checked: option.value === value,
         onSelect: () => { if (option.value !== value) onChange(option.value); },

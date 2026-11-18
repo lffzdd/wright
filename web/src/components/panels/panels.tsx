@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Brain, Clock, Plus, Scroll } from "@phosphor-icons/react";
+import { Brain, Clock, MagnifyingGlass, Plus, Scroll } from "@phosphor-icons/react";
 import { confirmDialog } from "../ui/dialogs";
 import type { MenuEntry } from "../ui/Menu";
 import { Select } from "../ui/Select";
@@ -50,7 +50,12 @@ export function SearchDialog({
   const [results, setResults] = useState<Array<Record<string, unknown>>>([]);
   const [notice, setNotice] = useState<Notice>({ tone: "idle", text: "" });
   const [preview, setPreview] = useState<{ path: string; content: string } | null>(null);
+  const [shown, setShown] = useState(false);
   const generation = useRef(0);
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => setShown(true));
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
   const typing = useRef<number | undefined>(undefined);
   useEffect(() => () => { generation.current += 1; }, []);
   const run = async () => {
@@ -98,21 +103,30 @@ export function SearchDialog({
       setNotice({ tone: "ok", text: "" });
     } catch (error) { if (request === generation.current) setNotice(noteOf(error)); }
   };
-  return <Panel id="search-title" title={tr("web.panel.search")} close={close}>
-    <div className="search-row">
-      <input autoFocus aria-label="Search query" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) run(); }} placeholder={tr("web.search")} />
-      <Select className="field-select" ariaLabel="Search kind" value={kind} onChange={setKind}
-        options={["file", "content", "task", "symbol"].map((value) => ({ value, label: tr(`web.panel.kind_${value}`) }))} />
-      <button type="button" className="button primary" onClick={() => run()}>{notice.tone === "busy" ? tr("web.panel.searching") : tr("web.panel.search")}</button>
+  return <div className={`overlay palette-overlay${shown ? " show" : ""}`} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
+    <div className="palette" role="dialog" aria-modal="true" aria-labelledby="search-title">
+      <div className="pal-in">
+        <MagnifyingGlass size={16} aria-hidden="true" />
+        <input autoFocus id="search-title" aria-label={tr("web.search")} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); close(); } if (event.key === "Enter" && !event.nativeEvent.isComposing) run(); }} placeholder={tr("web.search")} />
+        <Select className="field-select" ariaLabel="Search kind" value={kind} onChange={setKind}
+          options={["file", "content", "task", "symbol"].map((value) => ({ value, label: tr(`web.panel.kind_${value}`) }))} />
+      </div>
+      <PanelNotice notice={notice} />
+      <div className="pal-list change-list">{results.length ? results.map((item, index) => {
+        const path = String(item.path ?? item.name ?? item.title ?? item.id ?? index);
+        const line = item.line ? `:${item.line}` : "";
+        return <button type="button" className={`pal-i${index === 0 ? " sel" : ""}`} key={`${path}-${index}`} onClick={() => activate(item)}>
+          <span className="lbl">{item.kind ? `${item.kind} ` : ""}{path}{line}</span>
+          {typeof item.text === "string" && <span className="d">{item.text.trim().slice(0, 80)}</span>}
+        </button>;
+      }) : <p className="pal-empty">{query.trim() ? tr("web.panel.no_matches") : tr("web.panel.search_empty")}</p>}</div>
+      <div className="pal-foot">
+        <span><kbd>↵</kbd>{tr("web.panel.search")}</span>
+        <span><kbd>Esc</kbd>{tr("web.close")}</span>
+      </div>
+      {preview && <section className="palette-preview" aria-label="File preview"><h3>{preview.path}</h3><pre className="term-body">{preview.content || tr("web.empty_file")}</pre></section>}
     </div>
-    <PanelNotice notice={notice} />
-    <div className="change-list">{results.map((item, index) => {
-      const path = String(item.path ?? item.name ?? item.title ?? item.id ?? index);
-      const line = item.line ? `:${item.line}` : "";
-      return <button type="button" key={`${path}-${index}`} onClick={() => activate(item)}>{item.kind ? `${item.kind} ` : ""}{path}{line}{typeof item.text === "string" && <small className="search-snippet">{item.text.trim()}</small>}</button>;
-    })}</div>
-    {preview && <section aria-label="File preview"><h3>{preview.path}</h3><pre className="term-body">{preview.content || tr("web.empty_file")}</pre></section>}
-  </Panel>;
+  </div>;
 }
 
 function PageNotice({ notice }: { notice: Notice }) {

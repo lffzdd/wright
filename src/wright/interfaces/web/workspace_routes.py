@@ -18,6 +18,7 @@ from ...application.permission.service import PermissionConflict
 from ...application.session.dispatch import SLASH_COMMANDS
 from ...application.session_runtime.errors import SessionServiceError
 from ...application.workspace.catalog import WorkspaceCatalogError
+from ...application.workspace.changes import DiffError, list_changes
 from ...application.workspace.documents import DocumentError
 from ...application.workspace.files import PathRejected, list_directory, read_text
 from ...application.workspace.folders import FolderBrowseError, browse_folders
@@ -67,6 +68,7 @@ from ...application.workspace.session_commands import (
     revoke_grant as revoke_session_grant,
 )
 from ...core.paths import project_id
+from ...domain.model.workspace.project import ProjectContext
 from .auth import BootstrapAuth
 from .runtime_manager import RuntimeManager, RuntimeManagerError
 from .settings_routes import SettingUpdateRequest, describe_settings, update_setting
@@ -271,6 +273,21 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
     def workspace_file(registered_id: str, request: Request, path: str) -> dict[str, Any]:
         require(request)
         return _files(_project_root(manager, registered_id), path, listing=False)
+
+    @router.get("/workspaces/{registered_id}/changes")
+    def workspace_changes(
+        registered_id: str,
+        request: Request,
+        scope: Literal["working", "unstaged", "staged"] = "working",
+    ) -> dict[str, Any]:
+        # Read-only git status of the project checkout, so a history session can
+        # mark changed files without starting its runtime. Actions stay per session.
+        require(request)
+        root = _project_root(manager, registered_id)
+        try:
+            return list_changes(ProjectContext.local(root), scope)
+        except DiffError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.get("/workspaces/{registered_id}/references")
     def workspace_references(registered_id: str, request: Request, q: str = "") -> dict[str, Any]:

@@ -3,7 +3,7 @@ import { clampInspectorWidth, defaultInspectorWidth, parseInspectorWidth } from 
 
 describe("inspectorWidth", () => {
   it("picks responsive defaults", () => {
-    expect(defaultInspectorWidth(1440)).toBe(380);
+    expect(defaultInspectorWidth(1440)).toBe(440);
     expect(defaultInspectorWidth(1280)).toBe(300);
   });
 

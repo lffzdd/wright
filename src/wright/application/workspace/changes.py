@@ -10,6 +10,7 @@ import stat
 import subprocess
 import tempfile
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -144,7 +145,7 @@ def _status_rows(root: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _diff_args(root: Path, scope: str) -> list[str]:
+def _diff_args(root: Path, scope: str, base: str | None = None) -> list[str]:
     args = [
         "diff",
         "--no-ext-diff",
@@ -154,15 +155,15 @@ def _diff_args(root: Path, scope: str) -> list[str]:
         "--find-renames",
     ]
     if scope == "staged":
-        args += ["--cached", _base(root)]
+        args += ["--cached", base or _base(root)]
     elif scope == "working":
-        args += [_base(root)]
+        args += [base or _base(root)]
     return args
 
 
-def _diff_rows(root: Path, scope: str) -> list[dict[str, Any]]:
+def _diff_rows(root: Path, scope: str, base: str | None = None) -> list[dict[str, Any]]:
     parts = (
-        _run(root, *_diff_args(root, scope), "--name-status", "-z", "--")
+        _run(root, *_diff_args(root, scope, base), "--name-status", "-z", "--")
         .decode("utf-8", "surrogateescape")
         .split("\0")
     )
@@ -206,7 +207,72 @@ def _fingerprint(root: Path, rows: list[dict]) -> str:
     return digest.hexdigest()
 
 
-def _patch_data(root: Path, row: dict, scope: str) -> dict:
+@dataclass
+class _Batch:
+    """Git facts shared by every row of one listing.
+
+    A listing used to start several Git processes per file; with dozens of
+    changed files that took seconds. Values missing here fall back to asking
+    Git about the one row, so a batch only ever saves work.
+    """
+
+    prefix: str
+    base: str
+    sizes: dict[str, int] = field(default_factory=dict)
+    diffs: dict[str, bytes] = field(default_factory=dict)
+
+    @classmethod
+    def load(cls, root: Path, rows: list[dict] = (), scope: str = "working") -> _Batch:
+        prefix = _run(root, "rev-parse", "--show-prefix").decode().strip()
+        batch = cls(prefix, _base(root))
+        batch.sizes = _object_sizes(
+            root, [name for row in rows for name in batch.object_names(row, scope)]
+        )
+        return batch
+
+    def object_names(self, row: dict, scope: str) -> list[str]:
+        if row.get("untracked"):
+            return []
+        path = row["path"]
+        names = []
+        if scope != "unstaged":
+            names.append(f"{self.base}:{self.prefix}{row.get('old_path') or path}")
+        if scope in {"staged", "unstaged"}:
+            names.append(f":{self.prefix}{path}")
+        return names
+
+
+def _object_sizes(root: Path, names: list[str]) -> dict[str, int]:
+    unique = list(dict.fromkeys(names))
+    if not unique:
+        return {}
+    lines: list[str] | None = None
+    # One name per line, so a name with a newline cannot share the batch.
+    if not any("\n" in name for name in unique):
+        data = "".join(f"{name}\n" for name in unique).encode("utf-8", "surrogateescape")
+        lines = (
+            _run(root, "cat-file", "--batch-check=%(objectsize)", data=data)
+            .decode("utf-8", "surrogateescape")
+            .splitlines()
+        )
+        if len(lines) != len(unique):
+            lines = None
+    if lines is None:
+        lines = [
+            _run(root, "cat-file", "-s", name, allowed=(0, 128)).decode(
+                "utf-8", "surrogateescape"
+            )
+            for name in unique
+        ]
+    # A missing object prints "<name> missing" instead of a size.
+    return {
+        name: int(line.strip())
+        for name, line in zip(unique, lines, strict=True)
+        if line.strip().isdigit()
+    }
+
+
+def _measure(root: Path, row: dict, scope: str, batch: _Batch) -> tuple[Path, int, bool, bool]:
     path = row["path"]
     target = _safe(root, path)
     if row.get("old_path"):
@@ -216,21 +282,114 @@ def _patch_data(root: Path, row: dict, scope: str) -> dict:
     if scope != "staged" and target.is_file():
         with target.open("rb") as handle:
             binary = b"\0" in handle.read(8192)
-    prefix = _run(root, "rev-parse", "--show-prefix").decode().strip()
-    object_names = []
-    if not row.get("untracked"):
-        if scope != "unstaged":
-            object_names.append(f"{_base(root)}:{prefix}{row.get('old_path') or path}")
-        if scope in {"staged", "unstaged"}:
-            object_names.append(f":{prefix}{path}")
-    object_size = 0
-    for name in object_names:
-        raw = _run(root, "cat-file", "-s", name, allowed=(0, 128))
-        if raw.strip().isdigit():
-            object_size = max(object_size, int(raw))
+    object_size = max(
+        (batch.sizes.get(name, 0) for name in batch.object_names(row, scope)), default=0
+    )
     if scope == "staged":
         size = object_size
-    truncated = max(size, object_size) > MAX_PATCH_BYTES
+    return target, size, binary, max(size, object_size) > MAX_PATCH_BYTES
+
+
+_C_ESCAPES = {ord(k): v for k, v in zip("abtnvfr\"\\", b"\a\b\t\n\v\f\r\"\\", strict=True)}
+
+
+def _unquote(value: bytes) -> tuple[bytes, bytes] | None:
+    """Read one C-quoted Git path; return it and what follows."""
+    if not value.startswith(b'"'):
+        return None
+    out = bytearray()
+    index = 1
+    while index < len(value):
+        char = value[index]
+        if char == ord('"'):
+            return bytes(out), value[index + 1 :]
+        if char == ord("\\") and index + 1 < len(value):
+            following = value[index + 1]
+            if following in _C_ESCAPES:
+                out.append(_C_ESCAPES[following])
+                index += 2
+                continue
+            octal = value[index + 1 : index + 4]
+            if re.fullmatch(rb"[0-7]{3}", octal):
+                out.append(int(octal, 8))
+                index += 4
+                continue
+            return None
+        out.append(char)
+        index += 1
+    return None
+
+
+def _section_path(section: bytes) -> str | None:
+    lines = section.split(b"\n")
+    for line in lines[1:]:
+        if line.startswith((b"@@", b"--- ", b"Binary files ", b"GIT binary patch")):
+            break
+        for marker in (b"rename to ", b"copy to "):
+            if line.startswith(marker):
+                name = line[len(marker) :]
+                quoted = _unquote(name)
+                return (quoted[0] if quoted else name).decode("utf-8", "surrogateescape")
+    rest = lines[0][len(b"diff --git ") :]
+    if rest.startswith(b'"'):
+        first = _unquote(rest)
+        if first is None or not first[1].startswith(b" "):
+            return None
+        rest = first[1][1:]
+        second = _unquote(rest)
+        name = second[0] if second else rest
+    elif rest.endswith(b'"'):
+        second = _unquote(rest[rest.rfind(b' "b/') + 1 :])
+        if second is None:
+            return None
+        name = second[0]
+    else:
+        # Unquoted and not a rename: "a/<path> b/<path>" with the same path.
+        half = len(rest) // 2
+        if len(rest) % 2 == 0 or rest[half : half + 1] != b" " or rest[2:half] != rest[half + 3 :]:
+            return None
+        name = rest[half + 1 :]
+    if not name.startswith(b"b/"):
+        return None
+    return name[2:].decode("utf-8", "surrogateescape")
+
+
+def _combined_diffs(root: Path, scope: str, base: str, rows: list[dict]) -> dict[str, bytes]:
+    """One Git diff for many rows, split back into each row's section."""
+    diffs: dict[str, bytes] = {}
+    for start in range(0, len(rows), 200):
+        chunk = rows[start : start + 200]
+        paths = list(dict.fromkeys(path for row in chunk for path in _paths(row)))
+        try:
+            raw = _run(
+                root,
+                *_diff_args(root, scope, base),
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
+                "--",
+                *paths,
+            )
+        except DiffError:
+            continue
+        sections = [part for part in re.split(rb"(?m)^(?=diff --git )", raw) if part]
+        found = {}
+        for section in sections:
+            path = _section_path(section)
+            if path is None or path in found:
+                found = None
+                break
+            found[path] = section
+        if found is None:
+            continue  # unreadable output: every row in the chunk asks Git itself
+        # Every section was matched, so a row without one has an empty diff.
+        diffs.update({row["path"]: found.get(row["path"], b"") for row in chunk})
+    return diffs
+
+
+def _patch_data(root: Path, row: dict, scope: str, batch: _Batch | None = None) -> dict:
+    path = row["path"]
+    batch = batch or _Batch.load(root, [row], scope)
+    target, size, binary, truncated = _measure(root, row, scope, batch)
     raw = b""
     if row.get("untracked"):
         if target.is_file() and not binary and not truncated:
@@ -246,7 +405,9 @@ def _patch_data(root: Path, row: dict, scope: str) -> dict:
                 allowed=(0, 1),
             )
     elif not truncated:
-        raw = _run(root, *_diff_args(root, scope), "--", *_paths(row))
+        raw = batch.diffs.get(path)
+        if raw is None:
+            raw = _run(root, *_diff_args(root, scope, batch.base), "--", *_paths(row))
     binary = binary or any(
         line == b"GIT binary patch"
         or (line.startswith(b"Binary files ") and line.endswith(b" differ"))
@@ -291,18 +452,31 @@ def list_changes(context: ProjectContext, scope: str = "working") -> dict[str, A
             "revision": "",
         }
     status = _status_rows(root)
-    rows = _diff_rows(root, scope)
+    base = _base(root)
+    rows = _diff_rows(root, scope, base)
     status_map = {row["path"]: row for row in status}
     if scope != "staged":
         rows += [dict(row) for row in status if row["untracked"]]
     if scope == "working":
         seen = {row["path"] for row in rows}
         rows += [dict(row) for row in status if row["path"] not in seen]
-    changes = []
-    for original in sorted(rows, key=lambda item: item["path"]):
-        row = {**status_map.get(original["path"], {}), **original}
+    merged = [
+        {**status_map.get(original["path"], {}), **original}
+        for original in sorted(rows, key=lambda item: item["path"])
+    ]
+    batch = _Batch.load(root, merged, scope)
+    diffable = []
+    for row in merged:
         try:
-            metadata = _patch_data(root, row, scope)
+            if not row.get("untracked") and not _measure(root, row, scope, batch)[3]:
+                diffable.append(row)
+        except (DiffError, OSError):
+            pass  # reported for the row below
+    batch.diffs = _combined_diffs(root, scope, batch.base, diffable)
+    changes = []
+    for row in merged:
+        try:
+            metadata = _patch_data(root, row, scope, batch)
             error = ""
         except (DiffError, OSError) as exc:
             metadata = {

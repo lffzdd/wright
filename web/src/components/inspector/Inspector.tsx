@@ -1,20 +1,28 @@
-import { CaretRight, Check, Gauge, ShieldCheck, X } from "@phosphor-icons/react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ArrowsInLineVertical, CaretRight, Check, Folder, GitDiff, ListChecks, ShieldCheck, SquareSplitVertical, Stack, X } from "@phosphor-icons/react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { api } from "../../api";
-import { parseDiff } from "../../diff";
 import { useT } from "../../i18n";
-import type { Grants, PlanStep, ViewState, WaitReason } from "../../types";
+import type { GitChange, Grants, PlanStep, ViewState, WaitReason } from "../../types";
 import { PermissionsPanel } from "../permissions/permissions";
 import { ChangesPanel } from "./ChangesPanel";
 import { ContextPanel } from "./ContextPanel";
-import { FilesPanel } from "./FilesPanel";
+import { FilesPanel, isWorkUse } from "./FilesPanel";
 
 export type InspectorTab = "task" | "files" | "changes" | "permissions" | "context";
-/** Settings-like tabs sit at the end as icons, so the working tabs always fit. */
+/** Files and Changes can share the panel: the selected one on top, the other below. */
+const SPLIT_PARTNER: Partial<Record<InspectorTab, InspectorTab>> = { files: "changes", changes: "files" };
+const SPLIT_MIN = 0.2;
+const clampSplit = (value: number) => Math.min(1 - SPLIT_MIN, Math.max(SPLIT_MIN, value));
 const ACTIVE_STEP = ["in_progress", "running", "active"];
 /** Notes longer than this clamp to two lines and expand on click. */
 const LONG_STEP_NOTE = 80;
-const ICON_TABS: Partial<Record<InspectorTab, typeof Gauge>> = { permissions: ShieldCheck, context: Gauge };
+const TAB_ICONS: Record<InspectorTab, typeof Folder> = {
+  task: ListChecks,
+  changes: GitDiff,
+  files: Folder,
+  context: Stack,
+  permissions: ShieldCheck,
+};
 
 /** A path relative to the project, or null when it lies outside it. */
 /** Time of day for today, otherwise a short date and time; the full stamp stays in the tooltip. */
@@ -35,7 +43,7 @@ export function projectRelative(path: string, root?: string): string | null {
   return null;
 }
 
-export function Inspector({ state, sessionId, open, narrow = false, focusPath = null, focusLine, focusRequest = 0, tabRequest, close, onResume, onFeedback, showCall }: { state: ViewState; sessionId: string; open: boolean; narrow?: boolean; focusPath?: string | null; focusLine?: number; focusRequest?: number; tabRequest?: { tab: InspectorTab; request: number }; close: () => void; onResume?: () => Promise<unknown>; onFeedback?: (feedback: string) => void; showCall?: (callId: string) => void }) {
+export function Inspector({ state, sessionId, open, narrow = false, focusPath = null, focusLine, focusRequest = 0, tabRequest, close, onResume, onFeedback, onReference, showCall }: { state: ViewState; sessionId: string; open: boolean; narrow?: boolean; focusPath?: string | null; focusLine?: number; focusRequest?: number; tabRequest?: { tab: InspectorTab; request: number }; close: () => void; onResume?: () => Promise<unknown>; onFeedback?: (feedback: string) => void; onReference?: (path: string) => void; showCall?: (callId: string) => void }) {
   const tr = useT();
   const panelRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -53,7 +61,24 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
   useEffect(() => { if (tabRequest) setTab(tabRequest.tab); }, [tabRequest?.request]);
   const [filesVisited, setFilesVisited] = useState(false);
   const [changesVisited, setChangesVisited] = useState(false);
-  useEffect(() => { if (tab === "files") setFilesVisited(true); if (tab === "changes") setChangesVisited(true); }, [tab]);
+  // The split is opt-in and only pairs Files with Changes; the lower pane has its own header and close button.
+  const [split, setSplit] = useState(false);
+  const [splitRatio, setSplitRatio] = useState(0.55);
+  const panesRef = useRef<HTMLDivElement>(null);
+  const splitTab = split ? SPLIT_PARTNER[tab] ?? null : null;
+  const shows = (item: InspectorTab) => tab === item || splitTab === item;
+  useEffect(() => { if (shows("files")) setFilesVisited(true); if (shows("changes")) setChangesVisited(true); }, [tab, splitTab]);
+  const startSplitDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    const panes = panesRef.current;
+    if (!panes || event.button !== 0) return;
+    event.preventDefault();
+    const rect = panes.getBoundingClientRect();
+    const move = (moveEvent: PointerEvent) => { if (rect.height > 0) setSplitRatio(clampSplit((moveEvent.clientY - rect.top) / rect.height)); };
+    const stop = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", stop); document.body.classList.remove("inspector-split-resizing"); };
+    document.body.classList.add("inspector-split-resizing");
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+  };
   // One highlight slides between tabs instead of each tab drawing its own box.
   const tablistRef = useRef<HTMLDivElement>(null);
   const [indicator, setIndicator] = useState<{ left: number; width: number; animate: boolean } | null>(null);
@@ -74,7 +99,26 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
     observer.observe(list);
     return () => observer.disconnect();
   }, [tab]);
-  const [changes, setChanges] = useState<Array<{ path: string; status: string }> | null>(null);
+  // Every tab carries its label, as in the reference. When the labels do not fit the
+  // panel, only the selected tab keeps its label; the width they need is measured, not guessed.
+  const [compactTabs, setCompactTabs] = useState(false);
+  const fullTabsWidth = useRef(0);
+  useEffect(() => { setCompactTabs(false); }, [tr]);
+  useLayoutEffect(() => {
+    const list = tablistRef.current;
+    if (!list) return;
+    const measure = () => {
+      if (!compactTabs) {
+        if (list.scrollWidth > list.clientWidth + 1) { fullTabsWidth.current = list.scrollWidth; setCompactTabs(true); }
+      } else if (list.clientWidth >= fullTabsWidth.current) setCompactTabs(false);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [compactTabs]);
+  const [changes, setChanges] = useState<GitChange[] | null>(null);
   const [changeCount, setChangeCount] = useState(0);
   const [changesFocus, setChangesFocus] = useState<{ path: string; request: number } | null>(null);
   const [recentFileMeta, setRecentFileMeta] = useState<Record<string, { size?: number; additions?: number; deletions?: number }>>({});
@@ -144,14 +188,25 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
     return () => { ++changesGeneration.current; };
   }, [sessionId, historyOnly]);
   const refresh = useCallback(() => {
-    if (historyOnly) return;
+    // A history session has no runtime; its project's git status still marks the tree.
+    if (historyOnly && !historyProjectId) return;
     const request = ++changesGeneration.current;
-    api.changes(sessionId).then((result) => {
+    (historyOnly && historyProjectId ? api.workspaceChanges(historyProjectId) : api.changes(sessionId)).then((result) => {
       if (changesGeneration.current !== request) return;
       setChanges(result.changes); setChangeCount(result.changes.length);
     }).catch(() => { if (changesGeneration.current === request) { setChanges(null); setChangeCount(0); } });
-  }, [sessionId, historyOnly]);
-  useEffect(() => { if (tab !== "changes") refresh(); else ++changesGeneration.current; }, [refresh, state.session.status, state.connection, tab]);
+  }, [sessionId, historyOnly, historyProjectId]);
+  const filesBusy = useRef(false);
+  useEffect(() => {
+    const busy = state.connection !== "connected" || ["running", "queued", "waiting_for_input", "cancelling"].includes(execution);
+    const becameIdle = filesBusy.current && !busy;
+    filesBusy.current = busy;
+    if (tab === "changes") {
+      ++changesGeneration.current;
+      return;
+    }
+    if (tab === "files" || becameIdle) refresh();
+  }, [refresh, tab, execution, state.connection]);
   useEffect(() => {
     let current = true;
     if (tab === "permissions" && !historyOnly) {
@@ -174,22 +229,16 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
       const path = item.path;
       return path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
     }))];
-    const writePaths = new Set((changes ?? []).map((item) => item.path));
     const sizeRequest = Promise.all(folders.map((folder) => api.tree(sessionId, folder).catch(() => null)));
-    const diffRequest = Promise.all(accessed.filter((item) => item.access === "write" && writePaths.has(item.path)).map(async (item) => {
-      try {
-        const result = await api.patch(sessionId, item.path);
-        const { additions, deletions } = parseDiff(result.patch);
-        return [item.path, { additions, deletions }] as const;
-      } catch { return [item.path, {}] as const; }
-    }));
-    void Promise.all([sizeRequest, diffRequest]).then(([treeResults, diffResults]) => {
+    void sizeRequest.then((treeResults) => {
       if (!current) return;
       const metadata: Record<string, { size?: number; additions?: number; deletions?: number }> = {};
-      for (const tree of treeResults) for (const entry of tree?.entries ?? []) {
-        if (entry.kind === "file" && typeof entry.size === "number") metadata[entry.path] = { size: entry.size };
+      for (const row of changes ?? []) {
+        metadata[row.path] = { size: row.size, additions: row.additions, deletions: row.deletions };
       }
-      for (const [path, diff] of diffResults) metadata[path] = { ...metadata[path], ...diff };
+      for (const tree of treeResults) for (const entry of tree?.entries ?? []) {
+        if (entry.kind === "file" && typeof entry.size === "number") metadata[entry.path] = { ...metadata[entry.path], size: entry.size };
+      }
       setRecentFileMeta(metadata);
     });
     return () => { current = false; };
@@ -200,7 +249,7 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
     setFilePath(projectRelative(focusPath, state.session.execution_root) ?? focusPath);
   }, [focusPath, sessionId, focusRequest]);
   const breakdown = state.context_breakdown;
-  const tabs: InspectorTab[] = ["task", "files", "changes", "permissions", "context"];
+  const tabs: InspectorTab[] = ["task", "changes", "files", "context", "permissions"];
   const steps = state.plan.steps ?? [];
   // Shown relative to the project when they are inside it. An absolute and a relative
   // spelling of one file merge: the later access wins, but a write and tool counts carry over.
@@ -224,7 +273,7 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
   const projectName = (state.session.execution_root ?? "").replace(/\\/g, "/").replace(/\/+$/, "").split("/").pop() ?? "";
   const completedSteps = steps.filter((step) => step.status === "completed").length;
   const currentStep = steps.findIndex((step) => ACTIVE_STEP.includes(step.status));
-  const tabCount = (item: InspectorTab) => item === "files" ? accessedFiles.length : item === "changes" ? changeCount : 0;
+  const tabCount = (item: InspectorTab) => item === "files" ? accessedFiles.filter(isWorkUse).length : item === "changes" ? changeCount : 0;
   const fileMeta = (path: string) => recentFileMeta[projectRelative(path, state.session.execution_root) ?? path] ?? {};
   // The icon already says done, doing or to do; only other states (blocked, skipped…) are spelled out.
   const stepMeta = (status: string, note?: string) => {
@@ -252,7 +301,7 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
   const pendingCount = state.pending_interactions.length;
   const modeLabel = tr(`web.perm_short.${permissionMode}`) === `web.perm_short.${permissionMode}` ? permissionMode : tr(`web.perm_short.${permissionMode}`);
   const overviewRows: Array<{ tab: InspectorTab; label: string; value: string; alert?: boolean }> = [
-    { tab: "files", label: tr("web.accessed_files"), value: accessedFiles.length ? tr("web.files_count", { count: accessedFiles.length }) : tr("web.overview.none") },
+    { tab: "files", label: tr("web.accessed_files"), value: accessedFiles.some(isWorkUse) ? tr("web.files_count", { count: accessedFiles.filter(isWorkUse).length }) : tr("web.overview.none") },
     { tab: "changes", label: tr("web.overview.changes"), value: changeCount ? tr("web.files_count", { count: changeCount }) : tr("web.overview.none") },
     { tab: "context", label: tr("web.tab.context"), value: contextShare === null ? "—" : tr("web.overview.context_used", { percent: contextShare }) },
     { tab: "permissions", label: tr("web.tab.permissions"), alert: pendingCount > 0,
@@ -266,27 +315,39 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
   }}>
-    <div className="inspector-inner">
-    <div className="inspector-tabs">
-      <div className="inspector-tablist" role="tablist" aria-label={tr("web.inspector")} ref={tablistRef}>
+    <div className="inspector-inner in-inner">
+    <div className="inspector-tabs in-tabs">
+      <div className={`inspector-tablist${compactTabs ? " compact" : ""}`} role="tablist" aria-label={tr("web.inspector")} ref={tablistRef}>
       {indicator && <span className={`inspector-tab-indicator${indicator.animate ? " animate" : ""}`} aria-hidden="true" style={{ width: indicator.width, transform: `translateX(${indicator.left}px)` }} />}
       {/* Tabs switch on press, as editor tabs do; click still covers keyboard and assistive activation. */}
-      {tabs.map((item, index) => <button key={item} id={`inspector-tab-${item}`} aria-controls={`inspector-panel-${item}`} tabIndex={tab === item ? 0 : -1} className={`${ICON_TABS[item] ? "icon-tab" : ""}${item === "permissions" && state.pending_interactions.length ? " pending-tab" : ""}`.trim() || undefined} role="tab" aria-selected={tab === item}
-        onMouseDown={(event) => { if (event.button === 0) setTab(item); }} onClick={() => setTab(item)} onKeyDown={(event) => {
-        const next = event.key === "ArrowRight" ? (index + 1) % tabs.length : event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : null;
-        if (next === null) return;
-        event.preventDefault(); setTab(tabs[next]);
-        const button = panelRef.current?.querySelector<HTMLButtonElement>(`#inspector-tab-${tabs[next]}`);
-        button?.focus(); button?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-      }} aria-label={ICON_TABS[item] ? tr(`web.tab.${item}`) : undefined} title={ICON_TABS[item] ? tr(`web.tab.${item}`) : undefined}>
-        {(() => { const Icon = ICON_TABS[item]; return Icon
-          ? <><Icon size={15} aria-hidden="true" />{item === "permissions" && state.pending_interactions.length > 0 && <span className="tab-alert" aria-hidden="true" />}</>
-          : <><span>{tr(`web.tab.${item}`)}</span>{tabCount(item) > 0 && <>{" "}<small>{tabCount(item)}</small></>}</>; })()}
-      </button>)}
+      {tabs.map((item, index) => {
+        const Icon = TAB_ICONS[item];
+        const pending = item === "permissions" && state.pending_interactions.length > 0;
+        const count = tabCount(item);
+        return <button key={item} id={`inspector-tab-${item}`} aria-controls={`inspector-panel-${item}`} tabIndex={tab === item ? 0 : -1} className={`in-tab${tab === item ? " on" : ""}${pending ? " pending-tab" : ""}`} role="tab" aria-selected={tab === item}
+          onMouseDown={(event) => { if (event.button === 0) setTab(item); }} onClick={() => setTab(item)} onKeyDown={(event) => {
+          const next = event.key === "ArrowRight" ? (index + 1) % tabs.length : event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : null;
+          if (next === null) return;
+          event.preventDefault(); setTab(tabs[next]);
+          const button = panelRef.current?.querySelector<HTMLButtonElement>(`#inspector-tab-${tabs[next]}`);
+          button?.focus(); button?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+        }} title={tr(`web.tab.${item}`)}>
+          <Icon className="tab-ico" size={14} aria-hidden="true" />
+          <span className="tab-label">{tr(`web.tab.${item}`)}</span>
+          {count > 0 && <small className="cnt">{count}</small>}
+          {pending && <span className="tab-alert" aria-hidden="true" />}
+        </button>;
+      })}
       </div>
-      <button className="icon-button" onClick={close} aria-label={tr("web.close_inspector")} title={tr("web.close_inspector")}><X size={14} weight="bold" /></button>
+      {SPLIT_PARTNER[tab] && <button type="button" className={`icon-button icon-btn inspector-split-toggle${split ? " on" : ""}`} aria-pressed={split}
+        onClick={() => setSplit((value) => !value)}
+        aria-label={split ? tr("web.split_close", { name: tr(`web.tab.${SPLIT_PARTNER[tab]}`) }) : tr("web.split_open", { name: tr(`web.tab.${SPLIT_PARTNER[tab]}`) })}
+        title={split ? tr("web.split_close", { name: tr(`web.tab.${SPLIT_PARTNER[tab]}`) }) : tr("web.split_open", { name: tr(`web.tab.${SPLIT_PARTNER[tab]}`) })}>
+        {split ? <ArrowsInLineVertical size={15} /> : <SquareSplitVertical size={15} />}
+      </button>}
+      <button className="icon-button icon-btn" onClick={close} aria-label={tr("web.close_inspector")} title={tr("web.close_inspector")}><X size={15} weight="bold" /></button>
     </div>
-    {tab === "task" && <div className="inspector-body" role="tabpanel" id="inspector-panel-task" aria-labelledby="inspector-tab-task">
+    {tab === "task" && <div className="inspector-body in-body" role="tabpanel" id="inspector-panel-task" aria-labelledby="inspector-tab-task">
       <section className="goal-card">
         <div className="card-kicker"><span>{tr("web.goal")}</span>{steps.length ? <span className="goal-progress-copy">{tr("web.steps_completed", { done: completedSteps, total: steps.length })}</span> : null}</div>
         {state.plan.objective || state.session.user_goal
@@ -346,20 +407,43 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
         <div className="card-kicker"><span>{tr("web.subagents")}</span>{(state.subagents ?? []).length ? <span>{tr("web.spawned_count", { count: (state.subagents ?? []).length })}</span> : null}</div>
         {(state.subagents ?? []).map((agent) => <div className="subagent-row" key={agent.task_id}><span className="status-dot" /><span>{agent.task || agent.task_id}</span><span>{(agent.status || "unknown").replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())}</span></div>)}
       </section>}
-      {!steps.length && !(state.subagents ?? []).length && <p className="hint inspector-task-empty">{tr("web.inspector_task_empty")}</p>}
+      {!steps.length && !(state.subagents ?? []).length && <p className="in-empty inspector-task-empty">{tr("web.inspector_task_empty")}</p>}
     </div>}
-    {/* Kept mounted once opened, so the tree and preview survive tab switches. */}
-    {(tab === "files" || filesVisited) && <div className="inspector-body" role="tabpanel" id="inspector-panel-files" aria-labelledby="inspector-tab-files" hidden={tab !== "files"}>
+    {/* Kept mounted once opened, so the tree and preview survive tab switches. In a split
+        both stay in place and only their order and size change, so neither remounts. */}
+    {(shows("files") || shows("changes") || filesVisited || changesVisited) && <div ref={panesRef} className={`inspector-panes${splitTab ? " split" : ""}`} hidden={!shows("files") && !shows("changes")}>
+    {(shows("files") || filesVisited) && <div className={`inspector-body in-body${splitTab === "files" ? " inspector-pane-secondary" : ""}`} role="tabpanel" id="inspector-panel-files" aria-labelledby="inspector-tab-files" hidden={!shows("files")}
+      style={splitTab ? { order: splitTab === "files" ? 3 : 1, flexGrow: splitTab === "files" ? 1 - splitRatio : splitRatio } : undefined}>
       <FilesPanel sessionKey={`${sessionId}:${historyOnly}:${historyProjectId ?? ""}`} canReadFiles={canReadFiles} historyOnly={historyOnly}
         accessedFiles={accessedFiles} fileMeta={fileMeta} readTree={readTree} readFile={readFile} searchFiles={searchFiles}
         filePath={filePath} focusLine={focusPath && filePath === (projectRelative(focusPath, state.session.execution_root) ?? focusPath) ? focusLine : undefined} openFile={setFilePath} changes={changes ?? []} accessCounts={accessCounts} projectName={projectName} projectRoot={state.session.execution_root ?? undefined}
-        openChanges={(path) => { setChangesFocus((current) => ({ path, request: (current?.request ?? 0) + 1 })); setTab("changes"); }} showCall={showCall} />
+        openChanges={(path) => { setChangesFocus((current) => ({ path, request: (current?.request ?? 0) + 1 })); setTab("changes"); }} showCall={showCall} onReference={onReference} />
     </div>}
-    {(tab === "changes" || changesVisited) && <div className="inspector-body" role="tabpanel" id="inspector-panel-changes" aria-labelledby="inspector-tab-changes" hidden={tab !== "changes"}>
-      {historyOnly ? resumeStatus ?? <p className="hint">{tr("web.inspector_history_changes")}</p> : <ChangesPanel sessionId={sessionId} state={state} onCount={setChangeCount} onWorkingChanges={setChanges} onFeedback={onFeedback} focus={changesFocus} />}
-
+    {(shows("changes") || changesVisited) && <div className={`inspector-body in-body${splitTab === "changes" ? " inspector-pane-secondary" : ""}`} role="tabpanel" id="inspector-panel-changes" aria-labelledby="inspector-tab-changes" hidden={!shows("changes")}
+      style={splitTab ? { order: splitTab === "changes" ? 3 : 1, flexGrow: splitTab === "changes" ? 1 - splitRatio : splitRatio } : undefined}>
+      {historyOnly ? resumeStatus ?? <p className="hint">{tr("web.inspector_history_changes")}</p> : <ChangesPanel sessionId={sessionId} state={state} onCount={setChangeCount} onWorkingChanges={setChanges} onFeedback={onFeedback} focus={changesFocus} onOpenFile={(path) => { setFilePath(path); setTab("files"); }} />}
     </div>}
-    {tab === "permissions" && <div className="inspector-body" role="tabpanel" id="inspector-panel-permissions" aria-labelledby="inspector-tab-permissions">
+    {splitTab && (() => {
+      const Icon = TAB_ICONS[splitTab];
+      const name = tr(`web.tab.${splitTab}`);
+      const count = tabCount(splitTab);
+      return <div className="inspector-split-bar" style={{ order: 2 }}>
+        <div className="inspector-split-grip" role="separator" aria-orientation="horizontal" aria-label={tr("web.split_resize")} tabIndex={0}
+          aria-valuemin={SPLIT_MIN * 100} aria-valuemax={(1 - SPLIT_MIN) * 100} aria-valuenow={Math.round(splitRatio * 100)}
+          onPointerDown={startSplitDrag} onDoubleClick={() => setSplitRatio(0.55)}
+          onKeyDown={(event) => {
+            const step = event.key === "ArrowUp" ? -0.05 : event.key === "ArrowDown" ? 0.05 : null;
+            if (step === null) return;
+            event.preventDefault(); setSplitRatio((value) => clampSplit(value + step));
+          }} />
+        <button type="button" className="inspector-split-title" onClick={() => setTab(splitTab)} title={tr("web.split_focus", { name })}>
+          <Icon size={13} aria-hidden="true" /><span>{name}</span>{count > 0 && <small className="cnt">{count}</small>}
+        </button>
+        <button type="button" className="icon-button icon-btn inspector-split-close" onClick={() => setSplit(false)} aria-label={tr("web.split_close", { name })} title={tr("web.split_close", { name })}><X size={13} weight="bold" /></button>
+      </div>;
+    })()}
+    </div>}
+    {tab === "permissions" && <div className="inspector-body in-body" role="tabpanel" id="inspector-panel-permissions" aria-labelledby="inspector-tab-permissions">
       {historyOnly ? resumeStatus ?? <p className="hint">{tr("web.inspector_history_permissions")}</p> : <>
       {permissionsError && <p className="form-error" role="alert">{permissionsError}</p>}
       <PermissionsPanel sessionId={sessionId} grants={grants} update={setGrants}
@@ -370,7 +454,7 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
       />
       </>}
     </div>}
-    {tab === "context" && <div className="inspector-body" role="tabpanel" id="inspector-panel-context" aria-labelledby="inspector-tab-context">
+    {tab === "context" && <div className="inspector-body in-body" role="tabpanel" id="inspector-panel-context" aria-labelledby="inspector-tab-context">
       <ContextPanel breakdown={breakdown} usage={state.usage} historyOnly={historyOnly} />
     </div>}
     </div>

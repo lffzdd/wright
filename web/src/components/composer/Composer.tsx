@@ -1,4 +1,4 @@
-import { CaretDown, Desktop, FolderSimple, GitFork, Paperclip, PaperPlaneRight, ShieldCheck, ShieldWarning, Square, Warning, X } from "@phosphor-icons/react";
+import { ArrowUp, At, CaretDown, ChatCircleDots, Compass, Desktop, FolderSimple, GitFork, Lightning, Paperclip, Shield, ShieldCheck, ShieldWarning, Square, Warning, X } from "@phosphor-icons/react";
 import { FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { api } from "../../api";
 import { useT } from "../../i18n";
@@ -56,6 +56,32 @@ export function visibleModels(models: string[], currentModel: string, extras: st
   return result;
 }
 
+const MODES = ["agent", "plan", "ask"] as const;
+const MODE_ICONS = {
+  agent: <Lightning size={15} />,
+  plan: <Compass size={15} />,
+  ask: <ChatCircleDots size={15} />,
+} as const;
+const PERM_ICONS = {
+  default: <Shield size={15} />,
+  acceptEdits: <Lightning size={15} />,
+  bypass: <Warning size={15} />,
+  plan: <Compass size={15} />,
+} as const;
+
+/** The keys worth knowing, shown under the composer. */
+export function ComposerHints() {
+  const tr = useT();
+  return <div className="composer-hints hint" aria-hidden="true">
+    <span><kbd>↵</kbd>{tr("web.hint.send")}</span>
+    <span><kbd>⇧↵</kbd>{tr("web.hint.newline")}</span>
+    <span><kbd>/</kbd>{tr("web.hint.commands")}</span>
+    <span><kbd>@</kbd>{tr("web.hint.files")}</span>
+    <span><kbd>⇧Tab</kbd>{tr("web.hint.mode")}</span>
+    <span><kbd>{tr("web.shortcut_key", { key: "K" })}</kbd>{tr("web.hint.search")}</span>
+  </div>;
+}
+
 export function Composer({
   sessionId, connection, draft, updateDraft, submit, cancel, cancelAll, running, models = [], currentModel = "", interactionMode = "agent", permissionMode = "default", executionMode = "sandbox", onModel, onPolicy,
   projectId = null, chooseEnvironment = false, deferUploads = chooseEnvironment, git = false, workLabel = "", context,
@@ -85,7 +111,6 @@ export function Composer({
 }) {
   const tr = useT();
   const [uploading, setUploading] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [menu, setMenu] = useState<null | { kind: "file" | "command"; query: string; index: number }>(null);
   const [results, setResults] = useState<Array<{ id: string; label: string; insert: string; reference?: FileReference }>>([]);
   const [menuError, setMenuError] = useState("");
@@ -93,6 +118,7 @@ export function Composer({
   const composing = useRef(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
+  const [dragOver, setDragOver] = useState(false);
   const upload = async (files: FileList | File[]) => {
     const owner = sessionId;
     const selected = Array.from(files);
@@ -209,17 +235,12 @@ export function Composer({
     node?.focus();
   };
   const offline = connection === "disconnected" || connection === "reconnecting" || connection === "closed";
-  // Only what differs from the defaults is spelled out: the mode when it is not
-  // Agent, and a relaxed permission mode as a shield icon with its help as tooltip.
-  const relaxed = interactionMode === "agent" && (permissionMode === "acceptEdits" || permissionMode === "bypass");
-  const relaxedLabel = relaxed ? tr(`web.perm_short.${permissionMode}`) : "";
-  const settingsSummary = [interactionMode === "agent" ? "" : tr(`web.mode.${interactionMode}`), currentModel || tr("web.model")].filter(Boolean).join(" · ");
-  const policyControls = Boolean(onPolicy || onModel);
-  return <form className="composer" onSubmit={(event) => { send(event).catch((reason) => updateDraft(sessionId, (item) => ({ ...item, phase: "unknown", reason: String(reason) }))); }}>
+  const composerMode = interactionMode === "agent" ? "auto" : interactionMode;
+  return <form className={`composer${dragOver ? " drag" : ""}`} data-mode={composerMode} data-perm={permissionMode || "default"} data-drop={tr("web.drop_files")} onDragEnter={(event) => { event.preventDefault(); setDragOver(true); }} onDragOver={(event) => { event.preventDefault(); setDragOver(true); }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOver(false); }} onDrop={(event) => { event.preventDefault(); setDragOver(false); if (event.dataTransfer.files?.length) upload(event.dataTransfer.files); }} onSubmit={(event) => { send(event).catch((reason) => updateDraft(sessionId, (item) => ({ ...item, phase: "unknown", reason: String(reason) }))); }}>
     <input ref={fileInput} className="file-input" type="file" multiple tabIndex={-1} aria-hidden="true" onChange={(event) => { if (event.target.files) upload(event.target.files); event.target.value = ""; }} />
     {chooseEnvironment && <EnvironmentChoice sessionId={sessionId} draft={draft} updateDraft={updateDraft} git={git} workLabel={workLabel} />}
-    {(draft.attachments.length > 0 || (draft.documents ?? []).length > 0 || (draft.references ?? []).length > 0 || (draft.localFiles ?? []).length > 0 || draft.command) && <div className="chips">
-      {draft.attachments.map((attachment) => <span className="chip" key={attachment.id}>{attachment.filename}<button type="button" aria-label={tr("web.remove", { name: attachment.filename })} onClick={() => {
+    {(draft.attachments.length > 0 || (draft.documents ?? []).length > 0 || (draft.references ?? []).length > 0 || (draft.localFiles ?? []).length > 0 || draft.command) && <div className="attachments chips">
+      {draft.attachments.map((attachment) => <span className="att chip" key={attachment.id}><span>{attachment.filename}</span><button type="button" aria-label={tr("web.remove", { name: attachment.filename })} onClick={() => {
         const owner = sessionId;
         api.deleteAttachment(owner, attachment.id).then(() => {
           updateDraft(owner, (current) => ({ ...current, attachments: current.attachments.filter((item) => item.id !== attachment.id) }));
@@ -247,60 +268,46 @@ export function Composer({
         if (event.key === "Enter" || event.key === "Tab") { event.preventDefault(); applyMenu(results[menu.index]); return; }
       }
       if (menu && (menuLoading || menuError) && event.key === "Enter") { event.preventDefault(); return; }
+      // Shift+Tab steps through the interaction modes, as in a terminal agent.
+      if (event.key === "Tab" && event.shiftKey && !menu && onPolicy) {
+        event.preventDefault();
+        const next = MODES[(MODES.indexOf(interactionMode as typeof MODES[number]) + 1) % MODES.length];
+        onPolicy({ interaction_mode: next }).catch((error) => updateDraft(sessionId, (item) => ({ ...item, reason: String(error) })));
+        return;
+      }
       if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
     }} />
-    {menu && <div className="mention-menu" role="listbox" aria-busy={menuLoading}>
+    {menu && <div className="mention-menu popup" role="listbox" aria-busy={menuLoading}>
+      <div className="pop-h"><span>{tr(menu.kind === "command" ? "web.commands_title" : "web.reference_file")}</span></div>
       {menuError && <p className="form-error" role="alert">{menuError}</p>}
       {!menuLoading && !results.length && !menuError && <p className="empty-small">{tr("web.no_matches")}</p>}
-      {results.map((item, index) => <button type="button" role="option" aria-selected={index === menu.index} key={item.id} onMouseDown={(event) => { event.preventDefault(); applyMenu(item); }}>{item.label}</button>)}
+      {results.map((item, index) => <button type="button" className={`pop-i${index === menu.index ? " sel" : ""}`} role="option" aria-selected={index === menu.index} key={item.id} onMouseDown={(event) => { event.preventDefault(); applyMenu(item); }}>{item.label}</button>)}
     </div>}
-    <div className="composer-actions">
-      <div className="row-actions">
-        <button type="button" className="icon-button" title={tr("web.attach_file")} aria-label={tr("web.attach_file")} onClick={() => fileInput.current?.click()}><Paperclip size={14} /></button>
-        <button type="button" className="icon-button" title={tr("web.reference_file")} onClick={() => { updateDraft(sessionId, (item) => ({ ...item, prompt: `${item.prompt}@` })); setMenu({ kind: "file", query: "", index: 0 }); box.current?.focus(); }}>@</button>
-        <button type="button" className="icon-button" title={tr("web.commands_title")} onClick={() => { updateDraft(sessionId, (item) => ({ ...item, prompt: `${item.prompt}/` })); setMenu({ kind: "command", query: "", index: 0 }); box.current?.focus(); }}>/</button>
-        <span className="hint" role={draft.phase === "rejected" || draft.phase === "unknown" ? "alert" : "status"}>{draft.reason || (uploading ? tr("web.uploading") : "") || (draft.phase === "awaiting" ? tr("web.awaiting_accept") : "") || (offline ? tr("web.offline_hint") : "")}</span>
-      </div>
-      <div className="row-actions composer-primary-actions">
-        {context}
-        {policyControls && (
-          <button
-            type="button"
-            className="text-button composer-settings-toggle"
-            aria-expanded={settingsOpen}
-            aria-controls={`composer-settings-${sessionId}`}
-            title={relaxed ? `${relaxedLabel}: ${tr(`web.perm_help.${permissionMode}`)}` : tr("web.composer_settings")}
-            onClick={() => setSettingsOpen((open) => !open)}
-          >
-            {relaxed && <ShieldWarning className="composer-permission-icon" size={13} weight="fill" role="img" aria-label={relaxedLabel} />}
-            <span className="composer-settings-text">{settingsSummary}</span>
-            <CaretDown size={10} weight="bold" aria-hidden="true" />
-          </button>
-        )}
-        {running && <button type="button" className="button stop" onClick={() => { cancel().catch(() => undefined); }}><Square size={11} weight="fill" />{tr("web.stop")}<kbd>{tr("web.shortcut_key", { key: "." })}</kbd></button>}
-        {running && cancelAll && <button type="button" className="button stop" onClick={() => { cancelAll().catch(() => undefined); }}>{tr("web.stop_all")}</button>}
-        {(!running || draft.prompt.trim()) && <button className="button primary" disabled={uploading || draft.phase === "awaiting" || (!draft.prompt.trim() && !draft.command && !draft.attachments.length && !(draft.documents ?? []).length && !(draft.references ?? []).length && !(draft.localFiles ?? []).length)}><PaperPlaneRight size={13} />{draft.phase === "unknown" ? tr("web.retry") : tr("web.send")}</button>}
-      </div>
+    <div className="composer-actions cbar">
+      <button type="button" className="icon-button icon-btn" title={tr("web.attach_file")} aria-label={tr("web.attach_file")} onClick={() => fileInput.current?.click()}><Paperclip size={15} /></button>
+      <button type="button" className="icon-button icon-btn" title={tr("web.reference_file")} aria-label={tr("web.reference_file")} onClick={() => { updateDraft(sessionId, (item) => ({ ...item, prompt: `${item.prompt}@` })); setMenu({ kind: "file", query: "", index: 0 }); box.current?.focus(); }}><At size={15} /></button>
+      {onPolicy && <Select className={`select composer-pill pill select-mode mode mode-${interactionMode}`} ariaLabel={tr("web.interaction_mode")} title={`${tr(`web.mode_help.${interactionMode}`)} (⇧Tab)`} value={interactionMode} wide
+        onChange={(next) => onPolicy({ interaction_mode: next }).catch((error) => updateDraft(sessionId, (item) => ({ ...item, reason: String(error) })))}
+        options={MODES.map((mode) => ({ value: mode, label: tr(`web.mode.${mode}`), hint: tr(`web.mode_help.${mode}`), icon: MODE_ICONS[mode] }))} />}
+      {onPolicy && interactionMode === "agent" && <Select className={`select composer-pill pill select-permissions perm-${permissionMode || "default"}`} wide ariaLabel={tr("web.permission_mode")}
+        title={tr(permissionMode === "bypass" && executionMode === "host" ? "web.execution.host_bypass" : `web.perm_help.${permissionMode || "default"}`)}
+        value={permissionMode || "default"} onChange={(next) => onPolicy({ permission_mode: next }).catch((error) => updateDraft(sessionId, (item) => ({ ...item, reason: String(error) })))}
+        options={[
+          ...(["default", "acceptEdits", "bypass"] as const).map((mode) => ({ value: mode, label: tr(`web.perm_short.${mode}`), hint: tr(`web.perm.${mode}`), icon: PERM_ICONS[mode] })),
+          ...(permissionMode === "plan" ? [{ value: "plan", label: tr("web.perm.plan"), icon: PERM_ICONS.plan }] : []),
+        ]} />}
+      {executionMode === "host" && <span className="composer-host pill" title={tr("web.execution.host_help")}><ShieldWarning size={13} weight="fill" aria-hidden="true" />{tr("web.execution.host")}</span>}
+      {onModel && <Select className="select composer-pill pill select-model" ariaLabel={tr("web.model")} value={currentModel} onChange={(next) => onModel(next)}
+        options={visibleModels(models, currentModel).map((model) => ({ value: model, label: model }))} />}
+      {!onModel && currentModel && <span className="composer-model-static pill">{currentModel}</span>}
+      <span className="spacer" />
+      {context && <span className="ctx-btn">{context}</span>}
+      {running && !draft.prompt.trim() && <button type="button" className="send-button send stop" title={`${tr("web.stop")} (${tr("web.shortcut_key", { key: "." })})`} aria-label={tr("web.stop")} onClick={() => { cancel().catch(() => undefined); }}><Square size={12} weight="fill" /></button>}
+      {(!running || draft.prompt.trim()) && <button className="send-button send" title={draft.phase === "unknown" ? tr("web.retry") : tr("web.send")} aria-label={draft.phase === "unknown" ? tr("web.retry") : tr("web.send")} disabled={uploading || draft.phase === "awaiting" || (!draft.prompt.trim() && !draft.command && !draft.attachments.length && !(draft.documents ?? []).length && !(draft.references ?? []).length && !(draft.localFiles ?? []).length)}><ArrowUp size={15} weight="bold" /></button>}
     </div>
-    {policyControls && (
-      <div className={`composer-advanced ${settingsOpen ? "open" : ""}`} id={`composer-settings-${sessionId}`}>
-        <Select className="select select-mode" ariaLabel={tr("web.interaction_mode")} title={tr(`web.mode_help.${interactionMode}`)} value={interactionMode} wide
-          onChange={(next) => onPolicy?.({ interaction_mode: next }).catch((error) => updateDraft(sessionId, (item) => ({ ...item, reason: String(error) })))}
-          options={(["agent", "plan", "ask"] as const).map((mode) => ({ value: mode, label: tr(`web.mode.${mode}`), hint: tr(`web.mode_help.${mode}`) }))} />
-        <Select className="select select-model" ariaLabel={tr("web.model")} value={currentModel} onChange={(next) => onModel?.(next)}
-          options={visibleModels(models, currentModel).map((model) => ({ value: model, label: model }))} />
-        {executionMode === "host" && <span className="hint" title={tr("web.execution.host_help")}>{tr("web.execution.host")}</span>}
-        <Select className="select select-permissions" wide ariaLabel={tr("web.permission_mode")}
-          title={interactionMode === "agent" ? tr(permissionMode === "bypass" && executionMode === "host" ? "web.execution.host_bypass" : `web.perm_help.${permissionMode || "default"}`) : tr("web.perm_locked", { mode: tr(`web.mode.${interactionMode}`) })}
-          disabled={interactionMode !== "agent"}
-          value={permissionMode || "default"} onChange={(next) => onPolicy?.({ permission_mode: next }).catch((error) => updateDraft(sessionId, (item) => ({ ...item, reason: String(error) })))}
-          options={[
-            { value: "default", label: tr("web.perm.default") },
-            { value: "acceptEdits", label: tr("web.perm.acceptEdits") },
-            { value: "bypass", label: tr("web.perm.bypass") },
-            ...(permissionMode === "plan" ? [{ value: "plan", label: tr("web.perm.plan") }] : []),
-          ]} />
-      </div>
-    )}
+    {(draft.reason || uploading || draft.phase === "awaiting" || offline || (running && cancelAll)) && <div className="row-actions composer-primary-actions">
+      <span className="hint composer-status" role={draft.phase === "rejected" || draft.phase === "unknown" ? "alert" : "status"}>{draft.reason || (uploading ? tr("web.uploading") : "") || (draft.phase === "awaiting" ? tr("web.awaiting_accept") : "") || (offline ? tr("web.offline_hint") : "")}</span>
+      {running && cancelAll && <button type="button" className="button stop ghost" onClick={() => { cancelAll().catch(() => undefined); }}>{tr("web.stop_all")}</button>}
+    </div>}
   </form>;
 }

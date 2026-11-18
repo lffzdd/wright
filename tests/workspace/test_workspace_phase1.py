@@ -789,3 +789,35 @@ def test_accessed_files_counts_each_tool_per_path():
     assert entry["count"] == 4
     assert entry["tools"] == {"read": 2, "grep": 1, "write": 1}
     assert list(entry["last_calls"].items()) == [("grep", "c2"), ("read", "c3"), ("write", "c4")]
+
+
+def test_workspace_changes_report_git_status_without_starting_a_session(
+    tmp_path: Path, monkeypatch
+):
+    """History sessions color the file tree from the project's git status alone."""
+    monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "home"))
+    root = tmp_path / "project"
+    root.mkdir()
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+    (root / "kept.txt").write_text("base\n", encoding="utf-8", newline="")
+    subprocess.run(["git", "add", "kept.txt"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=root, check=True, capture_output=True)
+    (root / "kept.txt").write_text("edited\n", encoding="utf-8", newline="")
+    (root / "new.txt").write_text("new\n", encoding="utf-8", newline="")
+    manager = RuntimeManager(root, base_args=argparse.Namespace())
+    client = _client(tmp_path, manager)
+    try:
+        assert client.get("/api/v1/workspaces").status_code == 200
+        response = client.get(f"/api/v1/workspaces/{project_id(root)}/changes")
+        assert response.status_code == 200
+        rows = {row["path"]: row for row in response.json()["changes"]}
+        assert set(rows) == {"kept.txt", "new.txt"}
+        assert rows["kept.txt"]["status"].strip() == "M"
+        assert rows["new.txt"]["untracked"] is True
+        assert manager._handles == {}
+        missing = client.get("/api/v1/workspaces/unknown/changes")
+        assert missing.status_code == 404
+    finally:
+        client.close()

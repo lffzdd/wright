@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import App from "./App";
 import type { SessionSummary } from "./types";
@@ -43,23 +43,30 @@ function setup(options: { resumeGate?: Promise<void>; failFirstSubmit?: boolean 
   return { calls, sessions };
 }
 
-it("groups history under its project, isolates session drafts, and resumes the original owner only when sending", async () => {
+const switchProject = (from: string, to: string) => {
+  fireEvent.click(screen.getByRole("button", { name: `Switch project: ${from}` }));
+  fireEvent.click(screen.getByRole("menuitemradio", { name: new RegExp(`^${to}`) }));
+};
+
+it("lists only the current project's history, isolates session drafts, and resumes the original owner only when sending", async () => {
   const gate = deferred();
   const { calls } = setup({ resumeGate: gate.promise });
   await screen.findByRole("heading", { name: "Alpha conversation" });
-  const one = screen.getByRole("region", { name: "One" }), two = screen.getByRole("region", { name: "Two" });
-  expect(within(one).queryByRole("button", { name: "Beta conversation" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Beta conversation" }));
+  expect(screen.queryByRole("button", { name: /Beta conversation/ })).toBeNull();
+  switchProject("One", "Two");
+  fireEvent.click(screen.getByRole("button", { name: /Beta conversation/ }));
   await screen.findByRole("heading", { name: "Beta conversation" });
   expect(document.querySelector(".crumb")?.textContent).toBe("Two");
   expect(calls.some((call) => call.path === "/api/v1/sessions/b/preview?project_id=two")).toBe(true);
   expect(calls.filter((call) => call.body.resume)).toHaveLength(0);
   fireEvent.change(screen.getByLabelText("Message Wright"), { target: { value: "Draft for Beta" } });
-  fireEvent.click(screen.getByRole("button", { name: "Alpha conversation" }));
+  switchProject("Two", "One");
+  fireEvent.click(screen.getByRole("button", { name: /Alpha conversation/ }));
   await screen.findByRole("heading", { name: "Alpha conversation" });
   expect((screen.getByLabelText("Message Wright") as HTMLTextAreaElement).value).toBe("");
   fireEvent.change(screen.getByLabelText("Message Wright"), { target: { value: "Draft for Alpha" } });
-  fireEvent.click(screen.getByRole("button", { name: "Beta conversation" }));
+  switchProject("One", "Two");
+  fireEvent.click(screen.getByRole("button", { name: /Beta conversation/ }));
   await screen.findByRole("heading", { name: "Beta conversation" });
   expect((screen.getByLabelText("Message Wright") as HTMLTextAreaElement).value).toBe("Draft for Beta");
   fireEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -76,7 +83,7 @@ it("does not let a slow historical send take back the view after selecting anoth
   await screen.findByRole("heading", { name: "Alpha conversation" });
   fireEvent.change(screen.getByLabelText("Message Wright"), { target: { value: "Continue Alpha" } });
   fireEvent.click(screen.getByRole("button", { name: "Send" }));
-  fireEvent.click(screen.getByRole("button", { name: "Gamma conversation" }));
+  fireEvent.click(screen.getByRole("button", { name: /Gamma conversation/ }));
   await screen.findByRole("heading", { name: "Gamma conversation" });
   await act(async () => { gate.resolve(); });
   await waitFor(() => expect(calls.some((call) => call.path === "/api/v1/sessions/a/turns")).toBe(true));
@@ -98,18 +105,13 @@ it("reopens the same historical session and retries an uncertain submit with the
   expect(opens[0].body.client_request_id).toBe(opens[1].body.client_request_id);
 });
 
-it("keeps a new conversation draft with its project and lets project history collapse", async () => {
+it("keeps a new conversation draft with its project across project switches", async () => {
   setup(); await screen.findByRole("heading", { name: "Alpha conversation" });
-  const one = screen.getByRole("region", { name: "One" }), two = screen.getByRole("region", { name: "Two" });
-  fireEvent.click(within(one).getByRole("button", { name: "New session in One" }));
+  fireEvent.click(screen.getByRole("button", { name: /^New session/ }));
   fireEvent.change(screen.getByLabelText("Message Wright"), { target: { value: "New One draft" } });
-  fireEvent.click(within(two).getByRole("button", { name: "New session in Two" }));
+  switchProject("One", "Two");
   expect((screen.getByLabelText("Message Wright") as HTMLTextAreaElement).value).toBe("");
-  expect(screen.getByText("/two")).toBeTruthy();
-  fireEvent.click(within(one).getByRole("button", { name: "New session in One" }));
+  expect(screen.getAllByText("/two").length).toBeGreaterThan(0);
+  switchProject("Two", "One");
   expect((screen.getByLabelText("Message Wright") as HTMLTextAreaElement).value).toBe("New One draft");
-  const toggle = within(two).getByRole("button", { name: "Two" });
-  expect(toggle.getAttribute("aria-expanded")).toBe("true");
-  fireEvent.click(toggle);
-  expect(toggle.getAttribute("aria-expanded")).toBe("false");
 });

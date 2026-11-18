@@ -81,6 +81,15 @@ it("leaves the settings page with Escape without denying the background permissi
   expect(JSON.parse(send.mock.calls[0][0])).toMatchObject({ type: "interaction.respond", request_id: "approval", answer: "deny" });
 });
 
+it("starts renaming when the session title is clicked", async () => {
+  boot(false);
+  await screen.findByRole("heading", { name: "Review task" });
+  const title = document.querySelector<HTMLElement>(".conversation-head .crumbs .title")!;
+  fireEvent.click(title);
+  expect(title.getAttribute("contenteditable")).toBe("true");
+  expect(title.textContent).toBe("Review task");
+});
+
 it("toggles the desktop inspector from the header and saves both directions", async () => {
   const calls = boot(false);
   await screen.findByRole("heading", { name: "Review task" });
@@ -131,15 +140,15 @@ it("resizes the desktop inspector and persists width", async () => {
   const calls = boot(false);
   await screen.findByRole("heading", { name: "Review task" });
   const grid = document.querySelector<HTMLElement>(".workspace-grid")!;
-  expect(grid.style.getPropertyValue("--inspector-width")).toBe("380px");
+  expect(grid.style.getPropertyValue("--inspector-width")).toBe("440px");
   const handle = screen.getByRole("separator", { name: "Resize inspector" });
   fireEvent.pointerDown(handle, { button: 0, clientX: 900, pointerId: 1 });
   fireEvent.pointerMove(handle, { clientX: 860, pointerId: 1 });
-  expect(grid.style.getPropertyValue("--inspector-width")).toBe("420px");
+  expect(grid.style.getPropertyValue("--inspector-width")).toBe("480px");
   fireEvent.pointerUp(handle, { clientX: 860, pointerId: 1 });
-  await waitFor(() => expect(calls.some((call) => call.init?.method === "PUT" && JSON.parse(String(call.init?.body)).inspector_width === 420)).toBe(true));
+  await waitFor(() => expect(calls.some((call) => call.init?.method === "PUT" && JSON.parse(String(call.init?.body)).inspector_width === 480)).toBe(true));
   fireEvent.doubleClick(handle);
-  await waitFor(() => expect(grid.style.getPropertyValue("--inspector-width")).toBe("380px"));
+  await waitFor(() => expect(grid.style.getPropertyValue("--inspector-width")).toBe("440px"));
 });
 
 it("resizes the desktop session list from its right edge and persists width", async () => {
@@ -147,9 +156,9 @@ it("resizes the desktop session list from its right edge and persists width", as
   const calls = boot(false);
   await screen.findByRole("heading", { name: "Review task" });
   const grid = document.querySelector<HTMLElement>(".workspace-grid")!;
-  expect(grid.style.getPropertyValue("--sidebar-width")).toBe("230px");
+  expect(grid.style.getPropertyValue("--sidebar-width")).toBe("264px");
   const handle = screen.getByRole("separator", { name: "Resize session list" });
-  fireEvent.pointerDown(handle, { button: 0, clientX: 230, pointerId: 1 });
+  fireEvent.pointerDown(handle, { button: 0, clientX: 264, pointerId: 1 });
   fireEvent.pointerMove(handle, { clientX: 300, pointerId: 1 });
   expect(grid.style.getPropertyValue("--sidebar-width")).toBe("300px");
   fireEvent.pointerUp(handle, { clientX: 300, pointerId: 1 });
@@ -159,7 +168,7 @@ it("resizes the desktop session list from its right edge and persists width", as
   expect(grid.style.getPropertyValue("--sidebar-width")).toBe("180px");
   fireEvent.pointerUp(handle, { clientX: 0, pointerId: 2 });
   fireEvent.doubleClick(handle);
-  await waitFor(() => expect(grid.style.getPropertyValue("--sidebar-width")).toBe("230px"));
+  await waitFor(() => expect(grid.style.getPropertyValue("--sidebar-width")).toBe("264px"));
 });
 
 it("folds the desktop session list from the top bar and with the shortcut, and remembers it", async () => {

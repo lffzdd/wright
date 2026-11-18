@@ -5,7 +5,7 @@ import { setLocale } from "../../i18n";
 import type { Grants, Interaction } from "../../types";
 import { InteractionCard } from "../cards/cards";
 import { PermissionGrants, PermissionsPanel } from "./permissions";
-import { describeChoice, quickChoice } from "./approval";
+import { DIGIT_ARM_MS, describeChoice, quickChoice } from "./approval";
 import { describeGrant } from "./permissions";
 
 const choices: Interaction["choices"] = [
@@ -105,6 +105,48 @@ it("supports keyboard once approval and denial in Chinese", async () => {
   render(<InteractionCard sessionId="s" interaction={{ request_id: "r", kind: "permission", choices }} respond={respond} />);
   expect(screen.getByRole("button", { name: /拒绝/ })).toBeTruthy();
   fireEvent.keyDown(screen.getByRole("alert"), { key: "Enter", altKey: true });
+  await waitFor(() => expect(respond).toHaveBeenCalledWith("r", "allow_once"));
+});
+
+it("answers with number keys once the card has been up long enough", async () => {
+  let now = 1_000;
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const respond = vi.fn().mockResolvedValue(true);
+  const sessionChoices: Interaction["choices"] = [
+    ...(choices ?? []).slice(0, 1),
+    { id: "allow_session_rule", label: "Session", scope: "/project/src/a.ts", persistence: "", lifetime: "session", resource_kind: "file", operations: ["file_read", "file_write"] },
+    ...(choices ?? []).slice(1),
+  ];
+  const card = (id: string) => <InteractionCard sessionId="s" root="/project" interaction={{ request_id: id, kind: "permission", tool_name: "edit", operation: "file_write", targets: ["/project/src/a.ts"], choices: sessionChoices }} respond={respond} />;
+  render(card("r1"));
+  // A digit typed just as the card takes focus does nothing.
+  fireEvent.keyDown(screen.getByRole("alert"), { key: "1" });
+  now += DIGIT_ARM_MS - 1;
+  fireEvent.keyDown(screen.getByRole("alert"), { key: "1" });
+  expect(respond).not.toHaveBeenCalled();
+  now += 1;
+  fireEvent.keyDown(screen.getByRole("alert"), { key: "2" });
+  await waitFor(() => expect(respond).toHaveBeenCalledWith("r1", "allow_session_rule"));
+
+  cleanup();
+  render(card("r3"));
+  now += DIGIT_ARM_MS;
+  fireEvent.keyDown(screen.getByRole("alert"), { key: "3" });
+  await waitFor(() => expect(respond).toHaveBeenCalledWith("r3", "deny"));
+});
+
+it("ignores number keys typed in a field or held with a modifier", async () => {
+  let now = 1_000;
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const respond = vi.fn().mockResolvedValue(true);
+  render(<InteractionCard sessionId="s" root="/project" interaction={{ request_id: "r", kind: "permission", tool_name: "read", operation: "file_read", targets: ["/etc/hosts"], risk_flags: ["path_outside_scope"], choices }} respond={respond} />);
+  now += DIGIT_ARM_MS;
+  fireEvent.click(screen.getByText("More options"));
+  fireEvent.keyDown(screen.getAllByRole("radio")[0], { key: "1" });
+  fireEvent.keyDown(screen.getByRole("alert"), { key: "1", metaKey: true });
+  fireEvent.keyDown(screen.getByRole("alert"), { key: "1", repeat: true });
+  expect(respond).not.toHaveBeenCalled();
+  fireEvent.keyDown(screen.getByRole("alert"), { key: "1" });
   await waitFor(() => expect(respond).toHaveBeenCalledWith("r", "allow_once"));
 });
 

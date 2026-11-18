@@ -107,7 +107,7 @@ describe("SessionRail rows", () => {
     expect(onRenameStart).toHaveBeenCalledWith(sessions[0]);
   });
 
-  it("renames in place and adds workspaces from a visible button", () => {
+  it("renames in place and adds projects from the project menu", () => {
     const onRenameSubmit = vi.fn();
     const onRegisterWorkspace = vi.fn();
     render(<SessionRail sessions={sessions} selected={null} onSelect={vi.fn()} onCreate={vi.fn()} open workspaces={[{ project_id: "one", name: "One", selected: true }]} renaming="5a3312aa9f" onRenameSubmit={onRenameSubmit} onRegisterWorkspace={onRegisterWorkspace} />);
@@ -115,7 +115,8 @@ describe("SessionRail rows", () => {
     fireEvent.change(input, { target: { value: "Fix OAuth login" } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onRenameSubmit).toHaveBeenCalledWith(sessions[0], "Fix OAuth login");
-    fireEvent.click(screen.getByRole("button", { name: "Add workspace" }));
+    fireEvent.click(screen.getByRole("button", { name: "Switch project: One" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Add project…" }));
     expect(onRegisterWorkspace).toHaveBeenCalledOnce();
   });
 });

@@ -26,11 +26,12 @@ const pickChangeScope = (value: "git" | "session") => {
 
 beforeEach(() => {
   setLocale("en");
+  localStorage.clear();
   vi.spyOn(api, "changes").mockImplementation(async (_id, scope) => ({ changes: scope === "staged" ? [] : [{ path: "a.txt", status: "M" }], baseline: "HEAD", local_warning: false }));
   vi.spyOn(api, "review").mockResolvedValue({ changes: [] });
   vi.spyOn(api, "tree").mockResolvedValue({ path: "", entries: [] });
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); setLocale("en"); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); setLocale("en"); });
 
 describe("Inspector task tab", () => {
   it("keeps the goal, the session glance and one hint while nothing has happened", () => {
@@ -64,13 +65,16 @@ describe("Inspector overview and tab layout", () => {
     expect(screen.getByRole("tab", { name: "Permissions" }).getAttribute("aria-selected")).toBe("true");
   });
 
-  it("shows settings-like tabs as named icons and flags waiting approvals", () => {
+  it("shows an icon and label on every tab and flags waiting approvals", () => {
     const state = view(); state.pending_interactions = [{ interaction_id: "i", kind: "permission" } as unknown as ViewState["pending_interactions"][number]];
     render(inspector(state));
-    const permissions = screen.getByRole("tab", { name: "Permissions" });
-    expect(permissions.textContent).toBe("");
-    expect(permissions.querySelector(".tab-alert")).toBeTruthy();
-    expect(screen.getByRole("tab", { name: "Context" }).classList.contains("icon-tab")).toBe(true);
+    for (const name of ["Overview", "Changes", "Files", "Context", "Permissions"]) {
+      const item = screen.getByRole("tab", { name });
+      expect(item.classList.contains("icon-tab")).toBe(false);
+      expect(item.querySelector("svg")).toBeTruthy();
+      expect(item.textContent).toContain(name);
+    }
+    expect(screen.getByRole("tab", { name: "Permissions" }).querySelector(".tab-alert")).toBeTruthy();
     expect(screen.getByRole("button", { name: /Permissions\s*1 waiting/ })).toBeTruthy();
   });
 
@@ -102,7 +106,7 @@ describe("Inspector request and content state", () => {
     expect(await screen.findByText("No uncommitted changes.")).toBeTruthy();
     expect(api.review).not.toHaveBeenCalled();
     pickChangeScope("session");
-    expect(await screen.findByRole("button", { name: /a.txt/ })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /M\s*a.txt/ })).toBeTruthy();
     expect(screen.queryByText("No uncommitted changes.")).toBeNull();
     expect(screen.queryByRole("button", { name: "Accept review" })).toBeNull();
   });
@@ -119,6 +123,39 @@ describe("Inspector request and content state", () => {
     fireEvent.click(screen.getByRole("tab", { name: /Changes/ }));
     expect(screen.getByRole("radio", { name: "This session" }).getAttribute("aria-checked")).toBe("true");
     expect(vi.mocked(api.changes).mock.calls.length).toBe(fetches);
+  });
+
+  it("shows only the selected one of Files and Changes unless split is turned on", async () => {
+    render(inspector(view()));
+    const files = () => document.getElementById("inspector-panel-files") as HTMLElement;
+    const changes = () => document.getElementById("inspector-panel-changes") as HTMLElement;
+    fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Changes/ }));
+    expect(changes().hidden).toBe(false);
+    expect(files().hidden).toBe(true);
+    expect(document.querySelector(".inspector-split-bar")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show Files below" }));
+    expect(files().hidden).toBe(false);
+    expect(changes().hidden).toBe(false);
+    expect(files().classList.contains("inspector-pane-secondary")).toBe(true);
+    expect(screen.getByRole("separator", { name: "Resize split panes" })).toBeTruthy();
+
+    // Promoting the lower pane swaps the two; neither remounts.
+    fireEvent.click(screen.getByTitle("Make Files the main pane"));
+    expect(screen.getByRole("tab", { name: /Files/ }).getAttribute("aria-selected")).toBe("true");
+    expect(changes().classList.contains("inspector-pane-secondary")).toBe(true);
+
+    // Other tabs take the whole panel; the split comes back with Files or Changes.
+    fireEvent.click(screen.getByRole("tab", { name: /Context/ }));
+    expect(files().hidden).toBe(true);
+    expect(changes().hidden).toBe(true);
+    fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
+    expect(changes().hidden).toBe(false);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Close Changes pane" }).at(-1)!);
+    expect(changes().hidden).toBe(true);
+    expect(document.querySelector(".inspector-split-bar")).toBeNull();
   });
 
   it("keeps the scope explanation in a tooltip and a screen-reader description", async () => {
@@ -168,35 +205,37 @@ describe("Inspector request and content state", () => {
 
   it("normalizes absolute accessed paths for file reads and displays an empty file", async () => {
     const file = vi.spyOn(api, "file").mockResolvedValue({ path: "src/empty.ts", content: "", binary: false });
+    vi.mocked(api.tree).mockImplementation(async (_id, path = "") => {
+      if (path === "") return { path: "", entries: [{ name: "src", path: "src", kind: "dir", size: null }] };
+      if (path === "src") return { path: "src", entries: [{ name: "empty.ts", path: "src/empty.ts", kind: "file", size: 0 }] };
+      return { path, entries: [] };
+    });
     const state = view(); state.accessed_files = [{ path: "/project/src/empty.ts", access: "read" }];
     render(inspector(state));
     fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
-    fireEvent.click(screen.getByRole("button", { name: /READ\s*src\/empty.ts/ }));
+    fireEvent.click(await screen.findByRole("treeitem", { name: /src/ }));
+    fireEvent.click(await screen.findByRole("treeitem", { name: /empty.ts/ }));
     expect(await screen.findByText("This file is empty.")).toBeTruthy();
     expect(file).toHaveBeenCalledWith("a", "src/empty.ts");
   });
 
-  it("lists directories as LIST entries that do not open as files", () => {
+  it("does not open a listed directory as a file", () => {
     const file = vi.spyOn(api, "file");
     const state = view(); state.accessed_files = [{ path: "web/src", access: "list", tool: "ls" }];
     render(inspector(state));
-    fireEvent.click(screen.getByRole("tab", { name: /Files\s*1$/ }));
-    const entry = screen.getByRole("button", { name: /LIST\s*web\/src/ }) as HTMLButtonElement;
-    expect(entry.disabled).toBe(true);
-    fireEvent.click(entry);
+    // A bare listing is not counted as a used file.
+    fireEvent.click(screen.getByRole("tab", { name: /Files$/ }));
+    expect(screen.queryByRole("treeitem", { name: /web\/src/ })).toBeNull();
     expect(file).not.toHaveBeenCalled();
   });
 
-  it("shows all accessed files once and counts changes as files", async () => {
+  it("counts accessed files once and changes separately", async () => {
     const state = view(); state.accessed_files = [
       ...Array.from({ length: 10 }, (_, index) => ({ path: `f${index}.ts`, access: "read" })),
       { path: "/project/f0.ts", access: "write" },
     ];
     render(inspector(state));
     fireEvent.click(screen.getByRole("tab", { name: /Files\s*10$/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Show all (10)" }));
-    expect(screen.getAllByRole("button").filter((button) => button.classList.contains("accessed-file"))).toHaveLength(10);
-    expect(screen.getByRole("button", { name: /MOD\s*f0.ts/ })).toBeTruthy();
     expect(await screen.findByRole("tab", { name: /Changes\s*1$/ })).toBeTruthy();
   });
 
@@ -239,6 +278,20 @@ describe("Inspector historical sessions", () => {
     expect(api.changes).not.toHaveBeenCalled(); expect(api.review).not.toHaveBeenCalled(); expect(api.tree).not.toHaveBeenCalled(); expect(grants).not.toHaveBeenCalled();
   });
 
+  it("marks changed files from the project's git status without resuming the session", async () => {
+    vi.spyOn(api, "workspaces").mockResolvedValue({ selected_project_id: "project", projects: [{ project_id: "project", name: "project", root: "/project", exists: true }] });
+    vi.spyOn(api, "workspaceTree").mockResolvedValue({ path: "", entries: [{ path: "a.txt", name: "a.txt", kind: "file", size: 10 }, { path: "b.txt", name: "b.txt", kind: "file", size: 10 }] });
+    const status = vi.spyOn(api, "workspaceChanges").mockResolvedValue({ changes: [{ path: "a.txt", status: "M" }], baseline: "HEAD", local_warning: false });
+    render(inspector(view("saved", false)));
+    fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
+    const row = await screen.findByRole("treeitem", { name: /a.txt/ });
+    await waitFor(() => expect(row.classList.contains("mod")).toBe(true));
+    expect(row.querySelector(".st")?.textContent).toBe("M");
+    expect(screen.getByRole("treeitem", { name: /b.txt/ }).querySelector(".st")).toBeNull();
+    expect(status).toHaveBeenCalledWith("project");
+    expect(api.changes).not.toHaveBeenCalled();
+  });
+
   it("does not substitute the project directory for an unmatched worktree", async () => {
     vi.spyOn(api, "workspaces").mockResolvedValue({ selected_project_id: "project", projects: [{ project_id: "project", name: "project", root: "/project" }] });
     const file = vi.spyOn(api, "workspaceFile");
@@ -267,6 +320,16 @@ describe("Inspector files, context and visibility", () => {
     await screen.findByText("two");
     expect(api.search).toHaveBeenCalledWith("a", "app", "file");
     expect(document.querySelectorAll(".cv-row")).toHaveLength(2);
+  });
+
+  it("opens a changed file in Files from the row eye", async () => {
+    vi.spyOn(api, "tree").mockResolvedValue({ path: "", entries: [{ path: "a.txt", name: "a.txt", kind: "file", size: 3 }] });
+    vi.spyOn(api, "file").mockResolvedValue({ path: "a.txt", content: "workspace bytes", binary: false });
+    render(inspector(view()));
+    fireEvent.click(screen.getByRole("tab", { name: /Changes/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "View file" }));
+    expect(screen.getByRole("tab", { name: /Files/ }).getAttribute("aria-selected")).toBe("true");
+    expect(await screen.findByText("workspace bytes")).toBeTruthy();
   });
 
   it("jumps from a changed file preview to its diff", async () => {

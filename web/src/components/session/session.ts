@@ -1,4 +1,4 @@
-import { t } from "../../i18n";
+import { getLocale, t } from "../../i18n";
 import type { TimelineItem } from "../../types";
 
 export function formatAgo(iso?: string): string {
@@ -10,6 +10,52 @@ export function formatAgo(iso?: string): string {
   if (delta < 3_600_000) return `${Math.max(1, Math.round(delta / 60_000))}m`;
   if (delta < 86_400_000) return `${Math.max(1, Math.round(delta / 3_600_000))}h`;
   return `${Math.max(1, Math.round(delta / 86_400_000))}d`;
+}
+
+export type DateGroup = "today" | "yesterday" | "week" | "month" | "older";
+export const DATE_GROUPS: DateGroup[] = ["today", "yesterday", "week", "month", "older"];
+
+/** Calendar days between `then` and `now` in local time (0 = same day). */
+function daysBefore(then: Date, now: Date): number {
+  const start = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  return Math.round((start(now) - start(then)) / 86_400_000);
+}
+
+/**
+ * The sidebar bucket for a session, as the reference groups them: 今天 / 昨天 /
+ * 本周 (calendar week from Monday) / 本月 / 更早. One never saved is happening now.
+ */
+export function dateGroup(iso: string | undefined, now = new Date()): DateGroup {
+  const timestamp = iso ? Date.parse(iso) : Number.NaN;
+  if (!Number.isFinite(timestamp)) return "today";
+  const then = new Date(timestamp);
+  const days = daysBefore(then, now);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  const sinceMonday = (now.getDay() + 6) % 7;
+  if (days <= sinceMonday) return "week";
+  if (then.getFullYear() === now.getFullYear() && then.getMonth() === now.getMonth()) return "month";
+  return "older";
+}
+
+/** The time a sidebar row shows: relative today, then clock, weekday or date as it ages. */
+export function rowTime(iso: string | undefined, now = new Date()): string {
+  const timestamp = iso ? Date.parse(iso) : Number.NaN;
+  if (!Number.isFinite(timestamp)) return "";
+  const date = new Date(timestamp);
+  const locale = getLocale() === "zh-CN" ? "zh-CN" : "en";
+  const clock = () => date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", hour12: false });
+  switch (dateGroup(iso, now)) {
+    case "today": {
+      const delta = now.getTime() - timestamp;
+      if (delta < 60_000) return t("web.just_now");
+      if (delta < 3_600_000) return t("web.minutes_ago", { count: Math.floor(delta / 60_000) });
+      return t("web.hours_ago", { count: Math.floor(delta / 3_600_000) });
+    }
+    case "yesterday": return t("web.yesterday_at", { time: clock() });
+    case "week": return date.toLocaleDateString(locale, { weekday: "short" });
+    default: return date.toLocaleDateString(locale, date.getFullYear() === now.getFullYear() ? { month: "short", day: "numeric" } : { year: "numeric", month: "short", day: "numeric" });
+  }
 }
 
 export function isToday(iso?: string): boolean {

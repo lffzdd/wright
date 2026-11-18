@@ -11,7 +11,13 @@ export function InlineRename({ value, label, onSubmit, onCancel, className = "" 
   const [draft, setDraft] = useState(value);
   const input = useRef<HTMLInputElement>(null);
   const done = useRef(false);
-  useEffect(() => { input.current?.focus(); input.current?.select(); }, []);
+  const armed = useRef(false);
+  useEffect(() => {
+    input.current?.focus();
+    input.current?.select();
+    const timer = window.setTimeout(() => { armed.current = true; }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
   const finish = (save: boolean) => {
     if (done.current) return;
     done.current = true;
@@ -26,7 +32,7 @@ export function InlineRename({ value, label, onSubmit, onCancel, className = "" 
     value={draft}
     onChange={(event) => setDraft(event.target.value)}
     onClick={(event) => event.stopPropagation()}
-    onBlur={() => finish(true)}
+    onBlur={() => { if (armed.current) finish(true); }}
     onKeyDown={(event) => {
       if (event.nativeEvent.isComposing || event.keyCode === 229) return;
       if (event.key === "Enter") { event.preventDefault(); finish(true); }

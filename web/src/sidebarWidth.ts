@@ -1,7 +1,7 @@
 // Kept in step with SIDEBAR_WIDTH_RANGE in interfaces/web/routes.py.
 export const SIDEBAR_WIDTH_MIN = 180;
 export const SIDEBAR_WIDTH_MAX = 400;
-export const SIDEBAR_WIDTH_DEFAULT = 230;
+export const SIDEBAR_WIDTH_DEFAULT = 264;
 
 export function clampSidebarWidth(width: number, viewportWidth = typeof window !== "undefined" ? window.innerWidth : 1440): number {
   // The conversation keeps most of the window however wide the list is dragged.

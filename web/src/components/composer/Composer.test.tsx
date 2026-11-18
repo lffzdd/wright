@@ -97,6 +97,17 @@ describe("composer input", () => {
     expect(screen.getByText("meter")).toBeTruthy();
   });
 
+  it("puts a mode icon on each Agent / Plan / Ask row", () => {
+    render(<Composer sessionId="session-a" connection="connected" draft={emptyDraft()} updateDraft={() => undefined}
+      submit={async () => "accepted"} cancel={async () => undefined} running={false}
+      currentModel="model-a" onPolicy={async () => undefined} />);
+    fireEvent.click(screen.getByRole("button", { name: /interaction mode|交互/i }));
+    const items = screen.getAllByRole("menuitemradio");
+    expect(items.map((item) => item.querySelector("svg.menu-icon, .menu-icon svg"))).toHaveLength(3);
+    expect(items.every((item) => item.querySelector(".menu-icon svg"))).toBe(true);
+    expect(items[0].querySelector(".menu-check, .mi-check")).toBeTruthy();
+  });
+
   it("names the mode only when it is not Agent", () => {
     render(<Composer sessionId="session-a" connection="connected" draft={emptyDraft()} updateDraft={() => undefined}
       submit={async () => "accepted"} cancel={async () => undefined} running={false}

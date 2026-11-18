@@ -61,6 +61,22 @@ describe("real timeline projection", () => {
     expect(screen.getByText("Jump to latest")).toBeTruthy();
   });
 
+  it("mounts the jump control inside composer-inner when given the composer slot", () => {
+    const state = emit(fresh(), "turn.started", { prompt: "Long answer" });
+    const { container } = render(
+      <Timeline state={state} respond={async () => true} cancelQueued={() => undefined}>
+        {(jump) => <div className="composer-wrap"><div className="composer-inner">{jump}</div></div>}
+      </Timeline>,
+    );
+    const scroller = container.querySelector(".conversation-scroll") as HTMLElement;
+    Object.defineProperty(scroller, "clientHeight", { configurable: true, get: () => 400 });
+    Object.defineProperty(scroller, "scrollHeight", { configurable: true, get: () => 1000 });
+    Object.defineProperty(scroller, "scrollTop", { configurable: true, get: () => 0, set: () => undefined });
+    fireEvent.scroll(scroller);
+    expect(container.querySelector(".composer-inner > .jump")).toBeTruthy();
+    expect(container.querySelector(".conversation-main-foot > .jump")).toBeNull();
+  });
+
   it("keeps the user prompt, shell arguments and incremental output as tools run", () => {
     let state = emit(fresh(), "turn.started", { prompt: "Run the tests" });
     state = emit(state, "tool.planned", { call_id: "c", name: "shell", arguments: { command: "pytest -q" } });
@@ -105,7 +121,7 @@ describe("real timeline projection", () => {
     render(transcript(state));
     const reasoning = screen.getByText("Inspecting the input").closest(".reasoning-card");
     expect(reasoning).toBeTruthy();
-    fireEvent.click(reasoning!.querySelector("button")!);
+    fireEvent.click(reasoning!.querySelector("summary")!);
     expect(reasoning?.classList.contains("open")).toBe(true);
     expect(screen.getByText("Finished checking").closest(".msg-card")).toBeTruthy();
     expect(screen.getAllByText("Inspecting the input").length).toBeGreaterThan(0);
@@ -169,16 +185,14 @@ describe("real timeline projection", () => {
     const { container, rerender } = render(transcript(state));
     expect(container.querySelectorAll(".reasoning-card")).toHaveLength(2);
     const first = screen.getByText("Before tools").closest(".reasoning-card")!;
-    fireEvent.click(first.querySelector("button")!);
+    fireEvent.click(first.querySelector("summary")!);
     state = emit(state, outcome, {});
     rerender(transcript(state));
-    // The finished run of tools folds away; the reasoning the person opened stays.
-    const group = container.querySelector(".step-group")!;
-    expect(group.classList.contains("open")).toBe(false);
+    // Tools stay visible after the turn; only the reasoning the person opened stays expanded.
+    expect(container.querySelectorAll(".tl-indent")).toBeTruthy();
     expect(container.querySelectorAll(".reasoning-card")).toHaveLength(1);
     expect(first.classList.contains("open")).toBe(true);
-    fireEvent.click(group.querySelector(".step-group-head")!);
-    expect(container.querySelectorAll(".reasoning-card")).toHaveLength(2);
+    expect(container.querySelectorAll(".tool-card").length).toBeGreaterThan(0);
     expect(order()?.slice(0, expected.length)).toEqual(expected);
     expect(screen.getAllByText("Final answer")).toHaveLength(1);
     state = emit(state, "turn.started", { prompt: "Next" }, "turn-2");
@@ -201,7 +215,6 @@ describe("real timeline projection", () => {
     state = emit(state, "content.final", { content: "Done" });
     state = emit(state, "turn.completed", {});
     const { container } = render(transcript(state));
-    fireEvent.click(container.querySelector(".step-group-head")!);
     expect(container.querySelectorAll(".reasoning-card")).toHaveLength(2);
     expect(screen.getAllByText("Partial continued")).toHaveLength(1);
     expect(screen.getAllByText("Done")).toHaveLength(1);
@@ -263,14 +276,40 @@ describe("real timeline projection", () => {
     expect(screen.getByText(/line one/)).toBeTruthy();
   });
 
-  it("opens an edit card only while its turn is live", () => {
-    const edit = { call_id: "e", name: "edit", phase: "succeeded", arguments: { file: "a.py" }, data: { diff: "-old\n+new", additions: 1, deletions: 1, diff_truncated: false } } as const;
+  it("opens write and edit only while running, then folds when done", () => {
+    const edit = { call_id: "e", name: "edit", phase: "running", arguments: { file: "a.py" }, data: { diff: "-old\n+new", additions: 1, deletions: 1, diff_truncated: false } } as const;
     const { container, rerender } = render(toolCardFromState(edit, undefined, false, true));
     expect(container.querySelector(".tool-card")!.classList.contains("open")).toBe(true);
-    rerender(toolCardFromState(edit, undefined, false, false));
+    rerender(toolCardFromState({ ...edit, phase: "succeeded" }, undefined, false, false));
     expect(container.querySelector(".tool-card")!.classList.contains("open")).toBe(false);
     fireEvent.click(container.querySelector(".tool-card-head")!);
     expect(container.querySelector(".tool-card")!.classList.contains("open")).toBe(true);
+    fireEvent.click(container.querySelector(".tool-card-head")!);
+    expect(container.querySelector(".tool-card")!.classList.contains("open")).toBe(false);
+  });
+
+  it("keeps an edit without a diff and a denied edit folded", () => {
+    const { container, rerender } = render(toolCardFromState({ call_id: "e", name: "edit", phase: "succeeded", arguments: { file: "a.py" } }));
+    expect(container.querySelector(".tool-card")!.classList.contains("open")).toBe(false);
+    rerender(toolCardFromState({ call_id: "d", name: "edit", phase: "failed", arguments: { file: "a.py" }, data: { diff: "-a\n+b", permission: { decision: "deny" } } }));
+    expect(container.querySelector(".tool-card")!.classList.contains("open")).toBe(false);
+  });
+
+  it("caps a long diff and shows the rest on request", () => {
+    const diff = ["@@ -1,30 +1,30 @@", ...Array.from({ length: 30 }, (_, index) => `+line ${index}`)].join("\n");
+    const { container } = render(toolCardFromState({ call_id: "e", name: "edit", phase: "succeeded", arguments: { file: "a.py" }, data: { diff, additions: 30, deletions: 0 } }));
+    fireEvent.click(container.querySelector(".tool-card-head")!);
+    expect(container.querySelectorAll(".diff-add")).toHaveLength(15);
+    fireEvent.click(screen.getByRole("button", { name: "Show 15 more lines" }));
+    expect(container.querySelectorAll(".diff-add")).toHaveLength(30);
+    expect(screen.queryByRole("button", { name: /more lines/ })).toBeNull();
+  });
+
+  it("does not cap a diff that is only a few rows over", () => {
+    const diff = Array.from({ length: 19 }, (_, index) => `+line ${index}`).join("\n");
+    const { container } = render(toolCardFromState({ call_id: "e", name: "edit", phase: "succeeded", arguments: { file: "a.py" }, data: { diff } }));
+    fireEvent.click(container.querySelector(".tool-card-head")!);
+    expect(container.querySelectorAll(".diff-add")).toHaveLength(19);
   });
 
   it("shows directory entry counts without inventing them for ordinary file reads", () => {
@@ -290,7 +329,7 @@ describe("real timeline projection", () => {
     expect(screen.getByText("2 entries")).toBeTruthy();
   });
 
-  it("folds a finished run of steps into a summary and keeps a live run open", () => {
+  it("keeps a run of steps visible while live and after the turn ends", () => {
     let state = emit(fresh(), "turn.started", { prompt: "Look around" });
     state = emit(state, "reasoning.delta", { piece: "Check the tree" });
     state = emit(state, "tool.planned", { call_id: "d", name: "ls", arguments: { path: "." } });
@@ -299,19 +338,15 @@ describe("real timeline projection", () => {
     state = emit(state, "tool.finished", { call_id: "g", ok: true, data: { matches: [] } });
     state = emit(state, "tool.planned", { call_id: "c", name: "shell", arguments: { command: "false" } });
     const { container, rerender } = render(transcript(state));
-    expect(container.querySelectorAll(".step-group")).toHaveLength(1);
-    expect(container.querySelector(".step-group")!.classList.contains("open")).toBe(true);
+    expect(container.querySelectorAll(".tl-indent")).toBeTruthy();
     expect(screen.getByText("false")).toBeTruthy();
 
     state = emit(state, "tool.finished", { call_id: "c", ok: false, err: "boom", data: { returncode: 1 } });
     state = emit(state, "content.final", { content: "Done looking" });
     state = emit(state, "turn.completed", {});
     rerender(transcript(state));
-    const group = container.querySelector(".step-group")!;
-    expect(group.classList.contains("open")).toBe(false);
-    expect(group.querySelector(".step-group-summary")?.textContent).toBe("Listed 1 folder · Searched once · Ran 1 command");
-    expect(group.querySelector(".step-group-failed")?.textContent).toBe("1 failed");
-    expect(container.querySelector(".tool-card")).toBeNull();
+    expect(container.querySelector(".step-group-head")).toBeNull();
+    expect(container.querySelectorAll(".tool-card").length).toBeGreaterThanOrEqual(3);
     expect(screen.getByText("Done looking")).toBeTruthy();
   });
 
@@ -321,9 +356,9 @@ describe("real timeline projection", () => {
     state = emit(state, "tool.finished", { call_id: "r", ok: true, data: { content: "1|x" } });
     state = emit(state, "turn.completed", {});
     const { container } = render(transcript(state));
-    expect(container.querySelector(".step-group")).toBeNull();
+    expect(container.querySelector(".step-group-head")).toBeNull();
     // The row shows the tool's own name; its icon is coloured by kind.
-    expect(screen.getByText("read")).toBeTruthy();
+    expect(screen.getByText("Read")).toBeTruthy();
     expect(container.querySelector(".step-icon")?.classList.contains("reads")).toBe(true);
   });
 
@@ -387,6 +422,8 @@ describe("real timeline projection", () => {
 
     fireEvent.click(container.querySelector<HTMLButtonElement>(".timeline-toc-trigger")!);
     expect(container.querySelector(".timeline-toc-panel")).not.toBeNull();
+    expect(container.querySelector(".conversation-scroll-pane > .conversation-outline-host")).toBeTruthy();
+    expect(container.querySelector(".conversation-body > .conversation-outline-host")).toBeNull();
 
     let stateOther = emit(fresh(), "turn.started", { prompt: "Another session" });
     stateOther = { ...stateOther, session: { ...stateOther.session, session_id: "session-other" } };
@@ -416,28 +453,23 @@ describe("revealing a tool call", () => {
     timeline: [
       { id: "turn-1:user", kind: "text", role: "user", turn_id: "turn-1", text: "Check" },
       { id: "c1", kind: "tool", call_id: "c1", name: "read_file", phase: "succeeded", arguments: { file: "a.py" } },
-      { id: "c2", kind: "tool", call_id: "c2", name: "edit_file", phase: "succeeded", arguments: { file: "a.py" } },
+      { id: "c2", kind: "tool", call_id: "c2", name: "grep", phase: "succeeded", arguments: { pattern: "a" } },
       { id: "turn-1:reply", kind: "text", role: "assistant", turn_id: "turn-1", text: "Done" },
     ],
   });
   const view = (state: ViewState, revealCall: { callId: string; request: number } | null) =>
     <Timeline state={state} respond={async () => true} cancelQueued={() => undefined} revealCall={revealCall} />;
 
-  it("opens the folded group, scrolls to the call and highlights it once per request", async () => {
+  it("scrolls to the call and highlights it once per request", async () => {
     const state = folded();
     const { container, rerender } = render(view(state, null));
-    expect(container.querySelector(".step-group")!.classList.contains("open")).toBe(false);
+    expect(container.querySelector('[data-call-id="c2"]')).toBeTruthy();
     const scroller = container.querySelector(".conversation-scroll") as HTMLElement;
     const scrollTo = vi.fn();
     scroller.scrollTo = scrollTo;
     rerender(view(state, { callId: "c2", request: 1 }));
     await waitFor(() => expect(container.querySelector('[data-call-id="c2"]')?.classList.contains("reveal-flash")).toBe(true));
-    expect(container.querySelector(".step-group")!.classList.contains("open")).toBe(true);
     expect(scrollTo).toHaveBeenCalled();
-    // The person can fold it again; the same request does not reopen it.
-    fireEvent.click(container.querySelector(".step-group-head")!);
-    rerender(view(state, { callId: "c2", request: 1 }));
-    expect(container.querySelector(".step-group")!.classList.contains("open")).toBe(false);
   });
 
   it("says so when the call is not in the conversation", async () => {
