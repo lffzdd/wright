@@ -98,5 +98,6 @@ WRIGHT_SANDBOX_INTEGRATION=1 uv run pytest -q tests/runtime/test_native_sandbox.
 
 - 普通功能先给简短方案（目标、改动范围、完成标准），确认后再动手。不改变对外行为、不新增模块、改动集中在少数文件里的小修改，可以直接做。
 - 不要做任务范围之外的重构或清理，发现问题就单独说明。
+- 决定暂不做的改进、范围外发现的问题，记到根目录 [BACKLOG.md](BACKLOG.md)：写清现状、为什么没做、什么时候该做。做完就删掉对应条目。
 - 同一个问题修了两轮还没好，就停下来查根因，不要继续试。
 - 只有用户要求时才提交或推送。提交信息用 Conventional Commits，例如 `refactor(agent): ...`。
