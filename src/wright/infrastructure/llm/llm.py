@@ -23,6 +23,7 @@ from openai import APIConnectionError, APIStatusError, OpenAI, omit
 
 from ...domain.gateway.llm_gateway import ILLMProvider
 from ...domain.model.llm import ModelRequest
+from ...domain.model.llm.anthropic_adapter import MessagesAdapter
 from ...domain.model.llm.catalog import ModelRoute
 from ...domain.model.llm.events import (
     ContentDelta,
@@ -42,6 +43,7 @@ from ...domain.model.llm.provider_usage import usage_from_provider
 from ...domain.model.tool import ArtifactRef
 from ..storage.artifacts import ArtifactStore
 from ..storage.attachments import AttachmentError, AttachmentStore
+from .anthropic_client import AnthropicMessagesClient
 
 
 class LLMClient(ILLMProvider):
@@ -88,6 +90,11 @@ class LLMClient(ILLMProvider):
         self.response_format = response_format
         self.chat_adapter = ChatAdapter(self._attachment_data_url, self._artifact_data_url)
         self.responses_adapter = ResponsesAdapter(self._attachment_data_url, self._artifact_data_url)
+        self.messages_adapter = MessagesAdapter(self._attachment_data_url, self._artifact_data_url)
+        # Created on first use for the current endpoint (see _messages_client).
+        self._anthropic: AnthropicMessagesClient | None = None
+        # Tests inject an httpx2 client with a mock transport here.
+        self.anthropic_http_client: Any = None
 
     def retarget(self, model: str) -> Callable[[], None]:
         """Select ``model``, moving to its endpoint; returns an undo.
@@ -129,12 +136,14 @@ class LLMClient(ILLMProvider):
         Yields:
             LLMEvent: ReasoningDelta / ContentDelta /   ContentDone / UsageEvent
         """
+        cache_prefix_messages: int | None = None
         if isinstance(request, ModelRequest):
             messages = request.copied_messages()
             tools = list(request.tools) if request.tools else tools
             response_format = request.response_format or response_format
             model = request.model or self.model
             transport = request.transport or self.transport_name
+            cache_prefix_messages = request.cache_prefix_messages
         else:
             messages = request
             model = self.model
@@ -143,6 +152,12 @@ class LLMClient(ILLMProvider):
             raise ValueError(
                 "Responses continuation state cannot be sent through Chat transport"
             )
+        if transport == "messages":
+            yield from self._call_messages(
+                messages, tools, response_format or self.response_format, model,
+                cache_prefix_messages,
+            )
+            return
         options = {
             "tools": tools or omit,
             "response_format": response_format or self.response_format or omit,
@@ -161,6 +176,34 @@ class LLMClient(ILLMProvider):
                 model,
             )
         for event in events:
+            yield self._priced(event, model) if isinstance(event, UsageEvent) else event
+
+    def _messages_client(self) -> AnthropicMessagesClient:
+        current = self._anthropic
+        if current is None or (current.base_url, current.api_key) != (self.base_url, self._api_key):
+            current = AnthropicMessagesClient(
+                self.base_url, self._api_key,
+                max_attempts=self.max_attempts, http_client=self.anthropic_http_client,
+            )
+            self._anthropic = current
+        return current
+
+    def _call_messages(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict] | None,
+        response_format: dict | None,
+        model: str,
+        cache_prefix_messages: int | None,
+    ) -> Iterator[LLMEvent]:
+        """Anthropic Messages API: prompt caching and thinking-block replay."""
+        client = self._messages_client()
+        params = client.request_params(
+            self.messages_adapter, messages, model=model, tools=tools,
+            response_format=response_format, cache_prefix_messages=cache_prefix_messages,
+            stream=self.stream,
+        )
+        for event in client.call(self.messages_adapter, params, stream=self.stream):
             yield self._priced(event, model) if isinstance(event, UsageEvent) else event
 
     def _priced(self, event: UsageEvent, model: str) -> UsageEvent:

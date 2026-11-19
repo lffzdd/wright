@@ -32,8 +32,11 @@ def describe_model_error(exception: BaseException) -> str:
 def resolve_transport(base_url: str, requested: str | None) -> str:
     """Resolve automatic transport without speculative duplicate API calls."""
     choice = (requested or "auto").strip().lower()
-    if choice not in {"auto", "chat", "responses"}:
-        raise ValueError("WRIGHT_LLM_TRANSPORT must be auto, chat, or responses")
+    if choice not in {"auto", "chat", "responses", "messages"}:
+        raise ValueError("WRIGHT_LLM_TRANSPORT must be auto, chat, responses, or messages")
     if choice != "auto":
         return choice
-    return "responses" if urlparse(base_url).hostname == "api.openai.com" else "chat"
+    host = urlparse(base_url).hostname
+    if host == "api.openai.com":
+        return "responses"
+    return "messages" if host == "api.anthropic.com" else "chat"

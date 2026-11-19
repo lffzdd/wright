@@ -249,6 +249,7 @@ class ModelTurnRunner:
                 messages=tuple(wire_messages),
                 tools=tuple(view.tools),
                 context_token_estimate=view.estimated_tokens,
+                cache_prefix_messages=getattr(view, "durable_prefix_count", None),
                 model=run_config.get("model") or None,
                 transport=run_config.get("transport") or None,
             )

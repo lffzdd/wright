@@ -133,8 +133,8 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
     ),
     SettingSpec(
         "llm.transport", "choice", "auto", env=("WRIGHT_LLM_TRANSPORT",),
-        choices=("auto", "chat", "responses"),
-        description="Model API: chat completions, responses, or chosen from the endpoint.",
+        choices=("auto", "chat", "responses", "messages"),
+        description="Model API: chat completions, responses, Anthropic messages, or chosen from the endpoint.",
     ),
     SettingSpec(
         "llm.base_url", "str", "", env=("OPENAI_BASE_URL",), fail_closed=True,

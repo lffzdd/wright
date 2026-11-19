@@ -99,6 +99,18 @@ class ContextView:
         """Return a fresh copy for adapters which may normalize wire fields."""
         return [deepcopy(entry.message) for entry in self.entries]
 
+    @property
+    def durable_prefix_count(self) -> int:
+        """Leading messages up to the last durable record; reminders come after."""
+        return next(
+            (
+                index + 1
+                for index in range(len(self.entries) - 1, -1, -1)
+                if self.entries[index].record_id is not None
+            ),
+            0,
+        )
+
 
 class ContextCompactor:
     """Deterministically fold old tool results in a ContextView only."""

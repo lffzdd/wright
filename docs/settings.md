@@ -39,7 +39,7 @@ sessions.
 | `llm.memory_model` | string | empty (uses `llm.model`) | `OPENAI_MEMORY_MODEL` | yes |
 | `llm.models` | list of strings | empty (catalog presets) | `WRIGHT_MODELS` (comma-separated) | no |
 | `llm.prices` | list of `model=input/output[/cache_read]` | empty | `WRIGHT_MODEL_PRICES` (comma-separated) | no |
-| `llm.transport` | `auto` \| `chat` \| `responses` | `auto` | `WRIGHT_LLM_TRANSPORT` | no |
+| `llm.transport` | `auto` \| `chat` \| `responses` \| `messages` | `auto` | `WRIGHT_LLM_TRANSPORT` | no |
 | `llm.base_url` | string | empty (the model's provider) | `OPENAI_BASE_URL` | no |
 | `session.auto_title` | boolean | true | `WRIGHT_AUTO_TITLE` | no |
 | `logging.level` | `DEBUG` … `CRITICAL` | `WARNING` | `WRIGHT_LOG_LEVEL` | no |
@@ -85,6 +85,12 @@ are set through `llm.base_url`.
 the session to that provider's endpoint and transport. A conversation whose
 history needs the Responses API (OpenAI) cannot continue on a Chat endpoint;
 Wright refuses that switch and keeps the current model.
+
+**Transport.** `auto` picks `responses` for `api.openai.com`, `messages` (the
+native Anthropic Messages API) for `api.anthropic.com`, and `chat` for every
+other endpoint. A session keeps the transport it started with, so sessions
+created before `messages` existed stay on `chat`. Anthropic and Chat histories
+can continue on each other's endpoint.
 
 **Context window.** The first of these that applies:
 

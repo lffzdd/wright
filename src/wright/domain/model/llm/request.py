@@ -22,6 +22,9 @@ class ModelRequest(Sequence[dict[str, Any]]):
     model: str | None = None
     transport: str | None = None
     context_token_estimate: int = 0
+    # Leading messages that are durable history; later ones are this request's
+    # reminders. Adapters with prompt caching place the history breakpoint here.
+    cache_prefix_messages: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __iter__(self) -> Iterator[dict[str, Any]]:

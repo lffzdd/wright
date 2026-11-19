@@ -71,7 +71,7 @@ def parse_cli_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--transport",
-        choices=("auto", "chat", "responses"),
+        choices=("auto", "chat", "responses", "messages"),
         default=None,
         help=t("cli.help.transport"),
     )

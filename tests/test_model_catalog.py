@@ -141,7 +141,7 @@ def test_retarget_moves_to_the_new_provider_and_undo_restores():
     sdk = client.client
     undo = client.retarget("claude-sonnet-5-5")
     assert client.base_url == "https://api.anthropic.com/v1/"
-    assert client.transport_name == "chat"
+    assert client.transport_name == "messages"
     assert client.model == "claude-sonnet-5-5"
     assert client.client is not sdk
     undo()

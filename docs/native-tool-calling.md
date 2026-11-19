@@ -74,6 +74,36 @@ git worktree add --detach ../wright-legacy-study legacy-json-react
 `reasoning` 只记录供应商实际返回的推理内容；它不代表模型完整的内部思考。
 上下文压缩只作用于当次请求投影：它折叠可丢弃的旧工具结果正文，保留角色和调用 ID；完整结果仍在执行记录中。带 `retention=instruction` 的结果（技能正文）不会被换成占位符。压缩不会清空会话里已经激活的延迟工具。
 
+## Anthropic Messages 传输
+
+`api.anthropic.com` 默认走 `messages` 传输：`infrastructure/llm/anthropic_client.py`
+用官方 `anthropic` SDK 调 `POST /v1/messages`，编码和解码在
+`domain/model/llm/anthropic_adapter.py`，不含 SDK 类型。约定与其他传输相同：
+
+- `tools` 按会话固定的顺序编码为 `name`/`description`/`input_schema`，不发 `strict`；
+  延迟工具仍经 `tool_search` 结果和 `call_tool` 到达，请求里的工具数组不变。
+- 第一条 system 消息成为顶层 `system`；连续的 `role=tool` 合成一条带 `tool_result`
+  的 user 消息，工具图片放在同一条消息里。
+- 来自该 API 的 assistant 回合把原始内容块存进 `provider_state["anthropic_content"]`，
+  下次请求原样回放（含 thinking 块和 `signature`）。来自其他传输的回合按正文和
+  `tool_calls` 重建，所以 Chat 与 Anthropic 端点之间可以互相续接。
+- 停止原因映射：`end_turn`/`stop_sequence` → `stop`，`tool_use` → `tool_calls`，
+  `max_tokens` → `length`，`refusal` → `refusal`；后两者不会触发工具执行。
+
+缓存断点只放两个：最后一个 system 块（工具定义渲染在它之前，一起缓存），以及
+持久历史的最后一个可缓存块（`ModelRequest.cache_prefix_messages`，由 `ContextView`
+给出），本轮临时提醒在断点之后。thinking 块不能带断点，会向前找文本或工具块。
+命中情况看 `usage.cache_read_input_tokens`，`provider_usage` 已把它计入
+`cache_read_tokens`。
+
+Claude 4.6 及以后的模型发 `thinking: {"type": "adaptive", "display": "summarized"}`，
+推理摘要照常流式显示；更早的模型不发 thinking。会检查 thinking 块会话前缀的模型
+（Fable/Mythos 5.1+，Opus/Sonnet/Haiku 5.5+）额外带
+`block_binding.prefix_mismatch_behavior: "drop_block"`（beta
+`thinking-binding-controls-2026-08-01`）：上下文压缩折叠旧工具结果属于改写历史，
+这样只会丢掉受影响的 thinking 块，不会返回 400。折叠位置变化时，断点之后的消息
+缓存会失效，这是已知代价。
+
 ## 会话兼容与失败处理
 
 新版只运行原生协议。checkpoint 版本从 1 升到 2；旧版会话明确拒绝加载，
