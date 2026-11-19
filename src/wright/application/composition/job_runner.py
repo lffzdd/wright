@@ -271,6 +271,28 @@ def launch_job_run(
 
     if root_session is None and workspace_dir is None:
         raise ValueError("durable run requires workspace_dir when no source Session exists")
+    # Automation configuration is a persisted run snapshot.  Do not mutate a
+    # host-shared client when a task selected a model: concurrent durable runs
+    # must retain their own selection.  Retargeting a copy gives it its own
+    # SDK client when the model belongs to another provider.
+    run_llm = copy(llm)
+    configured_model = run.run_config.get("model")
+    if configured_model:
+        retarget = getattr(run_llm, "retarget", None)
+        try:
+            if callable(retarget):
+                retarget(str(configured_model))
+            else:
+                run_llm.model = str(configured_model)
+        except ValueError as exc:
+            scheduler.finish_run(run_id, status="failed", error=f"model unavailable: {exc}")
+            release_directory()
+            return None
+    configured_transport = run.run_config.get("transport")
+    if configured_transport:
+        run_llm.transport_name = resolve_transport(
+            run_llm.base_url, str(configured_transport)
+        )
     control = control_plane or (
         root_session.control_plane if root_session is not None else AgentControlPlane()
     )
@@ -352,19 +374,9 @@ def launch_job_run(
             usage.prompt_tokens,
             usage.completion_tokens,
             usage.total_tokens,
-        )
-
-    # Automation configuration is a persisted run snapshot.  Do not mutate a
-    # host-shared client when a task selected a model: concurrent durable runs
-    # must retain their own selection.
-    run_llm = copy(llm)
-    configured_model = run.run_config.get("model")
-    if configured_model:
-        run_llm.model = str(configured_model)
-    configured_transport = run.run_config.get("transport")
-    if configured_transport:
-        run_llm.transport_name = resolve_transport(
-            run_llm.base_url, str(configured_transport)
+            cache_read_tokens=usage.cache_read_tokens,
+            cost_usd=usage.cost_usd,
+            unpriced_requests=usage.unpriced_requests,
         )
 
     durable_commands = CommandExecution(

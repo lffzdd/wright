@@ -4,7 +4,7 @@ from copy import deepcopy
 from threading import RLock
 
 from ...domain.policy.permission.settings import PermissionSettings
-from .permission_store import protected_permission_paths
+from .permission_store import _configuration_id, protected_permission_paths
 
 
 class MemoryPermissionRepository:
@@ -65,6 +65,12 @@ class MemoryPermissionRepository:
                 self._revision += 1
 
     def remove(self, identity, lifetime):
-        self._settings.allow = [rule for rule in self._settings.allow if rule.id != identity or rule.lifetime != lifetime]
-        self._settings.project_rules = [rule for rule in self._settings.project_rules if rule.id != identity]
+        def keep(rule):
+            rid = rule.id or _configuration_id(rule, rule.lifetime)
+            return rid != identity or rule.lifetime != lifetime
+
+        self._settings.allow = [rule for rule in self._settings.allow if keep(rule)]
+        self._settings.deny = [rule for rule in self._settings.deny if keep(rule)]
+        self._settings.ask = [rule for rule in self._settings.ask if keep(rule)]
+        self._settings.project_rules = [rule for rule in self._settings.project_rules if keep(rule)]
         self._revision += 1

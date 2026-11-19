@@ -79,6 +79,9 @@ class Session:
     # Deferred tool schemas discovered by tool_search. Order is least-recently
     # touched first so the catalog can remain bounded and survive resume.
     active_deferred_tools: list[str] = field(default_factory=list)
+    # MCP servers this conversation has turned off: their tools are neither
+    # shown to the model nor callable until turned back on.
+    disabled_mcp_servers: list[str] = field(default_factory=list)
     # Root 与所有子 Agent 共享同一个控制面；子 session 用 agent_task_id
     # 标记自己在任务树中的位置，root 则为 None。
     control_plane: AgentControlPlane = field(default_factory=AgentControlPlane)
@@ -518,6 +521,9 @@ class Session:
         self.total_usage.prompt_tokens += usage.prompt_tokens
         self.total_usage.completion_tokens += usage.completion_tokens
         self.total_usage.total_tokens += usage.total_tokens
+        self.total_usage.cache_read_tokens += usage.cache_read_tokens
+        self.total_usage.cost_usd += usage.cost_usd
+        self.total_usage.unpriced_requests += usage.unpriced_requests
 
     def task_usage(self) -> UsageRecord:
         usage = UsageRecord(**{

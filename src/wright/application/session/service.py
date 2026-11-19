@@ -18,12 +18,14 @@ from uuid import uuid4
 
 from ...core.logger import get_logger
 from ...domain.model.attachment import AttachmentError
-from ...domain.model.llm.model_adapters import available_models
+from ...domain.model.llm.model_adapters import available_models, has_responses_state
+from ...domain.model.mcp import mcp_server_of
 from ...domain.model.session import HistoryRewriteError
 from ...domain.model.session.run import TERMINAL_RUN_STATUSES
 from ...domain.policy.permission.resolver import sandbox_network_granted
 from ..session_runtime.errors import SessionClosedError, SessionServiceError
 from ..session_runtime.events import session_status
+from ..workspace.mcp_servers import project_mcp_servers
 from ..workspace.references import capture_turn_references
 from .runner import RuntimeShutdown, SessionRunner
 from .title import first_user_request, generate_title, is_unlabeled
@@ -78,7 +80,29 @@ def set_session_model(runtime: WrightRuntime, model: str) -> tuple[str, str]:
     previous_session_model = runtime.session_state.model_name
     if cleaned == current:
         return current, cleaned
-    runtime.llm.model = cleaned
+    previous_transport = getattr(runtime.session_state, "llm_transport", None)
+    retarget = getattr(runtime.llm, "retarget", None)
+    if callable(retarget):
+        # A model of another provider moves the client to that provider.
+        try:
+            undo_retarget = retarget(cleaned)
+        except ValueError as exc:
+            raise SessionServiceError(str(exc)) from exc
+        transport = getattr(runtime.llm, "transport_name", None)
+        if transport != "responses" and has_responses_state(
+            record.message for record in getattr(runtime.session_state, "message_records", ())
+        ):
+            undo_retarget()
+            raise SessionServiceError(
+                f"{cleaned} cannot continue this conversation: its history uses the Responses API; "
+                "start a new session for this model"
+            )
+        runtime.session_state.llm_transport = transport
+    else:
+        runtime.llm.model = cleaned
+
+        def undo_retarget() -> None:
+            runtime.llm.model = current
     if agent_llm is not None and agent_llm is not runtime.llm:
         agent_llm.model = cleaned
     runtime.session_state.model_name = cleaned
@@ -87,10 +111,12 @@ def set_session_model(runtime: WrightRuntime, model: str) -> tuple[str, str]:
         try:
             store.save(runtime.session_state)
         except Exception as exc:
-            runtime.llm.model = current
+            undo_retarget()
             if agent_llm is not None and agent_llm is not runtime.llm:
                 agent_llm.model = current
             runtime.session_state.model_name = previous_session_model
+            if callable(retarget):
+                runtime.session_state.llm_transport = previous_transport
             raise SessionServiceError(f"checkpoint failed: {exc}") from exc
     publisher = getattr(runtime, "publisher", None)
     if publisher is not None:
@@ -726,6 +752,60 @@ class SessionService:
         set_session_model(self.runtime, model)
         return self.summary()
 
+    def mcp_servers(self) -> list[dict[str, Any]]:
+        """Configured MCP servers as this conversation sees them."""
+        manager = getattr(self.runtime, "mcp_manager", None)
+        if manager is None:
+            return []
+        agent = getattr(self.runtime, "agent", None)
+        return project_mcp_servers(
+            manager.servers(),
+            self.runtime.session_state.disabled_mcp_servers,
+            getattr(agent, "tool_schemas", None) or (),
+            getattr(agent, "_tool_names", None),
+        )
+
+    def set_mcp_server(self, name: str, enabled: bool) -> list[dict[str, Any]]:
+        """Turn one connected server on or off for later requests of this conversation.
+
+        Only while idle: the tool list of a request in flight is already fixed,
+        and the schemas the next request sends change, so its prompt cache
+        starts over.
+        """
+        with self._lock:
+            self._require_accepting_input()
+            if not self.runtime.agent_idle.is_set() or self._interaction_snapshot():
+                raise SessionServiceError(
+                    "a turn is still executing; change MCP servers when the session is idle"
+                )
+            row = next((item for item in self.mcp_servers() if item["name"] == name), None)
+            if row is None:
+                raise SessionServiceError(f"unknown MCP server: {name}")
+            if not row["toggleable"]:
+                raise SessionServiceError(f"MCP server {name} is not connected")
+            state = self.runtime.session_state
+            previous_disabled = list(state.disabled_mcp_servers)
+            previous_active = list(state.active_deferred_tools)
+            if enabled:
+                state.disabled_mcp_servers[:] = [item for item in previous_disabled if item != name]
+            elif name not in previous_disabled:
+                state.disabled_mcp_servers.append(name)
+                # Loaded tools of the server leave the schema with it.
+                state.active_deferred_tools[:] = [
+                    tool for tool in previous_active if mcp_server_of(tool) != name
+                ]
+            store = getattr(self.runtime.agent, "checkpoint_store", None)
+            if store is not None:
+                try:
+                    store.save(state)
+                except Exception as exc:
+                    state.disabled_mcp_servers[:] = previous_disabled
+                    state.active_deferred_tools[:] = previous_active
+                    raise SessionServiceError(f"checkpoint failed: {exc}") from exc
+            rows = self.mcp_servers()
+        self.publisher.publish("session.mcp_updated", {"mcp_servers": rows})
+        return rows
+
     def set_execution_policy(
         self,
         *,
@@ -1002,6 +1082,7 @@ class SessionService:
             "models": list(available_models(
                 str(self.runtime.session_state.model_name or ""),
                 self._configured_models(),
+                getattr(self.runtime, "model_presets", ()),
             )),
         }
 

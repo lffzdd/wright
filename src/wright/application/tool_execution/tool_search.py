@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from ...domain.model.tool import ToolAccess, ToolResult, split_tool_catalog
@@ -145,8 +145,13 @@ def _description(tools: Sequence[Tool]) -> str:
     return " ".join(parts)
 
 
-def make_tool_search_tool(tools: Sequence[Tool], active: list[str]) -> Tool:
-    deferred = {
+def make_tool_search_tool(
+    tools: Sequence[Tool],
+    active: list[str],
+    available: Callable[[str], bool] = lambda _name: True,
+) -> Tool:
+    """``available`` is asked at search time, so a server turned off later drops out."""
+    all_deferred = {
         tool.name: tool
         for tool in tools
         if tool.expose_to_model and tool.defer_to_model
@@ -166,6 +171,7 @@ def make_tool_search_tool(tools: Sequence[Tool], active: list[str]) -> Tool:
             if str(name).strip()
         }
         requested_names = set(requested_by_normalized)
+        deferred = {name: tool for name, tool in all_deferred.items() if available(name)}
         tokens = _search_tokens(query)
         ranked: list[tuple[int, Tool]] = []
         for tool in deferred.values():

@@ -3,12 +3,31 @@
   "mode": "default",
   "permissions": {
     "allow": [],
-    "deny": [
+    "ask": [
       "shell(rm *)",
       "shell(sudo *)",
       "shell(* sudo *)",
-      "shell(*git push*)",
-      "http_request(http://*)"
+      "shell(*git push*)"
+    ],
+    "deny": [
+      "shell(rm -* /)",
+      "shell(rm -* /[*])",
+      "shell(rm -* /.)",
+      "shell(rm -* /..)",
+      "shell(rm -* ~)",
+      "shell(rm -* ~/)",
+      "shell(rm -* ~[*])",
+      "shell(rm -* ~/[*])",
+      "shell(rm -* $HOME)",
+      "shell(rm -* $HOME/)",
+      "shell(rm -* $HOME[*])",
+      "shell(rm -* $HOME/[*])",
+      "shell(rm /)",
+      "shell(rm ~)",
+      "shell(rm $HOME)",
+      "shell(rmdir /)",
+      "shell(rmdir ~)",
+      "shell(rmdir $HOME)"
     ]
   }
 }

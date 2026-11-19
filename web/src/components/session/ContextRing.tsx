@@ -4,44 +4,42 @@ export const compactTokens = (value: number | null | undefined) => typeof value 
   ? value >= 1_000 ? `${(value / 1_000).toFixed(value >= 100_000 ? 0 : 1)}k` : String(value)
   : "unknown";
 
-// The wedge sits inside the outline with a small gap, like a pie in a dish.
-const OUTLINE = 7;
-const RADIUS = 5;
-
-/** The filled wedge of the pie, clockwise from twelve o'clock. */
-function wedge(percent: number): string {
-  if (percent <= 0) return "";
-  const angle = (Math.min(percent, 99.99) / 100) * 2 * Math.PI;
-  const x = 8 + RADIUS * Math.sin(angle);
-  const y = 8 - RADIUS * Math.cos(angle);
-  return `M8 8 L8 ${8 - RADIUS} A${RADIUS} ${RADIUS} 0 ${angle > Math.PI ? 1 : 0} 1 ${x.toFixed(2)} ${y.toFixed(2)} Z`;
-}
+/** Circumference of restored's r=15 ring (2π·15). */
+const RING = 94.25;
 
 /**
- * How full the model context is, as a small pie; the exact figures live in its label.
- * The percentage only shows once the context is filling up, and the pie is a
- * filled wedge rather than an arc so it never reads as a busy indicator.
+ * Restored's hollow progress ring. Progress is an inline stroke offset — CSS
+ * `stroke-dashoffset` would override an SVG attribute and freeze the ring empty.
+ * Native `title` clips at the composer corner, so the usage line is a hover tip.
  */
-export function ContextRing({ total, limit }: { total: number; limit: number | null | undefined }) {
+export function ContextRing({ total, limit, onClick }: {
+  total: number;
+  limit: number | null | undefined;
+  onClick?: () => void;
+}) {
   const tr = useT();
   const percent = limit ? Math.min(100, Math.round((total / limit) * 100)) : 0;
   const tone = percent >= 90 ? "full" : percent >= 70 ? "warn" : "";
   const label = tr("web.context_usage", { used: compactTokens(total), limit: compactTokens(limit), percent });
-  return <div
-    className={`context-ring ${tone}`.trim()}
-    role="meter"
-    aria-valuemin={0}
-    aria-valuemax={100}
-    aria-valuenow={percent}
-    aria-label={label}
-    title={`${label}\n${tr("web.estimate")}`}
-  >
-    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-      <circle className="context-ring-track" cx="8" cy="8" r={OUTLINE} />
-      {percent >= 100
-        ? <circle className="context-ring-fill" cx="8" cy="8" r={RADIUS} />
-        : percent > 0 && <path className="context-ring-fill" d={wedge(percent)} />}
+  const title = tr("web.context_ring_title", { used: compactTokens(total), limit: compactTokens(limit) });
+  const offset = RING * (1 - percent / 100);
+  const body = <>
+    <svg viewBox="0 0 36 36" width="18" height="18" aria-hidden="true">
+      <circle className="ring-bg context-ring-track" cx="18" cy="18" r="15" />
+      <circle className="ring-fg context-ring-fill" cx="18" cy="18" r="15" style={{ strokeDashoffset: offset }} />
     </svg>
-    {tone && <span aria-hidden="true">{percent}%</span>}
-  </div>;
+    {tone ? <span className="ctx-pct" aria-hidden="true">{percent}%</span> : null}
+    <span className="ctx-ring-tip" role="tooltip">{title}</span>
+  </>;
+  const meter = {
+    role: "meter" as const,
+    "aria-valuemin": 0,
+    "aria-valuemax": 100,
+    "aria-valuenow": percent,
+    "aria-label": label,
+  };
+  if (!onClick) return <div className={`ctx-ring context-ring ${tone}`.trim()} {...meter}>{body}</div>;
+  return <button type="button" className={`ctx-ring context-ring context-ring-button ${tone}`.trim()} aria-label={title} onClick={onClick}>
+    <span className="context-ring-meter" {...meter}>{body}</span>
+  </button>;
 }

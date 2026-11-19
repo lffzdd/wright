@@ -82,7 +82,7 @@ function AuditRuleRow({ rule, operation }: { rule: EffectivePolicy["rules"][numb
   return <li className="audit-rule">
     <span className="audit-rule-meta">
       {operationLabel ? `${operationLabel} · ` : ""}
-      {tr(`web.policy_decision.${rule.effect}`)} · {tr(`web.lifetime.${rule.scope}`)}{rule.conditional ? ` · ${tr("web.policy_conditional")}` : ""}
+      {tr(`web.policy_decision.${rule.effect}`)} · {rule.locked ? tr("web.policy_builtin") : tr(`web.lifetime.${rule.scope}`)}{rule.conditional && !rule.locked ? ` · ${tr("web.policy_conditional")}` : ""}
     </span>
     {commandLike
       ? <div className="perm-command grant-command"><span className="perm-target">{rule.target}</span></div>

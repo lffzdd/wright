@@ -15,6 +15,7 @@ from wright.infrastructure.config import (
     append_allow_rule,
     load_permission_settings,
 )
+from wright.infrastructure.config.permission_store import FilePermissionRepository
 from wright.infrastructure.tools.command import execute_command_tool
 from wright.infrastructure.tools.file import read_file_tool, write_file_tool
 
@@ -240,6 +241,86 @@ def test_load_settings_from_explicit_file_and_user_path(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     assert load_permission_settings().allow[0].tool_name == "http_request"
+
+
+def test_legacy_stock_denies_are_rewritten_to_ask(tmp_path, monkeypatch):
+    monkeypatch.delenv("WRIGHT_PERMISSION_CONFIG", raising=False)
+    monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "home"))
+    user = tmp_path / "home" / "permission_settings.json"
+    user.parent.mkdir()
+    user.write_text(
+        json.dumps({
+            "version": 2,
+            "mode": "default",
+            "permissions": {
+                "deny": [
+                    "execute_command(rm *)",
+                    "execute_command(sudo *)",
+                    "execute_command(* sudo *)",
+                    "execute_command(*git push*)",
+                    "http_request(http://*)",
+                ]
+            },
+        }),
+        encoding="utf-8",
+    )
+    settings, _ = FilePermissionRepository(tmp_path / "project").read()
+    assert {rule.pattern for rule in settings.ask} == {"rm *", "sudo *", "* sudo *", "*git push*"}
+    assert "rm -* /" in {rule.pattern for rule in settings.deny}
+    assert all(rule.source == "builtin" for rule in settings.deny if rule.pattern == "rm -* /")
+    saved = json.loads(user.read_text(encoding="utf-8"))
+    assert saved["permissions"]["deny"] == []
+    assert saved["permissions"]["ask"] == [
+        "shell(rm *)",
+        "shell(sudo *)",
+        "shell(* sudo *)",
+        "shell(*git push*)",
+    ]
+
+
+def test_stock_ask_with_empty_deny_gets_root_and_home_denies(tmp_path, monkeypatch):
+    monkeypatch.delenv("WRIGHT_PERMISSION_CONFIG", raising=False)
+    monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "home"))
+    user = tmp_path / "home" / "permission_settings.json"
+    user.parent.mkdir()
+    user.write_text(
+        json.dumps({
+            "version": 2,
+            "mode": "default",
+            "permissions": {
+                "ask": [
+                    "shell(rm *)",
+                    "shell(sudo *)",
+                    "shell(* sudo *)",
+                    "shell(*git push*)",
+                ],
+                "deny": [],
+            },
+        }),
+        encoding="utf-8",
+    )
+    settings, _ = FilePermissionRepository(tmp_path / "project").read()
+    assert "rm -* ~" in {rule.pattern for rule in settings.deny}
+    assert all(rule.source == "builtin" for rule in settings.deny)
+    saved = json.loads(user.read_text(encoding="utf-8"))
+    assert saved["permissions"]["deny"] == []
+
+
+def test_custom_denies_are_not_rewritten_as_stock(tmp_path, monkeypatch):
+    monkeypatch.delenv("WRIGHT_PERMISSION_CONFIG", raising=False)
+    monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "home"))
+    user = tmp_path / "home" / "permission_settings.json"
+    user.parent.mkdir()
+    user.write_text(
+        json.dumps({"version": 2, "mode": "default", "permissions": {"deny": ["shell(rm *)"]}}),
+        encoding="utf-8",
+    )
+    settings, _ = FilePermissionRepository(tmp_path / "project").read()
+    assert "rm *" in [rule.pattern for rule in settings.deny]
+    assert any(rule.pattern == "rm *" and rule.source != "builtin" for rule in settings.deny)
+    assert settings.ask == []
+    saved = json.loads(user.read_text(encoding="utf-8"))
+    assert saved["permissions"]["deny"] == ["shell(rm *)"]
 
 
 def test_ask_and_deny_rules_have_the_required_precedence():

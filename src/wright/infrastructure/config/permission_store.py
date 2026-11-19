@@ -9,11 +9,12 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
 
 from ...core.paths import user_permission_settings_path
-from ...domain.policy.permission.settings import PermissionSettings
+from ...domain.policy.permission.settings import PermissionRule, PermissionSettings
 from ..permission_transaction import (
     _ensure_directory,
     atomic_write,
@@ -22,6 +23,45 @@ from ..permission_transaction import (
     transaction,
     unit_of_work,
 )
+
+# Older installs copied these as user-level deny. They are now ask, except
+# cleartext HTTP which follows the same origin approval as HTTPS.
+_LEGACY_STOCK_DENY = frozenset({
+    "shell(rm *)",
+    "shell(sudo *)",
+    "shell(* sudo *)",
+    "shell(*git push*)",
+    "http_request(http://*)",
+})
+_STOCK_ASK = (
+    "shell(rm *)",
+    "shell(sudo *)",
+    "shell(* sudo *)",
+    "shell(*git push*)",
+)
+# Command-text globs for filesystem root and home. These are not a path check:
+# expanded home paths and other absolute targets still need a later matcher.
+_STOCK_DENY = (
+    "shell(rm -* /)",
+    "shell(rm -* /[*])",
+    "shell(rm -* /.)",
+    "shell(rm -* /..)",
+    "shell(rm -* ~)",
+    "shell(rm -* ~/)",
+    "shell(rm -* ~[*])",
+    "shell(rm -* ~/[*])",
+    "shell(rm -* $HOME)",
+    "shell(rm -* $HOME/)",
+    "shell(rm -* $HOME[*])",
+    "shell(rm -* $HOME/[*])",
+    "shell(rm /)",
+    "shell(rm ~)",
+    "shell(rm $HOME)",
+    "shell(rmdir /)",
+    "shell(rmdir ~)",
+    "shell(rmdir $HOME)",
+)
+PACKAGED_RULE_SOURCE = "builtin"
 
 
 def load_permission_settings(path: Path | None = None) -> PermissionSettings:
@@ -152,8 +192,6 @@ class FilePermissionRepository:
         return unit_of_work()
 
     def read(self) -> tuple[PermissionSettings, tuple[str, ...]]:
-        from dataclasses import replace
-
         # Materialize protected boundaries before issuing any execution permit.
         # This also prevents creating a previously absent permission file via Shell.
         from ...core.paths import wright_home
@@ -163,14 +201,17 @@ class FilePermissionRepository:
             _update_settings(lambda _: None, None)
         if not _user_path().exists():
             _update_settings(lambda _: None, _user_path())
+        for path in dict.fromkeys((default_settings_path(), _user_path())):
+            if path.is_file():
+                _update_settings(_rewrite_legacy_stock_denies, path)
         settings = load_permission_settings()
         if any(rule.kind == "shell" for rule in settings.allow):
             raise ValueError("Shell grants can only be stored in a conversation")
         if any(rule.root_kind == "workspace" for rule in settings.allow):
             raise ValueError("User authorizations require absolute resource roots")
-        settings.allow = [replace(rule, lifetime="user", id=rule.id or _configuration_id(rule, "user")) for rule in settings.allow]
-        settings.deny = [replace(rule, lifetime="user") for rule in settings.deny]
-        settings.ask = [replace(rule, lifetime="user") for rule in settings.ask]
+        settings.allow = [_stamp_lifetime(rule, "user") for rule in settings.allow]
+        settings.ask = [_stamp_lifetime(rule, "user") for rule in settings.ask]
+        settings.deny = _merge_packaged_denies(settings.deny)
         if self.project_path.is_file():
             data = json.loads(self.project_path.read_text(encoding="utf-8"))
             if data.get("version") != 2:
@@ -181,10 +222,14 @@ class FilePermissionRepository:
                 raise ValueError("Shell grants cannot be stored for a project")
             if any(rule.project_id and rule.project_id != self.project_identity for rule in project.allow):
                 raise ValueError("Authorization belongs to a different project")
-            settings.project_rules = [replace(rule, lifetime="project", id=rule.id or _configuration_id(rule, "project")) for rule in project.allow]
+            settings.project_rules = [_stamp_lifetime(rule, "project") for rule in project.allow]
             settings.allow.extend(settings.project_rules)
-            settings.deny.extend(replace(rule, lifetime="project") for rule in project.deny)
-            settings.ask.extend(replace(rule, lifetime="project") for rule in project.ask)
+            packaged_keys = {_rule_restriction_key(rule) for rule in settings.deny if rule.source == PACKAGED_RULE_SOURCE}
+            settings.deny.extend(
+                _stamp_lifetime(rule, "project") for rule in project.deny
+                if _rule_restriction_key(rule) not in packaged_keys
+            )
+            settings.ask.extend(_stamp_lifetime(rule, "project") for rule in project.ask)
         return settings, self.protected_paths()
 
     def protected_paths(self) -> tuple[str, ...]:
@@ -232,13 +277,12 @@ class FilePermissionRepository:
 
     def remove(self, record_id: str, lifetime: str) -> None:
         def update(data: dict) -> None:
-            allow = data.setdefault("permissions", {}).setdefault("allow", [])
-            def identity(item):
-                from ...domain.policy.permission.settings import PermissionRule
-                rule = PermissionRule.from_persistent(item).to_persistent()
-                return rule.get("id") or _configuration_id(PermissionRule.from_mapping(rule), lifetime)
-
-            data["permissions"]["allow"] = [item for item in allow if identity(item) != record_id]
+            permissions = data.setdefault("permissions", {})
+            for bucket in ("allow", "deny", "ask"):
+                items = permissions.setdefault(bucket, [])
+                permissions[bucket] = [
+                    item for item in items if _stored_identity(item, lifetime, bucket) != record_id
+                ]
 
         _update_settings(update, self.project_path if lifetime == "project" else None)
 
@@ -248,3 +292,76 @@ def _configuration_id(rule, lifetime: str) -> str:
     from dataclasses import replace
     payload = replace(rule, lifetime=lifetime, id="").to_persistent()
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:24]
+
+
+def _stamp_lifetime(rule: PermissionRule, lifetime: str) -> PermissionRule:
+    return replace(rule, lifetime=lifetime, id=rule.id or _configuration_id(rule, lifetime))
+
+
+def _packaged_settings() -> PermissionSettings:
+    path = _packaged_path()
+    if not path.is_file():
+        return PermissionSettings()
+    return PermissionSettings.from_dict(json.loads(path.read_text(encoding="utf-8")))
+
+
+def _rule_restriction_key(rule: PermissionRule) -> str:
+    if rule.kind == "network" and rule.scheme:
+        return f"{rule.tool_name}({rule.scheme}://*)"
+    if rule.kind == "shell":
+        return f"{rule.tool_name}({rule.pattern})"
+    return f"{rule.tool_name}({rule.subject_glob or rule.pattern})"
+
+
+def _merge_packaged_denies(user_denies: list[PermissionRule]) -> list[PermissionRule]:
+    """Packaged deny rules stay locked. User copies of the same pattern are dropped."""
+    packaged = [
+        _stamp_lifetime(replace(rule, source=PACKAGED_RULE_SOURCE), "user")
+        for rule in _packaged_settings().deny
+    ]
+    packaged_keys = {_rule_restriction_key(rule) for rule in packaged}
+    extra = [
+        _stamp_lifetime(rule, "user") for rule in user_denies
+        if _rule_restriction_key(rule) not in packaged_keys
+    ]
+    return packaged + extra
+
+
+def _stored_identity(item: object, lifetime: str, effect: str) -> str:
+    if isinstance(item, str):
+        rule = PermissionRule.parse(item, effect=effect)
+    elif isinstance(item, dict):
+        rule = PermissionRule.from_mapping(item)
+        if rule.id:
+            return str(rule.id)
+    else:
+        raise TypeError("permission rule must be a string or an object")
+    return _configuration_id(rule, lifetime)
+
+
+def _restriction_key(item: object, effect: str) -> str:
+    if isinstance(item, str):
+        rule = PermissionRule.parse(item, effect=effect)
+    elif isinstance(item, dict):
+        rule = PermissionRule.from_mapping(item)
+    else:
+        raise TypeError("permission rule must be a string or an object")
+    return _rule_restriction_key(rule)
+
+
+def _rewrite_legacy_stock_denies(data: dict) -> None:
+    permissions = data.setdefault("permissions", {})
+    deny = permissions.get("deny") or []
+    ask = permissions.get("ask") or []
+    try:
+        deny_keys = [_restriction_key(item, "deny") for item in deny]
+        stock_deny = {_restriction_key(item, "deny") for item in _STOCK_DENY}
+    except (TypeError, ValueError):
+        return
+    if not ask and set(deny_keys) == _LEGACY_STOCK_DENY:
+        permissions["deny"] = []
+        permissions["ask"] = list(_STOCK_ASK)
+        return
+    kept = [item for item, key in zip(deny, deny_keys, strict=True) if key not in stock_deny]
+    if len(kept) != len(deny):
+        permissions["deny"] = kept

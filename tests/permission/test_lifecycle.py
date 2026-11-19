@@ -122,6 +122,44 @@ def test_configured_restrictions_report_user_and_project_scope(setup):
     assert scopes == {"write": "user", "edit": "project"}
 
 
+def test_builtin_deny_cannot_be_revoked(setup):
+    session, service, _ = setup
+    listing = list_grants(session, service)
+    blocked = next(
+        rule
+        for group in listing["effective_policy"] if group["operation"] == "shell"
+        for rule in group["rules"]
+        if rule["effect"] == "deny" and rule["target"] == "rm -* /"
+    )
+    assert blocked["locked"] is True
+    with pytest.raises(ValueError, match="Built-in"):
+        service.revoke(session, blocked["rule"]["id"], blocked["scope"], listing["version"])
+    listing = list_grants(session, service)
+    assert any(
+        rule["effect"] == "deny" and rule["target"] == "rm -* /"
+        for group in listing["effective_policy"] if group["operation"] == "shell"
+        for rule in group["rules"]
+    )
+
+
+def test_configured_ask_rule_can_be_revoked(setup):
+    session, service, _ = setup
+    listing = list_grants(session, service)
+    push = next(
+        rule
+        for group in listing["effective_policy"] if group["operation"] == "shell"
+        for rule in group["rules"]
+        if rule["effect"] == "ask" and "push" in rule["target"]
+    )
+    service.revoke(session, push["rule"]["id"], push["scope"], listing["version"])
+    listing = list_grants(session, service)
+    assert not any(
+        rule["effect"] == "ask" and "push" in rule["target"]
+        for group in listing["effective_policy"] if group["operation"] == "shell"
+        for rule in group["rules"]
+    )
+
+
 @pytest.mark.parametrize("lifetime", ["session", "project", "user"])
 def test_file_grant_is_exact_and_revoked_once(setup, lifetime):
     session, service, _ = setup

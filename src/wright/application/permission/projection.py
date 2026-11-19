@@ -39,7 +39,8 @@ def summarize_policy(
             {"effect": effect, "scope": rule.lifetime, "rule": rule.to_persistent(),
              "target": rule.display_target(roots[0]), "resource_kind": rule.kind,
              "operations": list(rule.operations), "tool": rule.tool_name,
-             "description": rule.describe(), "conditional": rule.kind != "tool"}
+             "description": rule.describe(), "conditional": rule.kind != "tool",
+             "locked": rule.source == "builtin"}
             for effect, entries in groups for rule in entries
             if (rule.tool_name in tool_names or (rule.tool_name == "*" and rule.kind in {"file", "directory"} and operation != "shell")) and (
                 rule.kind not in {"file", "directory"} or not rule.operations or operation in rule.operations

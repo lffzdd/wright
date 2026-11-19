@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+from ...domain.model.mcp import mcp_tool_enabled
 from ..planning.prompt import plan_prompt_block
 from ..skills import SKILL_LOADER_NAME, catalog_reminder
 
@@ -57,7 +58,12 @@ class AgentPromptManager:
             tools = list(self.schema_tools)
         else:
             tools = [tool for tool in self.schema_tools if tool.name != SKILL_LOADER_NAME]
-        return [tool for tool in tools if tool_visible(tool.name, self.session_state)]
+        disabled = self.session_state.disabled_mcp_servers
+        return [
+            tool for tool in tools
+            if tool_visible(tool.name, self.session_state)
+            and mcp_tool_enabled(tool.name, disabled)
+        ]
 
     def skill_catalog_message(self) -> dict | None:
         if not self.skill_loader_exposed() or self.skills is None:

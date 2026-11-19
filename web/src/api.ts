@@ -102,6 +102,8 @@ export const api = {
   file: (sessionId: string, path: string) => json<{ path: string; content: string; binary: boolean; line_count?: number }>(`/api/v1/sessions/${sessionId}/file?path=${encodeURIComponent(path)}`),
   workspaceInfo: (sessionId: string) => json<Record<string, unknown>>(`/api/v1/sessions/${sessionId}/workspace`),
   policy: (sessionId: string, body: { interaction_mode?: string; permission_mode?: string; execution_mode?: ExecutionMode }) => json<Record<string, unknown>>(`/api/v1/sessions/${sessionId}/policy`, { method: "POST", body: JSON.stringify(body) }),
+  /** Only called for servers the snapshot marks `toggleable`. */
+  setMcpServer: (sessionId: string, name: string, enabled: boolean) => json<Record<string, unknown>>(`/api/v1/sessions/${sessionId}/mcp/${encodeURIComponent(name)}`, { method: "POST", body: JSON.stringify({ enabled }) }),
   grants: (sessionId: string) => json<Grants>(`/api/v1/sessions/${sessionId}/grants`),
   revokeGrant: (sessionId: string, ruleId: string, source: string, expected_version: string) => json<Grants>(`/api/v1/sessions/${sessionId}/grants/${ruleId}/revoke`, { method: "POST", body: JSON.stringify({ source, expected_version }) }),
   addGrant: (sessionId: string, resource: Record<string, unknown>, lifetime: string, expected_version: string) => json<Grants>(`/api/v1/sessions/${sessionId}/grants`, { method: "POST", body: JSON.stringify({ resource, lifetime, expected_version }) }),

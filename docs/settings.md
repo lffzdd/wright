@@ -34,11 +34,13 @@ sessions.
 | Key | Type | Default | Env override | Project file |
 |---|---|---|---|---|
 | `llm.model` | string | empty | `OPENAI_MODEL` | yes |
-| `llm.context_limit` | integer ≥ 1 | 128000 | `OPENAI_CONTEXT_LIMIT` | yes |
+| `llm.context_limit` | integer ≥ 0 | 0 (catalog, then 128000) | `OPENAI_CONTEXT_LIMIT` | yes |
+| `llm.context_limits` | list of `model=tokens` | empty | `WRIGHT_CONTEXT_LIMITS` (comma-separated) | yes |
 | `llm.memory_model` | string | empty (uses `llm.model`) | `OPENAI_MEMORY_MODEL` | yes |
-| `llm.models` | list of strings | empty | `WRIGHT_MODELS` (comma-separated) | no |
+| `llm.models` | list of strings | empty (catalog presets) | `WRIGHT_MODELS` (comma-separated) | no |
+| `llm.prices` | list of `model=input/output[/cache_read]` | empty | `WRIGHT_MODEL_PRICES` (comma-separated) | no |
 | `llm.transport` | `auto` \| `chat` \| `responses` | `auto` | `WRIGHT_LLM_TRANSPORT` | no |
-| `llm.base_url` | string | empty (SDK default) | `OPENAI_BASE_URL` | no |
+| `llm.base_url` | string | empty (the model's provider) | `OPENAI_BASE_URL` | no |
 | `session.auto_title` | boolean | true | `WRIGHT_AUTO_TITLE` | no |
 | `logging.level` | `DEBUG` … `CRITICAL` | `WARNING` | `WRIGHT_LOG_LEVEL` | no |
 | `knowledge.enabled` | boolean | false | `WRIGHT_KNOWLEDGE_ENABLED` | no |
@@ -51,11 +53,82 @@ The schema lives in `domain/model/settings.py` (`SETTING_SPECS`); this table
 follows it. An empty environment variable counts as unset. Booleans in the
 environment accept `1/true/yes/on` and `0/false/no/off`.
 
+## Model catalog
+
+Wright knows common models from Anthropic, OpenAI, Google, DeepSeek, Zhipu and
+Qwen (`domain/model/llm/catalog.py`, with the date it was checked and the
+pages the values came from). For a model in the catalog, setting `llm.model`
+and its provider's API key is enough; the endpoint, context window and model
+picker follow from it. Model names match the way prices do: a gateway prefix
+such as `openai/` and a dated snapshot suffix still find the family.
+
+**Endpoint and key.** With `llm.base_url` set, every model goes to that
+endpoint with `OPENAI_API_KEY`, as before the catalog. Without it, a catalog
+model goes to its provider's documented OpenAI-compatible endpoint with that
+provider's own key:
+
+| Provider | Endpoint | Key |
+|---|---|---|
+| OpenAI | `https://api.openai.com/v1` | `OPENAI_API_KEY` |
+| Anthropic | `https://api.anthropic.com/v1/` | `ANTHROPIC_API_KEY` |
+| Google | `https://generativelanguage.googleapis.com/v1beta/openai/` | `GEMINI_API_KEY` |
+| DeepSeek | `https://api.deepseek.com` | `DEEPSEEK_API_KEY` |
+| Zhipu | `https://api.z.ai/api/paas/v4/` (international) | `ZAI_API_KEY` |
+| Qwen | depends on the account: set `llm.base_url` | `OPENAI_API_KEY` |
+
+A missing key stops with an error that names it; Wright never sends one
+provider's key to another. A model outside the catalog needs `llm.base_url`.
+Zhipu's China endpoint (`open.bigmodel.cn`) and Qwen's workspace endpoints
+are set through `llm.base_url`.
+
+**Switching models.** Choosing a model of another provider in a session moves
+the session to that provider's endpoint and transport. A conversation whose
+history needs the Responses API (OpenAI) cannot continue on a Chat endpoint;
+Wright refuses that switch and keeps the current model.
+
+**Context window.** The first of these that applies:
+
+1. `llm.context_limits`, entries `model=tokens` for single models;
+2. `llm.context_limit`, when not 0, for every model;
+3. the catalog's value for the model;
+4. 128000.
+
+Where a provider publishes an input limit below the context window, the
+catalog uses the input limit. A malformed `llm.context_limits` entry is
+skipped with a warning.
+
+**Model picker.** `llm.models` replaces the picker's list. When it is empty
+the picker offers a few current catalog models of each provider you can
+reach: those with a key set, or with `llm.base_url` set, the provider that
+serves that host. A gateway or other unknown host offers no presets.
+
+## Model prices
+
+The web console shows an estimated cost for each session. Wright ships list
+prices for common models from Anthropic, OpenAI, Google, DeepSeek, Zhipu and
+Qwen (`domain/model/llm/pricing.py`, with the date they were checked and the
+pages they came from). A gateway prefix such as `openai/` and a dated snapshot
+suffix such as `-2025-08-07` still find the family's price.
+
+`llm.prices` adds a model the list lacks or replaces a list price. Each entry
+is `model=input/output[/cache_read]` in USD per million tokens; without a
+cache price, cached tokens are billed as input:
+
+```json
+{"llm": {"prices": ["kimi-k3=3/15/0.3", "my-gateway-model=0.5/2"]}}
+```
+
+The estimate leaves out cache writes, batch and priority tiers, and most
+long-context surcharges. While any request in a session used a model with no
+known price, the session cost shows as unknown rather than a partial sum. A
+malformed entry is skipped with a warning. Prices are user-only: a cloned
+repository should not decide what a session appears to cost.
+
 ## What a project file may set
 
 A project file can arrive with a cloned repository, so it may only choose the
-model: `llm.model`, `llm.context_limit` and `llm.memory_model`, the same
-non-secret keys a project `.env` could set before. Endpoints, paths Wright
+model: `llm.model`, `llm.context_limit`, `llm.context_limits` and
+`llm.memory_model`, the same non-secret keys a project `.env` may set. Endpoints, paths Wright
 imports code from, logging and every other key are user-only. Wright ignores
 them in a project file and logs a warning naming the file and key.
 
@@ -74,7 +147,10 @@ them in a project file and logs a warning naming the file and key.
 
 These stay environment-only:
 
-- Secrets: `OPENAI_API_KEY`, `TAVILY_API_KEY`, `SILICONFLOW_API_KEY`,
+- Secrets: `OPENAI_API_KEY`, the provider keys in the model catalog table
+  (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `ZAI_API_KEY`;
+  read from `~/.wright/.env` or the environment, not a project `.env`),
+  `TAVILY_API_KEY`, `SILICONFLOW_API_KEY`,
   `LLM_API_KEY` and embedding settings read by the optional RAG embedder. A
   keychain-backed secret store may come later.
 - `WRIGHT_HOME` and `WRIGHT_MEMORY_DIR`, which locate state, including the

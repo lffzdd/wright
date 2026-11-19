@@ -295,7 +295,8 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
     return `${((step.elapsed_ms + extra) / 1000).toFixed(1)}s`;
   };
   const contextLimit = breakdown?.limit ?? state.usage.context_limit ?? null;
-  const contextTotal = breakdown?.total ?? state.usage.context_tokens ?? null;
+  // The reply reserve is room kept free, not context in use.
+  const contextTotal = breakdown?.used ?? breakdown?.total ?? state.usage.context_tokens ?? null;
   const contextShare = contextLimit && typeof contextTotal === "number" ? Math.min(100, Math.round((contextTotal / contextLimit) * 100)) : null;
   const permissionMode = state.session.permission_mode ?? "default";
   const pendingCount = state.pending_interactions.length;
@@ -455,7 +456,8 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
       </>}
     </div>}
     {tab === "context" && <div className="inspector-body in-body" role="tabpanel" id="inspector-panel-context" aria-labelledby="inspector-tab-context">
-      <ContextPanel breakdown={breakdown} usage={state.usage} historyOnly={historyOnly} />
+      <ContextPanel breakdown={breakdown} usage={state.usage} historyOnly={historyOnly} model={state.session.model}
+        mcpServers={state.mcp_servers} onCommand={onFeedback} onToggleMcp={(name, enabled) => api.setMcpServer(sessionId, name, enabled)} onShowCall={showCall} />
     </div>}
     </div>
   </aside>;

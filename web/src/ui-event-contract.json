@@ -26,6 +26,7 @@
     "command.rejected",
     "session.history_requested",
     "plan.updated",
-    "session.policy_updated"
+    "session.policy_updated",
+    "session.mcp_updated"
   ]
 }

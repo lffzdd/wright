@@ -119,7 +119,7 @@ def metered_events(events, observer):
     try:
         for event in events:
             if isinstance(event, UsageEvent):
-                usage = usage_from_provider(event.usage)
+                usage = usage_from_provider(event.usage, cost_usd=event.cost_usd)
             yield event
     finally:
         if usage is not None and observer is not None:

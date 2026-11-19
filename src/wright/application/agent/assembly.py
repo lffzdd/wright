@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from wright.application.permission.workflow import AuthorizationWorkflow
 
 from ...domain.model.agent import AgentProfile, CapabilityCatalog, CapabilitySnapshot
+from ...domain.model.mcp import mcp_tool_enabled
 from ...domain.model.session import Session
 from ...domain.model.tool_definition import Tool
 from ...domain.prompt import build_system_prompt
@@ -109,7 +110,11 @@ def prepare_model_tools(
     ][-MAX_ACTIVE_DEFERRED_TOOLS:]
     session.active_deferred_tools[:] = restored_active
     if any(tool.expose_to_model and tool.defer_to_model for tool in runtime_tools):
-        runtime_tools.append(make_tool_search_tool(runtime_tools, session.active_deferred_tools))
+        runtime_tools.append(make_tool_search_tool(
+            runtime_tools,
+            session.active_deferred_tools,
+            lambda name: mcp_tool_enabled(name, session.disabled_mcp_servers),
+        ))
     capabilities = CapabilitySnapshot(resolved, tuple(runtime_tools))
     schemas, names = encode_tools(
         runtime_tools, active_deferred=set(session.active_deferred_tools)

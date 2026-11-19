@@ -342,13 +342,13 @@ def test_run_turn_records_usage():
     content, usage = agent._run_turn()
     assert content.content == "content 1"
     assert usage == UsageRecord(
-        prompt_tokens=100, completion_tokens=10, total_tokens=110
+        prompt_tokens=100, completion_tokens=10, unpriced_requests=1, total_tokens=110
     )
 
     content, usage = agent._run_turn()
     assert content.content == "content 2"
     assert usage == UsageRecord(
-        prompt_tokens=200, completion_tokens=20, total_tokens=220
+        prompt_tokens=200, completion_tokens=20, unpriced_requests=1, total_tokens=220
     )
 
 
@@ -381,7 +381,7 @@ def test_run_turn_records_dict_usage():
     content, usage = agent._run_turn()
     assert content.content == "ok"
     assert usage == UsageRecord(
-        prompt_tokens=11, completion_tokens=1541, total_tokens=1552
+        prompt_tokens=11, completion_tokens=1541, unpriced_requests=1, total_tokens=1552
     )
 
 

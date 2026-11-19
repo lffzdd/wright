@@ -330,12 +330,28 @@ def process_model_name(cli_model: str | None = None, configured: str | None = No
     return ""
 
 
+def has_responses_state(messages: Iterable[dict[str, Any]]) -> bool:
+    """History that only the Responses API can continue."""
+    return any(
+        isinstance(message.get("provider_state"), dict)
+        and "responses_output" in message["provider_state"]
+        for message in messages
+    )
+
+
 def available_models(
-    current: str, configured: str | Iterable[str] | None = None
+    current: str,
+    configured: str | Iterable[str] | None = None,
+    presets: Iterable[str] = (),
 ) -> tuple[str, ...]:
-    """Return configured candidates (``llm.models``), retaining the selected model first."""
+    """Picker candidates, the selected model first.
+
+    ``llm.models`` (``configured``) replaces the catalog ``presets``.
+    """
     items = configured.split(",") if isinstance(configured, str) else (configured or ())
     models = [model.strip() for model in items if model.strip()]
+    if not models:
+        models = [model for model in presets if model]
     if current and current not in models:
         models.insert(0, current)
     return tuple(dict.fromkeys(models))

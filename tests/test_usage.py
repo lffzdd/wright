@@ -52,7 +52,8 @@ def test_usage_after_tool_results_and_verifier(tmp_path):
     assert agent.run('test') == 'done'
     assert len(renderer.requests) == 2  # Intermediate snapshots do not print twice.
     assert renderer.summaries == [(200, 40, 240)]
-    assert session.last_usage == UsageRecord(100, 20, 120)
+    # The fake provider has no price table, so the request counts as unpriced.
+    assert session.last_usage == UsageRecord(100, 20, 120, unpriced_requests=1)
     assert session.context_tokens == sum(
         estimate_message_tokens(record.message)
         for record in session.message_records
@@ -90,7 +91,7 @@ def test_metered_failure_keeps_last_snapshot():
     recorded = []
     with pytest.raises(RuntimeError):
         list(metered_events(events(), recorded.append))
-    assert recorded == [UsageRecord(8, 3, 11)]
+    assert recorded == [UsageRecord(8, 3, 11, unpriced_requests=1)]
 
 
 def test_console_labels_and_unknown_usage():

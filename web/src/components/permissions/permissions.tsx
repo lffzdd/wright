@@ -1,10 +1,11 @@
+import { X } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../../api";
 import { t, useT } from "../../i18n";
 import type { ExecutionMode, Grants, PermissionResource, SandboxStatus } from "../../types";
 import { InlineSelect } from "../ui/InlineSelect";
 import { SegmentedControl } from "../ui/SegmentedControl";
-import { commandRuleDetails, commandRuleLabel, networkRuleLabel } from "./permission-resource";
+import { commandArguments, commandRuleDetails, commandRuleLabel, networkRuleLabel } from "./permission-resource";
 import { PolicyAuditDetail } from "./policyAuditDetail";
 
 export function useShellReadiness(sessionId: string, enabled: boolean) {
@@ -52,33 +53,55 @@ export function ResourceOperations({ kind, operations, tool }: { kind: string; o
 
 const programName = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() || path;
 
-/** A command rule named by its program, not its install path; the full rule stays in the tooltip. */
-function shortCommandLabel(grant: Grants["grants"][number]): string {
+type Grant = Grants["grants"][number];
+type RuleEffect = "allow" | "ask" | "deny";
+/** A configured ask/deny rule. User and project rows can be removed unless they are built-in. */
+export type PolicyRuleRow = { effect: RuleEffect; scope: string; target: string; description: string; conditional: boolean; id: string; locked: boolean };
+
+/**
+ * A saved grant as a short pattern, programs named rather than pathed. The
+ * full sentence stays in the row's tooltip. Kinds without a natural pattern
+ * keep their sentence and are not set in monospace.
+ */
+function grantPattern(grant: Grant): { text: string; mono: boolean } {
   const resource: PermissionResource = grant.resource ?? grant;
-  const argv = resource.argv ?? [];
-  return commandRuleLabel({
-    ...resource,
-    programs: resource.programs?.map(programName),
-    argv: argv.length ? [programName(argv[0]), ...argv.slice(1)] : argv,
-  }, programName(grant.target));
-}
-
-/** Primary label for a saved grant; shell/command/network use terminal styling. */
-function GrantPrimary({ grant }: { grant: Grants["grants"][number] }) {
-  const tr = useT();
-  if (grant.resource_kind === "shell") {
-    return <div className="perm-command grant-command"><span className="muted">{tr("web.grant_run")}</span><span className="perm-target">{grant.target}</span></div>;
-  }
   if (grant.resource_kind === "command") {
-    return <div className="perm-command grant-command"><span className="perm-target">{shortCommandLabel(grant)}</span></div>;
+    const argv = resource.argv ?? [];
+    if (resource.programs?.length) return { text: `${resource.programs.map(programName).join(", ")} *`, mono: true };
+    if (resource.command_match === "executable") return { text: `${programName(argv[0] || grant.target)} *`, mono: true };
+    return { text: argv.length ? `${commandArguments([programName(argv[0]), ...argv.slice(1)])} *` : `${programName(grant.target)} *`, mono: true };
   }
+  if (grant.resource_kind === "shell") return { text: grant.target, mono: true };
+  if (grant.resource_kind === "directory") return { text: grant.recursive ? `${grant.target.replace(/[\\/]+$/, "")}/**` : grant.target, mono: true };
+  if (grant.resource_kind === "file") return { text: grant.target, mono: true };
   if (grant.resource_kind === "network") {
-    return <div className="perm-command grant-command"><span className="perm-target">{describeGrant(grant)}</span></div>;
+    if (resource.tool_name === "*") return { text: grant.target, mono: true };
+    return { text: `${((resource.methods ?? grant.http_methods) ?? ["GET"]).join(",")} ${grant.target}`, mono: true };
   }
-  return <span className="grant-line">{describeGrant(grant)}</span>;
+  if (grant.resource_kind === "tool") return { text: grant.tool || grant.target, mono: true };
+  return { text: describeGrant(grant), mono: false };
 }
 
-const GRANT_LIST_SCROLL_AT = 5;
+/** What a grant covers besides its pattern: where it applies, and which operations. */
+function grantDetail(grant: Grant): string {
+  const parts = [t(`web.grant_group.${grant.lifetime}`)];
+  if (grant.resource_kind === "directory" || grant.resource_kind === "file" || grant.resource_kind === "tool") {
+    parts.push(grant.operations.map((operation) => t(`web.operation.${operation}`)).join(", "));
+  }
+  if (grant.tool && grant.tool !== "*" && grant.resource_kind !== "tool" && grant.resource_kind !== "command" && grant.resource_kind !== "shell") parts.push(t("web.tool_restriction", { tool: grant.tool }));
+  return parts.filter(Boolean).join(" · ");
+}
+
+/** Everything the short row leaves out, for its tooltip. */
+function grantTitle(grant: Grant): string {
+  const parts = [describeGrant(grant)];
+  if (grant.resource_kind === "command") parts.push(commandRuleDetails(grant.resource ?? grant));
+  if (grant.resource_kind === "shell" && grant.cwd) parts.push(t("web.approval.in_folder", { path: grant.cwd }));
+  if (grant.resource_kind === "command" || grant.resource_kind === "shell") parts.push(t((grant.resource?.execution_mode ?? "sandbox") === "host" ? "web.execution.host_boundary" : "web.approval.sandbox_boundary"));
+  if (grant.lifetime === "user") parts.push(t("web.cross_project"));
+  return parts.join(" · ");
+}
+
 const GRANT_LIFETIMES = ["session", "project", "user"] as const;
 
 function useGrantMutate(sessionId: string, grants: Grants, update: (value: Grants) => void) {
@@ -113,32 +136,17 @@ function useGrantMutate(sessionId: string, grants: Grants, update: (value: Grant
   return { mutate, busy, error, notice, revision, changing };
 }
 
-function GrantItemList({ sessionId, items, grants, busy, mutate }: {
-  sessionId: string;
-  items: Grants["grants"];
-  grants: Grants;
-  busy: boolean;
-  mutate: ReturnType<typeof useGrantMutate>["mutate"];
-}) {
+function RuleRow({ effect, pattern, mono, detail, title, revoke }: { effect: RuleEffect; pattern: string; mono: boolean; detail: string; title?: string; revoke?: { label: string; busy: boolean; run: () => void } }) {
   const tr = useT();
-  const scroll = items.length > GRANT_LIST_SCROLL_AT;
-  // Program rules all carry the same caveat; it is said once under the list.
-  const commandNotes = [...new Set(items.filter((grant) => grant.resource_kind === "command").map((grant) => commandRuleDetails(grant.resource ?? grant)))];
-  return <>
-    <ul className={`grant-list${scroll ? " grant-list-scroll" : ""}`}>
-      {items.map((grant) => <li className={`grant-item ${grant.lifetime === "user" ? "warn" : ""}`} key={`${grant.source}:${grant.id}`} title={grant.resource_kind === "command" || grant.resource_kind === "shell" ? [grant.resource_kind === "command" ? describeGrant(grant) : "", grant.cwd && grant.resource_kind === "shell" ? tr("web.approval.in_folder", { path: grant.cwd }) : "", tr((grant.resource?.execution_mode ?? "sandbox") === "host" ? "web.execution.host_boundary" : "web.approval.sandbox_boundary")].filter(Boolean).join(" · ") : undefined}>
-        <div className="grant-item-body">
-          <GrantPrimary grant={grant} />
-          {grant.resource_kind === "directory" && grant.recursive && <small>{tr("web.approval.directory_recursive")}</small>}
-          {grant.resource_kind === "tool" && <small>{tr("web.approval.tool_operations", { operations: grant.operations.map((operation) => tr(`web.operation.${operation}`)).join(", ") })}</small>}
-          {grant.tool && grant.tool !== "*" && grant.resource_kind !== "command" && grant.resource_kind !== "shell" && <small>{tr("web.tool_restriction", { tool: grant.tool })}</small>}
-          {grant.lifetime === "user" && <small>{tr("web.cross_project")}</small>}
-        </div>
-        <button type="button" disabled={busy} className="grant-revoke" aria-label={tr("web.revoke_target", { target: grant.target })} onClick={() => mutate(() => api.revokeGrant(sessionId, grant.id, grant.source, grants.version), "web.grant_revoked")}>{tr("web.revoke")}</button>
-      </li>)}
-    </ul>
-    {commandNotes.map((note) => <p className="grant-footnote" key={note}>{note}</p>)}
-  </>;
+  return <li className={`rule-row ${effect}`} title={title}>
+    <span className="status-dot" aria-hidden="true" />
+    <span className="rule-row-body">
+      <span className={`rule-row-pattern${mono ? " mono" : ""}`}>{pattern}</span>
+      {detail ? <small>{detail}</small> : null}
+    </span>
+    <span className="rule-row-effect">{tr(`web.rule_effect.${effect}`)}</span>
+    {revoke ? <button type="button" className="icon-button icon-btn sm rule-row-revoke" disabled={revoke.busy} aria-label={revoke.label} title={tr("web.revoke")} onClick={revoke.run}><X size={12} weight="bold" aria-hidden="true" /></button> : <span className="rule-row-revoke-space" aria-hidden="true" />}
+  </li>;
 }
 
 export function PermissionGrantManualAdd({ sessionId, grants, update }: { sessionId: string; grants: Grants; update: (value: Grants) => void }) {
@@ -209,7 +217,7 @@ export function SandboxStatusCard({ sessionId, grants, update }: { sessionId: st
   </article>;
 }
 
-export function PermissionGrants({ sessionId, grants, update, includeManualAdd = false, showSandbox = true }: { sessionId: string; grants: Grants; update: (value: Grants) => void; includeManualAdd?: boolean; showSandbox?: boolean }) {
+export function PermissionGrants({ sessionId, grants, update, includeManualAdd = false, showSandbox = true, policyRules = [] }: { sessionId: string; grants: Grants; update: (value: Grants) => void; includeManualAdd?: boolean; showSandbox?: boolean; policyRules?: PolicyRuleRow[] }) {
   const tr = useT();
   const sandbox = grants.sandbox;
   const { mutate, busy, error, notice, revision, changing } = useGrantMutate(sessionId, grants, update);
@@ -223,23 +231,33 @@ export function PermissionGrants({ sessionId, grants, update, includeManualAdd =
     return () => { cancelled = true; window.clearInterval(interval); };
   }, [sandbox?.state, sessionId, update, revision, changing]);
   const grantItems = grants.grants ?? [];
-  const filledGroups = GRANT_LIFETIMES.filter((lifetime) => grantItems.some((grant) => grant.lifetime === lifetime));
-  const showGroupLabels = filledGroups.length > 1;
+  // Saved grants first (narrowest lifetime first), then the policy's ask and deny rules.
+  const ordered = GRANT_LIFETIMES.flatMap((lifetime) => grantItems.filter((grant) => grant.lifetime === lifetime));
+  const asks = policyRules.filter((rule) => rule.effect === "ask");
+  const denies = policyRules.filter((rule) => rule.effect === "deny");
+  const total = ordered.length + asks.length + denies.length;
+  const policyRow = (rule: PolicyRuleRow) => {
+    const removable = Boolean(rule.id) && !rule.locked && (rule.scope === "user" || rule.scope === "project");
+    return <RuleRow key={`${rule.effect}:${rule.scope}:${rule.target}`} effect={rule.effect} pattern={rule.target} mono
+      detail={[rule.locked ? tr("web.policy_builtin") : tr(`web.grant_group.${rule.scope}`), rule.conditional && !rule.locked ? tr("web.policy_conditional") : ""].filter(Boolean).join(" · ")} title={rule.description || undefined}
+      revoke={removable ? { label: tr("web.revoke_rule", { target: rule.target }), busy, run: () => void mutate(() => api.revokeGrant(sessionId, rule.id, rule.scope, grants.version), "web.grant_revoked") } : undefined} />;
+  };
   return <>
   <section className="perm-section permission-manager">
     {error && <p className="form-error" role="alert">{error}</p>}
     {notice && <p className="hint" role="status">{notice}</p>}
     {showSandbox && <SandboxStatusCard sessionId={sessionId} grants={grants} update={update} />}
-    <div className="section-label"><span>{tr("web.saved_grants")}</span><span className="section-count">{grants.grants?.length ?? 0}</span></div>
-    {!(grants.grants ?? []).length && <p className="empty-small">{tr("web.no_saved_grants")}</p>}
-    {GRANT_LIFETIMES.map((lifetime) => {
-      const items = grantItems.filter((grant) => grant.lifetime === lifetime);
-      if (!items.length) return null;
-      return <div className="grant-group" key={lifetime}>
-        {showGroupLabels ? <div className="grant-group-label">{tr(`web.grant_group.${lifetime}`)}</div> : null}
-        <GrantItemList sessionId={sessionId} items={items} grants={grants} busy={busy} mutate={mutate} />
-      </div>;
-    })}
+    <div className="section-label"><span>{tr("web.rules.title")}</span><span className="section-count">{total}</span></div>
+    {!total && <p className="empty-small">{tr("web.no_saved_grants")}</p>}
+    {total > 0 && <ul className="rule-list">
+      {ordered.map((grant) => {
+        const pattern = grantPattern(grant);
+        return <RuleRow key={`${grant.source}:${grant.id}`} effect="allow" pattern={pattern.text} mono={pattern.mono} detail={grantDetail(grant)} title={grantTitle(grant)}
+          revoke={{ label: tr("web.revoke_target", { target: grant.target }), busy, run: () => void mutate(() => api.revokeGrant(sessionId, grant.id, grant.source, grants.version), "web.grant_revoked") }} />;
+      })}
+      {asks.map(policyRow)}
+      {denies.map(policyRow)}
+    </ul>}
     {includeManualAdd ? <PermissionGrantManualAdd sessionId={sessionId} grants={grants} update={update} /> : null}
   </section>
   </>;
@@ -335,9 +353,10 @@ export function PermissionsPanel({ sessionId, grants, update, interactionMode, p
     { key: "outside", decision: decisionOf(grants, "file_write", "outside_scope") ?? decisionOf(grants, "file_read", "outside_scope") },
     { key: "network", decision: networkDecision, note: execution === "host" ? tr("web.execution.host_network") : networkGrants.length && !sessionNetwork ? tr("web.glance.network_saved") : networkToggle ? tr("web.glance.network_enable_hint") : undefined, toggle: networkToggle },
   ];
-  const blocked = (grants?.effective_policy ?? []).flatMap((policy) => policy.rules
-    .filter((rule) => rule.effect === "deny")
-    .map((rule) => ({ ...rule, operation: policy.operation })));
+  // One row per rule: the same pattern can be listed under several operations.
+  const policyRules = [...new Map((grants?.effective_policy ?? []).flatMap((policy) => policy.rules)
+    .filter((rule) => rule.effect === "ask" || rule.effect === "deny")
+    .map((rule): [string, PolicyRuleRow] => [`${rule.effect}:${rule.scope}:${rule.target}`, { effect: rule.effect as RuleEffect, scope: rule.scope, target: rule.target, description: rule.description, conditional: rule.conditional, id: typeof rule.rule.id === "string" ? rule.rule.id : "", locked: Boolean(rule.locked || rule.rule.source === "builtin") }])).values()];
   const modeHelp = tr(mode === "bypass" && execution === "host" ? "web.execution.host_bypass" : `web.perm_help.${mode}`);
   return <div className="permissions-panel">
     <section className="perm-section perm-execution">
@@ -367,7 +386,6 @@ export function PermissionsPanel({ sessionId, grants, update, interactionMode, p
           return <li key={row.key} className={`glance-row ${row.decision ?? "unknown"}${row.toggle ? " has-toggle" : ""}`}>
             <span className="glance-label">
               {tr(`web.glance.${row.key}`)}
-              {row.inlineNote && <small className="glance-inline-note">{row.inlineNote}</small>}
             </span>
             {/* The switch sits where the answer is, since it changes that answer. */}
             <span className="glance-outcome">
@@ -378,24 +396,14 @@ export function PermissionsPanel({ sessionId, grants, update, interactionMode, p
                   title={tr(sessionNetwork ? "web.glance.network_toggle_off" : "web.glance.network_toggle_on")}><span /></button>}
               </span>
             </span>
-            {row.note ? <small className="glance-note">{row.note}</small> : null}
+            {/* Notes sit on their own line so the label and the decision never wrap into three columns. */}
+            {row.note || row.inlineNote ? <small className="glance-note">{[row.inlineNote, row.note].filter(Boolean).join(" · ")}</small> : null}
           </li>;
         })}
       </ul>
     </section>
-    {grants && <PermissionGrants sessionId={sessionId} grants={grants} update={update} includeManualAdd showSandbox={false} />}
-    {grants && (blocked.length > 0 || grants.effective_policy.length > 0) && <div className="perm-advanced">
-      {blocked.length > 0 && <details className="perm-fold" open>
-        <summary>{tr("web.glance.always_blocked", { count: blocked.length })}</summary>
-        <ul className="grant-list policy-blocked-list">
-          {blocked.map((rule, index) => <li className="grant-item policy-blocked-item" key={`${rule.operation}:${index}`}>
-            <div className="grant-item-body">
-              <div className="perm-command grant-command"><span className="perm-target">{rule.target}</span></div>
-              <small>{tr(`web.lifetime.${rule.scope}`)}{rule.conditional ? ` · ${tr("web.policy_conditional")}` : ""}</small>
-            </div>
-          </li>)}
-        </ul>
-      </details>}
+    {grants && <PermissionGrants sessionId={sessionId} grants={grants} update={update} includeManualAdd showSandbox={false} policyRules={policyRules} />}
+    {grants && grants.effective_policy.length > 0 && <div className="perm-advanced">
       {grants.effective_policy.length > 0 && <details className="perm-fold">
         <summary>{tr("web.glance.how_decided")}</summary>
         <PolicyAuditDetail grants={grants} />

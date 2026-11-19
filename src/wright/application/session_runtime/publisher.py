@@ -81,11 +81,7 @@ class DisplayFold:
             if event.type == "usage.request":
                 self._usage_request(payload)
             elif event.type == "usage.task":
-                self.task_usage = {
-                    "prompt_tokens": payload.get("prompt_tokens"),
-                    "completion_tokens": payload.get("completion_tokens"),
-                    "total_tokens": payload.get("total_tokens"),
-                }
+                self.task_usage = _task_usage(payload)
             return
         elif event.type == "reasoning.delta":
             self.root["reasoning"] += str(payload.get("piece") or "")
@@ -110,11 +106,7 @@ class DisplayFold:
         elif event.type == "usage.request":
             self._usage_request(payload)
         elif event.type == "usage.task":
-            self.task_usage = {
-                "prompt_tokens": payload.get("prompt_tokens"),
-                "completion_tokens": payload.get("completion_tokens"),
-                "total_tokens": payload.get("total_tokens"),
-            }
+            self.task_usage = _task_usage(payload)
 
         if self.root is not None:
             self._fold_timeline(event)
@@ -231,6 +223,13 @@ class DisplayFold:
             "context_tokens": self.context_tokens,
             "context_limit": self.context_limit,
         }
+
+
+def _task_usage(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        name: payload.get(name)
+        for name in ("prompt_tokens", "completion_tokens", "total_tokens", "cache_read_tokens", "cost_usd")
+    }
 
 
 def _drain(target: queue.Queue) -> None:

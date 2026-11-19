@@ -26,6 +26,7 @@ UI_EVENT_TYPES = frozenset({
     "task.updated", "usage.request", "usage.task", "system.notice",
     "system.checkpoint_error", "command.accepted", "command.rejected",
     "session.history_requested", "plan.updated", "session.policy_updated",
+    "session.mcp_updated",
 })
 
 
@@ -336,10 +337,13 @@ class SessionEvents:
 
     def on_usage_summary(
         self, prompt_tokens: int, completion_tokens: int, total_tokens: int,
+        *, cache_read_tokens: int | None = None, cost_usd: float | None = None,
     ) -> None:
+        """``cost_usd`` is None while any request in the total had no known price."""
         self.emit("usage.task", {
             "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens,
+            "total_tokens": total_tokens, "cache_read_tokens": cache_read_tokens,
+            "cost_usd": cost_usd,
         })
 
     def on_checkpoint_error(self, error: str) -> None:

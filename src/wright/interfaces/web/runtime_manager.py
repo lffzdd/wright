@@ -281,9 +281,13 @@ class SessionHandle:
                 project_timeline,
             )
 
+            # While idle, show what the next request will send, so turning an
+            # MCP server off or a plan change shows at once. While a request
+            # runs, show the one in flight.
             breakdown = getattr(state, "request_context_breakdown", None)
-            if not isinstance(breakdown, dict) or not breakdown:
-                breakdown = self._preview_context() or empty_context(
+            idle = getattr(self.runtime, "agent_idle", None)
+            if not isinstance(breakdown, dict) or not breakdown or (idle is not None and idle.is_set()):
+                breakdown = self._preview_context() or breakdown or empty_context(
                     getattr(self.runtime.llm, "context_limit", None)
                 )
             queued_commands = [
@@ -335,6 +339,9 @@ class SessionHandle:
                     "prompt_tokens": usage.prompt_tokens,
                     "completion_tokens": usage.completion_tokens,
                     "total_tokens": usage.total_tokens,
+                    "cache_read_tokens": usage.cache_read_tokens,
+                    # Unknown, not zero, while any request had no known price.
+                    "cost_usd": round(usage.cost_usd, 6) if usage.cost_known else None,
                     "request_prompt_tokens": None if request is None else request.get("prompt_tokens"),
                     "request_completion_tokens": None if request is None else request.get("completion_tokens"),
                     "request_total_tokens": None if request is None else request.get("total_tokens"),
@@ -355,6 +362,7 @@ class SessionHandle:
                 ),
                 "subagents": project_subagents(state),
                 "accessed_files": project_accessed_files(state),
+                "mcp_servers": self.service.mcp_servers(),
             }
 
         return self.publisher.capture(build)
@@ -385,9 +393,13 @@ class SessionHandle:
         if not callable(preview):
             return None
         state = self.runtime.session_state
+        plan = getattr(state, "plan_manager", None)
         key = (
             len(getattr(state, "message_records", ()) or ()),
             tuple(getattr(state, "active_deferred_tools", ()) or ()),
+            tuple(getattr(state, "disabled_mcp_servers", ()) or ()),
+            repr(plan.snapshot()) if plan is not None and hasattr(plan, "snapshot") else "",
+            getattr(self.runtime.llm, "context_limit", None),
         )
         cached = getattr(self, "_context_preview", None)
         if cached is not None and cached[0] == key:
@@ -414,6 +426,12 @@ class SessionHandle:
         except SessionServiceError as exc:
             raise RuntimeManagerError(str(exc)) from exc
         return self.summary()
+
+    def set_mcp_server(self, name: str, enabled: bool) -> list[dict[str, Any]]:
+        try:
+            return self.service.set_mcp_server(name, enabled)
+        except SessionServiceError as exc:
+            raise RuntimeManagerError(str(exc)) from exc
 
     def set_execution_policy(
         self,
@@ -474,6 +492,9 @@ class RuntimeManager:
 
     def set_model(self, session_id: str, model: str) -> dict[str, Any]:
         return self.get(session_id).set_model(model)
+
+    def set_mcp_server(self, session_id: str, name: str, enabled: bool) -> list[dict[str, Any]]:
+        return self.get(session_id).set_mcp_server(name, enabled)
 
     def create(
         self,

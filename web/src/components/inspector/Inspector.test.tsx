@@ -353,10 +353,14 @@ describe("Inspector files, context and visibility", () => {
     ] };
     render(inspector(state));
     fireEvent.click(screen.getByRole("tab", { name: /Context/ }));
-    expect(screen.getByRole("img", { name: "19% of the context window used" })).toBeTruthy();
-    expect(screen.getByText("Estimate before the next request")).toBeTruthy();
+    // The reply reserve is room kept free, so the gauge counts only the 8K the request takes.
+    expect(screen.getByRole("img", { name: "6% of the context window used" })).toBeTruthy();
+    // The short label carries the full meaning in its tooltip.
+    expect(screen.getByTitle("Estimate before the next request").textContent).toBe("estimate");
     const labels = [...document.querySelectorAll(".ctx-legend-label")].map((item) => item.textContent);
-    expect(labels).toEqual(["Reserved Output", "Tool Definitions", "System Prompt", "Free"]);
+    expect(labels).toEqual(["Tool definitions", "System prompt", "Reply reserve"]);
+    // Free space is stated once, beside the total, rather than as a legend row.
+    expect(document.querySelector(".ctx-sub")?.textContent).toBe("120K left");
     expect(screen.getByText("Empty: Plan")).toBeTruthy();
   });
 
@@ -365,7 +369,7 @@ describe("Inspector files, context and visibility", () => {
     state.context_breakdown = { total: 120000, limit: 128000, categories: [{ id: "history", tokens: 120000, share: 1 }] };
     render(inspector(state));
     fireEvent.click(screen.getByRole("tab", { name: /Context/ }));
-    expect(document.querySelector(".ctx-summary")?.classList.contains("danger")).toBe(true);
+    expect(document.querySelector(".ctx-hero")?.classList.contains("danger")).toBe(true);
     expect(screen.getByText(/Close to the limit/)).toBeTruthy();
   });
 

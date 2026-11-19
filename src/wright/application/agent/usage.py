@@ -46,6 +46,8 @@ class AgentUsageTracker:
             usage.prompt_tokens,
             usage.completion_tokens,
             usage.total_tokens,
+            cache_read_tokens=usage.cache_read_tokens,
+            cost_usd=round(usage.cost_usd, 6) if usage.cost_known else None,
         )
 
     def record_usage_for_turn(

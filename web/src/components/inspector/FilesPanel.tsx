@@ -1,4 +1,4 @@
-import { ArrowClockwise, At, CaretDoubleUp, CaretRight, ChatCircleDots, Crosshair, Eye, EyeSlash, File, FileCode, FileImage, FileLock, FileText, Folder, FolderOpen, GitDiff, MagnifyingGlass, X } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowUUpLeft, At, CaretDoubleUp, CaretRight, Eye, EyeSlash, File, FileCode, FileImage, FileLock, FileText, Folder, FolderOpen, GitDiff, MagnifyingGlass, TreeStructure, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useT } from "../../i18n";
 import { CodeView } from "../code/CodeView";
@@ -20,6 +20,8 @@ const sortEntries = (entries: TreeEntry[]) => [...entries].sort((a, b) => (a.kin
 const PREVIEW_LINES = 4000;
 /** The refresh icon spins at least this long, so a fast reload still reads as one. */
 const MIN_SPIN_MS = 500;
+/** How long a revealed tree row stays highlighted after "show in tree". */
+const REVEAL_FLASH_MS = 1800;
 
 /** Cache and tool folders that are hidden unless the user asks to see them. */
 const CACHE_NAMES = new Set([".mypy_cache", ".pytest_cache", ".ruff_cache", ".cache", ".parcel-cache", ".turbo", ".next", ".specstory", ".DS_Store"]);
@@ -161,6 +163,7 @@ export function FilesPanel({ sessionKey, canReadFiles, historyOnly, accessedFile
   const [showCache, setShowCacheState] = useState(() => readFlag("wright.files.showCache"));
   const setShowCache = (next: boolean) => { setShowCacheState(next); writeFlag("wright.files.showCache", next); };
   const [revealPath, setRevealPath] = useState<string | null>(null);
+  const [flashPath, setFlashPath] = useState<string | null>(null);
   const generation = useRef(0);
   const [spinning, setSpinning] = useState(false);
   // The header switches the body between the project tree and the files this session used.
@@ -191,7 +194,7 @@ export function FilesPanel({ sessionKey, canReadFiles, historyOnly, accessedFile
   useEffect(() => {
     ++generation.current;
     const saved = expandedBySession.get(sessionKey) ?? [];
-    setBranches({}); setExpanded(new Set(saved)); setQuery(""); setSearchOpen(false); setResults(null); setRevealPath(null); setView("tree");
+    setBranches({}); setExpanded(new Set(saved)); setQuery(""); setSearchOpen(false); setResults(null); setRevealPath(null); setFlashPath(null); setView("tree");
     if (canReadFiles) { load(""); for (const path of saved) load(path); }
   }, [sessionKey, canReadFiles, load]);
 
@@ -217,19 +220,25 @@ export function FilesPanel({ sessionKey, canReadFiles, historyOnly, accessedFile
   }, [filePath, canReadFiles, readFile]);
   useEffect(() => { if (filePath) previewRef.current?.focus(); }, [filePath]);
 
-  // After "show in tree", scroll to and focus the row once its folders have loaded.
+  // After "show in tree", scroll to and flash the row once its folders have loaded.
   useEffect(() => {
     if (!revealPath || filePath || !treeRef.current) return;
     const row = [...treeRef.current.querySelectorAll<HTMLElement>("[data-path]")].find((item) => item.dataset.path === revealPath);
     if (row) {
       row.scrollIntoView?.({ block: "center" });
       row.focus({ preventScroll: true });
+      setFlashPath(revealPath);
       setRevealPath(null);
       return;
     }
     const pending = chainOf(revealPath, false).some((path) => !branches[path] || branches[path].status === "loading");
     if (!pending) setRevealPath(null);
   }, [revealPath, branches, expanded, query, filePath]);
+  useEffect(() => {
+    if (!flashPath) return;
+    const timer = window.setTimeout(() => setFlashPath(null), REVEAL_FLASH_MS);
+    return () => window.clearTimeout(timer);
+  }, [flashPath]);
 
   const treeLoading = Object.values(branches).some((branch) => branch.status === "loading");
   useEffect(() => {
@@ -265,6 +274,7 @@ export function FilesPanel({ sessionKey, canReadFiles, historyOnly, accessedFile
     }
     updateExpanded(next);
     setQuery(""); setResults(null); setSearchOpen(false); setView("tree");
+    setFlashPath(path);
     setRevealPath(path);
     openFile("");
   };
@@ -326,7 +336,7 @@ export function FilesPanel({ sessionKey, canReadFiles, historyOnly, accessedFile
         <button type="button" className="icon-btn sm" onClick={() => openFile("")} aria-label={tr("web.back_to_files")} title={tr("web.back_to_files")}><CaretRight className="chev-back" size={14} aria-hidden="true" /></button>
         <span className="crumb-path grow" title={filePath}>{filePath}</span>
         {letter && <span className={`badge ${letter}`} title={status}>{letter}</span>}
-        {usageCall && <button type="button" className="icon-btn sm" onClick={() => showCall?.(usageCall)} aria-label={tr("web.files.show_call")} title={`${tr("web.files.show_call")} · ${toolSummary(usage!)}`}><ChatCircleDots size={14} /></button>}
+        {usageCall && <button type="button" className="icon-btn sm" onClick={() => showCall?.(usageCall)} aria-label={tr("web.files.show_call")} title={`${tr("web.files.show_call")} · ${toolSummary(usage!)}`}><ArrowUUpLeft size={14} /></button>}
         {changeStatus.has(filePath) && <button type="button" className="icon-btn sm" onClick={() => openChanges(filePath)} aria-label={tr("web.files.view_diff")} title={tr("web.files.view_diff")}><GitDiff size={14} /></button>}
         {onReference && <button type="button" className="btn btn-ghost btn-sm mention-file" onClick={() => onReference(filePath)}><At size={14} aria-hidden="true" />{tr("web.cite")}</button>}
       </div>
@@ -361,9 +371,10 @@ export function FilesPanel({ sessionKey, canReadFiles, historyOnly, accessedFile
           <button type="button" className="grow mono files-session-path" disabled={!canReadFiles} onClick={() => isDir ? reveal(isRoot ? "" : file.path, true) : openFile(file.path)} title={absolutePath(file.path, projectRoot)}>
             <bdi>{isRoot ? <b>{projectName || file.path}</b> : <><span>{dir}</span><b>{name}{isDir ? "/" : ""}</b></>}</bdi>
           </button>
-          <span className="muted" title={tr("web.files.access_count", { count })}>{toolSummary(file)}</span>
-          {callId && <button type="button" className="icon-btn sm" onClick={() => showCall?.(callId)} aria-label={`${tr("web.files.show_call")}: ${file.path}`} title={tr("web.files.show_call")}><ChatCircleDots size={14} /></button>}
-          <button type="button" className="icon-btn sm" onClick={() => reveal(isRoot ? "" : file.path, isDir)} disabled={!canReadFiles} aria-label={`${tr("web.files.locate")}: ${file.path}`} title={tr("web.files.locate")}><Crosshair size={14} /></button>
+          {callId
+            ? <button type="button" className="files-show-call" onClick={() => showCall?.(callId)} aria-label={`${tr("web.files.show_call")}: ${file.path}`} title={tr("web.files.show_call")}><ArrowUUpLeft size={12} aria-hidden="true" /><span>{toolSummary(file)}</span></button>
+            : <span className="muted" title={tr("web.files.access_count", { count })}>{toolSummary(file)}</span>}
+          <button type="button" className="icon-btn sm" onClick={() => reveal(isRoot ? "" : file.path, isDir)} disabled={!canReadFiles} aria-label={`${tr("web.files.locate")}: ${file.path}`} title={tr("web.files.locate")}><TreeStructure size={14} /></button>
         </div>;
       })}
     </div>
@@ -392,7 +403,7 @@ export function FilesPanel({ sessionKey, canReadFiles, historyOnly, accessedFile
         const open = expanded.has(entry.path);
         const hasMod = changedDirs.has(entry.path);
         return <div key={entry.path} role="none">
-          <button type="button" className={`tree-row files-row files-dir${open ? " open" : ""}`} role="treeitem" data-path={entry.path} data-dir="true" aria-level={depth + 1} aria-expanded={open} style={pad} onClick={() => toggle(entry.path)} title={absolutePath(entry.path, projectRoot)}>
+          <button type="button" className={`tree-row files-row files-dir${open ? " open" : ""}${flashPath === entry.path ? " files-reveal" : ""}`} role="treeitem" data-path={entry.path} data-dir="true" aria-level={depth + 1} aria-expanded={open} style={pad} onClick={() => toggle(entry.path)} title={absolutePath(entry.path, projectRoot)}>
             <CaretRight size={12} className="chev ico" aria-hidden="true" />
             <FolderIcon open={open} />
             <span className="name">{entry.name}</span>
@@ -404,7 +415,7 @@ export function FilesPanel({ sessionKey, canReadFiles, historyOnly, accessedFile
       const status = changeStatus.get(entry.path);
       const letter = status ? treeLetter(status) : "";
       const kind = status ? treeKind(status) : "";
-      return <button key={entry.path} type="button" className={`tree-row files-row${kind ? ` ${kind}` : ""}`} role="treeitem" data-path={entry.path} aria-level={depth + 1} style={pad} disabled={!canReadFiles} title={absolutePath(entry.path, projectRoot)} onClick={() => openFile(entry.path)}>
+      return <button key={entry.path} type="button" className={`tree-row files-row${kind ? ` ${kind}` : ""}${flashPath === entry.path ? " files-reveal" : ""}`} role="treeitem" data-path={entry.path} aria-level={depth + 1} style={pad} disabled={!canReadFiles} title={absolutePath(entry.path, projectRoot)} onClick={() => openFile(entry.path)}>
         <span className="tree-slot" aria-hidden="true" />
         <FileIcon name={entry.name} />
         <span className="name">{entry.name}</span>
@@ -429,7 +440,7 @@ export function FilesPanel({ sessionKey, canReadFiles, historyOnly, accessedFile
             <span className="name">{highlightName(name, query)}</span>
             {dir ? <span className="tree-path">{dir}</span> : null}
           </button>
-          <span className="files-row-actions"><button type="button" className="icon-button files-locate" onClick={() => reveal(path, false)} aria-label={tr("web.files.locate")} title={`${tr("web.files.locate")}: ${path}`}><Crosshair size={13} /></button></span>
+          <span className="files-row-actions"><button type="button" className="icon-button files-locate" onClick={() => reveal(path, false)} aria-label={tr("web.files.locate")} title={`${tr("web.files.locate")}: ${path}`}><TreeStructure size={13} /></button></span>
         </div>;
       })}</div>
       : <p className="empty-small">{tr("web.files.no_match")}</p>}

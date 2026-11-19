@@ -80,7 +80,9 @@ describe("Files used in this session", () => {
     fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
     await screen.findByRole("treeitem", { name: /README.md/ });
     sessionView();
-    fireEvent.click(screen.getByRole("button", { name: "Show in conversation: src/a.ts" }));
+    const jump = screen.getByRole("button", { name: "Jump to this call: src/a.ts" });
+    expect(jump.textContent).toBe("read_file · edit_file");
+    fireEvent.click(jump);
     expect(showCall).toHaveBeenCalledWith("call-edit");
   });
 
@@ -93,7 +95,7 @@ describe("Files used in this session", () => {
     sessionView();
     fireEvent.click(pathButton("README.md"));
     expect(await screen.findByText("hello")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Show in conversation" }));
+    fireEvent.click(screen.getByRole("button", { name: "Jump to this call" }));
     expect(showCall).toHaveBeenCalledWith("call-read");
   });
 
@@ -104,6 +106,14 @@ describe("Files used in this session", () => {
     expect(await screen.findByRole("treeitem", { name: /a.ts/ })).toBeTruthy();
     expect(screen.getByRole("radio", { name: "project" }).getAttribute("aria-checked")).toBe("true");
     expect(screen.queryByRole("region", { name: "Content preview" })).toBeNull();
+  });
+
+  it("highlights the tree row after reveal in tree", async () => {
+    await openFiles(used());
+    sessionView();
+    fireEvent.click(screen.getByRole("button", { name: "Reveal in tree: README.md" }));
+    const row = await screen.findByRole("treeitem", { name: /README.md/ });
+    expect(row.classList.contains("files-reveal")).toBe(true);
   });
 });
 

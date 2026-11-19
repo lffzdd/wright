@@ -187,6 +187,8 @@ class McpManager:
             target=self.loop.run_forever, name="mcp-loop", daemon=True
         )
         self.sessions: dict[str, ClientSession] = {}
+        # 每个 server 的连接结果,按配置顺序;供界面展示,不参与调用。
+        self._statuses: dict[str, dict[str, Any]] = {}
         self._started = False
         self._serve_future: Future | None = None  # _serve 任务句柄(线程安全)
         self._ready: Future | None = None  # _serve 交回工具列表的通道
@@ -224,11 +226,16 @@ class McpManager:
                     except Exception as e:
                         # 单个 server 连不上不拖垮整体:log 后跳过,其余照常。
                         logger.warning("MCP server %r failed to connect, skipped: %s", cfg.name, e)
+                        self._statuses[cfg.name] = _failed_status(e)
                         continue
                     self.sessions[cfg.name] = session
                     listed = await session.list_tools()
+                    names = []
                     for mcp_tool in listed.tools:
-                        tools.append(self._wrap(cfg.name, session, mcp_tool))
+                        wrapped = self._wrap(cfg.name, session, mcp_tool)
+                        names.append(wrapped.name)
+                        tools.append(wrapped)
+                    self._statuses[cfg.name] = {"status": "connected", "tools": names, "error": None}
                     logger.info(
                         "MCP server %r connected with %d tools",
                         cfg.name,
@@ -327,6 +334,14 @@ class McpManager:
             timeout_owner="tool",
         )
 
+    def servers(self) -> list[dict[str, Any]]:
+        """每个已配置 server 的状态:connected / failed / auth_required,及其工具名。"""
+        result = []
+        for cfg in self.configs:
+            status = self._statuses.get(cfg.name, {"status": "failed", "tools": [], "error": "not connected"})
+            result.append({"name": cfg.name, **status, "tools": list(status["tools"])})
+        return result
+
     def shutdown(self) -> None:
         """关闭所有 session / 子进程,并停掉事件循环线程。可重复调用。"""
         if not self._started:
@@ -347,6 +362,13 @@ class McpManager:
             self._started = False
             if not self.loop.is_closed():
                 self.loop.close()
+
+
+def _failed_status(error: BaseException) -> dict[str, Any]:
+    """连不上的 server;认证失败单独标出,界面据此提示重新认证。"""
+    text = f"{type(error).__name__}: {error}"[:300]
+    auth = any(marker in text for marker in ("401", "403", "Unauthorized", "Forbidden", "invalid_token"))
+    return {"status": "auth_required" if auth else "failed", "tools": [], "error": text}
 
 
 def _to_tool_result(

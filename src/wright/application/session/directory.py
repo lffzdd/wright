@@ -32,6 +32,7 @@ from ..composition.runtime import (
     RuntimeConfig,
     WrightRuntime,
     assemble_runtime,
+    model_presets,
     shutdown_runtime,
 )
 from ..composition.settings import load_settings
@@ -162,7 +163,7 @@ class SessionDirectory:
                 and self.worktrees.inspect(ProjectContext.local(self.project_root))["dirty"]
             ),
             "default_model": base_model,
-            "models": list(available_models(base_model, llm.models)),
+            "models": list(available_models(base_model, llm.models, model_presets(llm))),
             **_git_fields(self.project_root),
         }
 

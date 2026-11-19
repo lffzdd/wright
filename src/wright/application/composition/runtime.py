@@ -6,7 +6,7 @@ import os
 import queue
 import sys
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -29,6 +29,13 @@ from ...core.paths import (
     user_mcp_config_path,
     wright_home,
 )
+from ...domain.model.llm.catalog import (
+    ModelRouteError,
+    ModelRouter,
+    parse_context_entry,
+    provider_key_envs,
+)
+from ...domain.model.llm.pricing import PriceBook, PriceError, parse_price_entry
 from ...domain.model.session import INTERACTIVE_SESSION_LABEL, Session
 from ...domain.model.session.errors import CheckpointError
 from ...domain.model.settings import LlmSettings, SettingsError, WrightSettings
@@ -93,7 +100,7 @@ logger = get_logger(__name__)
 # The only keys a project .env can set; everything else belongs in ~/.wright/
 # or ~/.wright/settings.json. Non-secret ones here are legacy aliases of
 # project-safe settings (llm.model, llm.context_limit, llm.memory_model).
-_PROJECT_ENV_KEYS = frozenset({"OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_CONTEXT_LIMIT", "OPENAI_MEMORY_MODEL", "TAVILY_API_KEY", "BRAVE_API_KEY"})
+_PROJECT_ENV_KEYS = frozenset({"OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_CONTEXT_LIMIT", "WRIGHT_CONTEXT_LIMITS", "OPENAI_MEMORY_MODEL", "TAVILY_API_KEY", "BRAVE_API_KEY"})
 
 
 @dataclass
@@ -125,6 +132,8 @@ class WrightRuntime:
     title_llm: Any = None
     # Effective settings this runtime was built with.
     settings: WrightSettings = field(default_factory=WrightSettings)
+    # Catalog models the picker offers when llm.models is empty.
+    model_presets: tuple[str, ...] = ()
     # The ApplicationHost owns durable scheduling, SQLite and durable workers.
     # A session catalog may retain it after this Session closes.
     application_host: ApplicationHost | None = None
@@ -405,39 +414,77 @@ def _create_llm_clients(
     artifact_store: ArtifactStore,
     *,
     llm: LlmSettings,
-    api_key: str | None,
+    router: ModelRouter,
 ) -> tuple[LLMClient, LLMClient]:
-    requested_transport = (
-        session_state.llm_transport
-        or config.transport
-        or llm.transport
-    )
-    base_url = llm.base_url or None
+    preference = config.transport or llm.transport
+    route = router.route(model)
     llm_client = LLMClient(
-        base_url=base_url,
-        api_key=api_key,
+        base_url=route.base_url,
+        api_key=route.api_key,
         model=model,
-        context_limit=llm.context_limit,
-        transport=requested_transport,
+        context_limit=route.context_limit,
+        transport=session_state.llm_transport or preference,
         attachment_store=attachment_store,
         artifact_store=artifact_store,
     )
+    llm_client.router = router.route
+    llm_client.transport_preference = preference
     session_state.llm_transport = llm_client.transport_name
+    llm_client.price_book = _price_book(llm.prices)
     # 记忆的召回/提取 side-query 可选用更便宜的模型省钱(对标 memdir 用 Sonnet 选记忆)。
     # 配了 llm.memory_model 就单独建个非流式 client,否则复用主 client。
     memory_model = llm.memory_model
-    selector_llm = (
-        LLMClient(
-            base_url=base_url,
-            api_key=api_key,
+    if memory_model:
+        memory_route = router.route(memory_model)
+        same_endpoint = memory_route.base_url == route.base_url
+        selector_llm = LLMClient(
+            base_url=memory_route.base_url,
+            api_key=memory_route.api_key,
             model=memory_model,
+            context_limit=memory_route.context_limit,
             stream=False,
-            transport=session_state.llm_transport,
+            transport=session_state.llm_transport if same_endpoint else preference,
         )
-        if memory_model
-        else llm_client
-    )
+    else:
+        selector_llm = llm_client
+    selector_llm.price_book = llm_client.price_book
     return llm_client, selector_llm
+
+
+def model_router(llm: LlmSettings) -> ModelRouter:
+    """The catalog behind llm settings and the API keys in the environment.
+
+    A malformed llm.context_limits entry is skipped, not fatal.
+    """
+    overrides = {}
+    for entry in llm.context_limits:
+        try:
+            name, tokens = parse_context_entry(entry)
+        except ValueError as exc:
+            logger.warning("Ignored llm.context_limits entry: %s", exc)
+            continue
+        overrides[name] = tokens
+    keys = {name: os.getenv(name, "") for name in provider_key_envs()}
+    return ModelRouter(llm, keys, context_overrides=overrides)
+
+
+def model_presets(llm: LlmSettings) -> tuple[str, ...]:
+    """Catalog models the picker offers when llm.models is empty."""
+    load_env()
+    return model_router(llm).presets()
+
+
+def _price_book(entries: Sequence[str]) -> PriceBook:
+    """Built-in list prices plus llm.prices; a malformed entry is skipped, not fatal."""
+    overrides = {}
+    for entry in entries:
+        try:
+            name, price = parse_price_entry(entry)
+        except PriceError as exc:
+            logger.warning("Ignored llm.prices entry: %s", exc)
+            continue
+        overrides[name] = price
+    return PriceBook(overrides)
 
 
 def _open_autonomy_store(
@@ -480,7 +527,6 @@ def assemble_runtime(
 ) -> WrightRuntime:
     load_env()
 
-    api_key = os.getenv("OPENAI_API_KEY")
     requested_model = config.model
 
     requested_workspace = (config.workspace or Path.cwd()).expanduser().resolve()
@@ -524,10 +570,14 @@ def assemble_runtime(
     session_state.model_name = model
     attachment_store = AttachmentStore(attachment_dir(project_root), session_state.session_id)
     artifact_store = ArtifactStore(artifact_dir(project_root))
-    llm_client, selector_llm = _create_llm_clients(
-        config, session_state, model, attachment_store, artifact_store,
-        llm=settings.llm, api_key=api_key,
-    )
+    router = model_router(settings.llm)
+    try:
+        llm_client, selector_llm = _create_llm_clients(
+            config, session_state, model, attachment_store, artifact_store,
+            llm=settings.llm, router=router,
+        )
+    except ModelRouteError as exc:
+        raise SystemExit(str(exc)) from exc
     llm_client.session_attachments = session_state.attachments
     draft_attachments = DraftAttachments(attachment_store, session_state.attachments)
     runtime_resources = None  # created after the event queue exists
@@ -804,6 +854,7 @@ def assemble_runtime(
         sandbox_control=LocalSandboxControl(),
         title_llm=selector_llm if settings.session.auto_title else None,
         settings=settings,
+        model_presets=router.presets(),
     )
 
 

@@ -182,8 +182,8 @@ def _delegation(session, services, journal_factory, permission_service) -> Deleg
     def bind_child_session(task_id: str, child_session_id: str) -> None:
         control.bind_child_session(task_id, child_session_id)
 
-    def add_usage(task_id: str, prompt: int, completion: int, total: int) -> None:
-        control.add_usage(task_id, prompt, completion, total)
+    def add_usage(task_id: str, prompt: int, completion: int, total: int, **extra: Any) -> None:
+        control.add_usage(task_id, prompt, completion, total, **extra)
 
     def request_cancel(task_id: str, reason: str) -> None:
         control.request_cancel(task_id, reason)

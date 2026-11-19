@@ -21,6 +21,8 @@ _LEGACY = {
     "WRIGHT_MODELS": ("llm.models", "a, b,a", ("a", "b")),
     "OPENAI_MEMORY_MODEL": ("llm.memory_model", "small", "small"),
     "OPENAI_CONTEXT_LIMIT": ("llm.context_limit", "64000", 64000),
+    "WRIGHT_CONTEXT_LIMITS": ("llm.context_limits", "my-model=64000", ("my-model=64000",)),
+    "WRIGHT_MODEL_PRICES": ("llm.prices", "kimi-k3=3/15/0.3, my-model=1/2", ("kimi-k3=3/15/0.3", "my-model=1/2")),
     "WRIGHT_LLM_TRANSPORT": ("llm.transport", "Chat", "chat"),
     "OPENAI_BASE_URL": ("llm.base_url", "http://127.0.0.1:9/v1", "http://127.0.0.1:9/v1"),
     "WRIGHT_AUTO_TITLE": ("session.auto_title", "off", False),
@@ -58,7 +60,8 @@ def test_every_key_has_a_legacy_env_name_and_each_one_maps():
 def test_defaults_without_any_layer():
     settings = resolve_settings().settings
     assert settings == WrightSettings()
-    assert settings.llm.context_limit == 128000
+    # 0: each model's context window comes from the catalog, then 128000.
+    assert settings.llm.context_limit == 0
     assert settings.session.auto_title is True
     assert set(settings.sources.values()) == {"default"}
 
@@ -91,7 +94,7 @@ def test_project_file_cannot_set_user_only_keys(key):
 
 def test_project_safe_keys_are_only_model_choices():
     assert {spec.key for spec in SETTING_SPECS if spec.project_safe} == {
-        "llm.model", "llm.context_limit", "llm.memory_model",
+        "llm.model", "llm.context_limit", "llm.context_limits", "llm.memory_model",
     }
 
 
@@ -190,7 +193,7 @@ def test_write_sets_and_removes_keys_atomically(tmp_path, clean_env):
     ("project", "knowledge.rag_dir", "/tmp/x", "user settings file"),
     ("user", "llm.api_key", "sk", "secrets belong"),
     ("user", "llm.nope", "x", "unknown setting"),
-    ("user", "llm.context_limit", 0, "at least 1"),
+    ("user", "llm.context_limit", -1, "at least 0"),
     ("user", "llm.transport", "grpc", "one of"),
 ])
 def test_write_refuses_invalid_edits(tmp_path, clean_env, scope, key, value, match):

@@ -256,8 +256,12 @@ class PermissionService:
                             raise ValueError("Authorization not found")
                         self._repository.write_session(owner.session_id, self._records(owner.rules))
                     elif lifetime in {"project", "user"}:
-                        if not any(rule.lifetime == lifetime and record_id(rule.to_persistent()) == identity for rule in snapshot.settings.allow):
+                        stored = (*snapshot.settings.allow, *snapshot.settings.deny, *snapshot.settings.ask)
+                        matched = [rule for rule in stored if rule.lifetime == lifetime and record_id(rule.to_persistent()) == identity]
+                        if not matched:
                             raise ValueError("Authorization not found")
+                        if any(rule.source == "builtin" for rule in matched):
+                            raise ValueError("Built-in permission rules cannot be revoked")
                         self._repository.remove(identity, lifetime)
                     else:
                         raise ValueError("Unknown authorization lifetime")

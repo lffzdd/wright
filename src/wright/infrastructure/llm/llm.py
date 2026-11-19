@@ -23,6 +23,7 @@ from openai import APIConnectionError, APIStatusError, OpenAI, omit
 
 from ...domain.gateway.llm_gateway import ILLMProvider
 from ...domain.model.llm import ModelRequest
+from ...domain.model.llm.catalog import ModelRoute
 from ...domain.model.llm.events import (
     ContentDelta,
     ContentDone,
@@ -30,8 +31,14 @@ from ...domain.model.llm.events import (
     ReasoningDelta,
     UsageEvent,
 )
-from ...domain.model.llm.model_adapters import ChatAdapter, ResponsesAdapter
+from ...domain.model.llm.model_adapters import (
+    ChatAdapter,
+    ResponsesAdapter,
+    has_responses_state,
+)
 from ...domain.model.llm.model_errors import resolve_transport
+from ...domain.model.llm.pricing import PriceBook
+from ...domain.model.llm.provider_usage import usage_from_provider
 from ...domain.model.tool import ArtifactRef
 from ..storage.artifacts import ArtifactStore
 from ..storage.attachments import AttachmentError, AttachmentStore
@@ -61,12 +68,19 @@ class LLMClient(ILLMProvider):
 
         self.client = OpenAI(base_url=base_url, api_key=api_key)
         self.base_url = base_url
+        self._api_key = api_key
         self.transport_name = resolve_transport(base_url, transport)
+        # Set by composition: finds the endpoint of a newly selected model,
+        # and the transport asked for when that endpoint changes.
+        self.router: Callable[[str], ModelRoute] | None = None
+        self.transport_preference = "auto"
         self.attachment_store = attachment_store
         self.artifact_store = artifact_store
         self.session_attachments: dict[str, Any] = {}
         self.model = model
         self.context_limit = context_limit
+        # Set by composition from the built-in list and llm.prices.
+        self.price_book: PriceBook | None = None
         self.stream = stream
         self.max_attempts = max_attempts
         self.base_wait = base_wait
@@ -74,6 +88,31 @@ class LLMClient(ILLMProvider):
         self.response_format = response_format
         self.chat_adapter = ChatAdapter(self._attachment_data_url, self._artifact_data_url)
         self.responses_adapter = ResponsesAdapter(self._attachment_data_url, self._artifact_data_url)
+
+    def retarget(self, model: str) -> Callable[[], None]:
+        """Select ``model``, moving to its endpoint; returns an undo.
+
+        Raises ``ModelRouteError`` when the model cannot be reached, leaving
+        the client unchanged. A new endpoint gets a new SDK client, so a
+        shallow copy of this client can be retargeted without touching it.
+        """
+        previous = (self.client, self.base_url, self._api_key, self.transport_name, self.model, self.context_limit)
+
+        def undo() -> None:
+            (self.client, self.base_url, self._api_key, self.transport_name,
+             self.model, self.context_limit) = previous
+
+        if self.router is None:
+            self.model = model
+            return undo
+        route = self.router(model)
+        if (route.base_url, route.api_key) != (self.base_url, self._api_key):
+            transport = resolve_transport(route.base_url, self.transport_preference)
+            self.client = OpenAI(base_url=route.base_url, api_key=route.api_key)
+            self.base_url, self._api_key, self.transport_name = route.base_url, route.api_key, transport
+        self.model = model
+        self.context_limit = route.context_limit
+        return undo
 
     def __call__(
         self,
@@ -100,11 +139,7 @@ class LLMClient(ILLMProvider):
             messages = request
             model = self.model
             transport = self.transport_name
-        if transport != "responses" and any(
-            isinstance(message.get("provider_state"), dict)
-            and "responses_output" in message["provider_state"]
-            for message in messages
-        ):
+        if transport != "responses" and has_responses_state(messages):
             raise ValueError(
                 "Responses continuation state cannot be sent through Chat transport"
             )
@@ -113,22 +148,30 @@ class LLMClient(ILLMProvider):
             "response_format": response_format or self.response_format or omit,
         }
         if transport == "responses":
-            if self.stream:
-                yield from self._call_responses_stream(messages, options, model)
-            else:
-                yield from self._call_responses_once(messages, options, model)
-        elif self.stream:
-            yield from self._call_stream(
-                self.chat_adapter.encode_messages(messages),
-                {**options, "tools": self._chat_tools(options["tools"])},
-                model,
+            events = (
+                self._call_responses_stream(messages, options, model)
+                if self.stream
+                else self._call_responses_once(messages, options, model)
             )
         else:
-            yield from self._call_once(
+            chat = (self._call_stream if self.stream else self._call_once)
+            events = chat(
                 self.chat_adapter.encode_messages(messages),
                 {**options, "tools": self._chat_tools(options["tools"])},
                 model,
             )
+        for event in events:
+            yield self._priced(event, model) if isinstance(event, UsageEvent) else event
+
+    def _priced(self, event: UsageEvent, model: str) -> UsageEvent:
+        """Attach the request's list-price cost; None when the model has no known price."""
+        if event.cost_usd is not None or self.price_book is None:
+            return event
+        usage = usage_from_provider(event.usage)
+        cost = self.price_book.cost(
+            model, usage.prompt_tokens, usage.completion_tokens, usage.cache_read_tokens
+        )
+        return UsageEvent(event.usage, cost_usd=cost)
 
     def _attachment_data_url(self, attachment_id: str) -> str:
         if self.attachment_store is None:

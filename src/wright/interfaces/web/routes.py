@@ -52,6 +52,10 @@ class LabelRequest(BaseModel):
     label: str
 
 
+class McpServerRequest(BaseModel):
+    enabled: bool
+
+
 class ModelRequest(BaseModel):
     model: str
 
@@ -287,6 +291,15 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
         _require_auth(request, auth)
         try:
             return manager.fork(session_id, body.message_id).snapshot()
+        except RuntimeManagerError as exc:
+            raise HTTPException(status_code=exc.status_code or 409, detail=str(exc)) from exc
+
+    @router.post("/sessions/{session_id}/mcp/{name}")
+    def set_mcp_server(session_id: str, name: str, body: McpServerRequest, request: Request) -> dict[str, Any]:
+        """Turn one MCP server on or off for this conversation."""
+        _require_auth(request, auth)
+        try:
+            return {"mcp_servers": manager.set_mcp_server(session_id, name, body.enabled)}
         except RuntimeManagerError as exc:
             raise HTTPException(status_code=exc.status_code or 409, detail=str(exc)) from exc
 

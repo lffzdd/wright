@@ -26,21 +26,24 @@ Put your API key in `~/.wright/.env` (or the real environment):
 OPENAI_API_KEY=sk-...
 ```
 
-Put the endpoint and model, which must support native function calling, in
+Put the model, which must support native function calling, in
 `~/.wright/settings.json`:
 
 ```json
 {
-  "llm": {
-    "base_url": "https://api.openai.com/v1",
-    "model": "gpt-4.1",
-    "models": ["gpt-4.1", "gpt-4.1-mini"]
-  }
+  "llm": { "model": "gpt-6.2-sol" }
 }
 ```
 
+Common models from OpenAI, Anthropic, Google, DeepSeek, Zhipu and Qwen are
+built in: Wright finds their endpoint and context window, and the model picker
+offers current models of every provider whose key is set
+(`ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, …). For any other model, or a
+gateway, set `llm.base_url` to its OpenAI-compatible endpoint; `OPENAI_API_KEY`
+is then sent there. See [docs/settings.md](docs/settings.md#model-catalog).
+
 A project's `.wright/settings.json` may only choose the model
-(`llm.model`, `llm.context_limit`, `llm.memory_model`); a project `.env` only
+(`llm.model`, `llm.context_limit`, `llm.context_limits`, `llm.memory_model`); a project `.env` only
 supplies API keys and those model names. Wright ignores anything else there,
 because a cloned repository or a sandboxed command can write those files.
 Environment variables such as `OPENAI_MODEL` still work and override both

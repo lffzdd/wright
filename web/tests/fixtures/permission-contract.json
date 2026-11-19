@@ -1253,7 +1253,8 @@
           ],
           "tool": "*",
           "description": "* under /external matching project.txt for file_read, file_write only",
-          "conditional": true
+          "conditional": true,
+          "locked": false
         },
         {
           "effect": "allow",
@@ -1285,7 +1286,8 @@
           ],
           "tool": "*",
           "description": "* under /external matching user.txt for file_read, file_write only",
-          "conditional": true
+          "conditional": true,
+          "locked": false
         },
         {
           "effect": "allow",
@@ -1317,7 +1319,8 @@
           ],
           "tool": "*",
           "description": "* under /external matching session.txt for file_read, file_write only",
-          "conditional": true
+          "conditional": true,
+          "locked": false
         }
       ],
       "constraints": [
@@ -1385,7 +1388,8 @@
           ],
           "tool": "*",
           "description": "* under /external matching project.txt for file_read, file_write only",
-          "conditional": true
+          "conditional": true,
+          "locked": false
         },
         {
           "effect": "allow",
@@ -1417,7 +1421,8 @@
           ],
           "tool": "*",
           "description": "* under /external matching user.txt for file_read, file_write only",
-          "conditional": true
+          "conditional": true,
+          "locked": false
         },
         {
           "effect": "allow",
@@ -1449,7 +1454,8 @@
           ],
           "tool": "*",
           "description": "* under /external matching session.txt for file_read, file_write only",
-          "conditional": true
+          "conditional": true,
+          "locked": false
         }
       ],
       "constraints": [

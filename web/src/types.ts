@@ -182,13 +182,42 @@ export type TimelineItem = {
   suggestions?: string[];
 };
 
-export type ContextCategory = { id: string; tokens: number; share: number };
+/** One thing inside a context category, e.g. a single tool result or one MCP server's tools. */
+export type ContextItem = {
+  label: string;
+  tokens: number;
+  /** Fixed label to translate instead of `label`. */
+  key?: string;
+  detail?: string;
+  count?: number;
+  folded?: boolean;
+  loaded?: boolean;
+  call_id?: string;
+  mcp?: string;
+};
+
+export type ContextGroup = "fixed" | "conversation" | "reserve";
+
+export type ContextCategory = {
+  id: string;
+  tokens: number;
+  share: number;
+  /** Older snapshots have no group; the panel infers it from the id. */
+  group?: ContextGroup;
+  count?: number;
+  /** The largest items, biggest first. */
+  items?: ContextItem[];
+};
 
 export type ContextBreakdown = {
   kind?: string;
   exact?: boolean;
   total?: number;
+  /** Tokens the request itself takes; `total` also counts the reply reserve. */
+  used?: number;
   limit?: number | null;
+  /** Older tool results folded for this request and the tokens that saved. */
+  folded?: { count: number; tokens: number };
   system_prompt_contains_memory?: boolean;
   categories?: ContextCategory[];
   note?: string;
@@ -265,7 +294,7 @@ export type EffectivePolicy = {
   defaults: { in_scope: PolicyDefault; outside_scope: PolicyDefault };
   directories: string[];
   read_only: string[];
-  rules: Array<{ effect: "allow" | "ask" | "deny"; scope: "session" | "project" | "user"; rule: Record<string, unknown>; target: string; resource_kind: string; operations: string[]; tool: string; description: string; conditional: boolean }>;
+  rules: Array<{ effect: "allow" | "ask" | "deny"; scope: "session" | "project" | "user"; rule: Record<string, unknown>; target: string; resource_kind: string; operations: string[]; tool: string; description: string; conditional: boolean; locked?: boolean }>;
   constraints: string[]; precedence: string[];
 };
 export type SandboxStatus = { platform: string; provider: string; available: boolean; state: "ready" | "setup_required" | "initializing" | "failed"; detail?: string };
@@ -312,7 +341,25 @@ export type Snapshot = {
     request_total_tokens: number | null;
     context_tokens: number | null;
     context_limit: number | null;
+    /** Session totals not sent by the server yet; the context tab shows "—" until they arrive. */
+    cache_read_tokens?: number | null;
+    cost_usd?: number | null;
   };
+  /** Configured MCP servers; not sent by the server yet. */
+  mcp_servers?: McpServerView[];
+};
+
+/**
+ * One configured MCP server. `tokens` is what its tool definitions take in the
+ * context; `toggleable` is set only when the server accepts an on/off change.
+ */
+export type McpServerView = {
+  name: string;
+  status: "connected" | "failed" | "auth_required" | "disabled";
+  tool_count: number;
+  tokens?: number | null;
+  error?: string | null;
+  toggleable?: boolean;
 };
 
 export type UiEvent = {

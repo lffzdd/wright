@@ -150,9 +150,22 @@ def test_wright_home_env_may_set_configuration(tmp_path, monkeypatch):
     "{ rm x; }", "if true; then rm x; fi", "bash -c 'rm x'", "sh -c \"echo a; rm x\"", "eval rm x",
     "A=1 rm x", "echo 'a\\'; rm x #'", 'echo "a\\\\"; rm x #"', "ls | xargs rm",
     "git  push", "git\tpush", "git -c a=b push", "git -C /tmp push", "/usr/bin/git push",
-    "sudo id", "env sudo id", "$X x",
+    "sudo id", "env sudo id",
 ])
-def test_packaged_deny_rules_survive_shell_rewriting(command):
+def test_packaged_ask_rules_survive_shell_rewriting(command):
+    policy = PermissionPolicy(load_permission_settings(PACKAGED))
+    access = ToolAccess(frozenset({"shell"}), subject=command)
+    decision = policy.evaluate(access, tool_name="shell", subject=command, in_scope=True,
+        context=MatchContext(cwd="/w", operations=("shell",)), permission_mode="bypass")
+    assert decision[0] == "ask", command
+
+
+@pytest.mark.parametrize("command", [
+    "rm -rf /", "rm -fr /", "rm -r /", "rm --recursive --force /", "rm -rf /*",
+    "rm -rf /.", "rm -rf /..", "rm -rf ~", "rm -rf ~/", "rm -rf ~/*", "rm -rf $HOME",
+    "sudo rm -rf /", "/bin/rm -rf /", "rm /", "rm ~", "rmdir /", "rmdir ~",
+])
+def test_packaged_deny_blocks_rm_of_root_and_home(command):
     policy = PermissionPolicy(load_permission_settings(PACKAGED))
     access = ToolAccess(frozenset({"shell"}), subject=command)
     decision = policy.evaluate(access, tool_name="shell", subject=command, in_scope=True,
@@ -160,13 +173,34 @@ def test_packaged_deny_rules_survive_shell_rewriting(command):
     assert decision[0] == "deny", command
 
 
-@pytest.mark.parametrize("command", ["ls -la", "git status", "echo 'rm x'", "python3 -c 'print(1)'", "grep rm file"])
-def test_packaged_deny_rules_leave_other_commands(command):
+@pytest.mark.parametrize("command", ["rm file", "rm -rf src", "rm -rf /tmp/foo", "rm -rf ~/src"])
+def test_packaged_deny_does_not_block_ordinary_rm(command):
     policy = PermissionPolicy(load_permission_settings(PACKAGED))
     access = ToolAccess(frozenset({"shell"}), subject=command)
     decision = policy.evaluate(access, tool_name="shell", subject=command, in_scope=True,
-        context=MatchContext(cwd="/w", operations=("shell",)), permission_mode="default")
+        context=MatchContext(cwd="/w", operations=("shell",)), permission_mode="bypass")
     assert decision[0] == "ask", command
+
+
+@pytest.mark.parametrize("command", ["ls -la", "git status", "echo 'rm x'", "python3 -c 'print(1)'", "grep rm file"])
+def test_packaged_ask_rules_leave_other_commands(command):
+    policy = PermissionPolicy(load_permission_settings(PACKAGED))
+    access = ToolAccess(frozenset({"shell"}), subject=command)
+    context = MatchContext(cwd="/w", operations=("shell",))
+    default = policy.evaluate(access, tool_name="shell", subject=command, in_scope=True,
+        context=context, permission_mode="default")
+    bypass = policy.evaluate(access, tool_name="shell", subject=command, in_scope=True,
+        context=context, permission_mode="bypass")
+    assert default[0] == "ask", command
+    assert bypass[0] == "allow", command
+
+
+def test_packaged_defaults_ask_instead_of_denying_and_leave_http_open():
+    settings = load_permission_settings(PACKAGED)
+    assert {rule.pattern for rule in settings.ask} == {"rm *", "sudo *", "* sudo *", "*git push*"}
+    assert "rm -* /" in {rule.pattern for rule in settings.deny}
+    assert "rm -* ~" in {rule.pattern for rule in settings.deny}
+    assert not any(rule.kind == "network" for rule in (*settings.ask, *settings.deny))
 
 
 def test_shell_analysis_matches_bash_quoting():

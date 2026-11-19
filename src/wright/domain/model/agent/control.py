@@ -104,6 +104,9 @@ class AgentTaskRecord:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    cache_read_tokens: int = 0
+    cost_usd: float = 0.0
+    unpriced_requests: int = 0
     result: str = ""
     error: str = ""
     cancel_requested: bool = False
@@ -129,6 +132,9 @@ class AgentTaskRecord:
                 "prompt_tokens": self.prompt_tokens,
                 "completion_tokens": self.completion_tokens,
                 "total_tokens": self.total_tokens,
+                "cache_read_tokens": self.cache_read_tokens,
+                "cost_usd": self.cost_usd,
+                "unpriced_requests": self.unpriced_requests,
             },
             "result": self.result,
             "error": self.error,
@@ -207,6 +213,19 @@ class AgentTaskRecord:
             ),
             total_tokens=_nonnegative_int(
                 usage.get("total_tokens", 0), "usage.total_tokens"
+            ),
+            # Older checkpoints predate cache and cost accounting.
+            cache_read_tokens=_nonnegative_int(
+                usage.get("cache_read_tokens", 0), "usage.cache_read_tokens"
+            ),
+            cost_usd=_nonnegative_cost(usage.get("cost_usd", 0.0)),
+            # Older usage was never priced: its cost is unknown, not zero.
+            unpriced_requests=_nonnegative_int(
+                usage.get(
+                    "unpriced_requests",
+                    int(_nonnegative_int(usage.get("total_tokens", 0), "usage.total_tokens") > 0),
+                ),
+                "usage.unpriced_requests",
             ),
             result=_bounded_string(
                 value.get("result", ""), "result", 20_000, allow_empty=True
@@ -357,12 +376,19 @@ class AgentControlPlane:
         prompt_tokens: int,
         completion_tokens: int,
         total_tokens: int,
+        *,
+        cache_read_tokens: int = 0,
+        cost_usd: float = 0.0,
+        unpriced_requests: int = 0,
     ) -> None:
         with self._lock:
             record = self._require(task_id)
             record.prompt_tokens += max(0, int(prompt_tokens))
             record.completion_tokens += max(0, int(completion_tokens))
             record.total_tokens += max(0, int(total_tokens))
+            record.cache_read_tokens += max(0, int(cache_read_tokens))
+            record.cost_usd += max(0.0, float(cost_usd))
+            record.unpriced_requests += max(0, int(unpriced_requests))
             turn_total = sum(
                 item.total_tokens for item in self._tasks.values()
                 if item.root_turn_id == record.root_turn_id
@@ -639,6 +665,13 @@ def _nonnegative_int(value: Any, field: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise AgentControlError(f"{field} must be a non-negative integer")
     return value
+
+
+def _nonnegative_cost(value: Any) -> float:
+    cost = _number(value, "usage.cost_usd")
+    if cost < 0:
+        raise AgentControlError("usage.cost_usd must not be negative")
+    return cost
 
 
 def _number(value: Any, field: str) -> float:

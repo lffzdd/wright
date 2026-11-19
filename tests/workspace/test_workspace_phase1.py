@@ -7,6 +7,7 @@ the user's real project or permission file.
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,15 +15,14 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from wright.application.agent.context import ContextBuilder, ContextCompactor
+from wright.application.composition.agent_factory import create_agent
 from wright.application.composition.stores import open_autonomy_store, skill_store
 from wright.application.memory.service import MemoryService
 from wright.application.permission.resources import resource_change
 from wright.application.permission.service import PermissionService
 from wright.application.workspace.catalog import WorkspaceCatalog
-from wright.application.workspace.context_usage import (
-    classify_context,
-    estimate_context,
-)
+from wright.application.workspace.context_usage import MAX_ITEMS, classify_context
 from wright.application.workspace.documents import render_documents, store_document
 from wright.application.workspace.files import (
     PathRejected,
@@ -64,6 +64,7 @@ from wright.application.workspace.timeline import (
 from wright.core.paths import project_id, task_db_path
 from wright.domain.model.agent.control import AgentControlPlane
 from wright.domain.model.session import Session, SessionAuthorization
+from wright.domain.model.session.conversation import MessageRecord
 from wright.domain.policy.permission.resolver import PermissionPolicy
 from wright.domain.policy.permission.settings import PermissionSettings
 from wright.domain.policy.permission.types import ToolAccess
@@ -77,17 +78,26 @@ from wright.interfaces.web.server import create_app
 
 
 class _Message:
-    def __init__(self, role, content, source="history"):
-        self.message = {"role": role, "content": content}
+    def __init__(self, role, content, source="history", **extra):
+        self.message = {"role": role, "content": content, **extra}
         self.source = source
+
+
+def _tool_result(call_id, data, **extra):
+    return _Message("tool", json.dumps({"ok": True, "data": data, **extra}), tool_call_id=call_id)
+
+
+def _call(call_id, name, **arguments):
+    return {"id": call_id, "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}}
 
 
 def test_context_categories_are_exclusive_estimates():
     view = SimpleNamespace(
         entries=(
             _Message("system", "<MEMORY_CONTEXT>\nanchor\n</MEMORY_CONTEXT>\nYou are helpful."),
-            _Message("user", "<skill-catalog>review</skill-catalog>", "transient"),
+            _Message("user", "<skill-catalog>\n- review: check\n</skill-catalog>", "transient"),
             _Message("user", "wright-fact-recall: note"),
+            _Message("user", "fix the bug"),
             _Message("assistant", "hello"),
             _Message("tool", "file contents"),
         ),
@@ -100,30 +110,79 @@ def test_context_categories_are_exclusive_estimates():
     assert report["exact"] is False
     assert report["system_prompt_contains_memory"] is True
     assert sum(tokens) == report["total"]
-    by_id = {item["id"]: item["tokens"] for item in report["categories"]}
-    assert by_id["tool_schemas"] == 4
-    assert by_id["output_reserve"] == 2
-    assert by_id["rules"] > 0
-    assert by_id["memory"] > 0
-    assert by_id["system_prompt"] > 0
+    assert report["used"] == report["total"] - 2
+    by_id = {item["id"]: item for item in report["categories"]}
+    assert by_id["tool_schemas"]["tokens"] == 4
+    assert by_id["output_reserve"]["group"] == "reserve"
+    assert by_id["skills"]["items"][0]["count"] == 1
+    assert by_id["user"]["items"][0]["label"] == "fix the bug"
+    assert by_id["assistant"]["tokens"] > 0
+    # The resident memory block moves out of the system prompt into memory.
+    assert {item["key"] for item in by_id["memory"]["items"]} == {"resident_memory", "recalled_facts"}
+    assert by_id["system_prompt"]["tokens"] > 0
+    assert by_id["system_prompt"]["group"] == "fixed"
 
 
-def test_context_preview_counts_prompt_tools_and_reserve():
-    records = (
-        SimpleNamespace(message={"role": "system", "content": "stored prompt"}, source=""),
-        SimpleNamespace(message={"role": "user", "content": "hello"}, source=""),
+def test_context_items_name_each_tool_call_and_mcp_server():
+    view = SimpleNamespace(
+        entries=(
+            _Message("assistant", "", tool_calls=[
+                _call("c1", "read_file", path="src/app.py"),
+                _call("c2", "shell", command="pytest -q\n--tb=short"),
+                _call("c3", "load_skill", skill="release-check"),
+            ]),
+            _tool_result("c1", "x" * 400, folded=True),
+            _tool_result("c2", "y" * 4000),
+            _tool_result("c3", "steps", retention="instruction", retention_key="skill:release-check"),
+        ),
+        tools=(
+            {"name": "read_file", "description": "Read", "parameters": {}},
+            {"name": "mcp__demo__clock", "description": "Time", "parameters": {}},
+            {"name": "mcp__demo__echo", "description": "Echo", "parameters": {}},
+        ),
+        tool_schema_tokens=30,
+        output_reserve_tokens=0,
+        folded_tokens=120,
     )
-    tools = [{"name": "read", "description": "Read a file", "parameters": {"type": "object"}}]
-    report = estimate_context(records, tools=tools, system_prompt="projected prompt " * 20, context_limit=8000)
-    by_id = {item["id"]: item["tokens"] for item in report["categories"]}
+    report = classify_context(view)
+    by_id = {item["id"]: item for item in report["categories"]}
+    outputs = by_id["tool_output"]["items"]
+    assert [(item["label"], item["detail"]) for item in outputs] == [("shell", "pytest -q"), ("read_file", "src/app.py")]
+    assert outputs[1]["folded"] is True and outputs[1]["call_id"] == "c1"
+    assert report["folded"] == {"count": 1, "tokens": 120}
+    assert by_id["skills"]["items"][0]["label"] == "release-check"
+    assert by_id["skills"]["items"][0]["loaded"] is True
+    schemas = {item["label"]: item for item in by_id["tool_schemas"]["items"]}
+    assert (schemas["demo"]["mcp"], schemas["demo"]["count"]) == ("demo", 2)
+    assert "read_file" in schemas
+    assert by_id["tool_schemas"]["tokens"] == 30
+    assert by_id["assistant"]["items"][0]["label"] == "read_file, shell, load_skill"
+
+
+def test_context_lists_only_the_largest_items():
+    entries = tuple(_Message("user", f"message {index} " + "z" * index * 10) for index in range(MAX_ITEMS + 4))
+    report = classify_context(SimpleNamespace(entries=entries, tool_schema_tokens=0, output_reserve_tokens=0))
+    user = next(item for item in report["categories"] if item["id"] == "user")
+    assert user["count"] == MAX_ITEMS + 4
+    assert len(user["items"]) == MAX_ITEMS
+    assert user["items"][0]["label"].startswith(f"message {MAX_ITEMS + 3}")
+
+
+def test_preview_folds_old_tool_output_like_the_real_request():
+    records = [MessageRecord("m0", {"role": "system", "content": "prompt"}, "history")]
+    for index in range(6):
+        call_id = f"c{index}"
+        records.append(MessageRecord(f"a{index}", {"role": "assistant", "content": "", "tool_calls": [_call(call_id, "shell", command=f"cat {index}")]}, "history"))
+        records.append(MessageRecord(f"t{index}", {"role": "tool", "tool_call_id": call_id, "content": json.dumps({"ok": True, "data": "w " * 3000})}, "history"))
+    builder = ContextBuilder(ContextCompactor(context_watermark=0.5, keep_recent_tool_results=2))
+    view = builder.build(records, tools=[], context_limit=8000)
+    report = classify_context(view, preview=True)
     assert report["preview"] is True
-    assert report["limit"] == 8000
-    assert by_id["output_reserve"] == 1000
-    assert by_id["tool_schemas"] > 0
-    # The projected prompt replaces the stored one, as a real request would.
-    assert by_id["system_prompt"] > by_id["history"] > 0
-    assert sum(by_id.values()) == report["total"]
-    assert records[0].message["content"] == "stored prompt"
+    assert report["folded"]["count"] == 4
+    assert report["folded"]["tokens"] > 0
+    outputs = next(item for item in report["categories"] if item["id"] == "tool_output")
+    assert [item.get("folded", False) for item in outputs["items"][:2]] == [False, False]
+    assert report["used"] < 8000
 
 
 def test_paths_reject_escape_and_symlink(tmp_path: Path):
@@ -623,6 +682,9 @@ def test_switching_workspace_does_not_retarget_a_running_root(tmp_path: Path, mo
 
     monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("OPENAI_MODEL", "offline")
+    # Not a catalog model: it needs an endpoint and key, as a real one would.
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://127.0.0.1:9/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setattr(assembly, "load_env", lambda: None)
     monkeypatch.setattr(assembly, "LLMClient", lambda **_: Model())
     monkeypatch.setattr(assembly, "load_mcp_configs", lambda _: [])
@@ -821,3 +883,20 @@ def test_workspace_changes_report_git_status_without_starting_a_session(
         assert missing.status_code == 404
     finally:
         client.close()
+
+
+def test_agent_preview_folds_without_announcing_compaction(tmp_path: Path):
+    session = Session.create("preview", tmp_path)
+    for index in range(6):
+        call_id = f"c{index}"
+        session.message_records.append(MessageRecord(f"a{index}", {"role": "assistant", "content": "", "tool_calls": [_call(call_id, "shell", command="cat")]}, "history"))
+        session.message_records.append(MessageRecord(f"t{index}", {"role": "tool", "tool_call_id": call_id, "content": json.dumps({"ok": True, "data": "w " * 3000})}, "history"))
+    llm = SimpleNamespace(model="m", context_limit=12000)
+    agent = create_agent(llm, [], session)
+    announced = []
+    agent._model_turn.compactor.on_compact = lambda *args: announced.append(args)
+    report = agent.preview_context()
+    assert report["preview"] is True
+    assert report["folded"]["count"] > 0
+    assert report["used"] < 12000
+    assert announced == []

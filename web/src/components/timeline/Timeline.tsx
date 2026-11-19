@@ -56,7 +56,7 @@ function TurnOutcome({ status, detail, enter }: { status?: string; detail?: stri
 }
 
 /** How long a revealed tool card stays highlighted, and how long a miss notice stays up. */
-const REVEAL_FLASH_MS = 1600;
+const REVEAL_FLASH_MS = 2000;
 const REVEAL_MISS_MS = 3000;
 
 /** Per-message actions; each takes the id of a persisted message. */

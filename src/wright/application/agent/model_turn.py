@@ -143,8 +143,12 @@ class ModelTurnRunner:
         return response, usage_record
 
     def preview_context(self) -> dict:
-        """Side-effect-free estimate of the next request, for the Context tab."""
-        from ..workspace.context_usage import estimate_context
+        """Side-effect-free estimate of the next request, for the Context tab.
+
+        It assembles the request the way ``run`` does, folding included, but
+        skips memory recall, which may record what it injected.
+        """
+        from ..workspace.context_usage import classify_context
 
         schemas, _ = encode_tools(
             self._prompt_manager.visible_schema_tools(),
@@ -161,12 +165,16 @@ class ModelTurnRunner:
                 "",
             )
             system_prompt = self.memory.project_system_prompt(base_prompt)
-        return estimate_context(
+        view = ContextBuilder(self.compactor.detached()).build(
             self.session_state.message_records,
             tools=schemas,
+            reminders=self._prompt_manager.ephemeral_reminders(),
             system_prompt=system_prompt,
             context_limit=self.context_limit,
         )
+        breakdown = classify_context(view, preview=True)
+        breakdown["limit"] = self.context_limit
+        return breakdown
 
     def _build_turn_view(self, reminders: Sequence[dict]):
         """Project the transcript and this turn's reminders into one request view."""
@@ -269,7 +277,7 @@ class ModelTurnRunner:
                 elif isinstance(event, ContentDone):
                     response = event
                 elif isinstance(event, UsageEvent):
-                    usage_record = usage_from_provider(event.usage)
+                    usage_record = usage_from_provider(event.usage, cost_usd=event.cost_usd)
 
         except Exception as exc:
             if usage_record is not None:

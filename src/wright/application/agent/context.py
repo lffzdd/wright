@@ -88,6 +88,8 @@ class ContextView:
     tool_schema_tokens: int
     output_reserve_tokens: int
     folded_record_ids: tuple[str, ...] = ()
+    # Tokens the folding saved compared with sending every tool result in full.
+    folded_tokens: int = 0
     over_budget: bool = False
     budget_reason: str = ""
     omitted_optional_reminders: bool = False
@@ -114,6 +116,10 @@ class ContextCompactor:
         self._conversation_key: str | None = None
         self.context_watermark = context_watermark
         self.keep_recent_tool_results = keep_recent_tool_results
+
+    def detached(self) -> ContextCompactor:
+        """Same folding rules with no announcement, for side-effect-free previews."""
+        return ContextCompactor(self.context_watermark, self.keep_recent_tool_results)
 
     def project(
         self,
@@ -363,6 +369,7 @@ class ContextBuilder:
             tool_schema_tokens=tool_tokens,
             output_reserve_tokens=reserve,
             folded_record_ids=folded_ids,
+            folded_tokens=max(0, estimated - projected_total),
             over_budget=over_budget,
             budget_reason=budget_reason,
             omitted_optional_reminders=omitted_optional_reminders,

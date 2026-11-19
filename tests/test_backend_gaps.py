@@ -600,6 +600,9 @@ def test_scripted_web_session_projects_diff_wait_policy_and_history(
 
     monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("OPENAI_MODEL", "offline")
+    # Not a catalog model: it needs an endpoint and key, as a real one would.
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://127.0.0.1:9/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setattr(assembly, "load_env", lambda: None)
     monkeypatch.setattr(assembly, "LLMClient", lambda **_: Model())
     monkeypatch.setattr(assembly, "load_mcp_configs", lambda _: [])

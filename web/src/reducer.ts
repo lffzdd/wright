@@ -286,6 +286,9 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
       prompt_tokens: knownNumber(event.payload.prompt_tokens, next.usage.prompt_tokens),
       completion_tokens: knownNumber(event.payload.completion_tokens, next.usage.completion_tokens),
       total_tokens: knownNumber(event.payload.total_tokens, next.usage.total_tokens),
+      // Not sent by the server yet; the usage cards show them once it does.
+      cache_read_tokens: knownNumber(event.payload.cache_read_tokens, next.usage.cache_read_tokens ?? null),
+      cost_usd: knownNumber(event.payload.cost_usd, next.usage.cost_usd ?? null),
     };
   } else if (event.type === "command.accepted") {
     if (event.payload.command === "turn.submit" && event.payload.queued && !event.payload.duplicate) {
@@ -317,6 +320,8 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
     next = addNotice(next, event);
   } else if (["system.notice", "system.checkpoint_error", "task.updated"].includes(event.type)) {
     next = addNotice(next, event);
+  } else if (event.type === "session.mcp_updated") {
+    if (Array.isArray(event.payload.mcp_servers)) next.mcp_servers = event.payload.mcp_servers as ViewState["mcp_servers"];
   } else if (event.type === "session.policy_updated") {
     const interaction = event.payload.interaction_mode;
     const permission = event.payload.permission_mode;

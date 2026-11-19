@@ -112,16 +112,24 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
     ),
     SettingSpec(
         "llm.models", "list", (), env=("WRIGHT_MODELS",),
-        description="Models offered by the model picker.",
+        description="Models offered by the model picker; empty offers catalog models whose provider is reachable.",
     ),
     SettingSpec(
         "llm.memory_model", "str", "", env=("OPENAI_MEMORY_MODEL",), project_safe=True,
         description="Cheaper model for memory recall, fact extraction, the memory egress check and session titles; empty uses llm.model.",
     ),
     SettingSpec(
-        "llm.context_limit", "int", 128000, env=("OPENAI_CONTEXT_LIMIT",),
-        project_safe=True, minimum=1,
-        description="Context window of the model, in tokens.",
+        "llm.context_limit", "int", 0, env=("OPENAI_CONTEXT_LIMIT",),
+        project_safe=True, minimum=0,
+        description="Context window for every model, in tokens; 0 uses the built-in catalog, then 128000.",
+    ),
+    SettingSpec(
+        "llm.context_limits", "list", (), env=("WRIGHT_CONTEXT_LIMITS",), project_safe=True,
+        description="Context windows of single models, as model=tokens; they take precedence over llm.context_limit.",
+    ),
+    SettingSpec(
+        "llm.prices", "list", (), env=("WRIGHT_MODEL_PRICES",),
+        description="Prices for models the built-in list lacks or prices differently, as model=input/output[/cache_read] in USD per million tokens.",
     ),
     SettingSpec(
         "llm.transport", "choice", "auto", env=("WRIGHT_LLM_TRANSPORT",),
@@ -130,7 +138,7 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
     ),
     SettingSpec(
         "llm.base_url", "str", "", env=("OPENAI_BASE_URL",), fail_closed=True,
-        description="OpenAI-compatible endpoint; empty uses the SDK default.",
+        description="OpenAI-compatible endpoint for every model, sent with OPENAI_API_KEY; empty picks the endpoint of a catalog model's provider.",
     ),
     SettingSpec(
         "session.auto_title", "bool", True, env=("WRIGHT_AUTO_TITLE",),
@@ -172,7 +180,9 @@ class LlmSettings:
     model: str = ""
     models: tuple[str, ...] = ()
     memory_model: str = ""
-    context_limit: int = 128000
+    context_limit: int = 0
+    context_limits: tuple[str, ...] = ()
+    prices: tuple[str, ...] = ()
     transport: str = "auto"
     base_url: str = ""
 

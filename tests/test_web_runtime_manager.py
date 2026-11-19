@@ -8,6 +8,7 @@ import pytest
 
 from wright.application.session_runtime.live_resources import RuntimeResources
 from wright.application.session_runtime.publisher import EventPublisher
+from wright.domain.model.llm import UsageRecord
 from wright.domain.model.session import Session, SessionAuthorization
 from wright.domain.model.tool import ArtifactRef, ToolCall, ToolResult
 from wright.domain.model.workspace.project import ProjectContext
@@ -37,9 +38,7 @@ def _fake_runtime(session_id, root):
             base_commit="abc",
             branch_name=f"wright/{session_id}",
             context_tokens=0,
-            task_usage=lambda: SimpleNamespace(
-                prompt_tokens=0, completion_tokens=0, total_tokens=0
-            ),
+            task_usage=UsageRecord,
             turns=[],
             plan_manager=SimpleNamespace(snapshot=lambda: {"steps": []}),
         ),
@@ -357,9 +356,20 @@ def test_manager_set_model_missing_session_is_404(tmp_path):
     assert exc_info.value.status_code == 404
 
 
+def _without_model_keys(monkeypatch):
+    """No API key in the environment, so the picker has no catalog presets."""
+    from wright.application.composition import runtime as assembly
+    from wright.domain.model.llm.catalog import provider_key_envs
+
+    monkeypatch.setattr(assembly, "load_env", lambda: None)
+    for name in (*provider_key_envs(), "OPENAI_BASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+
+
 def test_project_exposes_configured_models_not_a_hardcoded_default(monkeypatch, tmp_path):
     monkeypatch.delenv("OPENAI_MODEL", raising=False)
     monkeypatch.delenv("WRIGHT_MODELS", raising=False)
+    _without_model_keys(monkeypatch)
     manager = RuntimeManager(tmp_path, capacity=1, base_args=argparse.Namespace(model=None))
 
     empty = manager.project()
@@ -380,6 +390,19 @@ def test_project_exposes_configured_models_not_a_hardcoded_default(monkeypatch, 
     assert overridden["models"] == ["cli-model", "deepseek-v4-flash", "deepseek-chat"]
 
 
+def test_project_offers_catalog_presets_of_providers_with_a_key(monkeypatch, tmp_path):
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
+    monkeypatch.delenv("WRIGHT_MODELS", raising=False)
+    _without_model_keys(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    manager = RuntimeManager(tmp_path, capacity=1, base_args=argparse.Namespace(model=None))
+
+    assert manager.project()["models"] == ["deepseek-v4-pro", "deepseek-flash"]
+
+    monkeypatch.setenv("WRIGHT_MODELS", "my-model")
+    assert manager.project()["models"] == ["my-model"]
+
+
 def test_closed_local_session_can_be_replaced_without_losing_its_schedules(monkeypatch, tmp_path):
     from tests.responses import response
     from wright.application.composition import runtime as assembly
@@ -395,6 +418,9 @@ def test_closed_local_session_can_be_replaced_without_losing_its_schedules(monke
 
     monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("OPENAI_MODEL", "offline")
+    # Not a catalog model: it needs an endpoint and key, as a real one would.
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://127.0.0.1:9/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setattr(assembly, "load_env", lambda: None)
     monkeypatch.setattr(assembly, "LLMClient", lambda **_: Model())
     monkeypatch.setattr(assembly, "load_mcp_configs", lambda _: [])
@@ -512,6 +538,9 @@ def offline_manager(monkeypatch, tmp_path):
 
     monkeypatch.setenv("WRIGHT_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("OPENAI_MODEL", "offline")
+    # Not a catalog model: it needs an endpoint and key, as a real one would.
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://127.0.0.1:9/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setattr(assembly, "load_env", lambda: None)
     monkeypatch.setattr(assembly, "LLMClient", lambda **_: Model())
     monkeypatch.setattr(assembly, "load_mcp_configs", lambda _: [])
@@ -771,3 +800,21 @@ def test_fork_of_a_missing_session_is_404(offline_manager):
     with pytest.raises(RuntimeManagerError) as error:
         manager.fork("missing")
     assert error.value.status_code == 404
+
+
+def test_idle_sessions_show_the_next_request_and_running_ones_the_request_in_flight(offline_manager):
+    manager, _calls = offline_manager
+    handle = manager.create(environment="local")
+    handle.submit("remember this context", "first-command")
+    _wait_completed(handle, "first-command")
+    state = handle.runtime.session_state
+    state.request_context_breakdown = {"total": 1, "categories": [], "note": "sent"}
+    idle = handle.snapshot()["context_breakdown"]
+    assert idle["preview"] is True
+    assert {item["id"] for item in idle["categories"]} >= {"system_prompt", "user", "assistant"}
+
+    handle.runtime.agent_idle.clear()
+    try:
+        assert handle.snapshot()["context_breakdown"]["note"] == "sent"
+    finally:
+        handle.runtime.agent_idle.set()

@@ -108,6 +108,7 @@ def _serialize_session(session: Session) -> dict[str, Any]:
             },
             "plan": session.plan_manager.snapshot(),
             "active_deferred_tools": list(session.active_deferred_tools),
+            "disabled_mcp_servers": list(session.disabled_mcp_servers),
             "agent_control": session.control_plane.snapshot(),
             "agent_task_id": session.agent_task_id,
             "agent_root_turn_id": session.agent_root_turn_id,
@@ -162,13 +163,16 @@ def _serialize_turn(turn: TurnRecord) -> dict[str, Any]:
     }
 
 
-def _serialize_usage(usage: UsageRecord | None) -> dict[str, int] | None:
+def _serialize_usage(usage: UsageRecord | None) -> dict[str, int | float] | None:
     if usage is None:
         return None
     return {
         "prompt_tokens": usage.prompt_tokens,
         "completion_tokens": usage.completion_tokens,
         "total_tokens": usage.total_tokens,
+        "cache_read_tokens": usage.cache_read_tokens,
+        "cost_usd": usage.cost_usd,
+        "unpriced_requests": usage.unpriced_requests,
     }
 
 
@@ -216,6 +220,11 @@ def _deserialize_session(payload: Any) -> Session:
     ):
         raise CheckpointError("active_deferred_tools must be an array of non-empty strings")
     active_deferred_tools = list(dict.fromkeys(active_deferred_value))
+    disabled_mcp_value = data.get("disabled_mcp_servers", [])
+    if not isinstance(disabled_mcp_value, list) or not all(
+        isinstance(item, str) and item for item in disabled_mcp_value
+    ):
+        raise CheckpointError("disabled_mcp_servers must be an array of non-empty strings")
     try:
         control_plane = AgentControlPlane.from_snapshot(
             data.get("agent_control", {}), mark_interrupted=True
@@ -302,6 +311,7 @@ def _deserialize_session(payload: Any) -> Session:
         commands={},
         plan_manager=plan_manager,
         active_deferred_tools=active_deferred_tools,
+        disabled_mcp_servers=list(dict.fromkeys(disabled_mcp_value)),
         control_plane=control_plane,
         agent_task_id=agent_task_id,
         agent_root_turn_id=agent_root_turn_id,
@@ -313,7 +323,7 @@ def _deserialize_session(payload: Any) -> Session:
         last_usage=_deserialize_usage(data.get("last_usage"), "last_usage"),
         total_usage=_deserialize_usage(data.get("total_usage"), "total_usage")
         or UsageRecord(),
-        task_usage_start=_deserialize_usage(data["task_usage_start"], "task_usage_start")
+        task_usage_start=_deserialize_usage(data["task_usage_start"], "task_usage_start", baseline=True)
         or UsageRecord(),
         model_name=_optional_string(data.get("model_name"), "model_name"),
         llm_transport=_optional_string(data.get("llm_transport"), "llm_transport"),
@@ -547,16 +557,28 @@ def _deserialize_executions(value: Any) -> dict[str, ToolExecutionRecord]:
     return executions
 
 
-def _deserialize_usage(value: Any, field: str) -> UsageRecord | None:
+def _deserialize_usage(value: Any, field: str, *, baseline: bool = False) -> UsageRecord | None:
     if value is None:
         return None
     item = _object(value, field)
+    total_tokens = _nonnegative_int(item.get("total_tokens"), f"{field}.total_tokens")
+    # Requests saved before cost accounting were never priced, so their cost
+    # is unknown, not zero. A baseline is subtracted from totals and stays 0.
+    legacy_unpriced = int("unpriced_requests" not in item and total_tokens > 0 and not baseline)
     return UsageRecord(
         _nonnegative_int(item.get("prompt_tokens"), f"{field}.prompt_tokens"),
         _nonnegative_int(
             item.get("completion_tokens"), f"{field}.completion_tokens"
         ),
         _nonnegative_int(item.get("total_tokens"), f"{field}.total_tokens"),
+        # Checkpoints written before cache and cost accounting lack these.
+        cache_read_tokens=_nonnegative_int(
+            item.get("cache_read_tokens", 0), f"{field}.cache_read_tokens"
+        ),
+        cost_usd=_nonnegative_float(item.get("cost_usd", 0.0), f"{field}.cost_usd"),
+        unpriced_requests=_nonnegative_int(
+            item.get("unpriced_requests", legacy_unpriced), f"{field}.unpriced_requests"
+        ),
     )
 
 
@@ -652,6 +674,12 @@ def _positive_int(value: Any, field: str) -> int:
     if number == 0:
         raise CheckpointError(f"{field} must be greater than 0")
     return number
+
+
+def _nonnegative_float(value: Any, field: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        raise CheckpointError(f"{field} must be a non-negative number")
+    return float(value)
 
 
 def _optional_number(value: Any, field: str) -> float | None:

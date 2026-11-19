@@ -23,6 +23,7 @@ from ...domain.gateway.runtime_protocols import (
 from ...domain.gateway.runtime_types import ExecutionPath
 from ...domain.gateway.tool_executor import IToolExecutor
 from ...domain.model.agent import CapabilitySnapshot
+from ...domain.model.mcp import mcp_server_of, mcp_tool_enabled
 from ...domain.model.memory import EgressHit, EgressVerdict
 from ...domain.model.tool import (
     ToolCall,
@@ -204,6 +205,11 @@ class ToolDispatchService:
             return tool_call, ToolResult.fail(
                 f"Interaction mode blocks {tool.name}",
                 data={"reason_code": "permission.ask_denied"},
+            )
+        if not mcp_tool_enabled(tool.name, getattr(self.session, "disabled_mcp_servers", ())):
+            return tool_call, ToolResult.fail(
+                f"MCP server {mcp_server_of(tool.name)!r} is turned off for this conversation",
+                data={"reason_code": "mcp.server_disabled"},
             )
         if self.capability_snapshot is not None and tool_call.name not in self.capability_snapshot.names:
             return tool_call, ToolResult.fail(

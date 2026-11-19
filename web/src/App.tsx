@@ -1054,11 +1054,10 @@ export default function App() {
             <Composer
               key={state.session.session_id}
               sessionId={state.session.session_id}
-              context={typeof breakdown?.total === "number" && <button type="button" className="context-ring-button" aria-label={tr("web.context_open")} onClick={() => {
-                // The meter opens the full breakdown in the inspector.
+              context={typeof breakdown?.total === "number" && <ContextRing total={breakdown.used ?? breakdown.total} limit={breakdown.limit} onClick={() => {
                 setInspectorTab((previous) => ({ tab: "context", request: (previous?.request ?? 0) + 1 }));
                 openInspector();
-              }}><ContextRing total={breakdown.total} limit={breakdown.limit} /></button>}
+              }} />}
               projectId={projectKey() || null}
               deferUploads={browsing === "preview"}
               connection={browsing === "preview" ? "connected" : (state.session.lifecycle === "closing" || state.session.lifecycle === "closed" || state.session.status === "closing" || state.session.status === "closed" ? "closed" : state.connection)}

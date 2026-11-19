@@ -47,9 +47,13 @@ class ContentDone:
 
 @dataclass
 class UsageEvent:
-    """本轮的 token 用量信息（流式时通常在最后一个 chunk 里）。"""
+    """本轮的 token 用量信息（流式时通常在最后一个 chunk 里）。
+
+    ``cost_usd`` 由知道模型和价格表的 provider 填写；None 表示这次请求没有已知价格。
+    """
 
     usage: Any
+    cost_usd: float | None = None
 
 
 # 所有事件的联合类型，方便类型标注与 isinstance 判断

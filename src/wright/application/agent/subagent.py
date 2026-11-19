@@ -255,6 +255,9 @@ def make_spawn_agent_tool(
                 usage.prompt_tokens,
                 usage.completion_tokens,
                 usage.total_tokens,
+                cache_read_tokens=usage.cache_read_tokens,
+                cost_usd=usage.cost_usd,
+                unpriced_requests=usage.unpriced_requests,
             )
 
         child_commands = CommandExecution(

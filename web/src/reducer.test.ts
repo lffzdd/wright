@@ -152,6 +152,22 @@ describe("UI event reducer", () => {
     expect(next.usage.total_tokens).toBe(37);
   });
 
+  it("replaces the MCP server list when the session reports a change", () => {
+    const servers = [{ name: "github", status: "disabled", tool_count: 14, tokens: 0, error: null, toggleable: true }];
+    const next = applyEvent(state, event(1, "session.mcp_updated", { mcp_servers: servers }));
+    expect(next.mcp_servers).toEqual(servers);
+  });
+
+  it("keeps cache hits and cost from task usage, and keeps them when a later event omits them", () => {
+    let next = applyEvent(state, event(1, "usage.task", { prompt_tokens: 30 }));
+    expect(next.usage.cache_read_tokens).toBeNull();
+    expect(next.usage.cost_usd).toBeNull();
+    next = applyEvent(next, event(2, "usage.task", { prompt_tokens: 40, cache_read_tokens: 25, cost_usd: 0.12 }));
+    next = applyEvent(next, event(3, "usage.task", { prompt_tokens: 50 }));
+    expect(next.usage.cache_read_tokens).toBe(25);
+    expect(next.usage.cost_usd).toBe(0.12);
+  });
+
   it("surfaces notices, checkpoint errors, and rejected commands", () => {
     let next = applyEvent(state, event(1, "system.notice", { text: "status output" }));
     next = applyEvent(next, event(2, "system.checkpoint_error", { error: "disk full" }));

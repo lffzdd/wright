@@ -2,11 +2,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiError, api } from "../../api";
 import { setLocale } from "../../i18n";
-import type { Grants, Interaction } from "../../types";
+import type { EffectivePolicy, Grants, Interaction } from "../../types";
 import { InteractionCard } from "../cards/cards";
 import { PermissionGrants, PermissionsPanel } from "./permissions";
 import { DIGIT_ARM_MS, describeChoice, quickChoice } from "./approval";
 import { describeGrant } from "./permissions";
+import { commandRuleDetails } from "./permission-resource";
 
 const choices: Interaction["choices"] = [
   { id: "allow_once", label: "Once", scope: "/project/a", persistence: "", lifetime: "once" },
@@ -155,7 +156,7 @@ it("revokes by source, ID and expected version and refreshes conflicts", async (
   vi.spyOn(api, "revokeGrant").mockRejectedValue(new ApiError("Permissions changed", 409, { ...grants, version: "revision-b", grants: [] }));
   vi.spyOn(api, "grants").mockResolvedValue({ ...grants, version: "revision-b", grants: [] });
   render(<PermissionGrants sessionId="s" grants={grants} update={update} includeManualAdd />);
-  fireEvent.click(screen.getByText("Revoke"));
+  fireEvent.click(screen.getByRole("button", { name: "Revoke authorization for /project/a" }));
   await waitFor(() => expect(api.revokeGrant).toHaveBeenCalledWith("s", "stable", "project", "revision-a"));
   expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Permissions changed. The latest state is shown; review it and retry.");
   await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ version: "revision-b" })));
@@ -343,14 +344,15 @@ it("renders and revokes command, HTTP path and named tool records using server i
     { id: "search-id", source: "user", lifetime: "user", resource_kind: "tool", target: "web_search", tool: "web_search", operations: ["network_read"], recursive: false },
   ] };
   render(<PermissionGrants sessionId="s" grants={records} update={vi.fn()} />);
-  // Programs are named, not pathed; the full rule and its caveat stay one hover away.
-  const python = screen.getByText("any arguments for python");
-  expect(python.closest(".grant-item")?.getAttribute("title")).toContain("any arguments for /usr/bin/python");
-  expect(document.querySelectorAll(".grant-footnote")).toHaveLength(1);
-  expect(document.querySelectorAll(".grant-item small")).not.toContain(document.querySelector(".grant-footnote"));
-  expect(screen.getByText("GET requests to the exact path https://example.com/api (any query parameters)")).toBeTruthy();
-  expect(screen.getByText("Use web_search for the listed operations")).toBeTruthy();
-  expect(screen.getByText("Allowed operations: Network read")).toBeTruthy();
+  // Rules read as short patterns, programs named rather than pathed; the full rule and its caveat stay one hover away.
+  const rows = [...document.querySelectorAll(".rule-row")];
+  expect(rows.map((row) => row.querySelector(".rule-row-pattern")?.textContent)).toEqual(["GET https://example.com/api", "python *", "web_search"]);
+  expect(rows.map((row) => row.querySelector("small")?.textContent)).toEqual(["This session", "This project", "All projects · Network read"]);
+  expect(rows[1].getAttribute("title")).toContain("any arguments for /usr/bin/python");
+  expect(rows[1].getAttribute("title")).toContain(commandRuleDetails(executableChoice.resource));
+  expect(rows[0].getAttribute("title")).toBe("GET requests to the exact path https://example.com/api (any query parameters)");
+  expect(rows[2].getAttribute("title")).toContain("Applies to every project on this device.");
+  expect(rows.every((row) => row.querySelector(".rule-row-effect")?.textContent === "Allow")).toBe(true);
   fireEvent.click(screen.getByRole("button", { name: "Revoke authorization for /usr/bin/python" }));
   await waitFor(() => expect(api.revokeGrant).toHaveBeenCalledWith("s", "python-id", "project", "revision-a"));
 });
@@ -404,13 +406,53 @@ it("describes a sandbox network grant", () => {
   expect(describeChoice({ id: "allow_session_sandbox_network", label: "Session", scope: "Sandbox network", persistence: "", lifetime: "session", resource_kind: "sandbox_network" })).toContain("sandbox network for this session");
 });
 
-it("says the shared program caveat once for several program rules", () => {
+it("names program rules by program and keeps the shared caveat in each row's tooltip", () => {
   const rule = (id: string, path: string) => ({ id, source: "project", lifetime: "project" as const, resource_kind: "command", target: path, operations: ["shell"], recursive: false, resource: { ...executableChoice.resource, argv: [path] } });
   render(<PermissionGrants sessionId="s" grants={{ ...readyGrants, grants: [rule("a", "/opt/homebrew/bin/git"), rule("b", "/usr/bin/tail")] }} update={vi.fn()} />);
-  expect(screen.getByText("any arguments for git")).toBeTruthy();
-  expect(screen.getByText("any arguments for tail")).toBeTruthy();
-  expect(document.querySelectorAll(".grant-footnote")).toHaveLength(1);
-  expect(document.querySelectorAll(".grant-item small")).toHaveLength(0);
+  expect(screen.getByText("git *")).toBeTruthy();
+  expect(screen.getByText("tail *")).toBeTruthy();
+  for (const row of document.querySelectorAll(".rule-row")) expect(row.getAttribute("title")).toContain(commandRuleDetails(executableChoice.resource));
+});
+
+it("lists saved grants, then the policy's ask and deny rules once each, and lets user and project restrictions be removed", async () => {
+  const policy = (operation: "file_read" | "file_write" | "shell", rules: EffectivePolicy["rules"]): EffectivePolicy => ({
+    operation, defaults: { in_scope: { decision: "allow", source: "", reason_code: "", reason_params: {} }, outside_scope: { decision: "ask", source: "", reason_code: "", reason_params: {} } },
+    directories: [], read_only: [], rules, constraints: [], precedence: [],
+  });
+  const deny = { effect: "deny" as const, scope: "user" as const, rule: { id: "deny-rm" }, target: "rm *", resource_kind: "command", operations: ["shell"], tool: "shell", description: "never delete", conditional: true };
+  const ask = { ...deny, effect: "ask" as const, scope: "project" as const, rule: { id: "ask-push" }, target: "git push*", description: "", conditional: false };
+  const allow = { ...deny, effect: "allow" as const, target: "/project/a" };
+  const update = vi.fn();
+  vi.spyOn(api, "revokeGrant").mockResolvedValue({ ...readyGrants, grants: [] });
+  render(<PermissionsPanel sessionId="s" grants={{ ...readyGrants, effective_policy: [policy("shell", [deny, ask, allow]), policy("file_write", [deny])] }} update={update} interactionMode="agent" permissionMode="default" />);
+  const rows = [...document.querySelectorAll(".rule-row")];
+  expect(rows.map((row) => [row.querySelector(".rule-row-pattern")?.textContent, row.querySelector(".rule-row-effect")?.textContent])).toEqual([["/project/a", "Allow"], ["git push*", "Ask"], ["rm *", "Block"]]);
+  expect(rows[2].querySelector("small")?.textContent).toBe("All projects · Conditional rule");
+  expect(rows[2].getAttribute("title")).toBe("never delete");
+  expect(rows.map((row) => Boolean(row.querySelector(".rule-row-revoke")))).toEqual([true, true, true]);
+  expect(document.querySelector(".permission-manager .section-count")?.textContent).toBe("3");
+  fireEvent.click(rows[1].querySelector(".rule-row-revoke")!);
+  await waitFor(() => expect(api.revokeGrant).toHaveBeenCalledWith("s", "ask-push", "project", "revision-a"));
+});
+
+it("does not let built-in deny rules be removed", () => {
+  const policy = (operation: "file_read" | "file_write" | "shell", rules: EffectivePolicy["rules"]): EffectivePolicy => ({
+    operation, defaults: { in_scope: { decision: "allow", source: "", reason_code: "", reason_params: {} }, outside_scope: { decision: "ask", source: "", reason_code: "", reason_params: {} } },
+    directories: [], read_only: [], rules, constraints: [], precedence: [],
+  });
+  const deny = { effect: "deny" as const, scope: "user" as const, rule: { id: "deny-root", source: "builtin" }, target: "rm -* /", resource_kind: "command", operations: ["shell"], tool: "shell", description: "", conditional: true, locked: true };
+  render(<PermissionsPanel sessionId="s" grants={{ ...readyGrants, grants: [], effective_policy: [policy("shell", [deny])] }} update={vi.fn()} interactionMode="agent" permissionMode="default" />);
+  const row = document.querySelector(".rule-row")!;
+  expect(row.querySelector(".rule-row-pattern")?.textContent).toBe("rm -* /");
+  expect(row.querySelector("small")?.textContent).toBe("Built-in");
+  expect(row.querySelector(".rule-row-revoke")).toBeNull();
+});
+
+it("puts the shell location on its own line under the label", () => {
+  render(<PermissionsPanel sessionId="s" grants={{ ...readyGrants, grants: [], execution_mode: "host" }} update={vi.fn()} interactionMode="agent" permissionMode="default" executionMode="host" />);
+  const row = screen.getByText("Run commands in this project").closest("li")!;
+  expect(row.querySelector(".glance-label")?.textContent).toBe("Run commands in this project");
+  expect(row.querySelector(".glance-note")?.textContent).toBe("Host (no sandbox)");
 });
 
 it("asks about a host a running command connects to and offers a session host rule", async () => {
