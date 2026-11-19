@@ -115,7 +115,6 @@ class Agent:
         self.max_consecutive_invalid = max_consecutive_invalid
         self.profile = prepared.profile
         self.capabilities = prepared.capabilities
-        self._active_deferred_tools = session_state.active_deferred_tools
         self._schema_tools = prepared.tools
 
         self.cancellation = components.cancellation
@@ -142,7 +141,6 @@ class Agent:
             memory=memory,
             context_builder=self.context_builder,
             prompt_manager=self._prompt_manager,
-            active_deferred_tools=self._active_deferred_tools,
             tool_schemas=prepared.schemas,
             tool_names=prepared.names,
             emit_lifecycle=self._run_events.emit,
@@ -745,14 +743,11 @@ class Agent:
                 for call, recorded in zip(
                     turn.tool_calls, turn.parsed["tool_calls"], strict=True
                 ):
-                    wire_name = call.name
-                    if wire_name not in self._tool_names:
-                        raise TurnAbort(
-                            f"Tool is not available this turn: {wire_name}"
-                        )
-                    call.name = self._tool_names[wire_name]
-                    self.session_state.touch_active_deferred_tool(call.name)
+                    # A name outside this request's schema fails only its own
+                    # call; the dispatcher answers it without running anything.
+                    call.name = self._tool_names.get(call.name, call.name)
                     recorded["name"] = call.name
+                self.executor.model_callable_names = frozenset(self._tool_names.values())
                 counters.invalid = 0
                 if turn.kind == "final":
                     answer, outcome = self._handle_final_turn(

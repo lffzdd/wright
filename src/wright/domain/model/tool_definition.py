@@ -13,6 +13,14 @@ if TYPE_CHECKING:
 
 
 TimeoutOwner = Literal["executor", "tool"]
+ExecutionRole = Literal["root", "child", "durable"]
+
+# Which execution roles may receive a tool. The default is root only, so a
+# new tool never reaches an isolated child or an unattended durable run
+# unless its definition says so.
+ROOT_ONLY: frozenset[ExecutionRole] = frozenset({"root"})
+INTERACTIVE_ROLES: frozenset[ExecutionRole] = frozenset({"root", "child"})
+ALL_ROLES: frozenset[ExecutionRole] = frozenset({"root", "child", "durable"})
 
 
 def _not_concurrency_safe(args: dict[str, Any]) -> bool:
@@ -43,6 +51,7 @@ class Tool:
     # frozen system-prompt tool list.
     list_in_system_prompt: bool = True
     source: str = "builtin"
+    roles: frozenset[ExecutionRole] = ROOT_ONLY
     required_capabilities: frozenset[str] = frozenset()
     approval_details: Callable[[dict, str], dict] | None = None
 

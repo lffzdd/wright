@@ -60,9 +60,11 @@ def build_system_prompt(
         paragraphs.append(shell)
     if deferred:
         paragraphs.append(
-            "If a specialized capability is missing this turn, call tool_search "
-            "first, then use it on the next turn. Do not search for tools already "
-            "in this schema."
+            "Specialized tools are listed with one sentence and no parameters. "
+            "Before first using one, call tool_search with its name to get the "
+            "full schema, then call it by name. Tools tool_search marks "
+            "invoke=call_tool are not listed; run them with call_tool. Do not "
+            "search for tools whose schema you already have."
         )
     paragraphs.append(
         "Base claims about completed work on actual tool results. Continue after "

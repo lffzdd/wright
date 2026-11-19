@@ -1,8 +1,11 @@
 """Agent, Plan, and Ask ceilings.
 
 These names are execution limits. They are not system-prompt labels.
-Ask and Plan hide mutating tools and the permission resolver denies those
-operations even when the session permission mode is bypass.
+Ask and Plan refuse mutating tools at execution, and the permission resolver
+denies those operations even when the session permission mode is bypass.
+The tool schema list does not change with the mode, so switching modes never
+invalidates the provider's prompt cache; the model learns the mode from
+``mode_notice`` at the end of each request instead.
 """
 
 from __future__ import annotations
@@ -22,6 +25,8 @@ ASK_TOOLS = frozenset({
     "memory_search",
     "memory_read",
     "tool_search",
+    # The wrapper is visible; the dispatcher gates the tool it unwraps to.
+    "call_tool",
     "get_agent",
     "shell_output",
     "list_commands",
@@ -75,6 +80,37 @@ def tool_visible(name: str, session: object | None) -> bool:
     return name in PLAN_TOOLS
 
 
+_MODE_SUMMARY = {
+    "ask": "Ask mode is read-only: tools that write files, run commands or change state are refused.",
+    "plan": (
+        "Plan mode is read-only except update_plan: investigate and write the plan; "
+        "tools that write files, run commands or change state are refused."
+    ),
+}
+
+
+def mode_notice(session: object | None) -> str | None:
+    """Request-tail notice while a restricted mode is active."""
+    ceiling = ceiling_for(session)
+    if ceiling == "agent":
+        return None
+    return (
+        f"<interaction-mode>{ceiling}. {_MODE_SUMMARY[ceiling]} Do not try them; "
+        "if the task needs changes, say so and ask the user to switch to agent "
+        "mode.</interaction-mode>"
+    )
+
+
+def mode_blocked_message(name: str, session: object | None) -> str:
+    ceiling = ceiling_for(session)
+    if ceiling == "agent":
+        return f"{name} is not allowed in this mode"
+    return (
+        f"{name} is not available in {ceiling} mode. {_MODE_SUMMARY[ceiling]} "
+        "Use a read-only tool, or ask the user to switch to agent mode."
+    )
+
+
 def operations_allowed(operations: frozenset[str] | set[str], session: object | None) -> bool:
     ceiling = ceiling_for(session)
     if ceiling == "agent":
@@ -92,6 +128,8 @@ __all__ = [
     "PLAN_TOOLS",
     "ceiling_for",
     "interaction_mode_of",
+    "mode_blocked_message",
+    "mode_notice",
     "operations_allowed",
     "permission_mode_of",
     "tool_visible",

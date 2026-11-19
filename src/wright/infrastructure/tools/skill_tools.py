@@ -13,13 +13,6 @@ from ...domain.model.tool_definition import Tool
 from ...domain.model.tool_runtime import ToolRuntime
 
 
-def optional_skill_tools(registry: ISkillCatalog) -> list[Tool]:
-    """No skills at this instant: do not register a loader."""
-    if not registry.has_skills():
-        return []
-    return build_skill_tools(registry)
-
-
 def resident_skill_tools(registry: ISkillCatalog) -> list[Tool]:
     """Root loader.
 

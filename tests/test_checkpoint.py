@@ -75,7 +75,6 @@ def test_checkpoint_round_trips_complete_session_state(tmp_path):
     original.active_run().model_config = {
         "model": "run-selected-model", "transport": "responses"
     }
-    original.active_deferred_tools = ["web_search", "schedule_task"]
     store = FileSessionRepository(tmp_path / "checkpoints")
 
     path = store.save(original)
@@ -103,7 +102,6 @@ def test_checkpoint_round_trips_complete_session_state(tmp_path):
     assert restored.current_run().model_config == {
         "model": "run-selected-model", "transport": "responses"
     }
-    assert restored.active_deferred_tools == ["web_search", "schedule_task"]
     assert restored.project_root == original.workspace_dir
     assert restored.authorization.rules == original.authorization.rules
     assert restored.environment == "local"
@@ -377,3 +375,17 @@ def test_checkpoint_snaps_cwd_back_when_outside_granted_roots(tmp_path):
     kept = store.load(session.session_id)
     _restore_authorization(kept)
     assert kept.get_cwd() == extra.resolve()
+
+
+def test_checkpoint_with_legacy_active_deferred_tools_still_loads(tmp_path):
+    original = _populated_session(tmp_path)
+    store = FileSessionRepository(tmp_path / "checkpoints")
+    path = store.save(original)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["session"]["active_deferred_tools"] = ["web_search", "schedule_task"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    restored = store.load(original.session_id)
+
+    assert restored.session_id == original.session_id
+    assert not hasattr(restored, "active_deferred_tools")

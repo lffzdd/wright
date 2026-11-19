@@ -461,7 +461,7 @@ def test_session_rejects_duplicate_tool_ids_without_partial_state():
             tool_calls=calls,
         )
     except ValueError as exc:
-        assert "重复的 tool_call id" in str(exc)
+        assert "duplicate tool_call id" in str(exc)
     else:
         raise AssertionError("duplicate tool_call ids should be rejected")
 

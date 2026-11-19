@@ -8,14 +8,16 @@ Agent 有两样按需能力：磁盘上的领域流程（Skill），以及可选
 | 问题 | 所有者 |
 |---|---|
 | 工具是否已注册、是否允许执行 | 组合根注册的工具 + `PermissionResolver` |
-| 工具 schema 当前是否向模型暴露 | 当轮 `encode_tools` 快照 |
-| MCP 是否已连接、工具是否已发现 | `McpManager.start()`（启动时完成） |
+| 工具 schema 当前是否向模型暴露 | 当轮 `encode_tools` 快照；延迟工具只有占位，完整 schema 在 `tool_search` 结果里 |
+| MCP 是否已连接、工具是否已发现 | `McpManager.start()`（启动时并行连接，单个 server 超时只记失败） |
 | 技能正文是否留在历史里 | transcript 里的 `load_skill` 结果 |
 | 技能正文是否在当前模型请求里 | `ContextBuilder` 投影；`retention=instruction` 不被折叠 |
 
 `defer_to_model` 只推迟 **schema 暴露**。它不推迟注册、权限或 MCP 连接。
-MCP 工具在 `McpManager.start()` 时已经连接并发现；随后才用
-`defer_to_model=True` 把 schema 留到 `tool_search` 激活之后。
+MCP 工具在 `McpManager.start()` 时已经连接并发现；随后用 `defer_to_model=True`
+让它们在 `tools` 参数里只有占位（名称和一句描述），模型经 `tool_search` 拿到完整
+schema 后按名称直接调用；超过占位上限的部分（MCP 工具优先）经 `call_tool` 调用
+（见 [native-tool-calling.md](native-tool-calling.md)）。
 
 ## 调用链
 
@@ -26,7 +28,7 @@ MCP 工具在 `McpManager.start()` 时已经连接并发现；随后才用
         │
 根 Agent 组合
   resident_skill_tools       注册 load_skill（不 defer）
-  tools_for_role             子 Agent / durable run 去掉 load_skill
+  tools_for_role             load_skill 只声明 root，子 Agent / durable run 拿不到
         │
 每一轮模型请求
   AgentPromptManager         有技能才暴露 load_skill，并附上当前目录
@@ -68,12 +70,11 @@ load_skill
 
 - 同一个 key 只保留最新一份完整正文；更早的副本可以标成 superseded。
 - 最新正文不会被换成 “folded” 占位。
-- 折叠只发生在请求投影上，不改 transcript，也不清空
-  `active_deferred_tools`。
+- 折叠只发生在请求投影上，不改 transcript。
 - 把可折叠结果都收掉之后仍然超过预算时，请求失败，并说明必需的指令内容
   放不进预算、没有被占位符替换。不会假装正文还在上下文里。
 - 重复加载产生新的 tool result。恢复会话时，正文随 transcript 回来，
-  目录按当前磁盘重建，已激活的延迟工具按 checkpoint 恢复后再按当前工具过滤。
+  目录按当前磁盘重建；`tool_search` 返回的 schema 同样随 transcript 回来。
 
 Checkpoint 不另存一份技能正文。没有 `retention` 的工具结果按普通结果折叠，
 不会补成技能指令。
@@ -111,7 +112,7 @@ Checkpoint 不另存一份技能正文。没有 `retention` 的工具结果按�
 | 目录是否出现在本轮请求 | `AgentPromptManager` + 当轮 schema |
 | 已加载正文 | transcript 中的 tool result |
 | 请求里是否仍有全文 | `ContextBuilder` / `ContextCompactor` |
-| 已激活的延迟工具 | `Session.active_deferred_tools` |
+| 已找到的延迟工具 schema | transcript 中的 `tool_search` 结果 |
 | 计划 | `Session.plan_manager` |
 | 跨会话事实 | Memory |
 
@@ -169,9 +170,10 @@ WRIGHT_KNOWLEDGE_LIVE_TEST=1 pytest -q \
   父 Agent 应在 spawn 描述里写清流程。durable run 把步骤写进调度 prompt，避免
   用步数去发现和展开 skill。两者都没有技能目录。
 
-排除名单在 `CHILD_EXCLUDED_TOOLS` 和 `DURABLE_EXCLUDED_TOOLS`，由
-`tools_for_role` 执行。漏掉 `load_skill` 会让隔离上下文或无人值守任务拿到
-技能加载器。
+每个工具在 `Tool.roles` 上声明可以给哪些角色，由 `tools_for_role` 执行。
+默认只有 root：新工具不写声明就不会进子 Agent 或 durable run。共享的基础
+工具（文件、shell、计划、网络、MCP）声明 `ALL_ROLES`，`knowledge_search`
+声明 `INTERACTIVE_ROLES`；`load_skill` 不声明，所以只留在 root。
 
 ## 有意没做的事
 

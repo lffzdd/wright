@@ -16,13 +16,14 @@ from ...domain.model.mcp import mcp_tool_enabled
 from ...domain.model.session import Session
 from ...domain.model.tool_definition import Tool
 from ...domain.prompt import build_system_prompt
-from ...domain.protocol import encode_tools
+from ...domain.protocol import call_tool_only, encode_tools
 from ..memory import MemoryManager
 from ..session_runtime.events import SessionEvents
 from ..tool_execution.capabilities import CapabilityAssembly
 from ..tool_execution.dispatch import ToolDispatchService
 from ..tool_execution.tool_search import (
-    MAX_ACTIVE_DEFERRED_TOOLS,
+    DISCOVERY_TOOL_NAMES,
+    make_call_tool,
     make_tool_search_tool,
 )
 from .cancellation import CancellationToken
@@ -98,27 +99,16 @@ def prepare_model_tools(
         if (resolved.allow_interaction or not tool.requires_user_interaction)
         and (resolved.allow_delegation or tool.name not in {"spawn_agent", "get_agent_tree"})
     ]
-    deferred_names = {
-        tool.name
-        for tool in runtime_tools
-        if tool.expose_to_model and tool.defer_to_model
-    }
-    restored_active = [
-        name
-        for name in session.active_deferred_tools
-        if name in deferred_names
-    ][-MAX_ACTIVE_DEFERRED_TOOLS:]
-    session.active_deferred_tools[:] = restored_active
     if any(tool.expose_to_model and tool.defer_to_model for tool in runtime_tools):
         runtime_tools.append(make_tool_search_tool(
             runtime_tools,
-            session.active_deferred_tools,
             lambda name: mcp_tool_enabled(name, session.disabled_mcp_servers),
         ))
+        # call_tool exists only for deferred tools that got no stub.
+        if call_tool_only(runtime_tools):
+            runtime_tools.append(make_call_tool())
     capabilities = CapabilitySnapshot(resolved, tuple(runtime_tools))
-    schemas, names = encode_tools(
-        runtime_tools, active_deferred=set(session.active_deferred_tools)
-    )
+    schemas, names = encode_tools(runtime_tools)
     return PreparedTools(resolved, capabilities, runtime_tools, schemas, names)
 
 
@@ -134,7 +124,7 @@ def ensure_system_prompt(
     memory_section = memory.instructions() if memory else ""
     prompt_tools = [
         tool for tool in prepared.tools
-        if tool.name != "tool_search" and tool.list_in_system_prompt
+        if tool.name not in DISCOVERY_TOOL_NAMES and tool.list_in_system_prompt
     ]
     effective_role = role_instruction or getattr(prepared.profile, "role_instruction", "")
     session.append_message({

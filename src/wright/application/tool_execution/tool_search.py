@@ -1,18 +1,32 @@
-"""On-demand discovery for specialized tools."""
+"""On-demand discovery and invocation of specialized tools.
+
+Deferred tools enter the request's ``tools`` array only as stubs (name, one
+sentence, open object schema). ``tool_search`` returns their full schemas as
+instruction content in the transcript, and the model then calls them by name.
+Deferred tools past the stub limit are not listed at all and run through the
+fixed ``call_tool`` wrapper, which the dispatcher unwraps before validation,
+hooks and permission. Either way the schema list sent to the provider stays
+byte-identical for the whole session, so discovery never invalidates the
+prompt cache.
+"""
 
 from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from typing import Any
 
-from ...domain.model.tool import ToolAccess, ToolResult, split_tool_catalog
+from ...domain.model.tool import ToolAccess, ToolCall, ToolResult, split_tool_catalog
 from ...domain.model.tool_definition import Tool
-from ...domain.model.tool_names import legacy_tool_names
+from ...domain.model.tool_names import canonical_tool_name, legacy_tool_names
 from ...domain.model.tool_runtime import ToolRuntime
+from ...domain.protocol import call_tool_only
 
-MAX_ACTIVE_DEFERRED_TOOLS = 12
+TOOL_SEARCH_NAME = "tool_search"
+CALL_TOOL_NAME = "call_tool"
+DISCOVERY_TOOL_NAMES = frozenset({TOOL_SEARCH_NAME, CALL_TOOL_NAME})
 _STOP_WORDS = frozenset({
     "a",
     "an",
@@ -136,18 +150,20 @@ def _score_tool(tool: Tool, query: str, tokens: set[str], requested: set[str]) -
 def _description(tools: Sequence[Tool]) -> str:
     _, deferred = split_tool_catalog(tools)
     parts = [
-        "Find and activate specialized tools omitted from the baseline schema set.",
+        "Find specialized tools omitted from the baseline schema set and return their full schemas.",
         "Do not search for tools already in this turn's schema.",
     ]
     if deferred:
         parts.append("Use it for: " + ", ".join(deferred) + ".")
-    parts.append("Activated tools are available on the next model turn.")
+    parts.append(
+        "Call a found tool by its name; a result marked invoke=call_tool goes "
+        "through call_tool(name, arguments)."
+    )
     return " ".join(parts)
 
 
 def make_tool_search_tool(
     tools: Sequence[Tool],
-    active: list[str],
     available: Callable[[str], bool] = lambda _name: True,
 ) -> Tool:
     """``available`` is asked at search time, so a server turned off later drops out."""
@@ -176,7 +192,7 @@ def make_tool_search_tool(
         ranked: list[tuple[int, Tool]] = []
         for tool in deferred.values():
             score = _score_tool(tool, query, tokens, requested_names)
-            if score >= 20 or score >= 1_000:
+            if score >= 20:
                 ranked.append((score, tool))
         ranked.sort(key=lambda item: (-item[0], item[1].name))
         if ranked:
@@ -191,14 +207,14 @@ def make_tool_search_tool(
             tool.name: tool
             for tool in tools
             if tool.expose_to_model and not tool.defer_to_model
-            and tool.name != "tool_search"
+            and tool.name not in DISCOVERY_TOOL_NAMES
         }
         already_available = []
         if query or requested_names:
             available_ranked: list[tuple[int, Tool]] = []
             for tool in baseline.values():
                 score = _score_tool(tool, query, tokens, requested_names)
-                if score >= 20 or score >= 1_000:
+                if score >= 20:
                     available_ranked.append((score, tool))
             available_ranked.sort(key=lambda item: (-item[0], item[1].name))
             already_available = [tool for _score, tool in available_ranked[:max_results]]
@@ -210,41 +226,36 @@ def make_tool_search_tool(
                     if item[0] >= baseline_floor or item[0] >= 1_000
                 ]
 
-        active_set = set(active)
-        already_active = [
-            tool for _score, tool in ranked if tool.name in active_set
-        ]
-        matches = [
-            tool for _score, tool in ranked if tool.name not in active_set
-        ][:min(max_results, MAX_ACTIVE_DEFERRED_TOOLS)]
-        for tool in already_active:
-            active.remove(tool.name)
-            active.append(tool.name)
-        active.extend(tool.name for tool in matches)
-        evicted: list[str] = []
-        while len(active) > MAX_ACTIVE_DEFERRED_TOOLS:
-            evicted.append(active.pop(0))
-
+        matches = [tool for _score, tool in ranked][:max_results]
         known_normalized = {_normalize(name) for name in deferred}
-        note = "Activated tools are available on the next model turn."
+        # Same split encode_tools makes: over every deferred tool, because
+        # turning a server off does not change the schema list.
+        overflow = call_tool_only(list(all_deferred.values()))
+        note = (
+            "Call invoke=direct tools by name like any other tool. Their schemas "
+            "stay in this conversation, so do not search for them again."
+        )
+        if any(tool.name in overflow for tool in matches):
+            note += (
+                " invoke=call_tool tools are not in the schema list; call them "
+                "with call_tool(name, arguments)."
+            )
         if already_available:
             note = (
                 "already_available tools are in the baseline schema and can be "
-                "called this turn. " + note
+                "called directly. " + note
             )
-        if evicted:
-            note += (
-                " Evicted tools were dropped from the active set and must be "
-                "searched again: " + ", ".join(evicted) + "."
-            )
-        return ToolResult.success({
-            "activated": [
-                {"name": tool.name, "description": tool.description}
+        data = {
+            "tools": [
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                    "invoke": "call_tool" if tool.name in overflow else "direct",
+                }
                 for tool in matches
             ],
             "already_available": [tool.name for tool in already_available],
-            "already_active": [tool.name for tool in already_active],
-            "evicted": evicted,
             "unknown_names": sorted(
                 requested_by_normalized[name]
                 for name in requested_names - known_normalized
@@ -253,17 +264,25 @@ def make_tool_search_tool(
             "metrics": {
                 "catalog_size": len(deferred),
                 "candidate_count": len(ranked),
-                "activated_count": len(matches),
+                "returned_count": len(matches),
                 "already_available_count": len(already_available),
-                "already_active_count": len(already_active),
-                "evicted_count": len(evicted),
-                "active_count": len(active),
                 "query_token_count": len(tokens),
             },
-        })
+        }
+        if not matches:
+            return ToolResult.success(data)
+        # The schemas are what lets the model call these tools later, so the
+        # request projection must keep them like a loaded skill body.
+        return ToolResult.success(
+            data,
+            retention="instruction",
+            retention_key=TOOL_SEARCH_NAME + ":" + ",".join(
+                sorted(tool.name for tool in matches)
+            ),
+        )
 
     return Tool(
-        name="tool_search",
+        name=TOOL_SEARCH_NAME,
         description=_description(tools),
         parameters={
             "type": "object",
@@ -293,4 +312,101 @@ def make_tool_search_tool(
             subject=str(args.get("query") or ",".join(args.get("names") or ())),
             reason="search the registered tool catalog",
         ),
+        is_concurrency_safe=lambda args: True,
+    )
+
+
+def _call_tool_never_runs(arguments: dict, runtime: ToolRuntime) -> ToolResult:
+    # The dispatcher replaces call_tool with the real call before execution.
+    del arguments, runtime
+    return ToolResult.fail("call_tool must be unwrapped by the dispatcher")
+
+
+def make_call_tool() -> Tool:
+    """Fixed wrapper for deferred tools that have no stub in the schema list."""
+    return Tool(
+        name=CALL_TOOL_NAME,
+        description=(
+            "Invoke a specialized tool that tool_search marked invoke=call_tool. "
+            "Pass its exact name and an arguments object that matches its "
+            "parameters. Tools in the schema list are called directly."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Exact name of the tool to invoke",
+                },
+                "arguments": {
+                    "type": "object",
+                    "description": "Arguments for that tool, matching its parameters",
+                },
+            },
+            "required": ["name"],
+            "additionalProperties": False,
+        },
+        call=_call_tool_never_runs,
+    )
+
+
+def unwrap_call_tool(
+    call: ToolCall, registry: Mapping[str, Tool]
+) -> tuple[ToolCall, ToolResult | None]:
+    """Turn ``call_tool(name, arguments)`` into the call it stands for.
+
+    Only exposed, deferred tools can be reached this way (a stubbed one too,
+    which is harmless). Every other name is an ordinary failed result for
+    this one call.
+    """
+    arguments = call.arguments if isinstance(call.arguments, dict) else {}
+    name = arguments.get("name")
+    inner = arguments.get("arguments", {})
+    if not isinstance(name, str) or not name.strip():
+        return call, ToolResult.fail("call_tool requires a tool name")
+    if not isinstance(inner, dict):
+        return call, ToolResult.fail("call_tool arguments must be an object")
+    name = canonical_tool_name(name.strip())
+    target = registry.get(name)
+    unwrapped = ToolCall(name, dict(inner), call.id)
+    if target is None or not target.expose_to_model or name in DISCOVERY_TOOL_NAMES:
+        return unwrapped, ToolResult.fail(
+            f"Unknown tool: {name}. Use tool_search to find specialized tools."
+        )
+    if not target.defer_to_model:
+        return unwrapped, ToolResult.fail(
+            f"{name} is a baseline tool; call it directly instead of through call_tool."
+        )
+    return unwrapped, None
+
+
+def with_schema_hint(tool: Tool, result: ToolResult) -> ToolResult:
+    """Attach a deferred tool's full schema to its failed validation result.
+
+    The model may call a stub without searching first; the schema then comes
+    back with the error and is kept through folding like a search result.
+    """
+    if not tool.defer_to_model:
+        return result
+    data = dict(result.data) if isinstance(result.data, dict) else {}
+    data["parameters"] = tool.parameters
+    return replace(
+        result,
+        data=data,
+        retention="instruction",
+        retention_key=TOOL_SEARCH_NAME + ":" + tool.name,
+    )
+
+
+def unavailable_tool_result(name: str, registry: Mapping[str, Tool]) -> ToolResult:
+    """Failure for a call to a name that is not in this request's schema."""
+    tool = registry.get(name)
+    if tool is not None and tool.expose_to_model and tool.defer_to_model:
+        return ToolResult.fail(
+            f"{name} is a specialized tool; call it with call_tool(name, arguments)."
+        )
+    return ToolResult.fail(
+        f"Tool is not available this turn: {name}. Use tool_search to find "
+        "specialized tools."
     )

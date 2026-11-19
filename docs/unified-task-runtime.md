@@ -26,7 +26,7 @@ Model
 
 子 Agent 委派：
 
-- `spawn_agent` / `wait_agent` 常驻；`get_agent_tree`、`get_agent`、`cancel_agent` 延迟加载，经 `tool_search` 激活；参数是 `agent_task_id`
+- `spawn_agent` / `wait_agent` 常驻；`get_agent_tree`、`get_agent`、`cancel_agent` 延迟加载（`tools` 里只有占位），经 `tool_search` 拿到 schema 后按名称调用；参数是 `agent_task_id`
 
 命令执行：
 

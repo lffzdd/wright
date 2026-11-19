@@ -48,8 +48,15 @@ from ...domain.policy import (
 )
 from ...domain.policy.memory import describe_verdict
 from ...domain.policy.permission import normalize_response
+from ..workspace.modes import mode_blocked_message, tool_visible
 from .capabilities import CapabilityAssembly
 from .executor import ConcurrentToolExecutor
+from .tool_search import (
+    CALL_TOOL_NAME,
+    unavailable_tool_result,
+    unwrap_call_tool,
+    with_schema_hint,
+)
 from .validation import validate_tool_arguments
 
 logger = get_logger(__name__)
@@ -107,6 +114,9 @@ class ToolDispatchService:
         if tool_timeout <= 0:
             raise ValueError("tool_timeout must be > 0")
         self.tool_registry = tool_registry
+        # Names the model was offered in the current request. The runner sets
+        # it per turn; ``None`` (direct callers and tests) skips the check.
+        self.model_callable_names: frozenset[str] | None = None
         self.capability_snapshot = capability_snapshot
         self.execution_journal = execution_journal
         self._active_step_id = ""
@@ -196,28 +206,37 @@ class ToolDispatchService:
         recorded the model's original input, so hook rewrites remain observable
         without mutating history.
         """
+        offered = self.model_callable_names
+        if offered is not None and tool_call.name not in offered:
+            disabled = self._mcp_disabled_result(tool_call.name)
+            return tool_call, disabled or unavailable_tool_result(
+                tool_call.name, self.tool_registry
+            )
+        if tool_call.name == CALL_TOOL_NAME:
+            # Everything below (mode, MCP state, capability, schema, hooks,
+            # permission) applies to the tool call_tool stands for.
+            tool_call, unwrap_error = unwrap_call_tool(tool_call, self.tool_registry)
+            if unwrap_error is not None:
+                return tool_call, unwrap_error
         tool = self.tool_registry.get(tool_call.name)
         if tool is None:
             return tool_call, ToolResult.fail(err=f"Unknown tool: {tool_call.name}")
-        from ..workspace.modes import tool_visible
-
         if not tool_visible(tool.name, self.session):
             return tool_call, ToolResult.fail(
-                f"Interaction mode blocks {tool.name}",
+                mode_blocked_message(tool.name, self.session),
                 data={"reason_code": "permission.ask_denied"},
             )
-        if not mcp_tool_enabled(tool.name, getattr(self.session, "disabled_mcp_servers", ())):
-            return tool_call, ToolResult.fail(
-                f"MCP server {mcp_server_of(tool.name)!r} is turned off for this conversation",
-                data={"reason_code": "mcp.server_disabled"},
-            )
+        disabled = self._mcp_disabled_result(tool.name)
+        if disabled is not None:
+            return tool_call, disabled
         if self.capability_snapshot is not None and tool_call.name not in self.capability_snapshot.names:
             return tool_call, ToolResult.fail(
                 f"Capability is not authorized for this Run: {tool_call.name}"
             )
         validation_error = validate_tool_arguments(tool, tool_call.arguments)
         if validation_error is not None:
-            return tool_call, validation_error
+            # Validation uses the real schema, never the stub the model saw.
+            return tool_call, with_schema_hint(tool, validation_error)
 
         arguments = dict(tool_call.arguments)
         hook_decision = self._emit_lifecycle(
@@ -249,6 +268,14 @@ class ToolDispatchService:
                         updated_validation_error,
                     )
         return ToolCall(tool_call.name, arguments, tool_call.id), None
+
+    def _mcp_disabled_result(self, name: str) -> ToolResult | None:
+        if mcp_tool_enabled(name, getattr(self.session, "disabled_mcp_servers", ())):
+            return None
+        return ToolResult.fail(
+            f"MCP server {mcp_server_of(name)!r} is turned off for this conversation",
+            data={"reason_code": "mcp.server_disabled"},
+        )
 
     def _access_scope(self) -> AccessScope:
         if self._managed_permissions():

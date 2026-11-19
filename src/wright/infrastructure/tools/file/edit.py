@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ....domain.model.tool import ToolResult
-from ....domain.model.tool_definition import Tool
+from ....domain.model.tool_definition import ALL_ROLES, Tool
 from ....domain.model.tool_runtime import ToolRuntime
 from .common import (
     _EDIT_OCCURRENCE_LIMIT,
@@ -199,6 +199,7 @@ def _approval_preview(args: dict) -> dict:
 
 edit_file_tool = Tool(
     name="edit",
+    roles=ALL_ROLES,
     approval_details=lambda args, cwd: _approval_preview(args),
     description=(
         "Replace exact text in an existing file. old_text must occur exactly once "

@@ -63,7 +63,6 @@ def test_agent_emits_root_lifecycle_and_compaction_events(tmp_path):
     recorder = TraceRecorder(tmp_path / "trace.jsonl")
     lifecycle = LifecycleManager("session", recorder)
     session = Session.create("goal", tmp_path)
-    session.active_deferred_tools = ["specialized_tool"]
     specialized = Tool(
         name="specialized_tool",
         description="Specialized test capability",
@@ -87,7 +86,6 @@ def test_agent_emits_root_lifecycle_and_compaction_events(tmp_path):
     })
 
     assert agent.run("do it") == "done"
-    assert session.active_deferred_tools == ["specialized_tool"]
 
     events = [row["event"] for row in recorder.read()]
     assert events == [

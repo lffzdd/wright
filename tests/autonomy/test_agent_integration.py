@@ -21,7 +21,7 @@ from wright.domain.model.agent import AgentProfile
 from wright.domain.model.scheduling import TriggerSpec
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolAccess, ToolResult
-from wright.domain.model.tool_definition import Tool
+from wright.domain.model.tool_definition import ALL_ROLES, Tool
 from wright.domain.policy import (
     PermissionPolicy,
     PermissionRule,
@@ -310,7 +310,7 @@ def test_durable_run_persists_history_and_child_side_effect_identity(tmp_path):
     )
     tools = build_agent_tools(
         llm,
-        [Tool("write_marker", "write marker", {"type": "object"}, write_marker, access_descriptor=lambda _: ToolAccess(frozenset({"persistent_write"})))],
+        [Tool("write_marker", "write marker", {"type": "object"}, write_marker, access_descriptor=lambda _: ToolAccess(frozenset({"persistent_write"})), roles=ALL_ROLES)],
         max_depth=1,
         render_subagents=False,
         permission_workflow=permission_workflow,

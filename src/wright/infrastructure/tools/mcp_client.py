@@ -33,6 +33,7 @@ import json
 import threading
 from collections.abc import Sequence
 from concurrent.futures import Future
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -46,7 +47,7 @@ from mcp.client.streamable_http import streamablehttp_client
 
 from ...core.logger import get_logger
 from ...domain.model.tool import ArtifactRef, ToolAccess, ToolResult
-from ...domain.model.tool_definition import Tool
+from ...domain.model.tool_definition import ALL_ROLES, Tool
 from ...domain.model.tool_runtime import ToolRuntime
 from ..storage.artifacts import ArtifactStore
 
@@ -200,58 +201,110 @@ class McpManager:
         return fut.result(timeout=timeout)
 
     def start(self) -> list[Tool]:
-        """起事件循环线程,连接所有 server 并发现工具。返回包装好的 Tool 列表。
+        """起事件循环线程,并行连接所有 server 并发现工具。返回包装好的 Tool 列表。
 
         没有任何 server 配置时直接返回空列表(连线程都不必起)。
+        超过 startup_timeout 还没就绪的 server 记为失败,不影响其余 server,
+        也不让会话启动失败。
         """
         if not self.configs:
             return []
         self._thread.start()
         self._started = True
         self._ready = Future()
-        # _serve 是一个长生命周期任务:open → 交回工具 → park → close 全在它一个任务里。
+        # _serve 是一个长生命周期任务:并行连接 → 交回工具 → park → 关闭。
         self._serve_future = asyncio.run_coroutine_threadsafe(self._serve(), self.loop)
-        # 阻塞等 _serve 完成"连接+发现"阶段,拿回工具列表(park 之前 set_result)。
-        return self._ready.result(timeout=self.startup_timeout)
+        # _serve 自己按 startup_timeout 截止;这里的超时只防事件循环本身卡死。
+        try:
+            return self._ready.result(timeout=self.startup_timeout + 10)
+        except FutureTimeoutError:
+            logger.warning("MCP startup did not finish; continuing without MCP tools")
+            for cfg in self.configs:
+                self._statuses.setdefault(
+                    cfg.name, _failed_status(TimeoutError("MCP startup did not finish"))
+                )
+            return []
 
     async def _serve(self) -> None:
-        """在单一任务内完成 session 的 open → 服务 → close,绕开 anyio 的任务绑定限制。"""
+        """每个 server 一个任务,各自在同一个任务里完成 open → 服务 → close。
+
+        anyio 要求 cancel scope 在进入它的任务里退出,所以每个 server 的
+        AsyncExitStack 都只在自己的任务中进入和退出。
+        """
         self._shutdown_event = asyncio.Event()
+        tasks: list[asyncio.Task] = []
         try:
-            async with AsyncExitStack() as stack:
-                tools: list[Tool] = []
-                for cfg in self.configs:
-                    try:
-                        session = await self._connect_one(stack, cfg)
-                    except Exception as e:
-                        # 单个 server 连不上不拖垮整体:log 后跳过,其余照常。
-                        logger.warning("MCP server %r failed to connect, skipped: %s", cfg.name, e)
-                        self._statuses[cfg.name] = _failed_status(e)
-                        continue
-                    self.sessions[cfg.name] = session
-                    listed = await session.list_tools()
-                    names = []
-                    for mcp_tool in listed.tools:
-                        wrapped = self._wrap(cfg.name, session, mcp_tool)
-                        names.append(wrapped.name)
-                        tools.append(wrapped)
-                    self._statuses[cfg.name] = {"status": "connected", "tools": names, "error": None}
-                    logger.info(
-                        "MCP server %r connected with %d tools",
+            ready = {cfg.name: self.loop.create_future() for cfg in self.configs}
+            tasks = [
+                asyncio.create_task(
+                    self._serve_one(cfg, ready[cfg.name]), name=f"mcp:{cfg.name}"
+                )
+                for cfg in self.configs
+            ]
+            await asyncio.wait(list(ready.values()), timeout=self.startup_timeout)
+            tools: list[Tool] = []
+            for cfg, task in zip(self.configs, tasks, strict=True):
+                pending = ready[cfg.name]
+                if not pending.done():
+                    # 卡在连接或发现阶段:记为失败并取消,其余 server 照常可用。
+                    logger.warning(
+                        "MCP server %r did not respond within %.0fs, skipped",
                         cfg.name,
-                        len(listed.tools),
+                        self.startup_timeout,
                     )
-                # 交回工具列表让 start() 返回;本任务继续 park 住,session 保持存活。
-                assert self._ready is not None
-                self._ready.set_result(tools)
-                await self._shutdown_event.wait()
-            # AsyncExitStack 在此退出——与进入它的是【同一个任务】,不触发 cancel scope 报错。
+                    self._statuses[cfg.name] = _failed_status(
+                        TimeoutError(f"no response within {self.startup_timeout:g}s")
+                    )
+                    task.cancel()
+                    continue
+                tools.extend(pending.result())
+            # 按配置顺序交回工具列表让 start() 返回;各 server 任务继续 park。
+            assert self._ready is not None
+            self._ready.set_result(tools)
+            await self._shutdown_event.wait()
         except Exception as e:
-            # 还没交回工具(连接阶段就崩)→ 把异常抛给 start();否则只能 log。
+            # 还没交回工具就崩了 → 把异常抛给 start();否则只能 log。
             if self._ready is not None and not self._ready.done():
                 self._ready.set_exception(e)
             else:
                 logger.warning("MCP serve task failed: %s", e)
+        finally:
+            self._shutdown_event.set()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _serve_one(self, cfg: McpServerConfig, ready: asyncio.Future) -> None:
+        """连接一个 server、交回它的工具,然后保持 session 直到关闭。"""
+        try:
+            async with AsyncExitStack() as stack:
+                try:
+                    session = await self._connect_one(stack, cfg)
+                    listed = await session.list_tools()
+                except Exception as e:
+                    # 单个 server 连不上不拖垮整体:log 后跳过,其余照常。
+                    logger.warning("MCP server %r failed to connect, skipped: %s", cfg.name, e)
+                    self._statuses[cfg.name] = _failed_status(e)
+                    if not ready.done():
+                        ready.set_result([])
+                    return
+                wrapped = [self._wrap(cfg.name, session, item) for item in listed.tools]
+                if ready.done():
+                    return
+                self.sessions[cfg.name] = session
+                self._statuses[cfg.name] = {
+                    "status": "connected",
+                    "tools": [tool.name for tool in wrapped],
+                    "error": None,
+                }
+                logger.info("MCP server %r connected with %d tools", cfg.name, len(wrapped))
+                ready.set_result(wrapped)
+                assert self._shutdown_event is not None
+                await self._shutdown_event.wait()
+            # AsyncExitStack 在此退出——与进入它的是【同一个任务】。
+        finally:
+            self.sessions.pop(cfg.name, None)
+            if not ready.done():
+                ready.set_result([])
 
     async def _connect_one(
         self, stack: AsyncExitStack, cfg: McpServerConfig
@@ -323,6 +376,7 @@ class McpManager:
 
         return Tool(
             name=full_name,
+            roles=ALL_ROLES,
             description=mcp_tool.description or "",
             parameters=mcp_tool.inputSchema,  # JSON Schema 同构,直接透传
             call=call,

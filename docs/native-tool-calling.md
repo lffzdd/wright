@@ -72,7 +72,62 @@ git worktree add --detach ../wright-legacy-study legacy-json-react
 
 `parsed.final_answer` 等是程序内部记录字段，不再要求模型生成这个信封。
 `reasoning` 只记录供应商实际返回的推理内容；它不代表模型完整的内部思考。
-上下文压缩只作用于当次请求投影：它折叠可丢弃的旧工具结果正文，保留角色和调用 ID；完整结果仍在执行记录中。带 `retention=instruction` 的结果（技能正文）不会被换成占位符。压缩不会清空会话里已经激活的延迟工具。
+上下文压缩只作用于当次请求投影：它折叠可丢弃的旧工具结果正文，保留角色和调用 ID；完整结果仍在执行记录中。带 `retention=instruction` 的结果（技能正文、`tool_search` 返回的 schema）不会被换成占位符。
+
+## 延迟工具：占位 schema、`tool_search` 与 `call_tool`
+
+`defer_to_model=True` 的工具（MCP、定时任务、子 Agent 管理、部分记忆工具等）
+已注册、受权限约束，但完整 schema 不进入请求的 `tools` 参数。`encode_tools`
+只给它们发一个占位：真实名称、描述的第一句，参数是 `{"type": "object"}`。
+模型这样使用它们：
+
+1. `tool_search(query | names)` 返回匹配工具的完整 schema（名称、描述、参数），
+   每项带 `invoke`：`direct` 或 `call_tool`。结果带 `retention=instruction`，
+   `retention_key` 是 `tool_search:` 加排序后的工具名，压缩时保留；超过水位线折叠时，
+   同一组工具较早的副本标成 superseded。
+2. `invoke=direct` 的工具用真实名称直接发起原生调用。`ToolDispatchService` 用真实
+   schema 做 jsonschema 校验，不用占位 schema。模型没先搜索就直接调用时，校验失败的
+   结果里附上完整 `parameters`，同样带 `retention=instruction`，下一次即可改对。
+3. 延迟工具超过 `DEFERRED_STUB_LIMIT`（64，见 `domain/protocol.py`）个时，超出部分
+   不发占位，只能经 `call_tool(name, arguments)` 调用。内置延迟工具先占名额，MCP 工具
+   排在后面，所以溢出的总是 MCP 工具的尾部。上限是为了给服务商的函数个数上限
+   （OpenAI 每次请求 128 个）留出基础工具的位置。只有存在溢出时 `tools` 里才有
+   `call_tool`。
+4. 两条路径共用分发层的同一套流程。`call_tool` 在任何检查之前还原成真实调用：交互模式、
+   MCP 开关、能力快照、参数校验、钩子、出口检查、权限和审批都按真实工具名执行，
+   事件和 trace 里也是真实工具名；transcript 保留模型实际发出的 `call_tool` 调用。
+   `call_tool` 只能到达已暴露的延迟工具。名称未知、指向基础工具、指向
+   `tool_search`/`call_tool` 自身或 `expose_to_model=False` 的工具时，只让这一个调用失败。
+
+为什么这样做：`tools` 参数排在服务商前缀缓存的最前面，任何改动都让整段缓存失效。
+占位 schema 在整个会话里固定不变，发现新工具只往 transcript 末尾追加内容，不改 `tools`，
+也不需要"已激活集合"、上限和淘汰。模型用原生方式调用真实名称，比间接的 `call_tool`
+更稳；`call_tool` 只兜底超出上限的部分。这一方案不依赖任何服务商的 beta 能力。
+参数校验本来就由 Wright 在执行前用 jsonschema 完成（请求里发的是 `strict: false`），
+所以占位 schema 不会让校验变弱。
+
+基础工具（文件、shell、计划、网络、`spawn_agent` 等）直接调用。模型调用一个不在本轮
+`tools` 里的名称时，这一个调用收到失败结果（溢出的延迟工具会提示改用 `call_tool`），
+同一回合的其他调用照常执行，不算无效回合。
+
+## 交互模式和 MCP 开关不改 `tools`
+
+Ask/Plan 模式不再从 `tools` 里隐藏工具，关掉的 MCP server 的占位也照常保留。
+`AgentPromptManager.visible_schema_tools` 只按"有无技能"决定是否列出 `load_skill`，
+所以切换模式、开关 MCP server 都不会让缓存失效。这两类限制通过两处生效：
+
+- 每次请求末尾的临时提醒，不写入 transcript：Ask/Plan 下有 `<interaction-mode>`
+  （`workspace/modes.py` 的 `mode_notice`），有 server 被关掉时有 `<mcp-servers-off>`。
+  放在末尾，前面的缓存前缀不变。
+- 执行层照旧拦截：分发层的 `tool_visible` 检查、MCP 开关检查，以及权限层的
+  `operations_allowed`。被拦下的调用返回失败结果，说明当前模式或哪个 server 已关闭，
+  以及替代做法。`tool_search` 不返回已关闭 server 的工具。
+
+代价是模型仍能看到被禁止工具的名字，偶尔会去试一次；安全性不受影响。关掉 server
+也不再省掉它的占位 token（MCP 页的 token 数照实计入）。于是 `tools` 在整个会话里
+保持逐字节不变。
+
+旧 checkpoint 里的 `active_deferred_tools` 字段在加载时忽略。
 
 ## Anthropic Messages 传输
 
@@ -81,7 +136,9 @@ git worktree add --detach ../wright-legacy-study legacy-json-react
 `domain/model/llm/anthropic_adapter.py`，不含 SDK 类型。约定与其他传输相同：
 
 - `tools` 按会话固定的顺序编码为 `name`/`description`/`input_schema`，不发 `strict`；
-  延迟工具仍经 `tool_search` 结果和 `call_tool` 到达，请求里的工具数组不变。
+  延迟工具照样只发占位（`input_schema` 为 `{"type": "object"}`），超出上限的经
+  `call_tool` 调用，请求里的工具数组整个会话不变。交互模式和 MCP 开关的临时提醒
+  排在历史断点之后，不影响缓存。
 - 第一条 system 消息成为顶层 `system`；连续的 `role=tool` 合成一条带 `tool_result`
   的 user 消息，工具图片放在同一条消息里。
 - 来自该 API 的 assistant 回合把原始内容块存进 `provider_state["anthropic_content"]`，

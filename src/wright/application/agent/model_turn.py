@@ -35,7 +35,6 @@ class ModelTurnRunner:
         memory: MemoryManager | None,
         context_builder: ContextBuilder,
         prompt_manager: AgentPromptManager,
-        active_deferred_tools: list[str],
         tool_schemas: list[dict],
         tool_names: dict[str, str],
         emit_lifecycle: Callable,
@@ -49,7 +48,6 @@ class ModelTurnRunner:
         self.context_builder = context_builder
         self.compactor = context_builder.compactor
         self._prompt_manager = prompt_manager
-        self._active_deferred_tools = active_deferred_tools
         self.tool_schemas = tool_schemas
         self._tool_names = tool_names
         self._emit_lifecycle = emit_lifecycle
@@ -70,12 +68,11 @@ class ModelTurnRunner:
         token 再传入同一份列表，用量校准才能扣掉这笔临时开销。
         """
 
-        # Schema exposure is snapshotted for this request. tool_search updates
-        # the session set during tool execution, so new names apply next request.
-        # Request compaction must not clear that set: folding is a projection.
+        # Schema exposure is snapshotted for this request. Deferred tools are
+        # stubs, and neither the interaction mode nor the MCP switches filter
+        # it, so the list stays byte-identical for the whole session.
         self.tool_schemas, self._tool_names = encode_tools(
             self._prompt_manager.visible_schema_tools(),
-            active_deferred=set(self._active_deferred_tools),
         )
         self.ui.on_turn_begin()
 
@@ -150,10 +147,7 @@ class ModelTurnRunner:
         """
         from ..workspace.context_usage import classify_context
 
-        schemas, _ = encode_tools(
-            self._prompt_manager.visible_schema_tools(),
-            active_deferred=set(self._active_deferred_tools),
-        )
+        schemas, _ = encode_tools(self._prompt_manager.visible_schema_tools())
         system_prompt = None
         if self.memory is not None:
             base_prompt = next(

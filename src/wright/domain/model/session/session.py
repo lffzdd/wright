@@ -76,9 +76,6 @@ class Session:
     # retained while Agent/Tool APIs are migrated.
     runs: dict[str, RunRecord] = field(default_factory=dict)
     active_run_id: str | None = None
-    # Deferred tool schemas discovered by tool_search. Order is least-recently
-    # touched first so the catalog can remain bounded and survive resume.
-    active_deferred_tools: list[str] = field(default_factory=list)
     # MCP servers this conversation has turned off: their tools are neither
     # shown to the model nor callable until turned back on.
     disabled_mcp_servers: list[str] = field(default_factory=list)
@@ -213,12 +210,6 @@ class Session:
     def _next_step(self) -> int:
         self.step_count += 1
         return self.step_count
-
-    def touch_active_deferred_tool(self, name: str) -> None:
-        if name not in self.active_deferred_tools:
-            return
-        self.active_deferred_tools.remove(name)
-        self.active_deferred_tools.append(name)
 
     def begin_user_turn(self, prompt: str) -> None:
         """记录当前任务目标及其证据边界。"""

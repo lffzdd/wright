@@ -19,7 +19,6 @@ from uuid import uuid4
 from ...core.logger import get_logger
 from ...domain.model.attachment import AttachmentError
 from ...domain.model.llm.model_adapters import available_models, has_responses_state
-from ...domain.model.mcp import mcp_server_of
 from ...domain.model.session import HistoryRewriteError
 from ...domain.model.session.run import TERMINAL_RUN_STATUSES
 from ...domain.policy.permission.resolver import sandbox_network_granted
@@ -785,22 +784,16 @@ class SessionService:
                 raise SessionServiceError(f"MCP server {name} is not connected")
             state = self.runtime.session_state
             previous_disabled = list(state.disabled_mcp_servers)
-            previous_active = list(state.active_deferred_tools)
             if enabled:
                 state.disabled_mcp_servers[:] = [item for item in previous_disabled if item != name]
             elif name not in previous_disabled:
                 state.disabled_mcp_servers.append(name)
-                # Loaded tools of the server leave the schema with it.
-                state.active_deferred_tools[:] = [
-                    tool for tool in previous_active if mcp_server_of(tool) != name
-                ]
             store = getattr(self.runtime.agent, "checkpoint_store", None)
             if store is not None:
                 try:
                     store.save(state)
                 except Exception as exc:
                     state.disabled_mcp_servers[:] = previous_disabled
-                    state.active_deferred_tools[:] = previous_active
                     raise SessionServiceError(f"checkpoint failed: {exc}") from exc
             rows = self.mcp_servers()
         self.publisher.publish("session.mcp_updated", {"mcp_servers": rows})

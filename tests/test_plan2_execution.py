@@ -13,7 +13,7 @@ from wright.application.session_runtime.live_resources import RuntimeResources
 from wright.application.tool_execution.dispatch import ToolDispatchService
 from wright.domain.model.session import Session
 from wright.domain.model.tool import ToolCall, ToolResult
-from wright.domain.model.tool_definition import Tool
+from wright.domain.model.tool_definition import ALL_ROLES, Tool
 from wright.domain.policy import (
     AccessTarget,
     PermissionPolicy,
@@ -197,6 +197,7 @@ def test_child_uses_fixed_local_cwd_and_own_scope_snapshot(tmp_path):
             subject="same.txt",
         ),
         required_capabilities=frozenset({"execution"}),
+        roles=ALL_ROLES,
     )
 
     from wright.infrastructure.runtime import AuthorizedExecution
@@ -272,6 +273,7 @@ def test_one_executor_refreshes_scope_for_shell_and_child(tmp_path):
             subject="marker.txt",
         ),
         required_capabilities=frozenset({"execution"}),
+        roles=ALL_ROLES,
     )
 
     class ChildLLM:

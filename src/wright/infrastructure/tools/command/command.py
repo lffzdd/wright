@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from ....domain.model.command import CommandOutcome
 from ....domain.model.tool import ToolResult
-from ....domain.model.tool_definition import Tool
+from ....domain.model.tool_definition import ALL_ROLES, Tool
 from ....domain.model.tool_runtime import ToolCancelledError, ToolRuntime
 from .permissions import (
     describe_execute_command_access,
@@ -69,6 +69,7 @@ def _project(outcome: CommandOutcome) -> ToolResult:
 
 execute_command_tool = Tool(
     name="shell",
+    roles=ALL_ROLES,
     approval_details=lambda args, cwd: {"command": str(args.get("command", ""))},
     description=(
         "Execute a shell command in the workspace, isolated by default. "

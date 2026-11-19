@@ -284,7 +284,7 @@ def test_budget_failure_reports_that_instructions_were_not_folded(tmp_path: Path
     assert "BUDGET-STEP" in stored
 
 
-def test_restore_keeps_catalog_body_and_activated_tools(tmp_path: Path):
+def test_restore_keeps_catalog_body_and_deferred_tool_reachable(tmp_path: Path):
     skills = tmp_path / "skills"
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -302,7 +302,6 @@ def test_restore_keeps_catalog_body_and_activated_tools(tmp_path: Path):
     )
     store = FileSessionRepository(tmp_path / "checkpoints")
     session = Session.create("restore", workspace)
-    session.active_deferred_tools = ["create_schedule"]
     llm = ScriptLLM([
         response(calls=[_call("load_skill", skill_id="release-check")]),
         _final("loaded"),
@@ -316,7 +315,6 @@ def test_restore_keeps_catalog_body_and_activated_tools(tmp_path: Path):
     ).run("load") == "loaded"
 
     restored = store.load(session.session_id)
-    assert restored.active_deferred_tools == ["create_schedule"]
     follow = ScriptLLM([_final("resumed")])
     assert create_agent(
         follow,
@@ -328,6 +326,7 @@ def test_restore_keeps_catalog_body_and_activated_tools(tmp_path: Path):
     request = json.dumps(follow.seen_messages[0], ensure_ascii=False)
     assert "RESTORED-STEP" in request
     assert "release-check" in _catalogs(follow.seen_messages[0])[0]
+    # The deferred tool stays reachable as a stub after restore.
     assert "create_schedule" in _names(follow.seen_tools[0])
     saved = json.loads(
         (tmp_path / "checkpoints" / f"{session.session_id}.json").read_text(encoding="utf-8")

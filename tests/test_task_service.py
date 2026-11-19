@@ -197,7 +197,6 @@ def test_execution_controls_are_root_only_and_history_does_not_restore_retired_n
     assert retired.isdisjoint(child_names)
 
     restored = Session.create("history", tmp_path)
-    restored.active_deferred_tools = ["schedule_task", "get_task", "create_schedule"]
     prepared = prepare_model_tools(
         restored,
         build_agent_tools(
@@ -205,7 +204,11 @@ def test_execution_controls_are_root_only_and_history_does_not_restore_retired_n
         ),
     )
     schema_names = {item["name"] for item in prepared.schemas}
-    assert "schedule_task" not in schema_names
-    assert "get_task" not in schema_names
-    assert "create_schedule" in schema_names
-    assert restored.active_deferred_tools == ["create_schedule"]
+    registered = {tool.name for tool in prepared.tools}
+    assert "schedule_task" not in registered
+    assert "get_task" not in registered
+    # Deferred: listed as a stub; the catalog is small enough for no call_tool.
+    assert "create_schedule" in registered
+    stub = next(item for item in prepared.schemas if item["name"] == "create_schedule")
+    assert stub["parameters"] == {"type": "object"}
+    assert "call_tool" not in schema_names

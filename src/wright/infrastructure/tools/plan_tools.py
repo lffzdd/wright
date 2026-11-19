@@ -5,7 +5,7 @@ from __future__ import annotations
 from ...domain.feedback import system_text
 from ...domain.model.planning.plan import PlanError
 from ...domain.model.tool import ToolAccess, ToolResult
-from ...domain.model.tool_definition import Tool
+from ...domain.model.tool_definition import ALL_ROLES, Tool
 from ...domain.model.tool_runtime import ToolRuntime
 from .system_result import fail_text
 
@@ -93,6 +93,7 @@ def update_plan(
 
 update_plan_tool = Tool(
     name="update_plan",
+    roles=ALL_ROLES,
     description=(
         "Write the task plan as a list of steps with their status. Use it when the "
         "work has several steps, multiple tools, or needs progress tracking; skip it "

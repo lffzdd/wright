@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ....domain.model.tool import ToolResult
-from ....domain.model.tool_definition import Tool
+from ....domain.model.tool_definition import ALL_ROLES, Tool
 from ....domain.model.tool_runtime import ToolRuntime
 from .common import (
     _backend,
@@ -158,6 +158,7 @@ def grep_files(
 
 list_directory_tool = Tool(
     name="ls",
+    roles=ALL_ROLES,
     description="List the immediate children of a known directory. Use glob to find paths recursively and grep to search file contents.",
     parameters={
         "type": "object",
@@ -178,6 +179,7 @@ list_directory_tool = Tool(
 
 glob_tool = Tool(
     name="glob",
+    roles=ALL_ROLES,
     description="Find files or directories by a workspace-relative glob pattern. Use ls for one known directory and grep for content.",
     parameters={
         "type": "object",
@@ -197,6 +199,7 @@ glob_tool = Tool(
 
 grep_tool = Tool(
     name="grep",
+    roles=ALL_ROLES,
     description="Search file contents with ripgrep and return path, line, column, and matching text.",
     parameters={
         "type": "object",

@@ -30,8 +30,9 @@ from .plan_tools import plan_tools
 from .web_fetch import web_fetch_tool
 from .web_tools import http_request_tool
 
-# Product tools stay on every request. Schedules, skills, episodes, loops, and
-# MCP catalogs pay one discovery round-trip through tool_search. web_search is
+# Product tools stay on every request. Schedules, episodes, loops, and MCP
+# catalogs pay one discovery round-trip through tool_search; skills do not
+# (load_skill is resident and the catalog rides on each request). web_search is
 # added by composition only when a search provider is configured.
 tools = [
     list_directory_tool,

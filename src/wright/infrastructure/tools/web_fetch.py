@@ -11,7 +11,7 @@ from html.parser import HTMLParser
 from typing import Any
 
 from ...domain.model.tool import AccessTarget, ToolAccess, ToolResult
-from ...domain.model.tool_definition import Tool
+from ...domain.model.tool_definition import ALL_ROLES, Tool
 from ..runtime.network import (
     is_permitted_redirect,
     request_target,
@@ -301,6 +301,7 @@ def _describe_web_fetch(args: dict) -> ToolAccess:
 
 web_fetch_tool = Tool(
     name="web_fetch",
+    roles=ALL_ROLES,
     description=(
         "Fetch a web page with GET and return its readable text (HTML is converted "
         "to text with headings, links, lists and code kept). Same-host redirects "

@@ -1,3 +1,4 @@
+import json
 import queue
 import threading
 from types import SimpleNamespace
@@ -67,10 +68,12 @@ def test_server_rows_count_tools_and_only_the_schemas_the_next_request_sends():
     assert project_mcp_servers(SERVERS, [], [])[0]["tokens"] == 0
 
 
-def test_a_turned_off_server_shows_as_disabled_and_costs_nothing():
+def test_a_turned_off_server_shows_as_disabled_and_still_counts_its_stubs():
     schemas = [{"name": "mcp__github__search", "description": "x", "parameters": {}}]
     row = project_mcp_servers(SERVERS, ["github"], schemas)[0]
-    assert (row["status"], row["tokens"], row["toggleable"]) == ("disabled", 0, True)
+    # Its stubs stay in the schema list so the prompt cache survives the toggle.
+    assert (row["status"], row["toggleable"]) == ("disabled", True)
+    assert row["tokens"] > 0
 
 
 def test_aliased_schema_names_still_count_for_their_server():
@@ -83,40 +86,52 @@ def test_aliased_schema_names_still_count_for_their_server():
 def test_tool_search_skips_tools_of_a_server_turned_off_after_it_was_built():
     disabled: list[str] = []
     tool = _tool("mcp__github__search")
-    search = make_tool_search_tool([tool], [], lambda name: mcp_tool_enabled(name, disabled))
+    search = make_tool_search_tool([tool], lambda name: mcp_tool_enabled(name, disabled))
     runtime = ToolRuntime(tool_name="tool_search")
-    assert search.call({"query": "github search issues"}, runtime).data["activated"]
+    assert search.call({"query": "github search issues"}, runtime).data["tools"]
     disabled.append("github")
-    assert not search.call({"query": "github search issues"}, runtime).data["activated"]
+    assert not search.call({"query": "github search issues"}, runtime).data["tools"]
 
 
-def test_agent_neither_shows_nor_runs_tools_of_a_turned_off_server(tmp_path):
+def test_turning_a_server_off_keeps_tools_and_refuses_its_calls(tmp_path):
     calls: list[str] = []
     session = Session.create("mcp", tmp_path)
-    session.active_deferred_tools = ["mcp__github__search"]
-    session.disabled_mcp_servers = ["github"]
 
     class ScriptLLM:
         context_limit = 128_000
 
         def __init__(self):
             self.script = [
+                response(content="first"),
                 response(calls=[{"name": "mcp__github__search", "arguments": {}}]),
                 response(content="done"),
             ]
-            self.schema_names: list[list[str]] = []
+            self.tool_payloads: list[str] = []
+            self.requests: list = []
 
         def __call__(self, messages, *, tools):
-            self.schema_names.append([item["name"] for item in tools])
+            self.tool_payloads.append(json.dumps(list(tools), sort_keys=True))
+            self.requests.append(list(messages))
             yield event(self.script.pop(0))
 
     llm = ScriptLLM()
     agent = create_agent(llm, [_tool("mcp__github__search", calls=calls)], session)
+    assert agent.run("hello") == "first"
+    session.disabled_mcp_servers.append("github")
     assert agent.run("search") == "done"
-    assert "mcp__github__search" not in llm.schema_names[0]
-    assert calls == []
+
+    # The schema list is byte-identical before and after the toggle.
+    assert len(set(llm.tool_payloads)) == 1
+    assert "mcp__github__search" in llm.tool_payloads[0]
+    assert "<mcp-servers-off>" not in json.dumps(llm.requests[0])
+    notice = llm.requests[1][-1]["content"]
+    assert "<mcp-servers-off>" in notice and "github" in notice
     # A call the model makes anyway is refused before it reaches the server.
-    assert any("not available this turn: mcp__github__search" in str(message.get("content")) for message in session.wire_messages())
+    assert calls == []
+    assert any(
+        "'github' is turned off" in str(message.get("content"))
+        for message in session.wire_messages()
+    )
 
 
 def _runtime(*, store=None):
@@ -128,7 +143,7 @@ def _runtime(*, store=None):
         model_name="m", user_goal="", environment="local", execution_mode="sandbox",
         workspace_dir=".", project_root=".", base_commit=None, branch_name=None, llm_transport="chat",
         lifecycle="open", attachment_records=lambda ids: [],
-        disabled_mcp_servers=[], active_deferred_tools=["mcp__github__search", "read_file"],
+        disabled_mcp_servers=[],
     )
     llm = SimpleNamespace(model="m")
     return SimpleNamespace(
@@ -139,7 +154,7 @@ def _runtime(*, store=None):
     )
 
 
-def test_turning_a_server_off_saves_drops_its_loaded_tools_and_tells_the_page():
+def test_turning_a_server_off_saves_and_tells_the_page():
     saved = []
     runtime = _runtime(store=SimpleNamespace(save=lambda state: saved.append(list(state.disabled_mcp_servers))))
     service = SessionService(runtime, shutdown=lambda _: None)
@@ -147,7 +162,6 @@ def test_turning_a_server_off_saves_drops_its_loaded_tools_and_tells_the_page():
 
     rows = service.set_mcp_server("github", False)
     assert rows[0]["status"] == "disabled"
-    assert runtime.session_state.active_deferred_tools == ["read_file"]
     assert saved == [["github"]]
     published = []
     while not inbox.empty():
@@ -177,4 +191,3 @@ def test_server_switch_is_refused_while_running_for_unknown_or_unconnected_serve
     with pytest.raises(SessionServiceError, match="checkpoint failed"):
         service.set_mcp_server("github", False)
     assert runtime.session_state.disabled_mcp_servers == []
-    assert runtime.session_state.active_deferred_tools == ["mcp__github__search", "read_file"]

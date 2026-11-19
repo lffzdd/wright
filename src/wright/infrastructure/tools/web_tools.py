@@ -1,7 +1,7 @@
 from typing import Any
 
 from ...domain.model.tool import AccessTarget, ToolAccess, ToolResult
-from ...domain.model.tool_definition import Tool
+from ...domain.model.tool_definition import ALL_ROLES, Tool
 from ..runtime.network import request_target
 
 
@@ -58,6 +58,7 @@ def _describe_http_request(args: dict) -> ToolAccess:
 
 http_request_tool = Tool(
     name="http_request",
+    roles=ALL_ROLES,
     description=(
         "Call an HTTP API with a custom method, headers, or body. "
         "Returns the raw response (text is truncated at 4000 characters). "

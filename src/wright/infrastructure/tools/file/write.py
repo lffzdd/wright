@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ....domain.model.tool import ToolResult
-from ....domain.model.tool_definition import Tool
+from ....domain.model.tool_definition import ALL_ROLES, Tool
 from ....domain.model.tool_runtime import ToolRuntime
 from .common import (
     _backend,
@@ -74,6 +74,7 @@ def write_file(
 
 write_file_tool = Tool(
     name="write",
+    roles=ALL_ROLES,
     approval_details=lambda args, cwd: {"preview": str(args.get("content", ""))},
     description=(
         "Create or overwrite a workspace file. Creates parent directories. "

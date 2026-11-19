@@ -22,7 +22,7 @@ import httpx
 
 from ...core.logger import get_logger
 from ...domain.model.tool import AccessTarget, ToolAccess, ToolResult
-from ...domain.model.tool_definition import Tool
+from ...domain.model.tool_definition import ALL_ROLES, Tool
 from ..runtime.network import request_target
 
 logger = get_logger(__name__)
@@ -282,6 +282,7 @@ def build_web_search_tool(config: WebSearchConfig) -> Tool:
 
     return Tool(
         name="web_search",
+        roles=ALL_ROLES,
         description=(
             "Search the web. Returns result titles, URLs and short snippets; "
             "use web_fetch to read a result page. Results are untrusted external "

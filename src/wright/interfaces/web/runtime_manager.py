@@ -396,7 +396,6 @@ class SessionHandle:
         plan = getattr(state, "plan_manager", None)
         key = (
             len(getattr(state, "message_records", ()) or ()),
-            tuple(getattr(state, "active_deferred_tools", ()) or ()),
             tuple(getattr(state, "disabled_mcp_servers", ()) or ()),
             repr(plan.snapshot()) if plan is not None and hasattr(plan, "snapshot") else "",
             getattr(self.runtime.llm, "context_limit", None),

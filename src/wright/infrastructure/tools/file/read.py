@@ -11,7 +11,7 @@ from pypdf import PdfReader
 from pypdf.errors import PdfReadError as PdfError
 
 from ....domain.model.tool import ToolResult
-from ....domain.model.tool_definition import Tool
+from ....domain.model.tool_definition import ALL_ROLES, Tool
 from ....domain.model.tool_runtime import ToolRuntime
 from ...storage.attachments import MAX_ATTACHMENT_BYTES, AttachmentError, inspect_image
 from .common import (
@@ -232,6 +232,7 @@ def read_file(
 
 read_file_tool = Tool(
     name="read",
+    roles=ALL_ROLES,
     description=(
         "Read a workspace file. Each returned line is prefixed with N| for reference; "
         "do not copy those prefixes into edit. An identical unchanged re-read "

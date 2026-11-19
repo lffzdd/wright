@@ -24,9 +24,11 @@ def project_mcp_servers(
 ) -> list[dict[str, Any]]:
     """One row per configured server.
 
-    ``tokens`` counts only the server's tools whose schemas the next request
-    sends; MCP tools are deferred, so a server costs nothing until
-    tool_search loads one of its tools.
+    ``tokens`` counts the server's tools in the schema list the next request
+    sends. MCP tools are deferred, so that is their stubs (name and one
+    sentence); full schemas reach the model through tool_search results, and
+    tools past the stub limit are not listed at all. Turning a server off
+    does not remove its stubs, so its row still counts them.
     """
     # Schemas carry API-safe aliases; ``tool_names`` maps them back.
     aliases = tool_names or {}
@@ -41,7 +43,9 @@ def project_mcp_servers(
         name = str(server.get("name") or "")
         connected = server.get("status") == "connected"
         status = "disabled" if connected and name in disabled else str(server.get("status") or "failed")
-        loaded = by_server.get(name, []) if status == "connected" else []
+        # A turned-off server keeps its stubs in the list (the prompt cache
+        # survives the toggle), so they still count.
+        loaded = by_server.get(name, []) if connected else []
         rows.append({
             "name": name,
             "status": status,

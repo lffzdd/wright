@@ -107,7 +107,6 @@ def _serialize_session(session: Session) -> dict[str, Any]:
                 for call_id, execution in session.tool_executions.items()
             },
             "plan": session.plan_manager.snapshot(),
-            "active_deferred_tools": list(session.active_deferred_tools),
             "disabled_mcp_servers": list(session.disabled_mcp_servers),
             "agent_control": session.control_plane.snapshot(),
             "agent_task_id": session.agent_task_id,
@@ -214,12 +213,8 @@ def _deserialize_session(payload: Any) -> Session:
     turns = _deserialize_turns(data.get("turns"))
     tool_executions = _deserialize_executions(data.get("tool_executions"))
     plan_manager = PlanManager.from_snapshot(_object(data.get("plan"), "plan"))
-    active_deferred_value = data.get("active_deferred_tools", [])
-    if not isinstance(active_deferred_value, list) or not all(
-        isinstance(item, str) and item for item in active_deferred_value
-    ):
-        raise CheckpointError("active_deferred_tools must be an array of non-empty strings")
-    active_deferred_tools = list(dict.fromkeys(active_deferred_value))
+    # Older checkpoints carry "active_deferred_tools". Deferred schemas now
+    # live in the transcript's tool_search results, so the key is ignored.
     disabled_mcp_value = data.get("disabled_mcp_servers", [])
     if not isinstance(disabled_mcp_value, list) or not all(
         isinstance(item, str) and item for item in disabled_mcp_value
@@ -310,7 +305,6 @@ def _deserialize_session(payload: Any) -> Session:
         # execution history is restored; live background process handles are not.
         commands={},
         plan_manager=plan_manager,
-        active_deferred_tools=active_deferred_tools,
         disabled_mcp_servers=list(dict.fromkeys(disabled_mcp_value)),
         control_plane=control_plane,
         agent_task_id=agent_task_id,

@@ -1,7 +1,9 @@
 """Which tools each execution role may receive.
 
+Each tool declares its roles on ``Tool.roles``; the default is root only.
 Root, child, and durable selection lives here so sub-agent creation and the
-durable runner do not keep separate name blacklists.
+durable runner share one rule. A tool missing a declaration stays with the
+root instead of leaking into an isolated child or an unattended run.
 """
 
 from __future__ import annotations
@@ -9,61 +11,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import replace
-from typing import Literal
 
-from ...domain.model.tool_definition import Tool
-
-ExecutionRole = Literal["root", "child", "durable"]
-
-# Names that must never be handed to an isolated child, even if a caller
-# passes them in the base catalog.
-CHILD_EXCLUDED_TOOLS = frozenset({
-    "get_agent",
-    "wait_agent",
-    "cancel_agent",
-    "get_agent_tree",
-    "shell_output",
-    "shell_kill",
-    "list_commands",
-    "create_schedule",
-    "get_schedule",
-    "list_schedules",
-    "pause_schedule",
-    "resume_schedule",
-    "cancel_schedule",
-    "list_schedule_runs",
-    "get_schedule_run",
-    "wait_schedule_run",
-    "cancel_schedule_run",
-    "ask_user",
-    "manage_loop",
-    "load_skill",
-})
-
-# Extra removals for an unattended durable worker. Memory and external search
-# stay off that worker even when a child of the interactive root could see them.
-DURABLE_EXCLUDED_TOOLS = CHILD_EXCLUDED_TOOLS | frozenset({
-    "memory_write",
-    "memory_update",
-    "memory_forget",
-    "memory_search",
-    "memory_read",
-    "memory_space",
-    "commitment_create",
-    "commitment_update",
-    "knowledge_search",
-})
-
-ROOT_ONLY_TOOLS = CHILD_EXCLUDED_TOOLS
+from ...domain.model.tool_definition import ExecutionRole, Tool
 
 
 def tools_for_role(tools: Sequence[Tool], role: ExecutionRole) -> list[Tool]:
-    denied = DURABLE_EXCLUDED_TOOLS if role == "durable" else (
-        CHILD_EXCLUDED_TOOLS if role == "child" else frozenset()
-    )
     selected: list[Tool] = []
     for tool in tools:
-        if tool.name in denied:
+        if role not in tool.roles:
             continue
         if tool.name == "shell" and role != "root":
             selected.append(_foreground_command(tool))
@@ -93,8 +48,6 @@ def _foreground_command(tool: Tool) -> Tool:
 
 
 __all__ = [
-    "CHILD_EXCLUDED_TOOLS",
-    "DURABLE_EXCLUDED_TOOLS",
-    "ROOT_ONLY_TOOLS",
+    "ExecutionRole",
     "tools_for_role",
 ]
