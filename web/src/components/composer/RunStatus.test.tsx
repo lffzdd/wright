@@ -2,7 +2,7 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setLocale } from "../../i18n";
 import type { ActiveTurn, Interaction, ToolState, ViewState } from "../../types";
-import { tabTitle } from "../../App";
+import { tabTitle } from "../../app/browser";
 import { RunStatus, formatElapsed, runActivity } from "./RunStatus";
 
 const view = (turn: Partial<ActiveTurn> | null, pending: Interaction[] = []): ViewState => ({

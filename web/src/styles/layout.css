@@ -1,0 +1,173 @@
+/* App frame: workspace grid, conversation column, top bar, resize handles. */
+.app-viewport {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  overflow: hidden;
+}
+.crumb { color: var(--text-muted); font-size: var(--text-sm); }
+
+/* ── .top-agent-state ── */
+.top-agent-state { max-width: 190px; overflow: hidden; text-overflow: ellipsis; border-radius: var(--radius-full); }
+.top-agent-state.waiting { color: var(--warning); }
+.top-agent-state.waiting-input { color: var(--info); }
+.top-agent-state.queued { color: var(--info); }
+.top-agent-state.running, .top-agent-state.completed { color: var(--ok); }
+.top-agent-state.cancelling, .top-agent-state.cancelled { color: var(--text-muted); }
+.top-agent-state.failed { color: var(--danger); }
+.top-agent-state.running { color: var(--accent); background: var(--accent-subtle); }
+.top-agent-state.failed { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.conversation-head .top-agent-state { border: 0 !important; }
+.conversation-head .top-agent-state.running { color: var(--accent); background: var(--accent-subtle); }
+.dirty { background: color-mix(in srgb, var(--warning) 10%, transparent); border-radius: var(--radius-sm); font-size: var(--text-xs); }
+.workspace-grid { flex: 1; min-height: 0; display: flex; --inspector-width: 440px; }
+.workspace-grid[data-inspector="closed"] .conversation-main {
+  max-width: min(
+    calc(var(--conversation-read-max-wide, 940px) + 2 * var(--timeline-gutter)),
+    100%
+  );
+}
+
+/* ── Conversation frame ───────────────────────────────────────────────────── */
+.conversation { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; container-type: inline-size; container-name: conversation; background: var(--bg-main); }
+.conversation-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding-inline: var(--conversation-pad-x);
+  box-sizing: border-box;
+}
+.conversation-scroll-pane {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.conversation-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  box-sizing: border-box;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+}
+.conversation-main {
+  min-width: 0;
+  width: 100%;
+  max-width: min(
+    calc(var(--conversation-read-max, 820px) + 2 * var(--timeline-gutter)),
+    100%
+  );
+  margin-inline: auto;
+  display: grid;
+  grid-template-columns: var(--timeline-gutter) minmax(0, 1fr) var(--timeline-gutter);
+  grid-auto-rows: auto;
+  align-content: start;
+}
+
+/* ── .conversation-main-foot ── */
+.conversation-main-foot {
+  flex: 0 0 auto; position: relative;
+}
+.conversation-main-foot .jump {
+  position: absolute; left: 50%; bottom: calc(100% + 14px);
+  transform: translate(-50%, 6px); display: inline-flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 12px 0 10px; margin: 0; border-radius: 99px;
+  background: var(--bg-elev); border: 1px solid var(--border); box-shadow: var(--shadow);
+  font-size: 12.5px; color: var(--text-2); backdrop-filter: none;
+  opacity: 0; pointer-events: none; transition: opacity .15s, transform .15s; z-index: 5;
+}
+.conversation-main-foot .jump.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+.conversation-main-foot .jump:hover { color: var(--text); }
+.conversation-head { flex: 0 0 38px;
+  display: flex; align-items: center; border-bottom: 1px solid var(--border-subtle); min-width: 0;
+}
+.conversation-head h1 { margin: 0; font-size: var(--text-md); font-weight: 560; letter-spacing: -0.005em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── .task-heading ── */
+.task-heading, .task-status { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.task-heading h1 { flex: 1; min-width: 0; cursor: default; }
+.conversation-head .task-heading h1 { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 500; }
+.conversation-head.topbar .task-heading.crumbs { flex: 0 1 auto; overflow: visible; }
+.task-status { flex: 0 0 auto; }
+.conversation-outline-host {
+  position: absolute;
+  top: 0;
+  /* Outside the scrollbar: the rail lives in the body's side padding, right of the scroller. */
+  right: calc(-1 * var(--conversation-pad-x, 28px));
+  /* Stop above the composer's fade so ticks never slide under the input. */
+  bottom: 52px;
+  width: 28px;
+  pointer-events: none;
+  z-index: 6;
+}
+.conversation-outline-host .outline-dock,
+.conversation-outline-host .outline-ticks {
+  pointer-events: auto;
+}
+@media (max-width: 1280px) {
+  .topbar { display: grid; }
+}
+@media (max-width: 700px) {
+  .topbar { grid-template-columns: minmax(0, 1fr) auto; }
+}
+
+/* ── Top bar ──────────────────────────────────────────────────────────────── */
+.topbar { border-bottom-color: var(--border-subtle); }
+.conversation-head.topbar { height: 52px; flex-basis: 52px; padding: 0 10px; gap: 8px; background: var(--bg); justify-content: flex-start; }
+
+/* ── .branch-pill ── */
+.branch-pill { background: var(--hover); border-color: transparent; font-family: var(--font-mono); }
+.conversation-head .branch-pill { flex: 0 1 auto; min-width: 0; overflow: hidden; height: 24px; padding: 0 8px; border: 0; border-radius: 6px; background: var(--hover); font: 12px var(--font-mono); color: var(--text-secondary); }
+.conversation-head .branch-pill > svg { flex: none; }
+.conversation-head .branch-pill > span:first-of-type { flex: 0 1 auto; min-width: 3ch; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; color: inherit; }
+.conversation-head .branch-pill .dirty { flex: 0 50 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0; background: transparent; color: var(--warning); font-family: var(--font-sans); }
+/* Folded step group: a thinking-style summary line. */
+/* Header: project / title, quiet status, branch chip. */
+.head-crumb { flex: 0 20 auto; min-width: 0; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 13.5px; }
+.head-sep { color: var(--text-muted); opacity: .6; }
+
+/* ── .crumbs ── */
+.conversation-head.topbar .crumbs { display: flex; align-items: center; gap: 4px; min-width: 0; font-size: 13.5px; }
+.conversation-head.topbar .crumbs .title {
+  font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  padding: 2px 6px; border-radius: 6px; outline: none; cursor: text; min-width: 20px; flex: 0 1 auto;
+}
+.conversation-head.topbar .crumbs .title:hover { background: var(--hover); }
+.conversation-head.topbar .crumbs .title[contenteditable="true"] {
+  overflow: visible; flex: none;
+  background: var(--bg-elev); box-shadow: 0 0 0 1.5px var(--accent); text-overflow: clip;
+}
+
+/* ── .run-pill ── */
+.conversation-head .run-pill { align-items: center; gap: 7px; font-size: 12px; font-weight: 500; padding: 0 10px; height: 24px; border-radius: 99px; white-space: nowrap; }
+.conversation-head .run-pill.running, .conversation-head .run-pill.waiting,
+.conversation-head .run-pill.waiting-input, .conversation-head .run-pill.queued { display: inline-flex; }
+.conversation-head .run-pill.running { color: var(--accent); background: var(--accent-subtle); }
+.conversation-head .run-pill.waiting, .conversation-head .run-pill.waiting-input, .conversation-head .run-pill.queued { color: var(--warning); background: var(--warning-soft); box-shadow: inset 0 0 0 1px var(--warning-border); }
+.conversation-head .run-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.conversation-head.topbar .rail-toggle { flex: none; margin: 0; }
+.conversation-head.topbar .spacer { flex: 1; min-width: 8px; }
+
+/* ── .icon-button ── */
+.conversation-head.topbar .icon-button, .conversation-head.topbar .icon-btn {
+  width: 30px; height: 30px; border-radius: 8px; color: var(--text-2);
+  transition: background .15s, color .15s;
+}
+.conversation-head.topbar .icon-button .ic, .conversation-head.topbar .icon-btn .ic { display: block; }
+.conversation-head.topbar .icon-button:hover, .conversation-head.topbar .icon-btn:hover { background: var(--hover); color: var(--text); }
+.conversation-head.topbar .icon-btn.on, .conversation-head.topbar .icon-button.on { color: var(--accent); }
+.conversation-head .title:hover { background: var(--hover); }
+

@@ -1,0 +1,159 @@
+/* Conversation frame: stage, stream, transcript grid and turns. */
+
+/* Conversation transcript: messages, step groups, tool rows and bodies, outline. */
+.conversation-stage {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  justify-content: flex-start;
+}
+
+/* ── .conversation-stream ── */
+.conversation-stream {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+.conversation-stream[data-outline="ticks"] {
+  /* Keeps the reading column (and the user bubble hanging into its gutter) clear of the scrollbar. */
+  --conversation-rail-inset: 28px;
+}
+.conversation-stream[data-outline="dock"] {
+  min-height: 0;
+  overflow: hidden;
+  max-width: none;
+  --conversation-rail-inset: 0px;
+}
+.conversation-stream[data-outline="dock"] .conversation-body {
+  flex: 1 1 0%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.conversation-stream > .conversation-body { min-height: 0; width: 100%; }
+
+/* ── .timeline ── */
+.conversation-stream[data-outline="dock"] .conversation-scroll .timeline {
+  min-height: 0;
+}
+.timeline {
+  grid-column: 1 / -1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-auto-rows: min-content;
+  align-content: start;
+  column-gap: 0; /* columns come from the parent grid; a gap here would narrow the content column */
+  position: relative;
+}
+.conversation-stream[data-outline="dock"] .conversation-scroll-pane {
+  flex-direction: row;
+  align-items: stretch;
+  overflow: hidden;
+}
+.conversation-stream[data-outline="dock"] .conversation-scroll {
+  flex: 1 1 0%;
+  min-width: 0;
+}
+.conversation-stream[data-outline="ticks"] .conversation-main {
+  padding-right: var(--conversation-rail-inset, 28px);
+  box-sizing: border-box;
+}
+
+/* ── .turn ── */
+.turn, .system-notice, .agent-progress {
+  border: 1px solid var(--border-subtle); background: var(--bg-card); border-radius: var(--radius-md); padding: 8px 10px;
+}
+
+/* ── .tl-indent ── */
+.tl-indent { min-width: 0; }
+.timeline .tl-indent,
+.timeline .tool-group,
+.timeline .turn-outcome,
+.timeline .working-indicator,
+.timeline .turn,
+.timeline .system-notice,
+.timeline .agent-progress,
+.timeline .queue-item,
+.timeline .hint.queue-reason,
+.timeline .empty-small,
+.msg-row.assistant-msg .msg-card,
+.msg-row.user-msg,
+.conversation-footnote,
+.timeline .jump {
+  grid-column: 2;
+  margin-left: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  justify-self: stretch;
+}
+.timeline .tl-indent { margin: 0; padding: 0; }
+.conversation-footnote {
+  margin: 0;
+  padding: 6px 0 4px;
+}
+.edit-add, .edit-del { font: var(--text-xs) var(--font-mono); }
+.diff-add, .diff-del, .diff-ctx { gap: 0; min-width: 0; color: var(--text-primary); }
+.diff-line { flex: 0 0 24px; user-select: none; }
+.diff-meta { white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff-meta + .diff-meta { margin-top: -4px; }
+.diff-mark { flex: 0 0 12px; flex-basis: 18px; opacity: 1; }
+.diff-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── .jump ── */
+.jump {
+  align-self: flex-end;
+  border-radius: var(--radius-full);
+}
+.timeline .jump {
+  justify-self: center;
+  width: auto;
+  max-width: none;
+}
+.conversation-stream[data-outline="dock"] .conversation-outline-host {
+  position: relative;
+  top: auto;
+  right: auto;
+  bottom: auto;
+  width: 148px;
+  flex: 0 0 148px;
+  min-height: 0;
+  max-height: 100%;
+  align-self: flex-start;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  z-index: 1;
+}
+@container conversation (min-width: 588px) {
+  .conversation-stream[data-outline="ticks"] .conversation-outline-host .outline-ticks { display: flex; }
+}
+.code-lang { color: var(--text-muted); font: var(--text-2xs, 11px) var(--font-mono); letter-spacing: .02em; text-transform: lowercase; font-size: 11.5px; }
+.working-indicator { margin: 0; }
+.timeline .enter, .timeline .msg-row.assistant-msg.enter > * {
+  animation: tl-enter var(--dur-base) var(--ease-out) both;
+}
+.web-results { max-height: 340px; overflow: auto; }
+
+/* ── .reveal-flash ── */
+.tl-indent.reveal-flash > .tool-card,
+.tl-indent.reveal-flash > :first-child { animation: reveal-flash 2s var(--ease-out); }
+@media (prefers-reduced-motion: reduce) {
+  .tl-indent.reveal-flash > .tool-card,
+  .tl-indent.reveal-flash > :first-child { animation: none; outline: 2px solid var(--accent); }
+}
+.diff-body > div + div, html.light .tool-card .diff-body > div + div { border-top: 0; }
+.diff-line-old, .diff-line-new { flex-basis: 40px; }
+.timeline .followups { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 0; }
+

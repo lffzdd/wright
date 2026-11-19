@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiError, api } from "../../api";
 import { setLocale } from "../../i18n";
 import type { EffectivePolicy, Grants, Interaction } from "../../types";
-import { InteractionCard } from "../cards/cards";
+import { InteractionCard } from "../cards/InteractionCard";
 import { PermissionGrants, PermissionsPanel } from "./permissions";
 import { DIGIT_ARM_MS, describeChoice, quickChoice } from "./approval";
 import { describeGrant } from "./permissions";

@@ -2,7 +2,7 @@ import { ArrowClockwise, ArrowCounterClockwise, ArrowsInLineVertical, ArrowsOutL
 import { confirmDialog } from "../ui/dialogs";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../../api";
-import { DiffViewer, type DiffFeedbackLine } from "../../DiffViewer";
+import { DiffViewer, type DiffFeedbackLine } from "../code/DiffViewer";
 import { useT } from "../../i18n";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import type { ChangeAction, ChangePatch, ChangesSummary, GitChange, GitChangeScope, ReviewChange, ViewState } from "../../types";

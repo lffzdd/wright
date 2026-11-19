@@ -296,7 +296,7 @@ export function Composer({
           ...(["default", "acceptEdits", "bypass"] as const).map((mode) => ({ value: mode, label: tr(`web.perm_short.${mode}`), hint: tr(`web.perm.${mode}`), icon: PERM_ICONS[mode] })),
           ...(permissionMode === "plan" ? [{ value: "plan", label: tr("web.perm.plan"), icon: PERM_ICONS.plan }] : []),
         ]} />}
-      {executionMode === "host" && <span className="composer-host pill" title={tr("web.execution.host_help")}><ShieldWarning size={13} weight="fill" aria-hidden="true" />{tr("web.execution.host")}</span>}
+      {executionMode === "host" && <span className="composer-host pill" title={tr("web.execution.host_help")}><ShieldWarning size={13} weight="fill" aria-hidden="true" /><span className="composer-host-label">{tr("web.execution.host")}</span></span>}
       {onModel && <Select className="select composer-pill pill select-model" ariaLabel={tr("web.model")} value={currentModel} onChange={(next) => onModel(next)}
         options={visibleModels(models, currentModel).map((model) => ({ value: model, label: model }))} />}
       {!onModel && currentModel && <span className="composer-model-static pill">{currentModel}</span>}

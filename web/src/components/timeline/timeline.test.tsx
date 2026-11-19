@@ -4,7 +4,7 @@ import { api } from "../../api";
 import { applyEvent } from "../../reducer";
 import type { UiEvent, ViewState } from "../../types";
 import { Timeline } from "./Timeline";
-import { toolCardFromTimeline, toolCardFromState } from "../cards/cards";
+import { toolCardFromTimeline, toolCardFromState } from "../cards/ToolCard";
 
 beforeAll(() => { Element.prototype.scrollTo = vi.fn(); });
 afterEach(cleanup);
@@ -22,7 +22,7 @@ function emit(state: ViewState, type: string, payload: Record<string, unknown>, 
   const event: UiEvent = { version: 2, stream_id: "s", seq, event_id: `e${seq}`, emitted_at: "now", project_id: "p", session_id: "session", turn_id, type, payload };
   return applyEvent(state, event);
 }
-const transcript = (state: ViewState) => <Timeline state={state} respond={async () => true} cancelQueued={() => undefined} />;
+const transcript = (state: ViewState) => <Timeline state={state} />;
 
 describe("real timeline projection", () => {
   it("shows a message sent mid-turn inside the running turn, marked as added while working", () => {
@@ -64,7 +64,7 @@ describe("real timeline projection", () => {
   it("mounts the jump control inside composer-inner when given the composer slot", () => {
     const state = emit(fresh(), "turn.started", { prompt: "Long answer" });
     const { container } = render(
-      <Timeline state={state} respond={async () => true} cancelQueued={() => undefined}>
+      <Timeline state={state}>
         {(jump) => <div className="composer-wrap"><div className="composer-inner">{jump}</div></div>}
       </Timeline>,
     );
@@ -458,7 +458,7 @@ describe("revealing a tool call", () => {
     ],
   });
   const view = (state: ViewState, revealCall: { callId: string; request: number } | null) =>
-    <Timeline state={state} respond={async () => true} cancelQueued={() => undefined} revealCall={revealCall} />;
+    <Timeline state={state} revealCall={revealCall} />;
 
   it("scrolls to the call and highlights it once per request", async () => {
     const state = folded();
@@ -494,7 +494,7 @@ describe("message actions", () => {
 
   it("offers edit on the last prompt, regenerate on the last reply, and fork on every reply", () => {
     const handlers = actions();
-    render(<Timeline state={settled()} respond={async () => true} cancelQueued={() => undefined} messageActions={handlers} />);
+    render(<Timeline state={settled()} messageActions={handlers} />);
 
     expect(screen.getAllByRole("button", { name: "Edit and resend" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Regenerate reply" })).toHaveLength(1);
@@ -513,7 +513,7 @@ describe("message actions", () => {
     const running = emit(settled(), "turn.started", { prompt: "third" });
     const queued = { ...settled(), queued_commands: [{ command_id: "q", prompt: "later" }] };
     for (const [state, handlers] of [[running, actions()], [queued, actions()], [settled(), undefined]] as const) {
-      render(<Timeline state={state} respond={async () => true} cancelQueued={() => undefined} messageActions={handlers} />);
+      render(<Timeline state={state} messageActions={handlers} />);
       expect(screen.queryByRole("button", { name: "Edit and resend" })).toBeNull();
       expect(screen.queryByRole("button", { name: "Regenerate reply" })).toBeNull();
       expect(screen.queryByRole("button", { name: "Fork into a new session from here" })).toBeNull();
@@ -523,7 +523,7 @@ describe("message actions", () => {
 
   it("does not offer regenerate when the last prompt has no reply yet", () => {
     const state = { ...settled(), timeline: (settled().timeline ?? []).slice(0, 3) };
-    render(<Timeline state={state} respond={async () => true} cancelQueued={() => undefined} messageActions={actions()} />);
+    render(<Timeline state={state} messageActions={actions()} />);
     expect(screen.queryByRole("button", { name: "Regenerate reply" })).toBeNull();
     expect(screen.getByRole("button", { name: "Edit and resend" })).toBeDefined();
   });

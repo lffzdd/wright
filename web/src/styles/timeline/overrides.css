@@ -1,0 +1,198 @@
+/* Rules that must load after the sections above: each overrides an earlier rule of equal specificity on the same element, so moving it up would change the result. */
+
+/* ── .msg-row ── */
+.timeline > .msg-row.assistant-msg { margin: 8px 0; }
+.timeline > .msg-row.user-msg { margin: 32px 0 16px; }
+.msg-row.assistant-msg .msg-actions {
+  position: absolute; top: -6px; right: 0; margin: 0 !important; z-index: 2; padding: 2px;
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-card); box-shadow: 0 2px 8px rgb(0 0 0 / 6%);
+}
+@media (hover: none) {
+  .msg-row.user-msg .u-meta, .timeline .tf-actions { opacity: 1; }
+}
+
+/* ── .msg-body ── */
+.timeline .msg-body > :last-child { margin-bottom: 0; }
+.timeline .msg-body > :first-child { margin-top: 0; }
+/* Reasoning rendered as a tool card carries no card chrome. */
+.timeline .tool-card.reasoning-card { margin: 0; border: 0; background: transparent; }
+.command, .path { font-size: var(--text-xs); }
+.test-count-failed { color: var(--danger); font-weight: 650; }
+.test-count-passed { color: var(--ok); font-weight: 650; }
+
+/* ── .diff-more ── */
+.diff-more { display: flex; align-items: center; gap: 6px; width: 100%; padding: 5px 10px; border: 0; border-top: 1px solid var(--border-subtle); background: transparent; color: var(--text-muted); font: var(--text-xs)/1.4 var(--font-sans); text-align: left; cursor: pointer; }
+.chip-marker { font-weight: 650; }
+.timeline .turn > .enter,
+.timeline > .msg-row.enter { animation: rise .25s var(--ease); }
+
+/* ── .web-hit-title ── */
+.web-hit-title { display: flex; align-items: flex-start; gap: 5px; min-width: 0; color: var(--text-primary); font-size: var(--text-sm); font-weight: 600; overflow-wrap: anywhere; }
+.web-hit-url { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: var(--text-2xs); }
+.web-hit-snippet { margin: 0; color: var(--text-secondary); font-size: var(--text-xs); line-height: 1.5; overflow-wrap: anywhere; }
+/* A tool card the Files panel jumped to. */
+.tl-indent.reveal-flash { border-radius: var(--radius-md); animation: reveal-flash-slot 2s var(--ease-out); }
+
+/* ── .reasoning-card ── */
+.reasoning-card .tool-card-body { border: 0; border-left: 2px solid var(--border-subtle); border-radius: 0; }
+
+/* ── .code-block ── */
+.code-block .code-header { height: 30px; padding: 0 6px 0 12px; background: var(--bg-card-secondary); border-bottom: 1px solid var(--border-subtle); }
+
+/* ── .step-icon ── */
+.step-icon.reasoning { background: var(--bg-card-secondary); }
+
+/* ── .turn ── */
+.timeline .turn {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  position: relative;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  width: auto;
+  max-width: none;
+  box-shadow: none;
+}
+
+/* ── .tool-card-head ── */
+.tool-card-head:hover { background: var(--hover); }
+
+/* ── .step-icon ── */
+.step-icon.failed { background: color-mix(in srgb, var(--danger) 13%, var(--bg-card)); border: 0; }
+
+/* ── .tool-card-body ── */
+.tool-card-body .term-body, .tool-card-body .diff-body { background: var(--bg-card) !important; }
+/* Tool bodies: code, diff, search hits, file lists and terminal output. */
+.tool-card-body .cv { --cv-bg: transparent; border: 0 !important; border-radius: 0 !important; background: transparent !important; box-shadow: none !important; max-height: none; }
+.tool-card-body .cv-num { width: 46px; padding: 0 10px 0 0; background: transparent; opacity: .75; }
+.tool-card-body > .tool-toolbar { position: absolute; top: 6px; right: 8px; z-index: 1; padding: 0; border: 0; background: transparent; min-height: 0; opacity: 0; transition: opacity .12s; }
+.tool-card-body .diff-body { background: transparent !important; padding: 6px 0; font: 12px/1.7 var(--font-mono); width: max-content; min-width: 100%; }
+.tool-card-body .diff-add { background: var(--add-bg); }
+.tool-card-body .diff-del { background: var(--del-bg); }
+/* Shell padding lives on `.term` inside the body. */
+.tool-card-body .term-cmd { background: transparent !important; color: var(--text-primary); font: inherit; }
+
+/* ── .jump ── */
+.timeline .jump {
+  height: 30px; padding: 0 12px 0 10px; border-radius: var(--radius-full); background: var(--bg-card);
+  border: 1px solid var(--border-subtle); box-shadow: var(--shadow-lg); font-size: var(--text-sm); color: var(--text-secondary);
+}
+
+/* ── .timeline-toc-trigger ── */
+.timeline-toc-trigger.open { border-color: color-mix(in srgb, var(--accent) 55%, var(--border-subtle)); }
+
+/* ── .outline-dock-item ── */
+.outline-dock-item:hover, .outline-dock-item:focus-visible { background: var(--hover); }
+.outline-dock-item.active { background: transparent; color: var(--accent); font-weight: 500; }
+
+/* ── .outline-ticks-expand ── */
+.outline-ticks-expand:hover { background: var(--hover); }
+@media (prefers-reduced-motion: reduce) {
+  .tl-indent.reveal-flash { animation: none; }
+}
+/* JSON tool results laid out as a record. */
+.structured-output { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 6px; font-size: var(--text-sm); }
+.so-title { color: var(--text-primary); font-weight: 600; }
+.so-summary { margin: 0; color: var(--text-secondary); font-size: var(--text-xs); }
+
+/* ── .so-field ── */
+.so-field { display: inline-flex; align-items: baseline; gap: 4px; max-width: 100%; padding: 1px 6px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); font-size: var(--text-xs); }
+.so-label { margin-bottom: 2px; color: var(--text-muted); font: var(--text-2xs) var(--font-mono); text-transform: lowercase; }
+.so-text { margin: 0; font: var(--text-xs)/1.5 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* ── .tool-card ── */
+.tool-card .path, .command { font-size: 12.5px; }
+
+/* ── .timeline ── */
+.timeline { row-gap: 0; padding: 28px 0 36px; font-size: 14px; line-height: 1.6; }
+.dir-tree { font-size: 12px; }
+.diff-line { font-variant-numeric: tabular-nums; }
+
+/* ── .diff-more ── */
+.diff-more { padding: 6px 12px; font-size: var(--text-xs); }
+
+/* ── .timeline-toc-trigger ── */
+.timeline-toc-trigger { height: 28px; padding: 0 10px; border-color: var(--border-subtle); box-shadow: var(--shadow-popover); font-size: 12.5px; }
+.outline-dock-title { font-size: 11.5px; font-weight: 500; letter-spacing: 0; }
+.outline-dock-meta { font-size: 11px; }
+
+/* ── .outline-dock-item ── */
+.outline-dock-item { padding: 5px 6px 5px 0; border-radius: 7px; font-size: 12.5px; line-height: 1.45; }
+.outline-tick-preview {
+  padding: 8px 12px; border-radius: 10px; border-color: var(--border-subtle); box-shadow: var(--shadow-popover);
+  font-size: 12.5px; font-weight: 450; line-height: 1.5; color: var(--text-primary);
+}
+
+/* ── Turn outcome and notices ─────────────────────────────────────────────── */
+.turn-outcome { border-radius: 10px; font-size: var(--text-sm); }
+.system-notice { border-radius: 10px; font-size: var(--text-sm); }
+.add-n, .edit-add { color: var(--ok); font-weight: 400; font-size: inherit; }
+.del-n, .edit-del { color: var(--danger); font-weight: 400; font-size: inherit; }
+.term-prompt { margin-right: 0; font-weight: 400; }
+/* Reasoning: a quiet summary row; the body is italic with a left rule. */
+.timeline .think {
+  margin: 2px 0 8px; color: var(--text-muted); font-size: 13px; border: 0; background: transparent; overflow: visible;
+}
+.timeline .think-body {
+  border-left: 2px solid var(--border-subtle); padding: 2px 0 2px 12px; margin: 6px 0 6px 6px;
+  line-height: 1.7; color: var(--text-secondary); font-style: italic;
+}
+.timeline .question-record { margin: 6px 0; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--bg-card); overflow: hidden; }
+
+/* ── Plan card, turn footer, permission lines ─────────────────────────────── */
+.timeline .plan-card { margin: 10px 0; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--bg-card); padding: 10px 14px 10px; }
+.timeline .sum { margin: 14px 0 4px; border: 1px solid var(--border-subtle); border-radius: 12px; background: var(--bg-card); overflow: hidden; }
+.timeline .sum-head { display: flex; align-items: center; gap: 8px; padding: 9px 8px 9px 14px; font-size: 13px; font-weight: 500; border-bottom: 1px solid var(--border-subtle); }
+
+/* ── .sum-row ── */
+.timeline .sum-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 14px; font-family: var(--font-mono); font-size: 12.5px; border: 0; background: transparent; color: var(--text-primary); text-align: left; transition: background .12s; }
+.timeline .tag-new { font-family: var(--font-sans); font-size: 10.5px; font-weight: 500; padding: 0 6px; border-radius: 4px; background: var(--green-soft); color: var(--ok); line-height: 17px; }
+
+/* ── .fu ── */
+.timeline .fu { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; padding: 5px 12px 5px 10px; border-radius: 99px; border: 1px solid var(--border-subtle); color: var(--text-secondary); background: var(--bg-card); transition: .15s; }
+.timeline .fu svg { color: var(--accent); }
+
+/* ── .perm-done ── */
+.timeline .perm-done svg, .timeline .auto-ok svg { color: var(--ok); flex: none; }
+
+/* ── .perm ── */
+.timeline .perm.approval-card { margin: 12px 0; border: 1px solid var(--warning-border); background: linear-gradient(var(--warning-soft), var(--warning-soft)), var(--bg-card); border-radius: 12px; padding: 12px 14px 14px; box-shadow: none; max-height: none; }
+.timeline .perm .hint-k { margin-left: auto; font-weight: 400; font-size: 11.5px; color: var(--text-muted); }
+.timeline .perm .perm-cmd { margin: 10px 0 8px; font-family: var(--font-mono); font-size: 12.5px; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 8px 12px; overflow-x: auto; }
+.timeline .perm .perm-why { font-size: 13px; color: var(--text-secondary); margin: 0 0 12px; }
+
+/* ── .btn ── */
+.timeline .btn { display: inline-flex; align-items: center; gap: 8px; border-radius: 8px; border: 1px solid var(--border-subtle); background: var(--bg-card); font-weight: 500; }
+.timeline .queue {
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* ── .turn ── */
+.timeline .turn > * { grid-column: 2; animation: rise .25s var(--ease); }
+
+/* ── .perm ── */
+.timeline .perm { animation: pop .25s var(--ease); }
+.spin, .runbar .spin, .tool-st .spin {
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 1.6px solid currentColor; border-right-color: transparent;
+  animation: rot .7s linear infinite; flex: none;
+}
+.timeline .streaming .msg-body > :last-child:not(ul):not(ol):not(.code-block)::after,
+.timeline .streaming .msg-body > ul:last-child > li:last-child::after,
+.timeline .streaming .msg-body > ol:last-child > li:last-child::after,
+.timeline .streaming .msg-body:empty::after {
+  content: ""; display: inline-block; width: 7px; height: 15px;
+  background: var(--accent); margin-left: 3px; vertical-align: -2px;
+  border-radius: 1px; animation: blink 1s steps(1) infinite;
+}
+

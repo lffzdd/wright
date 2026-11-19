@@ -2,7 +2,11 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Inspector } from "../inspector/Inspector";
 import type { ViewState } from "../../types";
-import { MemoryPage, RulesPage, SchedulesPage, SearchDialog, SettingsPage } from "./panels";
+import { MemoryPage } from "./MemoryPage";
+import { RulesPage } from "./RulesPage";
+import { SchedulesPage } from "./SchedulesPage";
+import { SearchDialog } from "./SearchDialog";
+import { SettingsPage } from "./SettingsPage";
 
 afterEach(() => {
   cleanup();

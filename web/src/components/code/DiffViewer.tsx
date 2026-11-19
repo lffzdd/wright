@@ -1,7 +1,7 @@
 import { ChatCircle, Check, Copy } from "@phosphor-icons/react";
 import { memo, useMemo, useState, type CSSProperties, type ReactNode } from "react";
-import { languageForPath, useHighlight } from "./components/code/highlight";
-import { useT } from "./i18n";
+import { languageForPath, useHighlight } from "./highlight";
+import { useT } from "../../i18n";
 import { parseDiff } from "./diff";
 
 export type DiffFeedbackLine = { oldLine: number | null; newLine: number | null; content: string; side: "old" | "new" };

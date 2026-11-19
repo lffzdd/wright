@@ -77,7 +77,7 @@ Changes 当前行为和验收标准见 [Changes 功能约定](changes-contract.m
 - `web/src/App.tsx` 保留连接、快照、命令确认、断线重同步、每会话草稿和快捷键。⌘K 新建任务，⌘. 停止，Esc 关闭弹层和窄屏侧栏，不把 Esc 当成停止或拒绝。
 - `web/src/workspace/widgets.tsx` 是任务栏、时间线、审批卡、输入框、检查器和新建会话对话框。测试仍从 `App.tsx` 引入这些组件。
 - `web/src/workspace/panels.tsx` 是搜索、记忆、规则、定时任务和设置。它们使用同一套面板变量，不另做一套后台页。
-- `web/src/styles.css` 提取设计里的颜色、边框、圆角和栏宽。没有引入 Tailwind CDN。Markdown 和 diff 继续用原来的变量别名。
+- `web/src/styles/`（按区域分文件，由 `web/src/styles.css` 按顺序引入）提取设计里的颜色、边框、圆角和栏宽。没有引入 Tailwind CDN。Markdown 和 diff 继续用原来的变量别名。
 - Vite 仍输出到 `src/wright/interfaces/web/static`。没有手改打包产物。
 
 时间线优先使用快照里的 `timeline`。工具调用插在发出它的那条助手消息后面，不再把全部工具堆到最终回答之后。快照没有时间线时，仍按原来的 history 加 active turn 渲染，保证旧事件流测试可读。实时里尚未进入时间线的工具和文本追加在后面。用户离开底部时不强制滚动，并提供回到底部。

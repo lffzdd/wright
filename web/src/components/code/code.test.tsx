@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { setLocale } from "../../i18n";
-import { ToolCard, toolCardFromState, toolCardFromTimeline } from "../cards/cards";
+import { ToolCard, toolCardFromState, toolCardFromTimeline } from "../cards/ToolCard";
 import { CodeView } from "./CodeView";
 import { languageForPath } from "./highlight";
 import { OpenFileContext } from "./openFile";

@@ -1,0 +1,531 @@
+/* Step groups, tool cards and their bodies, reasoning, plans, turn footers. */
+
+/* Process steps: a run of reasoning and tool calls folds into one group. */
+/* A rail through the step icons ties the run together. */
+/* Rows stay quiet; only an opened row shows its body, indented past the rail. */
+/* Tool cards outside the timeline (inspector, panels). The timeline styles its own under "Tool cards in the timeline". */
+.tool-card { background: transparent; border-radius: var(--radius-md); }
+/* A short preview leaves air on the right instead of a wall of text. */
+.tool-card .path { color: var(--text-muted); }
+/* Conversation tool payloads: match permission strips in light theme (terminal styling stays in dark). */
+/* Light tool cards print on a light strip, so failures need darker reds. */
+html.light .tool-card { --term-danger: #be123c; --term-danger-strong: #e11d48; }
+html.light .tool-card .term-body.test-failure-output { color: var(--text-primary); }
+html.light .tool-card .term-line.test-summary { color: var(--text-muted); }
+
+/* ── .tool-card-head ── */
+.tool-card-head:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+.tool-card-head { border-radius: var(--radius-md); }
+.tool-card-head .tool-meta { font-size: var(--text-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.tool-meta { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tool-meta .denied-pill, .tool-meta .fail-pill { margin-right: 6px; }
+/* Each kind of work has its own colour, carried by the glyph alone. */
+.step-icon { --step-color: var(--text-secondary); flex: 0 0 20px; display: inline-flex; align-items: center; justify-content: center; position: relative; z-index: 1; }
+.step-icon.directories, .step-icon.reads { --step-color: var(--step-read); }
+.step-icon.searches { --step-color: var(--step-search); }
+.step-icon.commands { --step-color: var(--step-shell); }
+.step-icon.edits { --step-color: var(--step-edit); }
+.step-icon.web { --step-color: var(--step-web); }
+.step-icon.tools, .step-icon.memory, .step-icon.plans { --step-color: var(--step-tool); }
+.step-icon.failed { --step-color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--bg-card)); border-color: color-mix(in srgb, var(--danger) 30%, transparent); }
+/* Reasoning sits between actions as a quiet aside. */
+.step-icon.reasoning { --step-color: var(--text-muted); }
+.step-icon.question { color: var(--accent); }
+
+/* ── Step groups and tool cards ───────────────────────────────────────────── */
+/* Icons are small tinted tiles; the tint says what kind of work it was. */
+.step-icon {
+  width: 22px; height: 22px; flex-basis: 22px; border-radius: 6px; border: 0;
+  background: color-mix(in srgb, var(--step-color) 13%, var(--bg-card));
+}
+
+/* ── .reasoning-card ── */
+.reasoning-card > .tool-card-head { min-height: 28px; }
+
+/* ── .tool-card-body ── */
+.tool-card-body.failed { border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+
+/* ── .reasoning-card ── */
+.reasoning-card .tool-card-body { border: 0; border-left: 2px solid var(--border-strong); border-radius: 0; background: transparent; }
+/* Expanded output sits on the card itself; only headers get a faint neutral band. */
+.tool-card-body .term-body, .tool-card-body .diff-body { border-top: 0 !important; }
+.tool-card-body .term-body { line-height: 1.55; }
+.tool-card-body > .sandbox-denial, .tool-card-body > .hint, .tool-card-body > .empty-small { margin: 0; padding: 8px 10px; }
+.tool-card-body { border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-card); }
+.tool-card-body .cv-body { padding: 6px 0; font: 12px/1.7 var(--font-mono); }
+.tool-card-body .cv-row:hover, .tool-card-body .cv-row:hover .cv-num { background: var(--hover); }
+.tool-card-body:hover > .tool-toolbar, .tool-card-body > .tool-toolbar:focus-within { opacity: 1; }
+.tool-card-body > .tool-toolbar .text-button { background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 2px 8px; }
+.tool-card-body .diff-body > div { display: grid; grid-template-columns: 40px 40px 18px auto; padding: 0 16px 0 0; border: 0; }
+.tool-card-body .diff-body > .diff-more { display: flex; }
+.tool-card-body .diff-line { width: auto; padding-right: 10px; text-align: right; color: var(--text-muted); opacity: .75; }
+.tool-card-body .diff-mark { width: auto; text-align: center; color: var(--text-muted); }
+.tool-card-body .diff-text { white-space: pre; }
+.tool-card-body .diff-add .diff-mark { color: var(--ok); }
+.tool-card-body .diff-del .diff-mark { color: var(--danger); }
+.tool-card-body .dir-tree { padding: 6px 14px; font: 12px/1.7 var(--font-mono); color: var(--text-secondary); }
+.tool-card-body .glob-list { padding: 6px 0; color: var(--text-secondary); }
+.tool-card-body .glob-list div { display: flex; align-items: center; gap: 8px; padding: 2px 14px; }
+.tool-card-body .term-cmd ~ .term-body, .tool-card-body .term-cmd ~ * .term-body { padding: 0; max-height: none; background: transparent !important; font: inherit; color: var(--text-primary); }
+/* Tool bodies in the timeline drop the generic card-body chrome. */
+.conversation-stage .timeline .tool-card-body > :first-child:not(.tool-toolbar) {
+  margin-top: 0;
+}
+.conversation-stage .timeline .tool-card-body .term-body,
+.conversation-stage .timeline .tool-card-body pre.term-body {
+  margin: 0;
+  padding: 0;
+  max-height: none;
+  overflow: visible;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  font: 12px / 1.65 var(--font-mono);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.conversation-stage .timeline .tool-card-body .term-line {
+  display: block;
+  min-height: 1.65em;
+  white-space: pre-wrap;
+}
+.conversation-stage .timeline .tool-card-body > .term {
+  padding: 10px 14px;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+  background: var(--bg-card-secondary);
+  color: var(--text-primary);
+}
+.conversation-stage .timeline .tool-card-body > .term .term-cmd {
+  margin: 0 0 4px;
+  padding: 0;
+  border: 0;
+  white-space: pre-wrap;
+}
+.conversation-stage .timeline .tool-card-body > .term .term-prompt {
+  color: var(--accent);
+  user-select: none;
+}
+.conversation-stage .timeline .tool-card-body > .term .term-exit {
+  margin-top: 6px;
+  font: 11px / 1.4 var(--font-sans);
+  color: var(--text-muted);
+}
+.conversation-stage .timeline .tool-card-body .diff-body,
+.conversation-stage .timeline .tool-card-body .cv,
+.conversation-stage .timeline .tool-card-body .search-results,
+.conversation-stage .timeline .tool-card-body .glob-list,
+.conversation-stage .timeline .tool-card-body .dir-tree {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.conversation-stage .timeline .tool-card-body .diff-body,
+.conversation-stage .timeline .tool-card-body .cv .cv-body,
+.conversation-stage .timeline .tool-card-body .search-results,
+.conversation-stage .timeline .tool-card-body .glob-list {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.conversation-stage .timeline .tool-card-body .dir-tree {
+  padding: 6px 0;
+}
+.conversation-stage .timeline .tool-card-body .dir-entry {
+  padding: 2px 14px;
+  gap: 8px;
+}
+.conversation-stage .timeline .tool-card-body .search-hit,
+.conversation-stage .timeline .tool-card-body .grep-row {
+  padding: 2px 14px;
+  column-gap: 10px;
+  line-height: 1.7;
+}
+.conversation-stage .timeline .tool-card-body .empty-small,
+.conversation-stage .timeline .tool-card-body > .hint,
+.conversation-stage .timeline .tool-card-body .sandbox-denial,
+.conversation-stage .timeline .tool-card-body .plan-rejection {
+  margin: 0;
+  padding: 8px 14px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.conversation-stage .timeline .tool-card-body .expandable {
+  padding: 0;
+}
+.conversation-stage .timeline .tool-card-body .expandable-body {
+  max-height: min(280px, 46vh);
+}
+.conversation-stage .timeline .tool-card-body .expandable.open .expandable-body {
+  max-height: none;
+}
+.conversation-stage .timeline .tool-card-body .expandable-toggle {
+  margin: 4px 14px 8px;
+  font-size: 11.5px;
+}
+/* Reasoning is a quiet aside: smaller, muted, sans like the reply. Overflowing text fades out at the bottom until scrolled to the end. */
+.reasoning-body { font: var(--text-sm)/1.6 var(--font-sans); line-height: 1.7; }
+.reasoning-body.fade-end { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent); }
+/* Terminal output and diffs share one quiet code surface. */
+.term-cmd { overflow-wrap: anywhere; background: var(--term-bg); }
+.dir-tree { padding: 6px 0; max-height: 260px; overflow: auto; font: var(--text-xs)/1.7 var(--font-mono); }
+.dir-entry { display: flex; align-items: center; gap: 6px; padding: 2px 10px; color: var(--text-secondary); }
+.dir-entry svg { flex-shrink: 0; color: var(--text-muted); }
+.dir-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
+.dir-size { margin-left: auto; color: var(--text-muted); }
+
+/* ── .cv ── */
+.cv mark { background: color-mix(in srgb, var(--warning) 28%, transparent); color: inherit; border-radius: 2px; }
+
+/* ── .tool-card-body ── */
+.tool-card-body mark { background: color-mix(in srgb, var(--warning) 28%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; }
+/* Code: one component for read results, search hits and the Files preview. */
+.cv { position: relative; overflow: auto; background: var(--cv-bg); font: 12px/1.6 var(--font-mono); tab-size: 4; color: var(--text-primary); outline: none; }
+.cv:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
+.term-body.failed::first-line { color: var(--term-danger-strong); font-weight: 700; }
+.term-body.test-failure-output { color: var(--term-fg); }
+
+/* ── .term-line ── */
+.term-line { display: block; min-height: 1.4em; white-space: pre-wrap; }
+.term-line.test-location { color: var(--term-danger-strong); font-weight: 650; }
+.term-line.test-location::before { content: "✕ "; }
+.term-line.assertion { margin-left: -8px; padding-left: 6px; border-left: 2px solid var(--term-danger-rule); color: var(--term-danger); font-size: var(--text-xs); }
+.term-line.test-summary { color: var(--text-muted); font-size: var(--text-2xs); }
+
+/* ── .diff-more ── */
+.diff-more:hover { color: var(--text-primary); background: var(--bg-card-hover); }
+
+/* ── .step-card ── */
+.step-card small.plan-wait { color: var(--warning); white-space: normal; }
+.step-card { display: flex; align-items: flex-start; border-radius: var(--radius-md); background: var(--bg-card); }
+.step-card > svg { color: var(--ok); flex: 0 0 auto; margin-top: 1px; }
+.step-card > div { flex: 1; min-width: 0; }
+.step-card strong { display: block; overflow-wrap: anywhere; }
+.step-card.completed { color: var(--text-primary); }
+.step-card.in_progress, .step-card.running, .step-card.active { background: color-mix(in srgb, var(--warning) 10%, transparent); border-color: color-mix(in srgb, var(--warning) 30%, transparent); }
+.step-card.in_progress > svg, .step-card.running > svg, .step-card.active > svg { color: var(--warning); }
+.step-card.in_progress strong, .step-card.running strong, .step-card.active strong { color: var(--warning); font-weight: 600; }
+.step-card.pending { background: var(--bg-card-secondary); opacity: 0.7; }
+.step-card.pending > svg, .step-card.pending strong { color: var(--text-muted); }
+
+/* ── .tool-card-body ── */
+.tool-card-body .glob-list svg { color: var(--text-muted); flex: none; }
+
+/* ── .step-card ── */
+.step-card.in_progress small, .step-card.running small, .step-card.active small { font-size: var(--text-xs); margin-top: 2px; }
+.step-card.completed .step-node { border-color: transparent; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.step-card.in_progress .step-node, .step-card.running .step-node, .step-card.active .step-node {
+  border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.step-card.blocked .step-node { border-color: var(--warning); color: var(--warning); }
+.step-card.skipped .step-node { border-style: dashed; }
+/* Turn outcome, shown inline where the turn ended. */
+.turn-outcome { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 12px; padding: 8px 12px; border-radius: var(--radius-lg); border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); background: color-mix(in srgb, var(--danger) 8%, transparent); }
+.turn-outcome strong { color: var(--danger); font-weight: 600; }
+.turn-outcome.cancelled { border-color: var(--line-strong); background: transparent; }
+.turn-outcome.cancelled strong { color: var(--muted); }
+.turn-outcome-detail { color: var(--muted); font-family: var(--font-mono, ui-monospace, monospace); font-size: var(--text-sm); white-space: pre-wrap; word-break: break-word; }
+.cv-body { width: max-content; min-width: 100%; }
+.cv-row { display: flex; min-width: 100%; }
+.cv-row:hover, .cv-row:hover .cv-num { background: color-mix(in srgb, var(--text-primary) 4%, var(--cv-bg)); }
+.cv-num { position: sticky; left: 0; z-index: 1; flex: 0 0 auto; text-align: right; color: var(--text-muted); background: var(--cv-bg); user-select: none; }
+.cv-src { flex: 1 0 auto; padding: 0 14px 0 4px; white-space: pre; }
+.cv-wrap .cv-body { width: auto; }
+.cv-wrap .cv-src { flex: 1 1 0; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cv-link { cursor: pointer; }
+.cv-link:hover .cv-num { color: var(--accent); opacity: 1; }
+.cv-focus, .cv-focus .cv-num, .cv-focus:hover, .cv-focus:hover .cv-num { background: color-mix(in srgb, var(--warning) 16%, var(--cv-bg)); }
+.cv-focus .cv-num { color: var(--text-primary); opacity: 1; }
+.cv-tok { color: var(--shiki-dark); font-style: var(--shiki-dark-font-style); font-weight: var(--shiki-dark-font-weight); }
+html.light .cv-tok { color: var(--shiki-light); font-style: var(--shiki-light-font-style); font-weight: var(--shiki-light-font-weight); }
+.web-hit { display: flex; flex-direction: column; gap: 3px; padding: 8px 12px; }
+.web-hit + .web-hit { border-top: 1px solid var(--border-subtle); }
+
+/* ── .web-hit-title ── */
+a.web-hit-title:hover { color: var(--accent); }
+.web-hit-title > :first-child { min-width: 0; overflow-wrap: anywhere; }
+.web-hit-title svg { flex: 0 0 auto; margin-top: 2px; color: var(--text-muted); }
+
+/* ── .tool-toolbar ── */
+.tool-toolbar { display: flex; justify-content: flex-end; background: var(--bg-card); }
+.tool-toolbar .text-button { display: inline-flex; align-items: center; gap: 4px; color: var(--text-muted); font-size: var(--text-2xs); }
+.tool-toolbar .text-button:hover { color: var(--accent); }
+.plan-rejection { overflow-wrap: anywhere; }
+.timeline .plan-rejection { color: var(--warning); }
+
+/* ── .plan-mark ── */
+.plan-mark { flex: 0 0 auto; margin-top: 4px; }
+.plan-mark.completed { color: var(--ok); }
+.plan-mark.pending { color: var(--text-muted); }
+.plan-mark.blocked { color: var(--warning); }
+.plan-mark.skipped { color: var(--text-muted); }
+
+/* ── .tool-card ── */
+.tool-card .path { color: var(--text-secondary); }
+
+/* ── .plan-mark ── */
+.plan-mark.in_progress { width: 12px; height: 12px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent); border-top-color: var(--accent); }
+/* Reasoning rows: say what the line is, so the model's notes don't read as system text. */
+/* Tall tool output: a few lines with a fade, then "Show all". */
+.expandable { position: relative; }
+.expandable .term-body, .expandable .cv-card { overflow: visible; }
+.expandable .cv-card { overflow-x: auto; }
+.expandable.clipped .expandable-body { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 40px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 40px), transparent); }
+.expandable-body { overflow: hidden; }
+
+/* ── .expandable-toggle ── */
+.expandable-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); cursor: pointer; }
+.expandable-toggle:hover { color: var(--text-primary); background: var(--bg-card-hover); }
+.expandable-toggle .flipped, .so-raw[open] > summary svg { transform: rotate(180deg); }
+.so-head { display: flex; flex-direction: column; gap: 2px; }
+.so-fields { display: flex; flex-wrap: wrap; gap: 4px 6px; margin: 0; }
+
+/* ── .so-field ── */
+.so-field dt { color: var(--text-muted); font-family: var(--font-mono); }
+.so-field dd { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
+
+/* ── .so-prose ── */
+.so-prose .markdown-body { font-size: var(--text-sm); }
+.so-prose .markdown-body > :last-child { margin-bottom: 0; }
+
+/* ── .tool-card-body ── */
+.tool-card-body .diff-body > .diff-meta { display: block; padding: 3px 12px; margin: -6px 0 4px; font-size: 11.5px; color: var(--text-muted); background: var(--bg-card-secondary); border-bottom: 1px solid var(--border-subtle); }
+
+/* ── .so-prose ── */
+.so-prose .expandable-toggle { margin-left: 0; }
+
+/* ── .so-raw ── */
+.so-raw { margin: 0 -12px -6px; border-top: 1px solid var(--border-subtle); }
+.so-raw > summary { display: flex; align-items: center; gap: 4px; padding: 5px 12px; color: var(--text-muted); font-size: var(--text-xs); cursor: pointer; list-style: none; }
+.so-raw > summary::-webkit-details-marker { display: none; }
+.so-raw > summary:hover { color: var(--text-primary); }
+.so-raw .cv-card { max-height: 320px; }
+
+/* ── .tool-card-body ── */
+.tool-card-body .search-results { padding: 6px 0; max-height: none; overflow: visible; }
+.tool-name { font-size: var(--text-sm); font-weight: 600; color: var(--text-primary); }
+
+/* ── Tool rows: a check or spinner says how each call ended ───────────────── */
+
+/* ── Turn footer: what a finished turn did ────────────────────────────────── */
+.turn-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-height: 22px; color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+/* Wrapper only: children must still participate in timeline subgrid. */
+.timeline .tool-group { display: contents; }
+/* Tool rows: icon, arguments, meta and status. */
+.tool-ic { background: var(--bg-card-secondary); }
+.tool-arg-dim { color: var(--text-muted); }
+.tool-meta-part + .tool-meta-part::before { content: " · "; white-space: pre; }
+.search-hit-path { color: var(--accent); }
+.search-hit-line { color: var(--text-muted); }
+.search-hit-text { overflow: hidden; text-overflow: ellipsis; color: var(--text-primary); }
+.term-exit { display: block; padding: 0; }
+
+/* ── .think ── */
+.timeline .think summary {
+  list-style: none; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  padding: 2px 8px 2px 6px; margin-left: -6px; border-radius: 6px; user-select: none; transition: color .12s, background .12s;
+}
+.timeline .think summary::-webkit-details-marker { display: none; }
+.timeline .think summary:hover { color: var(--text-secondary); background: var(--hover); }
+.timeline .think summary .chev { transition: transform .15s; opacity: .7; flex: none; color: var(--text-muted); }
+.timeline .think[open] summary .chev { transform: rotate(90deg); }
+.timeline .think summary .lbl { font-size: 13px; font-weight: 400; color: inherit; }
+.timeline .think.running summary .lbl {
+  background: linear-gradient(90deg, var(--text-muted) 20%, var(--text-primary) 50%, var(--text-muted) 80%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: shimmer 1.8s linear infinite;
+}
+.timeline .think-body .reasoning-body {
+  margin: 0; padding: 0; max-height: 320px; overflow: auto; font-size: 13px; font-style: italic;
+  color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
+/* ── .plan-card ── */
+.timeline .plan-card .pc-head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-secondary); font-weight: 500; margin-bottom: 6px; }
+.timeline .plan-card .pc-head .count { margin-left: auto; color: var(--text-muted); font-variant-numeric: tabular-nums; font-weight: 400; }
+.timeline .plan-card .todo { list-style: none; margin: 0; padding: 0; }
+.timeline .plan-card .todo li { display: flex; align-items: flex-start; gap: 10px; padding: 3px 0; font-size: 13px; transition: color .2s; }
+.timeline .plan-card .cb { width: 15px; height: 15px; border-radius: 50%; border: 1.5px solid var(--border-strong); flex: none; margin-top: 3px; display: grid; place-items: center; transition: background .2s, border-color .2s; }
+.timeline .plan-card .todo li.done .cb { background: var(--ok); border-color: var(--ok); color: var(--bg-main); }
+.timeline .plan-card .todo li.done .tx { color: var(--text-muted); text-decoration: line-through; text-decoration-color: var(--border-strong); }
+.timeline .plan-card .todo li.active .cb { border-color: var(--accent); }
+.timeline .plan-card .todo li.active .cb::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: pulse-ring 1.6s infinite; }
+.timeline .plan-card .todo li.active .tx { font-weight: 500; }
+.timeline .turn-footer-block { margin: 2px 0 6px; display: grid; gap: 0; }
+.timeline .sum-head .nums { font-family: var(--font-mono); font-size: 12px; font-weight: 400; }
+
+/* ── .sum-row ── */
+.timeline .sum-row:hover:not(:disabled) { background: var(--hover); }
+.timeline .sum-row .fs { margin-left: auto; font-size: 12px; }
+.timeline .sum-row .ic { color: var(--text-3); }
+
+/* ── .turn-foot ── */
+.timeline .turn-foot { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; min-height: 26px; }
+.timeline .turn-foot .ok { color: var(--ok); }
+.timeline .turn-foot .warn { color: var(--warning); }
+.timeline .turn-foot .sep { opacity: .5; margin: 0 2px; }
+
+/* ── .tf-actions ── */
+.timeline .tf-actions { margin-left: auto; display: flex; gap: 2px; opacity: 0; transition: opacity .15s; }
+.timeline .turn:hover .tf-actions, .timeline .turn-footer-block:hover .tf-actions, .timeline .tf-actions:focus-within { opacity: 1; }
+.timeline .tf-actions .icon-button { width: 26px; height: 26px; color: var(--text-muted); }
+@media (hover: none) {
+  .timeline .tf-actions { opacity: 1; } }
+
+/* ── .perm-done ── */
+.timeline .perm-done, .timeline .auto-ok { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-muted); padding: 2px 0; margin: 6px 0; }
+.timeline .perm-done.deny svg { color: var(--danger); }
+.timeline .perm-done code, .timeline .auto-ok code { font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); }
+.timeline .auto-ok { gap: 6px; font-size: 12px; margin: 4px 0; }
+
+/* ── .perm ── */
+.timeline .perm .perm-head { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13.5px; padding: 0; border: 0; background: transparent; }
+.timeline .perm .perm-head h3 { margin: 0; font-size: inherit; font-weight: inherit; }
+.timeline .perm .perm-head .approval-icon { color: var(--warning); }
+.timeline .perm .tool-tag { font-family: var(--font-mono); font-size: 11.5px; font-weight: 500; color: var(--text-secondary); background: var(--hover); padding: 0 6px; border-radius: 5px; }
+.timeline .perm .perm-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; border: 0; }
+.timeline .perm .pr { color: var(--accent); user-select: none; }
+
+/* ── .btn ── */
+.timeline .btn.primary { background: var(--text-primary); color: var(--bg-main); border-color: transparent; }
+.timeline .btn.ghost { background: transparent; border-color: transparent; }
+.timeline .btn.sm { height: 28px; font-size: 12.5px; padding: 0 10px; }
+.timeline .btn.danger:hover { color: var(--danger); }
+.timeline .btn:hover { border-color: var(--border-strong); background: var(--bg-sub); }
+.timeline .btn.primary:hover { opacity: .88; background: var(--text); }
+.timeline .btn.ghost:hover { background: var(--hover); }
+
+/* ── Tool cards in the timeline ───────────────────────────────────────────── */
+.conversation-stage .timeline .tool.tool-card {
+  transition: border-color 0.15s ease, margin 0.15s ease, background-color 0.15s ease;
+}
+.conversation-stage .timeline .tool.tool-card > .tool-card-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  min-height: 0;
+  margin: 0;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 13px;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.conversation-stage .timeline .tool.tool-card > .tool-card-head:hover,
+.conversation-stage .timeline .tool.tool-card > .tool-card-head:focus-visible {
+  background: var(--hover) !important;
+  color: var(--text-primary);
+}
+.conversation-stage .timeline .tool.tool-card > .tool-card-body {
+  position: relative;
+  margin: 0 !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  border-left: 0 !important;
+  border-right: 0 !important;
+  border-bottom: 0 !important;
+  box-shadow: none !important;
+}
+.conversation-stage .timeline .tool.tool-card.compact:not(.open) {
+  border: 1px solid transparent;
+  border-radius: 10px;
+  overflow: hidden;
+  background: transparent;
+  margin: 0;
+  box-shadow: none;
+}
+.conversation-stage .timeline .tool.tool-card.compact:not(.open) .tool-ic { background: transparent; }
+.conversation-stage .timeline .tool.tool-card.compact:not(.open) .tool-name { font-weight: 500; color: var(--text-secondary); }
+.conversation-stage .timeline .tool.tool-card.compact.open {
+  border-color: var(--border-subtle);
+  background: var(--bg-card);
+  margin: 4px 0;
+}
+.conversation-stage .timeline .tool.tool-card.compact[data-status="running"] { border-color: transparent; background: transparent; }
+.conversation-stage .timeline .tool.tool-card:not(.compact) {
+  margin: 6px 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--bg-card);
+  overflow: hidden;
+  transition: border-color 0.15s ease;
+}
+.conversation-stage .timeline .tool.tool-card:not(.compact) .tool-ic { background: var(--bg-card-secondary); }
+.conversation-stage .timeline .tool.tool-card:not(.compact) .tool-name { font-weight: 600; color: var(--text-primary); }
+.conversation-stage .timeline .tool.tool-card:not(.compact)[data-status="running"] { border-color: var(--border); }
+.conversation-stage .timeline .tool.tool-card:not(.compact)[data-status="error"] {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border-subtle));
+}
+.conversation-stage .timeline .tool.tool-card > .tool-card-head .tool-ic {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  color: var(--text-secondary);
+}
+.conversation-stage .timeline .tool.tool-card > .tool-card-head .tool-arg {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.conversation-stage .timeline .tool.tool-card > .tool-card-head .tool-meta {
+  margin-left: auto;
+  padding-left: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.conversation-stage .timeline .tool.tool-card > .tool-card-head .tool-st {
+  flex: none;
+  width: 16px;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+}
+.conversation-stage .timeline .tool.tool-card[data-status="done"] > .tool-card-head .tool-st { color: var(--ok); }
+.conversation-stage .timeline .tool.tool-card[data-status="error"] > .tool-card-head .tool-st { color: var(--danger); }
+.conversation-stage .timeline .tool.tool-card > .tool-card-head .tool-chev {
+  color: var(--text-muted);
+  flex: none;
+  transition: transform 0.15s ease;
+}
+.conversation-stage .timeline .tool.tool-card.open > .tool-card-head .tool-chev { transform: rotate(90deg); }
+.conversation-stage .timeline .tool.tool-card.compact.open {
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.conversation-stage .timeline .tool.tool-card.compact[data-status="running"],
+.conversation-stage .timeline .tool.tool-card.compact[data-status="running"].open {
+  border-color: transparent;
+  background: transparent;
+}
+.conversation-stage .timeline .tool.tool-card > .tool-card-body {
+  border-top: 1px solid var(--border-subtle) !important;
+  max-height: 380px;
+  overflow: auto;
+  background: transparent;
+}
+

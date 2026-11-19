@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import type { ToolState, ViewState } from "../../types";
-import { toolCategory } from "../cards/cards";
+import { toolCategory } from "../cards/toolKinds";
 
 /** What the running turn is doing right now, as an i18n key and an optional target. */
 export type RunActivity = { key: string; target?: string; waiting?: boolean };

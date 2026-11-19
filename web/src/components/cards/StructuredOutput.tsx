@@ -1,6 +1,6 @@
 import { CaretDown } from "@phosphor-icons/react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { MarkdownContent } from "../../Markdown";
+import { MarkdownContent } from "../code/Markdown";
 import { useT } from "../../i18n";
 import { CodeView } from "../code/CodeView";
 

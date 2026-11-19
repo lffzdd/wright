@@ -2,8 +2,8 @@ import { Check, Copy } from "@phosphor-icons/react";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { memo, useMemo, useState, type CSSProperties } from "react";
-import { languageForFence, useHighlight } from "./components/code/highlight";
-import { useT } from "./i18n";
+import { languageForFence, useHighlight } from "./highlight";
+import { useT } from "../../i18n";
 
 type MarkdownChunk =
   | { type: "code"; lang?: string; text: string }

@@ -11,7 +11,7 @@ import {
 } from "react";
 import { useT } from "../../i18n";
 
-/** Keep these in step with the conversation-stage rules in styles.css. */
+/** Keep these in step with the conversation-stage and outline rules in styles/timeline/ and styles/layout.css. */
 export const OUTLINE_TEXT_PX = 176;
 export const OUTLINE_TICKS_PX = 28;
 export const OUTLINE_DOCK_MIN_ITEMS = 4;

@@ -1,9 +1,9 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { setLocale } from "../../i18n";
-import { MarkdownContent } from "../../Markdown";
+import { MarkdownContent } from "../code/Markdown";
 import { languageForFence } from "../code/highlight";
-import { ToolCard } from "./cards";
+import { ToolCard } from "./ToolCard";
 import { parseJsonOutput, StructuredOutput } from "./StructuredOutput";
 
 beforeEach(() => setLocale("en"));

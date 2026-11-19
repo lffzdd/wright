@@ -67,3 +67,9 @@
 - 为什么没做：当时只改了后端
 - 什么时候做：下次动工具卡片，或 MCP 工具多到出现溢出时
 - 相关：`web/src/components/cards/`
+
+### 38 个前端单元测试在 main 上就是失败的
+- 现状：`npm run test` 有 38 个失败，集中在工具卡片、计划卡片和面板的测试，断言的还是迁移到新布局之前的界面
+- 为什么没做：整理前端结构时确认这些失败在 HEAD 上就存在，修它们要逐个判断是测试过时还是代码有问题，超出那次整理的范围
+- 什么时候做：下次改这几个组件之前，先把对应测试修好，否则改动是否破坏行为没法靠测试判断
+- 相关：`web/src/components/cards/`、`web/src/components/panels/`、`web/src/components/timeline/timeline.test.tsx`

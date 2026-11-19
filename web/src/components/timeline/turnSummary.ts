@@ -1,5 +1,5 @@
 import type { TimelineItem } from "../../types";
-import { toolCategory } from "../cards/cards";
+import { toolCategory } from "../cards/toolKinds";
 
 export type TurnFileChange = { path: string; additions: number; deletions: number; isNew?: boolean };
 

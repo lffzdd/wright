@@ -1,5 +1,6 @@
 import type { TimelineItem, ToolState } from "../../types";
-import { planRejection, toolCategory, type StepCategory } from "../cards/cards";
+import { planRejection } from "../cards/PlanCard";
+import { toolCategory, type StepCategory } from "../cards/toolKinds";
 
 /** One process step of a turn: a reasoning segment or a tool call. */
 export type Step = {

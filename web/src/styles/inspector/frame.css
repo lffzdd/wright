@@ -1,0 +1,229 @@
+/* Inspector panel: frame, tabs, resizing, split panes, overview rows. */
+
+/* ── .diff-viewer ── */
+html.light .diff-viewer {
+  background: var(--bg-card);
+  border-color: var(--border-subtle);
+}
+.diff-viewer { margin: 8px 0; border: 1px solid var(--line); border-radius: var(--radius-md); overflow: hidden; background: var(--term-bg); }
+
+/* ── .inspector ── */
+.inspector {
+  width: var(--inspector-width); flex: 0 0 var(--inspector-width); display: flex; flex-direction: column;
+  border-left: 1px solid var(--border-subtle); background: var(--bg-panel); min-width: 0; min-height: 0;
+  position: relative; overflow: hidden; container-type: inline-size; container-name: inspector; transition: width .28s var(--ease), flex-basis .28s var(--ease), transform .28s var(--ease), opacity .28s var(--ease);
+}
+@media (max-width: 1024px) {
+  .inspector { position: fixed; top: 38px; bottom: 0; z-index: 25; }
+  .inspector, .inspector.is-closed { right: 0; width: min(var(--inspector-width, 440px), 92vw); flex-basis: auto; transform: translateX(105%); opacity: 1; }
+
+}
+/* The content keeps its full width while the panel narrows, so it slides
+   instead of reflowing on every frame. */
+.inspector-inner {
+  width: var(--inspector-width); min-width: var(--inspector-width); flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+  transition: transform 220ms var(--ease-out);
+}
+@media (max-width: 1024px) {
+  .inspector-inner { width: 100%; min-width: 0; }
+
+}
+
+/* ── .inspector-resizing ── */
+body.inspector-resizing .inspector, body.inspector-resizing .inspector-inner { transition: none; }
+body.inspector-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+body.inspector-resizing * {
+  cursor: col-resize;
+}
+
+/* ── .inspector-resize-handle ── */
+.inspector-resize-handle {
+  flex: 0 0 5px;
+  width: 5px;
+  margin-left: -3px;
+  margin-right: -2px;
+  cursor: col-resize;
+  touch-action: none;
+  position: relative;
+  z-index: 2;
+}
+.inspector-resize-handle::before {
+  content: "";
+  position: absolute;
+  inset: 0 -3px;
+}
+.inspector-resize-handle:hover,
+.inspector-resize-handle:focus-visible {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+@media (max-width: 1024px) {
+  .inspector-resize-handle { display: none; }
+
+}
+.inspector.is-closed { border-left-width: 0; visibility: hidden;
+}
+@media (max-width: 1024px) {
+  .inspector.is-closed .inspector-inner { transform: none; }
+
+}
+
+/* ── .inspector-tablist ── */
+/* Tabs as an underline: words carry the state, and the selected tab's 2px line
+   sits on the bar's bottom rule, tying the tab to the panel below. */
+.inspector-tablist { position: relative; display: flex; align-items: center; gap: 2px; scrollbar-width: none; align-self: stretch; }
+.inspector-tablist::-webkit-scrollbar { display: none; }
+.inspector .inspector-tablist.compact .in-tab:not([aria-selected="true"]) .tab-label {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* ── .inspector-tabs ── */
+.inspector-tabs button[role="tab"] {
+  position: relative; z-index: 1; border: 1px solid transparent;
+  border-radius: var(--radius-sm); font-size: var(--text-xs); white-space: nowrap; flex: 0 0 auto; user-select: none;
+}
+.inspector-tabs .icon-button { margin-left: auto; flex: 0 0 auto; border-color: transparent; background: transparent; color: var(--text-muted); }
+.inspector-tabs .icon-button:hover { border-color: transparent; background: var(--bg-card-hover); color: var(--text-primary); }
+@media (max-width: 1280px) {
+  .inspector-tabs button[role="tab"] { padding-inline: 4px; }
+}
+.inspector-tabs button[role="tab"]:not([aria-selected="true"]):hover { background: transparent; color: var(--text-secondary); }
+/* Commands in rule lists are code, but one per row needs no box of its own. */
+.inspector-tabs .inspector-tablist + .icon-button { margin-left: 4px; }
+.inspector-tabs button[role="tab"] small { font-variant-numeric: tabular-nums; margin-left: 1px; font-size: 10.5px; font-weight: 500; opacity: 0.7; transition: opacity var(--dur-fast) var(--ease-out); }
+.inspector-tabs button[aria-selected="true"] small { opacity: 1; }
+.inspector-tabs button.pending-tab:not([aria-selected="true"]) { color: var(--warning); }
+/* The selected tab's box: drawn once under the tabs and slid to the active one. */
+.inspector-tab-indicator {
+  position: absolute; left: 0; border-radius: var(--radius-sm);
+  pointer-events: none; background: transparent;
+}
+.inspector-tab-indicator.animate { transition: transform 200ms var(--ease-out), width 200ms var(--ease-out); }
+@media (prefers-reduced-motion: reduce) {
+  .inspector-tab-indicator.animate { transition: none; } }
+/* The line spans the label, not the tab's padding. */
+.inspector-tab-indicator::after { content: ""; position: absolute; left: 8px; right: 8px; top: 0; bottom: 0; border-radius: 2px 2px 0 0; background: var(--text-primary); display: none; }
+
+/* ── .inspector-body ── */
+
+/* ── Inspector system ───────────────────────────────────────────────────────
+   Every tab is built from the same few parts, so switching tabs never changes
+   the visual language:
+   - Section: a small muted caps header, then content; sections are separated
+     by space and a hairline, never by boxes (the panel is already a surface).
+   - Row: label left, meta right, 30px tall, hairlines between rows.
+   - Numbers: sans with tabular figures; monospace is kept for code and diffs.
+   - Color: neutral by default; status colors mark exceptions only.
+   - Disclosure: one chevron style for every fold.
+   Scoped to .inspector-body so shared components look the same elsewhere. */
+.inspector-body { min-height: 0; display: flex; flex-direction: column; animation: inspector-tab-in 120ms var(--ease-out); gap: 22px; }
+.inspector-body > * { flex-shrink: 0; }
+/* .tab-body */
+#inspector-panel-changes.inspector-body,
+#inspector-panel-files.inspector-body,
+.inspector .inspector-body.in-body:has(.changes-panel),
+.inspector .inspector-body.in-body:has(.files-panel) {
+  flex: 1; overflow: auto; min-height: 0; position: relative; display: block; padding: 0;
+}
+
+/* ══ Inspector panes: one tab at a time, or Files + Changes split ═══════════
+   Panel rules above set display by id, which beats the UA [hidden] rule; a hidden
+   panel must never show under the active one. */
+.inspector .inspector-body[hidden], .inspector-panes[hidden] { display: none !important; }
+.inspector-body .term-body { max-width: 100%; overflow: auto; }
+.inspector-file-preview { min-width: 0; }
+.inspector-file-preview .term-body { margin-top: 8px; max-height: none; }
+
+/* ── .card-kicker ── */
+.card-kicker { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: var(--text-xs); font-weight: 600; }
+.inspector-body .card-kicker > span + span,
+.inspector-body .section-label .section-count,
+.inspector-body .changes-group-title small {
+  font: 500 var(--text-xs) var(--font-sans); font-variant-numeric: tabular-nums; letter-spacing: 0; text-transform: none; color: var(--text-muted);
+}
+.inspector-plan { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.inspector-plan .section-label { height: 15px; padding: 0 4px; }
+.current-step { padding: 1px 5px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--warning) 20%, transparent); color: var(--warning); font-size: var(--text-2xs); font-weight: 700; text-transform: uppercase; }
+
+/* ── .segmented ── */
+.segmented { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-card-secondary); align-self: flex-start; }
+.segmented button { height: 26px; padding: 0 12px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-secondary); font-size: var(--text-sm); cursor: pointer; white-space: nowrap; }
+.inspector-backdrop { display: none; }
+@media (max-width: 1024px) {
+  .inspector-backdrop { display: block; position: fixed; inset: 38px 0 0; background: var(--backdrop-soft); border: 0; z-index: 24; animation: fade-in 200ms var(--ease-out); }
+  .inspector.narrow-open { transition: transform 240ms var(--ease-out), visibility 0s; transform: none; }
+
+}
+@media (max-width: 1180px) {
+  .inspector, .inspector.is-closed { transition: transform .28s var(--ease), visibility 0s .28s; box-shadow: var(--shadow); }
+}
+@media (max-width: 1180px) {
+  .inspector.narrow-open { transition: transform .28s var(--ease), visibility 0s; }
+}
+.segmented-control {
+  display: flex; width: 100%; padding: 2px; gap: 2px;
+  border-radius: var(--radius-md); border: 1px solid var(--border-subtle); background: var(--bg-card-secondary);
+}
+
+/* ── .segmented-option ── */
+.segmented-option {
+  flex: 1 1 0; min-width: 0; border: 0; border-radius: var(--radius-sm); background: transparent;
+  color: var(--text-secondary); font-size: var(--text-xs); font-weight: 600; line-height: 1.2;
+  padding: 7px 3px; cursor: pointer; text-align: center;
+}
+.segmented-option:disabled { opacity: .6; cursor: not-allowed; }
+/* Inspector: one quiet line instead of a stack of empty cards. */
+.inspector-task-empty { margin: 4px 2px 0; }
+/* Destructive actions look like their neighbours until pointed at. */
+.inspector-body .button.changes-danger { color: var(--text-secondary); }
+.inspector-body .button.changes-danger:not(:disabled):hover { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--border-subtle)); background: color-mix(in srgb, var(--danger) 6%, transparent); }
+.inspector-body .text-button { font-family: var(--font-sans); font-weight: 500; }
+
+/* ── .overview-row ── */
+.overview-row + .overview-row { border-top: 1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent); }
+.overview-row > svg { flex: 0 0 auto; color: var(--text-muted); opacity: 0.6; transition: transform 120ms var(--ease-out), opacity 120ms var(--ease-out); }
+.overview-row:hover .overview-label { color: var(--text-primary); }
+.overview-row:hover .overview-value { color: var(--text-secondary); }
+.overview-row:hover > svg { opacity: 1; transform: translateX(2px); }
+.overview-row.alert .overview-value { color: var(--warning); }
+.overview-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; border-radius: var(--radius-sm); }
+@media (prefers-reduced-motion: reduce) {
+  .overview-row > svg { transition: none; } }
+
+/* ── .overview-rows ── */
+.overview-rows .overview-row { min-height: 36px; padding: 0; }
+.overview-rows .overview-row + .overview-row { border-top-color: color-mix(in srgb, var(--border-subtle) 60%, transparent); }
+
+/* ── .in-tabs ── */
+.inspector .in-tabs { height: 52px; flex: 0 0 52px; display: flex; align-items: center; gap: 2px; padding: 0 8px 0 10px; border-bottom: 1px solid var(--border-subtle); overflow: hidden; }
+.inspector .in-tabs .inspector-tablist { flex: 1; min-width: 0; overflow-x: auto; }
+.inspector .in-tabs .icon-button, .inspector .in-tabs .icon-btn { width: 30px; height: 30px; }
+
+/* ── .in-tab ── */
+.inspector .in-tab { display: inline-flex; align-items: center; gap: 6px;
+}
+.inspector .in-tab .tab-ico { width: 14px; height: 14px; flex: none; }
+.inspector .in-tab .tab-label { white-space: nowrap; }
+.inspector .in-tab .tab-alert { width: 6px; height: 6px; border-radius: 50%; background: var(--warning); flex: none; }
+.inspector .in-tab:hover { color: var(--text); background: var(--bg-hover); }
+.inspector .in-tab.on, .inspector .in-tab[aria-selected="true"] { color: var(--text); background: var(--bg-active); font-weight: 400; }
+.inspector .in-tab small, .inspector .in-tab .cnt { font: 500 10.5px var(--font-mono); min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; }
+.inspector .in-body, .inspector .inspector-body.in-body { flex: 1; overflow: auto; padding: 16px; }
+.inspector-panes.split > .inspector-body { flex-basis: 0; flex-shrink: 1; min-height: 72px; animation: none; }
+.inspector-split-bar:hover .inspector-split-grip::after { opacity: .6; }
+
+/* ── .inspector-split-grip ── */
+.inspector-split-grip {
+  position: absolute; left: 0; right: 0; top: -5px; height: 9px; cursor: row-resize; z-index: 2; outline: none;
+}
+.inspector-split-grip::after {
+  content: ""; position: absolute; left: 50%; top: 2px; width: 32px; height: 4px; margin-left: -16px;
+  border-radius: 2px; background: var(--text-3); opacity: .35; transition: opacity var(--dur, .15s), background var(--dur, .15s);
+}
+.inspector-split-grip:hover::after, .inspector-split-grip:focus-visible::after,
+body.inspector-split-resizing .inspector-split-grip::after { opacity: 1; background: var(--accent); }
+body.inspector-split-resizing { cursor: row-resize; user-select: none; }
+

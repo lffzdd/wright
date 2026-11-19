@@ -1,5 +1,5 @@
 import { useT } from "../../i18n";
-import { clampInspectorWidth, defaultInspectorWidth, INSPECTOR_WIDTH_MAX, INSPECTOR_WIDTH_MIN } from "../../inspectorWidth";
+import { clampInspectorWidth, defaultInspectorWidth, INSPECTOR_WIDTH_MAX, INSPECTOR_WIDTH_MIN } from "./inspectorWidth";
 import { ResizeHandle } from "../ui/ResizeHandle";
 
 export function InspectorResizeHandle({

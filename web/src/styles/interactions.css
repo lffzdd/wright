@@ -1,0 +1,200 @@
+/* Approval and question cards, permission choices in the transcript. */
+html.light .perm-head { background: linear-gradient(90deg, color-mix(in srgb, var(--warning) 15%, transparent), color-mix(in srgb, var(--warning) 5%, transparent), transparent); }
+.perm-head { justify-content: space-between; background: linear-gradient(90deg, color-mix(in srgb, var(--warning) 15%, transparent), color-mix(in srgb, var(--warning) 5%, transparent), transparent); border-bottom: 1px solid color-mix(in srgb, var(--warning) 22%, transparent); }
+
+/* ── .perm-command ── */
+html.light .perm-command {
+  background: var(--bg-card-secondary);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+html.light .perm-command .perm-target,
+html.light .perm-command > .muted { color: var(--text-primary); }
+.perm-command > .muted { color: var(--term-fg-muted); }
+.perm-command .perm-target { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; max-height: 180px; color: var(--term-fg); font-weight: 600; }
+
+/* ── .fail-pill ── */
+.fail-pill, .denied-pill { white-space: nowrap; flex-shrink: 0; }
+.fail-pill { padding: 1px 6px; border-radius: var(--radius-sm); font: var(--text-xs) var(--font-mono); color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); border: 1px solid color-mix(in srgb, var(--danger) 25%, transparent); }
+.denied-pill { padding: 1px 6px; border-radius: var(--radius-sm); font: var(--text-xs) var(--font-mono); color: var(--text-secondary); background: var(--bg-card-hover); border: 1px solid var(--border-strong); }
+.perm-title, .perm-paused { display: flex; align-items: center; gap: 8px; }
+.perm-paused { gap: 6px; color: var(--text-muted); font: 400 var(--text-2xs) var(--font-mono); }
+.perm-paused .dot { color: var(--warning); }
+.perm-blocked { padding: 1px 6px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--warning) 20%, transparent); border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent); color: var(--warning); font-size: var(--text-2xs); font-weight: 650; }
+
+/* ── .perm-command ── */
+.perm-command { display: flex; gap: 6px; align-items: center; padding: 4px 8px; border-radius: var(--radius-sm); background: var(--term-bg); border: 1px solid var(--border-subtle); font: var(--text-xs)/16px var(--font-mono); color: var(--term-accent); }
+.interaction-actions { padding-top: 1px; }
+
+/* ── .perm-choice ── */
+.perm-choice { display: inline-flex; align-items: center; white-space: nowrap; }
+.perm-choice kbd { font: var(--text-2xs) var(--font-mono); color: inherit; opacity: 1; }
+.perm-choice.primary { border: 0; }
+.perm-choice.primary kbd { border-radius: var(--radius-sm); background: var(--on-accent-chip); font-size: var(--text-2xs); }
+.perm-choice.deny { background: transparent; border: 1px solid transparent; }
+.perm-choice small { display: block; color: var(--text-muted); font-size: var(--text-2xs); font-weight: 450; }
+.perm-choice, .permission-preview summary { min-height: 32px; }
+.perm-choice.primary:not(:disabled):hover { background: var(--accent-hover); }
+.perm-choice.deny:not(:disabled):hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.perm-choice {
+  height: 32px; gap: 8px; border-radius: var(--radius-md); font-weight: 500;
+}
+.perm-choice.primary { background: var(--text-primary); color: var(--bg-main); }
+.perm-choice.primary:not(:disabled):hover { background: var(--text-primary); opacity: .86; }
+.perm-choice.session { background: var(--bg-card); border: 1px solid var(--border-subtle); color: var(--text-primary); }
+.perm-choice.deny { color: var(--text-secondary); }
+.perm-choice.deny:not(:disabled):hover { color: var(--danger); background: var(--hover); }
+
+/* ── .permission-preview ── */
+.permission-preview {
+  margin: 6px 0 0; padding: 8px; max-height: 180px; overflow: auto;
+  background: var(--term-bg); color: var(--term-fg); border-radius: var(--radius-sm); font: var(--text-xs)/1.45 var(--font-mono); white-space: pre-wrap;
+}
+html.light .permission-preview {
+  background: var(--bg-card-secondary);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+}
+.permission-preview { padding: 8px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); font-size: var(--text-xs); }
+.permission-preview summary { cursor: pointer; color: var(--text-secondary); }
+.permission-preview pre { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow: auto; font: var(--text-xs)/1.5 var(--font-mono); }
+.approval-card:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.approval-card.elevated { border-color: color-mix(in srgb, var(--danger) 70%, transparent); }
+.approval-card.elevated .approval-icon { color: var(--danger); }
+/* Approval card: one question, the exact target, three decisions. */
+.approval-card { display: flex; flex-direction: column; max-height: min(46vh, 400px); outline: none;
+  border: 1px solid var(--warning-border); border-radius: var(--radius-lg);
+  background: linear-gradient(var(--warning-soft), var(--warning-soft)), var(--bg-card);
+  box-shadow: var(--shadow-md); font-size: var(--text-sm); line-height: 1.5;
+}
+.approval-card.elevated { border-color: color-mix(in srgb, var(--danger) 45%, transparent); background: linear-gradient(color-mix(in srgb, var(--danger) 6%, transparent), color-mix(in srgb, var(--danger) 6%, transparent)), var(--bg-card); }
+
+/* ── .approval-head ── */
+.approval-head { display: flex; align-items: center; padding: 12px 14px 8px; gap: 9px; }
+.approval-head h3 { margin: 0; color: var(--text-primary); flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; }
+.approval-icon { color: var(--warning); flex: 0 0 auto; }
+.approval-waiting { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: var(--text-xs); white-space: nowrap; }
+.approval-body { display: flex; flex-direction: column; overflow: auto; min-height: 0; padding: 0 14px 12px; gap: 10px; }
+
+/* ── .ask-card ── */
+.ask-card { display: flex; flex-direction: column; gap: 8px; max-height: min(46vh, 420px); overflow: auto; background: var(--bg-card); box-shadow: var(--shadow-md); line-height: 20px; outline: none; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border-subtle)); border-left-width: 1px; border-radius: var(--radius-lg); padding: 12px 14px 14px; font-size: var(--text-sm); }
+.ask-card:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+
+/* ── .ask-head ── */
+.ask-head { display: flex; align-items: flex-start; gap: 8px; }
+.ask-head h3 { margin: 0; flex: 1; min-width: 0; font-size: var(--text-md); font-weight: 600; line-height: 20px; color: var(--text-primary); overflow-wrap: anywhere; }
+.ask-head .approval-waiting { line-height: 20px; }
+.ask-head .approval-waiting .dot { color: var(--accent); }
+.ask-icon { flex: 0 0 auto; margin-top: 2px; color: var(--accent); }
+.ask-context { margin: -2px 0 0 24px; color: var(--text-muted); font-size: var(--text-sm); line-height: 18px; overflow-wrap: anywhere; }
+.ask-options { display: flex; flex-direction: column; gap: 4px; }
+
+/* ── .ask-option ── */
+.ask-option { display: flex; align-items: flex-start; gap: 10px; width: 100%; text-align: left; border: 1px solid var(--border-subtle); background: var(--bg-card); color: var(--text-primary); font: inherit; font-size: var(--text-sm); line-height: 18px; cursor: pointer; transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out); }
+.ask-option > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ask-option kbd { flex: 0 0 auto; min-width: 18px; height: 18px; display: grid; place-items: center; border-radius: var(--radius-sm); background: var(--bg-card-secondary); border: 1px solid var(--border-subtle); color: var(--text-muted); font: 500 var(--text-2xs) var(--font-mono); }
+.ask-option:not(:disabled):hover, .ask-option:focus-visible { border-color: color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 7%, var(--bg-card)); outline: none; }
+.ask-option:not(:disabled):hover kbd, .ask-option:focus-visible kbd, .ask-option.chosen kbd { background: var(--accent); border-color: transparent; color: var(--on-accent); }
+
+/* ── .perm-choice ── */
+.perm-choice.primary kbd { background: transparent; border-color: color-mix(in srgb, var(--bg-main) 35%, transparent); color: inherit; opacity: .75; padding: 0 5px; }
+
+/* ── .ask-option ── */
+.ask-option.chosen { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--bg-card)); }
+.ask-option:disabled:not(.chosen) { opacity: .5; cursor: default; }
+.ask-option { border-radius: var(--radius-md); padding: 8px 12px; }
+
+/* ── .ask-reply ── */
+.ask-reply { display: flex; align-items: flex-end; gap: 6px; padding: 4px 4px 4px 10px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-card-secondary); transition: border-color var(--dur-fast) var(--ease-out); }
+.ask-reply:focus-within { border-color: color-mix(in srgb, var(--accent) 60%, transparent); background: var(--bg-card); }
+.ask-reply textarea { flex: 1; min-width: 0; min-height: 24px; max-height: 160px; padding: 3px 0; border: 0; outline: none; resize: none; background: transparent; color: var(--text-primary); font: inherit; font-size: var(--text-sm); line-height: 18px; }
+.ask-reply textarea::placeholder { color: var(--text-muted); }
+
+/* ── .ask-send ── */
+.ask-send { flex: 0 0 auto; width: 26px; height: 26px; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: var(--accent); color: var(--on-accent); transition: opacity var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out); }
+.ask-send:not(:disabled):hover { background: var(--accent-hover); }
+.ask-send:disabled { opacity: .3; cursor: default; }
+.question-record { border-radius: var(--radius-md); }
+.question-record.unanswered .question-record-a { color: var(--text-muted); font-weight: 450; font-style: italic; }
+
+/* ── .question-record-head ── */
+.question-record-head { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 4px 6px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-secondary); font: inherit; font-size: var(--text-sm); line-height: 20px; text-align: left; cursor: pointer; }
+.question-record-head:hover { background: var(--bg-card-hover); }
+.question-record-head > svg.collapsed { transform: rotate(-90deg); }
+.question-record-head > svg { flex: 0 0 auto; color: var(--text-muted); transition: transform var(--dur-fast) var(--ease-out); }
+.question-record-q { flex: 0 1 auto; min-width: 0; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
+.question-record-arrow { flex: 0 0 auto; color: var(--text-muted); }
+.question-record-a { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); font-weight: 600; }
+.question-record-body { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 6px 28px; padding: 10px 12px; border: 1px solid var(--border-subtle); border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent); border-radius: var(--radius-md); background: var(--bg-card); }
+.question-record-context { margin: 0; color: var(--text-muted); font-size: var(--text-sm); line-height: 18px; overflow-wrap: anywhere; }
+
+/* ── .question-record-options ── */
+.question-record-options { display: flex; flex-direction: column; gap: 3px; margin: 0; padding: 0; list-style: none; }
+.question-record-options li { display: flex; align-items: flex-start; gap: 10px; padding: 5px 8px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-muted); font-size: var(--text-sm); line-height: 18px; }
+.question-record-options li > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.question-record-options kbd { flex: 0 0 auto; min-width: 18px; height: 18px; display: grid; place-items: center; border-radius: var(--radius-sm); background: var(--bg-card-secondary); border: 1px solid var(--border-subtle); color: var(--text-muted); font: 500 var(--text-2xs) var(--font-mono); }
+.question-record-options li.chosen { border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 8%, var(--bg-card)); color: var(--text-primary); font-weight: 550; }
+.question-record-options li.chosen kbd { background: var(--accent); border-color: transparent; color: var(--on-accent); }
+.question-record-options li.chosen > svg { flex: 0 0 auto; margin-top: 2px; color: var(--accent); }
+.question-record-own > span { display: block; margin-bottom: 2px; color: var(--text-muted); font-size: var(--text-2xs); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.question-record-own > p { margin: 0; padding: 6px 8px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent) 8%, var(--bg-card)); color: var(--text-primary); font-size: var(--text-sm); line-height: 18px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.question-record-none { margin: 0; color: var(--text-muted); font-size: var(--text-sm); }
+
+/* ── .approval-target ── */
+.approval-target { display: flex; align-items: flex-start; gap: 6px; padding: 8px 12px; border-radius: var(--radius-md); background: var(--bg-card); border: 1px solid var(--border-subtle); }
+.approval-target .perm-target { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 140px; overflow: auto; font: 500 12.5px/1.55 var(--font-mono); color: var(--text-primary); }
+.approval-copy { flex: 0 0 auto; color: var(--text-muted); }
+.approval-meta { margin: -4px 0 0; color: var(--text-muted); font-family: var(--font-mono); overflow-wrap: anywhere; font-size: var(--text-xs); }
+.approval-preview pre { max-height: 160px; overflow: auto; }
+.approval-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
+/* ── .approval-badge ── */
+.approval-badge { padding: 1px 8px; border-radius: var(--radius-full); border: 1px solid var(--border-strong); color: var(--text-secondary); font-size: var(--text-xs); }
+.approval-badge.warn { border-color: color-mix(in srgb, var(--warning) 60%, transparent); color: var(--warning); }
+.approval-badge { padding: 1px 8px; font-size: 11.5px; background: var(--bg-card); border-color: var(--border-subtle); }
+
+/* ── .approval-toggle ── */
+.approval-toggle { display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); cursor: pointer; }
+.approval-toggle input { margin-top: 2px; }
+.approval-toggle small { display: block; color: var(--text-muted); font-size: var(--text-xs); }
+
+/* ── .approval-actions ── */
+.approval-actions { display: flex; flex-wrap: wrap; align-items: center; border-radius: 0 0 var(--radius-lg) var(--radius-lg); flex: 0 0 auto; padding: 10px 14px 12px; gap: 8px; border-top: 0; background: transparent; }
+.approval-actions .perm-choice { font-size: var(--text-sm); padding: 0 10px 0 12px; }
+.approval-actions .perm-choice.session { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; height: auto; min-height: 32px; padding-block: 5px; }
+.approval-actions .perm-choice.session.long { order: 1; flex: 1 1 100%; }
+.approval-actions .perm-more { margin-left: auto; }
+.approval-actions .perm-choice:disabled { opacity: .55; cursor: not-allowed; }
+.approval-quick-note { order: 2; flex: 1 1 100%; color: var(--text-muted); font-size: var(--text-xs); line-height: 15px; }
+
+/* ── .approval-more ── */
+.approval-more { display: flex; flex-direction: column; gap: 8px; padding: 8px 12px 12px; border-top: 1px solid var(--border-subtle); overflow: auto; }
+.approval-more fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.approval-more legend { font-size: var(--text-xs); font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+.approval-more { border-top-color: var(--border-subtle); background: color-mix(in srgb, var(--bg-card) 60%, transparent); }
+
+/* ── .approval-option ── */
+.approval-option { display: flex; align-items: flex-start; gap: 8px; padding: 4px 6px; border-radius: var(--radius-sm); cursor: pointer; font-size: var(--text-sm); }
+.approval-option:hover { background: var(--bg-card-hover); }
+.approval-option.global span { color: var(--warning); }
+.approval-option input { margin-top: 3px; }
+.approval-level {
+  max-width: 100%; height: 24px; margin: 4px 0 2px; padding: 0 6px 0 8px; font-size: var(--text-sm);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-card); color: var(--text-primary);
+}
+.approval-level:hover:not(:disabled) { border-color: var(--border-strong); }
+.approval-more-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.approval-more-actions .button.primary { margin-left: auto; }
+.approval-warn { color: var(--warning); font-size: var(--text-xs); }
+
+/* ── .sandbox-denial ── */
+.sandbox-denial p { margin: 0 0 4px; }
+.sandbox-denial { display: grid; gap: 4px; justify-items: start; border-top: 1px solid var(--border-subtle); color: var(--text-primary); overflow-wrap: anywhere; }
+.sandbox-denial .mono { color: var(--text-muted); font-size: var(--text-xs); }
+.sandbox-denial-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.button:not(.primary):not(.stop):not(.accept):not(.revert):not(:disabled):hover,
+.perm-choice.session:not(:disabled):hover {
+  border-color: var(--border-strong); background: var(--bg-card-hover); color: var(--text-primary);
+}
+.approval-prompt { font: 12.5px/1.55 var(--font-mono); color: var(--accent); }
+

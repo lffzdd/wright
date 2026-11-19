@@ -1,20 +1,28 @@
 import { BookOpen, Brain, Bug, Clock, Compass, Gear, GitBranch, Lightning, MagnifyingGlass, Moon, Scroll, Sun, Warning, X } from "@phosphor-icons/react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { api, ApiError, bootstrap } from "./api";
 import { browserLocale, setLocale, useT } from "./i18n";
 import { paintTheme, paintedTheme, systemTheme } from "./theme";
-import { parseEvent } from "./protocol";
-import { applyEvent } from "./reducer";
-import type { FileReference, SessionSummary, Snapshot, ViewState } from "./types";
+import type { FileReference, SessionSummary } from "./types";
+import { downloadText, tabTitle } from "./app/browser";
+import { useCapabilityCounts } from "./app/useCapabilityCounts";
+import { useServerLatency } from "./app/useServerLatency";
+import { useSessionStream, type Browsing } from "./app/useSessionStream";
+import { useWorkspaceLayout } from "./app/useWorkspaceLayout";
 import { RunStatus } from "./components/composer/RunStatus";
 import { Composer, ComposerHints, EnvironmentChoice } from "./components/composer/Composer";
 import { emptyDraft, type Draft } from "./components/composer/draft";
 import { Inspector, type InspectorTab } from "./components/inspector/Inspector";
 import { InspectorResizeHandle } from "./components/inspector/InspectorResizeHandle";
 import { ResizeHandle } from "./components/ui/ResizeHandle";
-import { MemoryPage, RulesPage, SchedulesPage, SearchDialog, SettingsPage } from "./components/panels/panels";
-import { clampInspectorWidth, defaultInspectorWidth, parseInspectorWidth } from "./inspectorWidth";
-import { clampSidebarWidth, parseSidebarWidth, SIDEBAR_WIDTH_DEFAULT, SIDEBAR_WIDTH_MAX, SIDEBAR_WIDTH_MIN } from "./sidebarWidth";
+import { MemoryPage } from "./components/panels/MemoryPage";
+import { RulesPage } from "./components/panels/RulesPage";
+import { SchedulesPage } from "./components/panels/SchedulesPage";
+import { SearchDialog } from "./components/panels/SearchDialog";
+import { SettingsPage } from "./components/panels/SettingsPage";
+import { defaultInspectorWidth, parseInspectorWidth } from "./components/inspector/inspectorWidth";
+import { clampSidebarWidth, parseSidebarWidth, SIDEBAR_WIDTH_DEFAULT, SIDEBAR_WIDTH_MAX, SIDEBAR_WIDTH_MIN } from "./components/session/sidebarWidth";
+import { HeaderTitle } from "./components/session/HeaderTitle";
 import { ContextRing } from "./components/session/ContextRing";
 import { SessionRail } from "./components/session/SessionRail";
 import { conversationMarkdown, markdownFileName, rewindImpact, sessionTitle } from "./components/session/session";
@@ -25,118 +33,29 @@ import { InteractionDock, QueuedCommands, Timeline, type MessageActions } from "
 import { OpenFileContext } from "./components/code/openFile";
 
 
-/** The server no longer has this session open; its checkpoint remains. */
-function sessionGone(error: unknown): boolean {
-  return error instanceof ApiError && error.status === 404;
-}
-
-const initialView = (snapshot: Snapshot): ViewState => ({
-  ...snapshot,
-  agents: snapshot.agents ?? [],
-  notices: snapshot.notices ?? [],
-  queued_commands: snapshot.queued_commands ?? [],
-  queue_depth: (snapshot.queued_commands ?? []).length,
-  seen: [],
-  connection: "connecting",
-  resync: false,
-});
-
 type WorkspaceRow = { project_id: string; name: string; root: string; selected?: boolean; exists?: boolean };
-type CapabilityCounts = { memory: number | null; rules: number | null; schedules: number | null };
 type Panel = null | "search";
 /** A capability screen that replaces the conversation in the main area. */
 type Page = null | "memory" | "rules" | "schedules" | "settings";
-
-function HeaderTitle({ value, hint, onCommit, onBegin, editRef }: {
-  value: string;
-  hint: string;
-  onCommit: (next: string) => void;
-  onBegin?: () => void;
-  editRef?: { current: (() => void) | null };
-}) {
-  const node = useRef<HTMLSpanElement>(null);
-  const editing = useRef(false);
-  const armed = useRef(false);
-  const valueRef = useRef(value);
-  valueRef.current = value;
-  useLayoutEffect(() => {
-    const el = node.current;
-    if (!el || editing.current) return;
-    if (el.textContent !== value) el.textContent = value;
-  }, [value]);
-  const begin = () => {
-    const el = node.current;
-    if (!el || el.contentEditable === "true") return;
-    onBegin?.();
-    editing.current = true;
-    armed.current = false;
-    el.setAttribute("contenteditable", "true");
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    const sel = getSelection();
-    sel?.removeAllRanges();
-    sel?.addRange(range);
-    window.setTimeout(() => { armed.current = true; }, 0);
-  };
-  const finish = (save: boolean) => {
-    const el = node.current;
-    if (!el || el.contentEditable !== "true") return;
-    const text = el.textContent?.trim() ?? "";
-    el.removeAttribute("contenteditable");
-    editing.current = false;
-    armed.current = false;
-    if (save && text && text !== valueRef.current) onCommit(text);
-    else el.textContent = valueRef.current;
-  };
-  if (editRef) editRef.current = begin;
-  return <span
-    ref={node}
-    className="title"
-    role="heading"
-    aria-level={1}
-    title={hint}
-    tabIndex={0}
-    spellCheck={false}
-    onClick={begin}
-    onKeyDown={(event) => {
-      if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-      if (event.key === "Enter") { event.preventDefault(); if (editing.current) finish(true); else begin(); }
-      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); finish(false); }
-    }}
-    onBlur={() => { if (armed.current) finish(true); }}
-  >{value}</span>;
-}
-
 
 export default function App() {
   const tr = useT();
   const [project, setProject] = useState<Record<string, unknown> | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [state, setState] = useState<ViewState | null>(null);
-  const stateRef = useRef<ViewState | null>(null);
-  stateRef.current = state;
-  const [browsing, setBrowsing] = useState<"draft" | "preview" | "live">("draft");
+  const [browsing, setBrowsing] = useState<Browsing>("draft");
   const browsingRef = useRef(browsing);
   browsingRef.current = browsing;
   const [fatal, setFatal] = useState("");
-  const [railOpen, setRailOpen] = useState(false);
-  const [inspectorOpen, setInspectorOpen] = useState(true);
-  const [inspectorWidth, setInspectorWidth] = useState(() => defaultInspectorWidth());
-  // On wide screens the session list is docked and can be folded away; on
-  // compact ones it is a drawer (railOpen) and these two do not apply.
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_WIDTH_DEFAULT);
-  const sidebarOpenRef = useRef(sidebarOpen);
-  sidebarOpenRef.current = sidebarOpen;
-  const [narrowInspector, setNarrowInspector] = useState(false);
-  const [compactViewport, setCompactViewport] = useState(() => window.matchMedia?.("(max-width: 1024px)").matches ?? false);
-  const inspectorVisibility = useRef({ open: inspectorOpen, narrow: narrowInspector, compact: compactViewport });
-  inspectorVisibility.current = { open: inspectorOpen, narrow: narrowInspector, compact: compactViewport };
+  const {
+    railOpen, setRailOpen,
+    sidebarOpen, setSidebarOpen, sidebarWidth, setSidebarWidth, commitSidebarWidth, toggleRail,
+    inspectorOpen, setInspectorOpen, inspectorWidth, setInspectorWidth, commitInspectorWidth,
+    narrowInspector, setNarrowInspector, compactViewport, visibility: inspectorVisibility,
+    openInspector, closeInspector, toggleInspector,
+  } = useWorkspaceLayout();
   const [theme, setTheme] = useState<"dark" | "light">(paintedTheme);
-  const [serverLatency, setServerLatency] = useState<number | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceRow[]>([]);
-  const [capabilityCounts, setCapabilityCounts] = useState<CapabilityCounts>({ memory: null, rules: null, schedules: null });
   const [panel, setPanel] = useState<Panel>(null);
   const panelRef = useRef(panel);
   panelRef.current = panel;
@@ -150,17 +69,11 @@ export default function App() {
   const [inspectorTab, setInspectorTab] = useState<{ tab: InspectorTab; request: number } | undefined>(undefined);
   const [fileFocus, setFileFocus] = useState<{ sessionId: string; path: string; line?: number; request: number } | null>(null);
   const [booted, setBooted] = useState(false);
-  const socket = useRef<WebSocket | null>(null);
-  const commandWaiters = useRef(new Map<string, (outcome: "accepted" | "rejected" | "unknown") => void>());
-  const epoch = useRef(0);
-  const streamId = useRef("");
-  const respondIds = useRef(new Map<string, string>());
   const cancelId = useRef<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [draftPolicy, setDraftPolicy] = useState({ interaction_mode: "agent", permission_mode: "default" });
   const draftsRef = useRef(drafts);
   draftsRef.current = drafts;
-  const activeSent = useRef(new Set<string>());
   const workspaceId = useRef<string | null>(null);
   const launchId = useRef<string | null>(null);
   const launchRoot = useRef<string | undefined>(undefined);
@@ -177,27 +90,6 @@ export default function App() {
     });
   }, []);
 
-  // The event stream carries text and tool progress; derived inspector data
-  // (context categories, accessed files, subagents) lives in the snapshot.
-  useEffect(() => {
-    if (!selected || browsing !== "live" || !state || state.resync) return;
-    const sessionId = selected;
-    const generation = epoch.current;
-    const timer = window.setTimeout(() => {
-      api.snapshot(sessionId).then((snapshot) => {
-        if (epoch.current !== generation) return;
-        setState((current) => current?.session.session_id === sessionId && snapshot.last_seq >= current.last_seq ? {
-          ...current,
-          plan: snapshot.plan,
-          context_breakdown: snapshot.context_breakdown,
-          accessed_files: snapshot.accessed_files,
-          subagents: snapshot.subagents,
-        } : current);
-      }).catch(() => undefined);
-    }, 200);
-    return () => window.clearTimeout(timer);
-  }, [selected, browsing, state?.last_seq, state?.resync]);
-
   const refreshSessions = useCallback(async () => {
     const request = ++sessionListGeneration.current;
     const items = (await api.sessions(true)).map((item) => ({
@@ -209,61 +101,10 @@ export default function App() {
     return items;
   }, []);
 
-  useEffect(() => {
-    if (!booted) return;
-    let mounted = true;
-    let pending = false;
-    const measure = async () => {
-      if (pending) return;
-      pending = true;
-      const startedAt = performance.now();
-      try {
-        const result = await api.health();
-        if (mounted && result.ok) setServerLatency(Math.round(performance.now() - startedAt));
-        else if (mounted) setServerLatency(null);
-      } catch {
-        if (mounted) setServerLatency(null);
-      } finally {
-        pending = false;
-      }
-    };
-    void measure();
-    const timer = window.setInterval(() => void measure(), 10_000);
-    return () => { mounted = false; window.clearInterval(timer); };
-  }, [booted]);
+  const serverLatency = useServerLatency(booted);
 
   const selectedProjectId = String(workspaceId.current || project?.project_id || "");
-  useEffect(() => {
-    // Counts belong to the workspace, so they show even with no task open.
-    if (page !== null) return;
-    if (!selectedProjectId) {
-      setCapabilityCounts({ memory: null, rules: null, schedules: null });
-      return;
-    }
-    let current = true;
-    const loadCounts = async () => {
-      const [memoryResult, rulesResult, schedulesResult] = await Promise.allSettled([
-        api.memory(selectedProjectId),
-        api.rules(selectedProjectId),
-        api.projectSchedules(selectedProjectId),
-      ]);
-      if (!current) return;
-      const memory = memoryResult.status === "fulfilled" ? memoryResult.value : null;
-      const facts = Array.isArray(memory?.facts) ? memory.facts as Array<Record<string, unknown>> : [];
-      const commitments = Array.isArray(memory?.commitments) ? memory.commitments as Array<Record<string, unknown>> : [];
-      setCapabilityCounts({
-        memory: memoryResult.status === "fulfilled"
-          ? facts.filter((fact) => fact.status === "active" || fact.status === "quarantined").length + commitments.filter((item) => item.status === "open").length
-          : null,
-        rules: rulesResult.status === "fulfilled"
-          ? (rulesResult.value.rules ?? []).filter((rule) => typeof rule.id === "string" && rule.id.length > 0).length
-          : null,
-        schedules: schedulesResult.status === "fulfilled" ? schedulesResult.value.length : null,
-      });
-    };
-    void loadCounts();
-    return () => { current = false; };
-  }, [selectedProjectId, page]);
+  const capabilityCounts = useCapabilityCounts(selectedProjectId, page !== null);
 
   const themeFollowsSystem = useRef(false);
   useEffect(() => {
@@ -279,54 +120,13 @@ export default function App() {
     paintTheme(next);
   };
 
-  useEffect(() => {
-    const media = window.matchMedia?.("(max-width: 1024px)");
-    if (!media) return;
-    const changed = () => { setCompactViewport(media.matches); setNarrowInspector(false); };
-    media.addEventListener("change", changed);
-    return () => media.removeEventListener("change", changed);
-  }, []);
-
   useEffect(() => { setFileFocus(null); setCallFocus(null); setInspectorTab(undefined); }, [selected]);
 
-  const closeInspector = useCallback(() => {
-    setNarrowInspector(false);
-    if (!inspectorVisibility.current.compact) {
-      setInspectorOpen(false);
-      api.setPreference({ inspector_open: false }).catch(() => undefined);
-    }
-  }, []);
-  const openInspector = useCallback(() => {
-    setInspectorOpen(true);
-    setNarrowInspector(true);
-    setRailOpen(false);
-    api.setPreference({ inspector_open: true }).catch(() => undefined);
-  }, []);
   const openFileAt = useCallback((path: string, line?: number) => {
     if (!selected) return;
     setFileFocus((previous) => ({ sessionId: selected, path, line, request: (previous?.request ?? 0) + 1 }));
     openInspector();
   }, [selected, openInspector]);
-  const toggleInspector = useCallback(() => {
-    const current = inspectorVisibility.current;
-    if (current.compact ? current.open && current.narrow : current.open) closeInspector();
-    else openInspector();
-  }, [closeInspector, openInspector]);
-  const toggleRail = useCallback(() => {
-    setNarrowInspector(false);
-    if (inspectorVisibility.current.compact) {
-      setRailOpen((prev) => !prev);
-      return;
-    }
-    const next = !sidebarOpenRef.current;
-    setSidebarOpen(next);
-    api.setPreference({ sidebar_open: next }).catch(() => undefined);
-  }, []);
-  const commitSidebarWidth = useCallback((width: number) => {
-    const next = clampSidebarWidth(width);
-    setSidebarWidth(next);
-    api.setPreference({ sidebar_width: next }).catch(() => undefined);
-  }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -456,155 +256,9 @@ export default function App() {
     return () => { cancelled = true; };
   }, [refreshSessions]);
 
-  useEffect(() => {
-    if (!selected || browsing !== "live") {
-      if (!selected) setState(null);
-      return;
-    }
-    const generation = ++epoch.current;
-    const sessionId = selected;
-    socket.current?.close();
-    let retryTimer: number | undefined;
-    const owned = () => epoch.current === generation;
-    const connect = (snapshot: Snapshot, attempt = 0) => {
-      if (!owned()) return;
-      streamId.current = snapshot.stream_id;
-      const sentHere = new Set<string>();
-      activeSent.current = sentHere;
-      const protocol = location.protocol === "https:" ? "wss" : "ws";
-      const ws = new WebSocket(`${protocol}://${location.host}/api/v1/sessions/${sessionId}/stream?stream_id=${snapshot.stream_id}&last_seq=${snapshot.last_seq}`);
-      socket.current = ws;
-      ws.onopen = () => {
-        if (!owned()) { ws.close(); return; }
-        setState((current) => current && current.session.session_id === sessionId ? { ...current, connection: "connected" } : current);
-        const pending = draftsRef.current[sessionId];
-        if (pending?.commandId && (pending.phase === "awaiting" || pending.phase === "unknown")) {
-          api.commandStatus(sessionId, pending.commandId).then((record) => {
-            if (!owned()) return;
-            if (record.status === "unknown") {
-              updateDraft(sessionId, (item) => ({ ...item, phase: "unknown", reason: "The server does not know whether this command finished. It will not be sent with a new id." }));
-            } else {
-              updateDraft(sessionId, () => emptyDraft());
-            }
-          }).catch(() => {
-            if (!owned()) return;
-            updateDraft(sessionId, (item) => ({ ...item, phase: "unknown", reason: "Not confirmed. Retry keeps this command id." }));
-          });
-        }
-      };
-      ws.onclose = () => {
-        for (const id of sentHere) {
-          const waiter = commandWaiters.current.get(id);
-          if (waiter) {
-            commandWaiters.current.delete(id);
-            waiter("unknown");
-          }
-        }
-        if (!owned()) return;
-        setState((current) => current && current.session.session_id === sessionId ? { ...current, connection: "reconnecting" } : current);
-        retryTimer = window.setTimeout(() => {
-          if (!owned()) return;
-          api.snapshot(sessionId).then((fresh) => {
-            if (!owned()) return;
-            setState({ ...initialView(fresh), connection: "reconnecting" });
-            connect(fresh, attempt + 1);
-          }).catch((error) => {
-            if (!owned()) return;
-            // The session was closed (for example to make room). Its history is
-            // still on disk: show it instead of reconnecting forever.
-            if (sessionGone(error)) { setBrowsing("preview"); refreshSessions().catch(() => undefined); return; }
-            connect(snapshot, attempt + 1);
-          });
-        }, Math.min(10_000, 500 * (2 ** Math.min(attempt, 5))));
-      };
-      ws.onmessage = (message) => {
-        if (!owned()) return;
-        let body: unknown;
-        try { body = JSON.parse(message.data); }
-        catch { return; }
-        if (body && typeof body === "object" && "snapshot" in (body as Record<string, unknown>)) {
-          const snapshot = (body as { snapshot: Snapshot }).snapshot;
-          if (snapshot.session?.session_id && snapshot.session.session_id !== sessionId) return;
-          streamId.current = snapshot.stream_id;
-          setState({ ...initialView(snapshot), connection: "connected" });
-          refreshSessions().catch(() => undefined);
-          return;
-        }
-        const parsed = parseEvent(body, { sessionId, streamId: streamId.current });
-        if (!parsed.ok) {
-          if (parsed.reason === "malformed" || parsed.reason === "session") return;
-          setState((current) => current && current.session.session_id === sessionId ? { ...current, resync: true } : current);
-          return;
-        }
-        const event = parsed.event;
-        if (event.type === "command.accepted" || event.type === "command.rejected") {
-          const waiter = commandWaiters.current.get(String(event.payload.command_id ?? ""));
-          if (waiter) {
-            commandWaiters.current.delete(String(event.payload.command_id ?? ""));
-            waiter(event.type === "command.accepted" ? "accepted" : "rejected");
-          }
-        }
-        setState((current) => {
-          if (!current || current.session.session_id !== sessionId) return current;
-          return applyEvent(current, event);
-        });
-        if ([
-          "turn.started", "turn.completed", "turn.failed", "turn.cancelled",
-          "interaction.requested", "interaction.resolved", "session.status_changed", "session.policy_updated",
-        ].includes(event.type)) {
-          refreshSessions().catch(() => undefined);
-        }
-      };
-    };
-    api.snapshot(sessionId).then((snapshot) => {
-      if (!owned()) return;
-      streamId.current = snapshot.stream_id;
-      setState(initialView(snapshot));
-      connect(snapshot);
-    }).catch((error) => {
-      if (!owned()) return;
-      if (sessionGone(error)) { setBrowsing("preview"); refreshSessions().catch(() => undefined); return; }
-      setFatal(String(error));
-    });
-    return () => { epoch.current += 1; if (retryTimer !== undefined) window.clearTimeout(retryTimer); socket.current?.close(); };
-  }, [selected, browsing, refreshSessions, updateDraft]);
-
-  useEffect(() => {
-    if (browsing !== "preview" || !selected) return;
-    const generation = ++epoch.current;
-    const sessionId = selected;
-    socket.current?.close();
-    const owner = sessions.find((item) => item.session_id === sessionId)?.project_id || workspaceId.current || undefined;
-    api.preview(sessionId, owner).then((preview) => {
-      if (epoch.current !== generation) return;
-      const body = preview as unknown as { session: Snapshot["session"]; history?: Snapshot["history"]; timeline?: Snapshot["timeline"]; plan?: Snapshot["plan"]; subagents?: Snapshot["subagents"]; accessed_files?: Snapshot["accessed_files"]; context_breakdown?: Snapshot["context_breakdown"] };
-      setState({
-        ...initialView({
-          stream_id: "preview",
-          last_seq: 0,
-          session: { ...body.session, active: false },
-          history: body.history ?? [],
-          timeline: body.timeline ?? [],
-          active_turn: null,
-          plan: body.plan ?? {},
-          pending_interactions: [],
-          notices: [],
-          queued_commands: [],
-          queue_depth: 0,
-          usage: {
-            prompt_tokens: null, completion_tokens: null, total_tokens: null,
-            request_prompt_tokens: null, request_completion_tokens: null, request_total_tokens: null,
-            context_tokens: null, context_limit: null,
-          },
-          context_breakdown: body.context_breakdown ?? undefined,
-          subagents: body.subagents,
-          accessed_files: body.accessed_files,
-        }),
-        connection: "connected",
-      });
-    }).catch((error) => { if (epoch.current === generation) setFatal(String(error)); });
-    return () => { epoch.current += 1; };
-  }, [browsing, selected]);
+  const { state, setState, stateRef, epoch, sendCommand, respondToInteraction } = useSessionStream({
+    selected, browsing, setBrowsing, sessions, workspaceId, refreshSessions, draftsRef, updateDraft, setFatal,
+  });
 
   useEffect(() => {
     if (!booted) return;
@@ -612,24 +266,6 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [booted, refreshSessions]);
 
-  const sendCommand = (payload: Record<string, unknown>) => {
-    const id = String(payload.command_id ?? "");
-    if (socket.current?.readyState !== WebSocket.OPEN) return Promise.resolve("unknown" as const);
-    activeSent.current.add(id);
-    return new Promise<"accepted" | "rejected" | "unknown">((resolve) => {
-      commandWaiters.current.set(id, resolve);
-      socket.current?.send(JSON.stringify(payload));
-    });
-  };
-  const respondToInteraction = (requestId: string, answer: unknown) => {
-    const existing = respondIds.current.get(requestId);
-    const id = existing ?? crypto.randomUUID();
-    respondIds.current.set(requestId, id);
-    return sendCommand({ type: "interaction.respond", command_id: id, request_id: requestId, answer }).then((outcome) => {
-      if (outcome === "accepted" || outcome === "rejected") respondIds.current.delete(requestId);
-      return outcome === "accepted";
-    });
-  };
   const projectKey = () => String(workspaceId.current || launchId.current || "");
   const draftKey = projectKey() ? `draft:${projectKey()}` : "draft:local";
   const remember = (sessionId: string | null) => {
@@ -799,26 +435,6 @@ export default function App() {
       setInspectorWidth(stored ?? defaultInspectorWidth());
     }
   };
-  const commitInspectorWidth = useCallback((width: number) => {
-    const next = clampInspectorWidth(width);
-    setInspectorWidth(next);
-    api.setPreference({ inspector_width: next }).catch(() => undefined);
-  }, []);
-  useEffect(() => {
-    if (!state?.resync || !selected) return;
-    const generation = epoch.current;
-    const sessionId = selected;
-    api.snapshot(sessionId).then((snapshot) => {
-      if (epoch.current !== generation) return;
-      streamId.current = snapshot.stream_id;
-      setState({ ...initialView(snapshot), connection: "connected" });
-    }).catch((error) => {
-      if (epoch.current !== generation) return;
-      if (sessionGone(error)) { setBrowsing("preview"); return; }
-      setFatal(String(error));
-    });
-  }, [state?.resync, selected]);
-
   /** Explains what a rewind drops and keeps; files on disk are never restored. */
   const rewindNotes = (messageId: string) => {
     const impact = rewindImpact(state?.timeline ?? [], messageId);
@@ -888,7 +504,6 @@ export default function App() {
             : execution === "cancelled" || agentStatus === "cancelled" ? "cancelled"
               : execution === "completed" || agentStatus === "completed" ? "completed"
                 : running ? "running" : "";
-  const statusPulse = running || statusClass === "waiting";
   const terminalAgentStatus = agentStatus === "completed" || agentStatus === "failed" || agentStatus === "cancelled" || agentStatus === "interrupted";
   const displayStatus = execution === "idle" && terminalAgentStatus ? agentStatus : execution;
   // Idle and finished turns are already visible in the sidebar; the top bar only speaks up when something is happening.
@@ -1019,13 +634,6 @@ export default function App() {
               openInspector();
             }}
             onSuggest={(text) => updateDraft(state.session.session_id, (current) => ({ ...current, prompt: text }))}
-            respond={(requestId, answer) => {
-              return respondToInteraction(requestId, answer);
-            }}
-            cancelQueued={(targetCommandId) => {
-              const id = crypto.randomUUID();
-              sendCommand({ type: "turn.cancel_queued", command_id: id, target_command_id: targetCommandId }).catch(() => undefined);
-            }}
           >
           {(jump) => <>
           {browsing === "preview" && <p className="hint conversation-footnote">{state.session.recoverable === false ? tr("web.history_unavailable") : tr("web.history_view")}</p>}
@@ -1202,24 +810,4 @@ export default function App() {
     }} />}
     <DialogHost />
   </div>;
-}
-
-/**
- * "(n) Wright" while n sessions wait on an approval or answer. The open
- * session's own stream is fresher than the list, so it decides for itself.
- */
-export function tabTitle(sessions: Array<{ session_id: string; pending_interactions?: number }>, open: ViewState | null): string {
-  const waiting = new Set(sessions.filter((item) => item.pending_interactions).map((item) => item.session_id));
-  if (open?.pending_interactions.length) waiting.add(open.session.session_id);
-  else if (open) waiting.delete(open.session.session_id);
-  return waiting.size ? `(${waiting.size}) Wright` : "Wright";
-}
-
-function downloadText(fileName: string, text: string) {
-  const url = URL.createObjectURL(new Blob([text], { type: "text/markdown;charset=utf-8" }));
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = fileName;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
 }

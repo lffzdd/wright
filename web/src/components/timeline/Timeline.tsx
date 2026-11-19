@@ -1,9 +1,11 @@
 import { ArrowDown, X } from "@phosphor-icons/react";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { MarkdownContent } from "../../Markdown";
+import { MarkdownContent } from "../code/Markdown";
 import { present, useT } from "../../i18n";
 import type { ViewState } from "../../types";
-import { AssistantMessage, InteractionCard, ReasoningRow, UserMessage, toolCardFromState } from "../cards/cards";
+import { AssistantMessage, ReasoningRow, UserMessage } from "../cards/Messages";
+import { InteractionCard } from "../cards/InteractionCard";
+import { toolCardFromState } from "../cards/ToolCard";
 import { RevealCallContext, StepGroup, type RevealCall } from "./StepGroup";
 import { appendStep, segmentTimeline, stepFromTool, type Segment } from "./steps";
 import { TurnFooter } from "./TurnFooter";
@@ -80,7 +82,7 @@ export function QueuedCommands({ items, onCancel }: { items: ViewState["queued_c
   </div>;
 }
 
-export function Timeline({ state, respond, userLabel, timestamp, children, revealCall, messageActions, onViewChanges, onSuggest }: {
+export function Timeline({ state, userLabel, timestamp, children, revealCall, messageActions, onViewChanges, onSuggest }: {
   state: ViewState;
   /** Opens the Changes view from a turn's summary line. */
   onViewChanges?: () => void;
@@ -90,8 +92,6 @@ export function Timeline({ state, respond, userLabel, timestamp, children, revea
   messageActions?: MessageActions;
   /** A tool call to scroll to, open and highlight; a new `request` repeats it. */
   revealCall?: RevealCall | null;
-  respond: (requestId: string, answer: unknown) => boolean | Promise<boolean>;
-  cancelQueued: (commandId: string) => void;
   userLabel?: string;
   timestamp?: string;
   /** Foot content. Pass a function to mount the jump control inside `.composer-inner`. */

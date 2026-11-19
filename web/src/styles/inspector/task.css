@@ -1,0 +1,88 @@
+/* Task tab: goal, plan steps, subagents. */
+
+.plan-wait { color: var(--warning); white-space: normal; }
+
+/* ── .goal-card ── */
+.goal-card, .policy-card { padding: 10px; border-radius: var(--radius-md); background: var(--bg-card); border: 1px solid var(--border-subtle); }
+.goal-card:first-child .progress { margin-top: 6px; }
+.goal-card > .empty-small { margin: 6px 0 0; font-size: var(--text-xs); font-weight: 400; }
+/* An empty card collapses to one row: title left, empty state right. */
+.goal-card:has(> .empty-small) { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding-block: 8px; }
+.goal-card:has(> .empty-small) > .empty-small { margin: 0; text-align: right; }
+.goal-card.inspector-plan .step-list:empty { display: none; }
+/* Task sections stand on their labels and spacing, as in Permissions. */
+.inspector-body .goal-card + .goal-card { margin-top: 8px; }
+.inspector-body .goal-card p { margin: 0; font-size: var(--text-md); font-weight: 500; line-height: 1.45; color: var(--text-primary); }
+.inspector-body .goal-card:has(> .empty-small) { display: block; padding: 0; }
+.inspector-body .goal-card:has(> .empty-small) > .empty-small { text-align: left; }
+.inspector-body .goal-card > .empty-small { margin: 0; font-size: var(--text-sm); }
+
+/* ── .progress ── */
+.progress { border-radius: var(--radius-full); overflow: hidden; }
+.progress i { display: block; height: 100%; }
+.inspector-body .progress i { background: var(--accent); border-radius: inherit; transition: width 400ms var(--ease-out); }
+.step-list { display: grid; grid-template-columns: minmax(0, 1fr); }
+/* Plan steps as a timeline: numbered nodes joined by a line that is solid
+   where the plan has been and dotted where it is still to go. No box, no
+   row rules: the line carries the sequence. */
+.inspector-body .step-list,
+.inspector-body .goal-card.inspector-plan .step-list { list-style: none; gap: 0; margin: 4px 0 0; padding: 0; }
+
+/* ── .subagent-row ── */
+.subagent-row { min-height: 32px; padding: 6px 8px; border-radius: var(--radius-sm); background: var(--bg-sidebar); border: 1px solid var(--border-subtle); }
+.subagent-row > span:last-child { color: var(--text-muted); font: var(--text-2xs) var(--font-mono); }
+.inspector-body .subagent-row .status-dot { flex: 0 0 6px; }
+
+/* ── .plan-headline ── */
+.plan-headline { display: inline-flex; align-items: center; gap: 5px; min-width: 0; color: var(--text-secondary); font-size: var(--text-sm); }
+.plan-headline .plan-mark { margin-top: 0; }
+
+/* ── .plan-checklist ── */
+.plan-checklist { display: flex; flex-direction: column; gap: 8px; background: var(--bg-card); font-size: var(--text-sm); line-height: 20px; }
+.plan-checklist ol { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.plan-checklist li { border-radius: var(--radius-sm); color: var(--text-primary); }
+.plan-checklist li > div { display: flex; flex-direction: column; min-width: 0; }
+.plan-checklist li > div > span { overflow-wrap: anywhere; }
+.plan-checklist li small { color: var(--text-muted); font-size: var(--text-xs); line-height: 17px; overflow-wrap: anywhere; }
+.plan-checklist li.completed > div > span { color: var(--text-muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--text-muted) 55%, transparent); }
+.plan-checklist li.skipped > div > span { color: var(--text-muted); text-decoration: line-through; }
+.plan-checklist li.dim { opacity: .55; }
+.plan-checklist li.focus { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.plan-checklist li.focus > div > span { text-decoration: none; color: var(--text-primary); font-weight: 550; }
+.plan-checklist li.blocker { background: color-mix(in srgb, var(--warning) 9%, transparent); }
+.plan-checklist li small.plan-attempt { color: var(--warning); }
+.plan-objective { margin: 0; color: var(--text-primary); font-weight: 600; overflow-wrap: anywhere; }
+
+/* ── .step-card ── */
+.inspector-body .step-card:last-child { padding-bottom: 0; }
+.inspector-body .step-card:not(:last-child)::before {
+  content: ""; position: absolute; left: 8.25px; top: 23px; bottom: 3px; width: 1.5px; border-radius: 1px;
+}
+.inspector-body .step-card.completed:not(:last-child)::before { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.inspector-body .step-card strong { flex: 1; min-width: 0; font-size: var(--text-sm); font-weight: 450; line-height: 1.4; color: var(--text-primary); }
+.inspector-body .step-card small,
+.inspector-body .step-card.in_progress small, .inspector-body .step-card.running small, .inspector-body .step-card.active small {
+  margin: 0; font: var(--text-xs)/1.45 var(--font-sans); color: var(--text-muted);
+}
+/* Notes wrap to two lines; long ones expand in place. The clamp sits on the
+   inner span, since a button does not lay out as a line-clamped box. */
+.inspector-body .step-card .step-note {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  white-space: normal; overflow-wrap: anywhere; text-overflow: clip;
+  font: var(--text-xs)/1.45 var(--font-sans); color: var(--text-muted);
+}
+.inspector-body .step-card.pending strong { color: var(--text-secondary); }
+.inspector-body .step-card.in_progress strong, .inspector-body .step-card.running strong, .inspector-body .step-card.active strong { font-weight: 600; }
+
+/* ── .step-node ── */
+.step-node > i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .step-node > i { animation: none; } }
+.inspector-body .step-body { display: flex; flex-direction: column; gap: 2px; }
+.inspector-body .step-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+
+/* ── .step-note-toggle ── */
+.inspector-body .step-note-toggle:hover .step-note { color: var(--text-secondary); }
+.inspector-body .step-note-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: var(--radius-sm); }
+.inspector-body .step-note-toggle.expanded .step-note { display: block; -webkit-line-clamp: unset; }
+

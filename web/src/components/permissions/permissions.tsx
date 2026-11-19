@@ -104,14 +104,14 @@ function grantTitle(grant: Grant): string {
 
 const GRANT_LIFETIMES = ["session", "project", "user"] as const;
 
-function useGrantMutate(sessionId: string, grants: Grants, update: (value: Grants) => void) {
+function useGrantMutate(sessionId: string, update: (value: Grants) => void) {
   const tr = useT();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const changing = useRef(false);
   const revision = useRef(0);
-  const mutate = async (operation: () => Promise<Grants>, success: string, added = false) => {
+  const mutate = async (operation: () => Promise<Grants>, success: string) => {
     if (changing.current) return;
     changing.current = true; revision.current++;
     setBusy(true); setError(""); setNotice("");
@@ -155,7 +155,7 @@ export function PermissionGrantManualAdd({ sessionId, grants, update }: { sessio
   const [kind, setKind] = useState("file");
   const [write, setWrite] = useState(false);
   const [lifetime, setLifetime] = useState("project");
-  const { mutate, busy, error, notice } = useGrantMutate(sessionId, grants, update);
+  const { mutate, busy, error, notice } = useGrantMutate(sessionId, update);
   return <div className="grant-add-section" aria-label={tr("web.add_rule")}>
     <details className="grant-add-card">
       <summary className="grant-add-summary">
@@ -169,7 +169,7 @@ export function PermissionGrantManualAdd({ sessionId, grants, update }: { sessio
         {notice && <p className="hint" role="status">{notice}</p>}
         <form className="grant-form" onSubmit={(event) => {
           event.preventDefault();
-          void mutate(() => api.addGrant(sessionId, { kind, path: path.trim(), operations: write ? ["file_read", "file_write"] : ["file_read"] }, lifetime, grants.version), "web.grant_added", true).then((ok) => { if (ok) setPath(""); });
+          void mutate(() => api.addGrant(sessionId, { kind, path: path.trim(), operations: write ? ["file_read", "file_write"] : ["file_read"] }, lifetime, grants.version), "web.grant_added").then((ok) => { if (ok) setPath(""); });
         }}>
           <InlineSelect label={tr("web.scope_label")} value={kind} onChange={setKind} options={[
             { value: "file", label: tr("web.grant_kind.file") },
@@ -202,7 +202,7 @@ export function PermissionGrantManualAdd({ sessionId, grants, update }: { sessio
 export function SandboxStatusCard({ sessionId, grants, update }: { sessionId: string; grants: Grants; update: (value: Grants) => void }) {
   const tr = useT();
   const sandbox = grants.sandbox;
-  const { mutate, busy, error, notice } = useGrantMutate(sessionId, grants, update);
+  const { mutate, busy, error, notice } = useGrantMutate(sessionId, update);
   if (!sandbox || grants.execution_mode === "host") return null;
   return <article className="policy-card sandbox-card">
     {error && <p className="form-error" role="alert">{error}</p>}
@@ -220,7 +220,7 @@ export function SandboxStatusCard({ sessionId, grants, update }: { sessionId: st
 export function PermissionGrants({ sessionId, grants, update, includeManualAdd = false, showSandbox = true, policyRules = [] }: { sessionId: string; grants: Grants; update: (value: Grants) => void; includeManualAdd?: boolean; showSandbox?: boolean; policyRules?: PolicyRuleRow[] }) {
   const tr = useT();
   const sandbox = grants.sandbox;
-  const { mutate, busy, error, notice, revision, changing } = useGrantMutate(sessionId, grants, update);
+  const { mutate, busy, error, notice, revision, changing } = useGrantMutate(sessionId, update);
   useEffect(() => {
     let cancelled = false;
     const interval = window.setInterval(() => {

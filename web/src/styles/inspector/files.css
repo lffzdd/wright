@@ -1,0 +1,159 @@
+/* Files tab: project tree, session files, preview. */
+
+/* ── .file-stat ── */
+.inspector-body .file-stat > span:first-child, .inspector-body .subagent-row > span:nth-child(2) { min-width: 0; overflow-wrap: anywhere; }
+.file-stat, .subagent-row, .policy-card > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.file-stat, .subagent-row { font: var(--text-xs) var(--font-mono); }
+.file-stat { min-height: 18px; color: var(--text-secondary); }
+.file-stat.changed { color: var(--ok); }
+.file-stat span:last-child { font-variant-numeric: tabular-nums; }
+.inspector-body .file-stat + .file-stat,
+.inspector-body .subagent-row + .subagent-row,
+.inspector-body .glance-row + .glance-row { border-top: 1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent); }
+.inspector-body .file-stat > span:first-child { color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inspector-body .file-stat > span:last-child,
+.inspector-body .subagent-row > span:last-child {
+  flex: 0 0 auto; color: var(--text-muted); font: 500 var(--text-xs) var(--font-sans); font-variant-numeric: tabular-nums; letter-spacing: 0.02em;
+}
+.inspector-body .file-stat.changed, .inspector-body .file-stat.changed > span:first-child { color: var(--text-primary); }
+
+/* ── .folder-bar ── */
+.folder-bar { display: flex; align-items: center; gap: 4px; }
+.folder-bar input { flex: 1; font-family: var(--font-mono); font-size: var(--text-xs); }
+.folder-bar .icon-button { flex: 0 0 auto; width: 30px; height: 30px; }
+/* Files tab */
+/* The global hover token is nearly the panel colour in light mode; tint with the text colour so hover reads in both themes. */
+.files-panel {
+  --files-hover: color-mix(in srgb, var(--text-primary) 6%, var(--bg-panel));
+  --files-press: color-mix(in srgb, var(--text-primary) 10%, var(--bg-panel)); flex-direction: column; min-width: 0;
+}
+.inspector-body > .files-panel:has(> .files-preview) { flex: 1 1 auto; min-height: 0; }
+.files-panel .files-project-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files-panel .pane-head.files-project-head > span { overflow: visible; text-overflow: unset; }
+/* 文件树 */
+.files-panel .files-group::before { display: none; }
+.files-panel .tree, .files-panel .files-tree { padding: 6px 4px 20px; font-size: 13px; }
+.files-panel .tree-row:disabled { cursor: default; }
+.files-panel .tree-row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files-panel .tree-row.mod .name { color: var(--amber); }
+.files-panel .tree-row.new .name { color: var(--green); }
+.files-panel .tree-row.del .name { color: var(--red); text-decoration: line-through; }
+.files-panel .tree-row .st { font: 600 10.5px var(--font-mono); flex: none; }
+.files-panel .tree-row.mod .st { color: var(--amber); }
+.files-panel .tree-row.new .st { color: var(--green); }
+.files-panel .tree-row.del .st { color: var(--red); }
+.files-panel .tree-slot { width: 12px; flex: none; }
+/* "This session" view: one row per file the session touched, in the tree's padding. */
+.files-panel .files-view-switch { min-width: 0; }
+.files-panel .files-view-switch .segmented-option { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files-panel .files-count-label { flex: none; white-space: nowrap; }
+.files-panel .files-session { padding: 10px 12px 20px; }
+.files-panel .list-rows { display: flex; flex-direction: column; }
+.files-panel .list-rows .lr { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 12.5px; border-top: 1px solid var(--border); }
+.files-panel .list-rows .lr:first-child { border-top: 0; padding-top: 0; }
+.files-panel .list-rows .lr .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files-panel .list-rows .lr .mono { font-family: var(--font-mono); font-size: 12px; }
+.files-panel .list-rows .lr .muted { color: var(--text-3); font: 11.5px var(--font-mono); flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files-panel .list-rows .lr .files-show-call {
+  display: inline-flex; align-items: center; gap: 3px; flex: none; max-width: 40%; min-width: 0;
+  margin: 0 -4px; padding: 1px 4px; border: 0; border-radius: var(--radius-sm);
+  background: transparent; color: var(--text-3); font: 11.5px var(--font-mono); cursor: pointer;
+}
+.files-panel .list-rows .lr .files-show-call svg { flex: none; }
+.files-panel .list-rows .lr .files-show-call span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files-panel .list-rows .lr .files-show-call:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.files-panel .list-rows .lr .files-show-call:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.files-panel .list-rows .lr > .ico, .files-panel .list-rows .lr > .files-icon { width: 16px; height: 16px; color: var(--text-3); flex: none; }
+.files-panel .files-session-path span { color: var(--text-3); }
+.files-panel .files-session-path:hover:not(:disabled) b { text-decoration: underline; }
+/* The filter opens in place of the project name; it grows in from the search button's side. */
+/* Header controls keep normal case; only the header text itself is set as a small caps label. */
+.files-filter {
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 4px 0 8px; margin-left: -2px;
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-card); color: var(--text-muted);
+  font-weight: 400; transform-origin: right center; animation: files-filter-in 160ms var(--ease-out); text-transform: none; letter-spacing: 0;
+}
+.files-filter input::-webkit-search-cancel-button { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .files-filter { animation: none; } }
+.files-filter:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
+.files-filter input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text-primary); font-size: var(--text-sm); }
+/* Session filters: quiet text in the header row; the active one gets the text colour and a light fill. */
+.files-filter-clear { flex: 0 0 auto; display: inline-grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); cursor: pointer; }
+
+/* ── .files-project-head ── */
+.files-project-head.searching { gap: 6px; }
+/* Section headers stay in view while their lists scroll (the inspector body pads 12px). */
+.files-project-head { justify-content: space-between; position: sticky; top: -14px; z-index: 1; background: var(--bg-panel); padding-top: 4px; padding-bottom: 4px; }
+.files-project-head > span { min-width: 0; white-space: nowrap; }
+/* In the session list the locate button only appears on the row in use. */
+.files-section { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.files-list, .files-tree { display: flex; flex-direction: column; gap: 0; min-width: 0; }
+/* Indent guides: one faint rule per open folder, under its caret; brighter while the tree is hovered. */
+.files-group { position: relative; }
+.files-group::before { content: ""; position: absolute; top: 0; bottom: 0; left: var(--files-guide, 13px); width: 1px; background: color-mix(in srgb, var(--text-muted) 16%, transparent); pointer-events: none; transition: background-color 120ms var(--ease-out); }
+/* Files panel motion: content that appears fades in, loads show skeletons late, and fresh activity flashes once. */
+/* Folded: rows and filters stay mounted but hidden; the tab already shows the total. */
+.files-group, .files-results-list { animation: files-in 160ms var(--ease-out); }
+.files-tree:hover .files-group::before { background: color-mix(in srgb, var(--text-muted) 32%, transparent); }
+
+/* ── .files-row ── */
+/* Files panel polish: short state transitions, press feedback, and one accent colour for links. */
+.files-row { min-width: 0; padding: 0 8px; transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out), border-color 120ms var(--ease-out), transform 120ms var(--ease-out);
+}
+.files-row:hover:not(:disabled) { background: var(--files-hover); }
+.files-row:disabled { cursor: default; opacity: 0.9; }
+.files-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.files-row:active:not(:disabled) { background: var(--files-press); }
+@media (prefers-reduced-motion: reduce) {
+  .files-row { transition: none; } }
+.files-row.files-reveal { animation: files-reveal 1.8s var(--ease-out); }
+@media (prefers-reduced-motion: reduce) {
+  .files-row.files-reveal { animation: none; box-shadow: inset 2px 0 0 var(--accent); }
+}
+/* Icons stay neutral: their shape tells the kind, and color is saved for status. */
+/* Session access tags: one width so names line up; weight drops from MOD to READ to folder listings. */
+/* A leading "." in an RTL run would jump to the end; an LRM anchors it on the left. */
+/* Sizes are reference info: shown only for the row under the pointer or focus. */
+/* Changed files read like editor git decorations: tinted name plus a status letter. */
+.files-tree-note { margin: 2px 0; }
+
+/* ── .files-preview ── */
+.files-preview { display: flex; flex-direction: column; gap: 8px; min-width: 0; outline: none; }
+.files-preview:has(.cv-panel) { flex: 1 1 auto; min-height: 0; }
+#inspector-panel-files.inspector-body:has(.files-preview),
+.inspector .inspector-body.in-body:has(.files-preview) { display: flex; flex-direction: column; overflow: hidden; }
+.files-preview .icon-btn .chev-back { transform: rotate(180deg); }
+.files-preview .file-view-code { flex: 1; min-height: 0; overflow: auto; }
+.files-preview .cv-body { padding: 10px 0 20px; }
+.files-preview .cv-src { padding: 0 14px; }
+
+/* ── .files-preview-head ── */
+.files-preview-head { display: flex; align-items: center; gap: 6px; min-width: 0; position: sticky; top: -14px; z-index: 1; margin: -14px -14px 0; padding: 8px 14px; background: var(--bg-panel); border-bottom: 1px solid var(--border-subtle); }
+.files-preview-head .icon-button { flex: 0 0 auto; }
+
+/* ── .files-head-actions ── */
+.files-head-actions .icon-button:hover:not(:disabled) { background: var(--files-hover); color: var(--text-primary); }
+/* Collapse-all is disabled while nothing is open; say so instead of looking clickable. */
+.files-head-actions .icon-button:disabled { opacity: 0.35; cursor: default; }
+.files-head-actions .icon-button.on { color: var(--accent); }
+
+/* ── .files-result ── */
+.files-result > .files-row { flex: 1; min-width: 0; }
+.files-result:hover > .files-row:not(:disabled) { background: var(--files-hover); }
+
+/* ── .files-panel ── */
+.files-panel .tree-row:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
+
+/* ── .files-result ── */
+.files-result:hover .files-row-actions, .files-row-actions:focus-within { opacity: 1; pointer-events: auto; }
+.files-row-actions:empty { display: none; }
+/* Separate the session block from the project tree while it is open, and rule off its rows lightly. */
+.files-session.open { padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--border-subtle); }
+.files-count { flex: 0 0 auto; font: var(--text-sm)/1.4 var(--font-sans); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+
+/* ── .files-cache-toggle ── */
+.files-cache-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.files-delayed { animation: fade-in 200ms var(--ease-out) 220ms both; }
+.files-spin { animation: spin 700ms linear infinite; }
+

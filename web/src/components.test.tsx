@@ -2,12 +2,14 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { marked } from "marked";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { t } from "./i18n";
-import { AssistantMessage, InteractionCard, ToolCard, UserMessage } from "./components/cards/cards";
+import { AssistantMessage, UserMessage } from "./components/cards/Messages";
+import { InteractionCard } from "./components/cards/InteractionCard";
+import { ToolCard } from "./components/cards/ToolCard";
 import { SessionRail } from "./components/session/SessionRail";
 import { Composer, visibleModels } from "./components/composer/Composer";
 import { sessionTitle } from "./components/session/session";
-import { DiffViewer } from "./DiffViewer";
-import { MarkdownContent, markdownChunks } from "./Markdown";
+import { DiffViewer } from "./components/code/DiffViewer";
+import { MarkdownContent, markdownChunks } from "./components/code/Markdown";
 
 afterEach(() => {
   cleanup();

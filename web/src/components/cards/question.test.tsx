@@ -1,7 +1,9 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { setLocale } from "../../i18n";
-import { InteractionCard, QuestionRecord, toolCardFromTimeline } from "./cards";
+import { InteractionCard } from "./InteractionCard";
+import { QuestionRecord } from "./QuestionRecord";
+import { toolCardFromTimeline } from "./ToolCard";
 
 beforeEach(() => setLocale("en"));
 afterEach(() => { cleanup(); setLocale("en"); });
