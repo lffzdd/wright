@@ -5,22 +5,34 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.import_linter_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
 dist/
 build/
 web/node_modules/
 web/.vite/
 web/*.tsbuildinfo
+web/test-results/
+web/playwright-report/
+web/blob-report/
+web/qa/
 .DS_Store
 .env
+.env.*
+!.env.example
 .wright/
 
+# 本机编辑器和 Agent 目录，不要进仓库
+.claude/
+.codex/
+.cursor/
 .cursorindexingignore
 .specstory
 .design-qa/
-.cursor/
-.import_linter_cache/
-web/test-results/
-web/qa/
 
 # 本地日志
 log/
+*.log
