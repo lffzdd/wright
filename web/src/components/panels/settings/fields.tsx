@@ -26,7 +26,9 @@ export function useSettingText(item: RuntimeSetting): { label: string; hint: str
  * One setting: label, hint, and only the status worth reading. The source tag
  * shows when the value is not the default; the raw key only when asked for.
  */
-export function SettingRow({ item, scope, save, showKeys, control, stacked = false, children }: FieldProps & {
+export function SettingRow({ item, scope, save, showKeys, control, stacked = false, problem, children }: FieldProps & {
+  /** A blocking problem with the effective value, such as a model no session can reach. */
+  problem?: string;
   /** Replaces the default control for this kind. */
   control?: (props: { label: string; stored: unknown; disabled: boolean; apply: (value: unknown) => void }) => ReactNode;
   /** Full-width control below the text instead of beside it. */
@@ -54,6 +56,7 @@ export function SettingRow({ item, scope, save, showKeys, control, stacked = fal
       {!editable && <span className="hint">{tr("web.runtime.user_only")}</span>}
     </div>}
     {item.env_override && <p className="settings-env-note">{tr("web.runtime.env_note", { name: item.env.join(" / ") })}</p>}
+    {problem && <p className="settings-problem" role="note">{tr("web.runtime.problem", { message: problem })}</p>}
   </>;
   return <div className={`settings-row runtime-row${stacked ? " stacked" : ""}`} data-setting={item.key}>
     <div className="runtime-meta">

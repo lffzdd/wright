@@ -39,6 +39,9 @@ function view(patch: Record<string, Partial<RuntimeSetting>> = {}, models: Model
     setting("llm.context_limit", { kind: "int", default: 0, value: 0, scopes: ["user", "project"] }),
     setting("llm.prices", { kind: "list", default: [], value: [] }),
     setting("session.auto_title", { kind: "bool", default: true, value: true }),
+    setting("memory.enabled", { kind: "bool", default: true, value: true }),
+    setting("memory.recall", { kind: "bool", default: true, value: true }),
+    setting("memory.auto_extract", { kind: "bool", default: true, value: true }),
     setting("knowledge.enabled", { kind: "bool", default: false, value: false }),
     setting("knowledge.retriever", { kind: "choice", choices: ["dense", "hybrid"], default: "dense", value: "dense" }),
   ];
@@ -220,5 +223,34 @@ describe("SettingsPage navigation", () => {
     fireEvent.click(screen.getByRole("switch", { name: "Show configuration keys" }));
     openSection("Models");
     expect(screen.getByText("llm.model")).toBeTruthy();
+  });
+});
+
+describe("SettingsPage memory", () => {
+  it("turns memory parts off and folds them away when memory is off", async () => {
+    const calls = stubFetch([view(), view({ "memory.enabled": { value: false, user_value: false, source: "user" } })]);
+    page();
+    await screen.findByRole("combobox", { name: "Model" });
+    openSection("Memory");
+    fireEvent.click(screen.getByRole("switch", { name: "Recall each turn" }));
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    expect(bodies(calls)).toEqual([{ scope: "user", key: "memory.recall", value: false }]);
+
+    expect(await screen.findByText(/Memory is off/)).toBeTruthy();
+    expect(screen.queryByRole("switch", { name: "Recall each turn" })).toBeNull();
+    // The memory model also names sessions and judges the egress check.
+    expect(screen.getByRole("combobox", { name: "Memory model" })).toBeTruthy();
+  });
+
+  it("warns when the chosen model would stop new sessions", async () => {
+    stubFetch([view(
+      { "llm.memory_model": { value: "gpt-4o", user_value: "gpt-4o", source: "user" } },
+      { ...overview, problems: { "llm.memory_model": "Set OPENAI_API_KEY in .env to use OpenAI (gpt-4o)" } },
+    )]);
+    page();
+    await screen.findByRole("combobox", { name: "Model" });
+    expect(screen.queryByText(/New sessions will not start/)).toBeNull();
+    openSection("Memory");
+    expect(screen.getByText("New sessions will not start: Set OPENAI_API_KEY in .env to use OpenAI (gpt-4o)")).toBeTruthy();
   });
 });

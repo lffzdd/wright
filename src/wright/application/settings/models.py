@@ -8,7 +8,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from ...domain.model.llm.catalog import BASE_URL_KEY_ENV, ModelCatalog
+from ...domain.model.llm.catalog import (
+    BASE_URL_KEY_ENV,
+    ModelCatalog,
+    ModelRouteError,
+    ModelRouter,
+    provider_key_envs,
+)
 from ...domain.model.llm.pricing import (
     ModelPrice,
     PriceBook,
@@ -73,7 +79,18 @@ def model_overview(
         }
         for item in catalog.models()
     ]
+    # The same routing a new session does, so the editor can say why one would not start.
+    router = ModelRouter(llm, {name: environ.get(name, "").strip() for name in provider_key_envs(catalog)}, catalog=catalog)
+    problems: dict[str, str] = {}
+    for key, name in (("llm.model", llm.model), ("llm.memory_model", llm.memory_model)):
+        if not name:
+            continue
+        try:
+            router.route(name)
+        except ModelRouteError as exc:
+            problems[key] = str(exc)
     return {
+        "problems": problems,
         "endpoint": {
             "base_url": llm.base_url,
             "key_env": BASE_URL_KEY_ENV,

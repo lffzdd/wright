@@ -430,6 +430,8 @@ export type CatalogModelInfo = {
 };
 
 export type ModelOverview = {
+  /** Why a new session would not start with the effective llm.model or llm.memory_model. */
+  problems?: Record<string, string>;
   endpoint: { base_url: string; key_env: string; key_set: boolean; provider: string };
   providers: ProviderStatus[];
   models: CatalogModelInfo[];

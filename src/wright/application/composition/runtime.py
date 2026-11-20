@@ -719,14 +719,19 @@ def assemble_runtime(
     # 它若信息不足，应把缺口作为结果交回父 Agent。子 Agent 也保持无长期记忆、
     # 无 skill 加载器的纯净上下文——委派时把需要的流程写进任务描述。
     # loop 同理：会话内重跑必须看见当前对话，不能下放到隔离的子 Agent。
-    memory_manager = assemble_memory_manager(
+    store_manager = assemble_memory_manager(
         llm_client,
         selector_llm=selector_llm,
         session_repository=checkpoint_store,
+        turn_recall=settings.memory.recall,
+        auto_extract=settings.memory.auto_extract,
     )
     # Every tool call that can send text off the machine is checked against
     # memory first, for this agent and every subagent sharing these services.
-    services.egress_guard = egress_guard(memory_manager)
+    # memory.enabled=false leaves the agent without memory, but the check
+    # stays: facts may already be in a resumed transcript.
+    services.egress_guard = egress_guard(store_manager)
+    memory_manager = store_manager if settings.memory.enabled else None
     skill_registry = SkillRegistry(skill_directories(workspace_dir))
     # 注册与 schema 暴露分开：加载器常驻注册，有技能时才出现在当轮 schema 和目录里。
     skill_tools = resident_skill_tools(skill_registry)
@@ -743,7 +748,7 @@ def assemble_runtime(
         ),
         ask_user_tool,
         manage_loop_tool,
-        *memory_tools(memory_manager),
+        *(memory_tools(memory_manager) if memory_manager is not None else ()),
         *skill_tools,
     ]
 

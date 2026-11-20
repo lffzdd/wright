@@ -41,3 +41,11 @@ def test_models_carry_context_window_and_price_with_user_overrides():
     assert models["gpt-4o"]["context_window"] == 128_000
     assert models["gpt-4o"]["price"] == {"input": 9.0, "output": 18.0, "cache_read": None}
     assert models["claude-opus-5-5"]["preset"] is True
+
+
+def test_models_that_would_stop_a_session_are_reported_with_the_routing_error():
+    llm = LlmSettings(model="claude-opus-5-5", memory_model="gpt-4o")
+    problems = model_overview(llm, {"ANTHROPIC_API_KEY": "k"})["problems"]
+    assert "llm.model" not in problems
+    assert "OPENAI_API_KEY" in problems["llm.memory_model"]
+    assert "not in Wright's model catalog" in model_overview(LlmSettings(model="mystery"), {})["problems"]["llm.model"]

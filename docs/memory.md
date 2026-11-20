@@ -222,3 +222,13 @@ episode 记录目标、状态、交付回答、工具与子 Agent 轨迹、验�
 ## 配置
 
 `llm.memory_model`（`OPENAI_MEMORY_MODEL`）用于 selector、自动提炼和出口检查的小模型判断，未配置时复用主模型。
+
+三个开关只能写在用户设置文件或环境变量里，项目文件不能设置，避免克隆来的仓库在用户关掉记忆后重新打开：
+
+| 设置 | 默认 | 关闭后 |
+| --- | --- | --- |
+| `memory.enabled`（`WRIGHT_MEMORY_ENABLED`） | 开 | 主 Agent 不带记忆：没有常驻块、回合召回、记忆工具，也不记录 episode 和自动提炼。出口检查照常运行，因为恢复的会话里可能已有召回过的内容。控制台的记忆页仍可查看和编辑 |
+| `memory.recall`（`WRIGHT_MEMORY_RECALL`） | 开 | 不做回合召回，省掉每个用户回合一次 selector 调用；常驻块、工具和 episode 不变 |
+| `memory.auto_extract`（`WRIGHT_MEMORY_AUTO_EXTRACT`） | 开 | 不做自动提炼；episode 照常记录，事实只来自显式写入 |
+
+设置在组装会话运行时读取。会话的系统提示只在创建时写入一次，所以关掉 `memory.enabled` 后恢复的旧会话，系统提示里仍有记忆说明，但工具已经不在。

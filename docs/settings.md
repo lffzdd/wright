@@ -42,6 +42,9 @@ sessions.
 | `llm.transport` | `auto` \| `chat` \| `responses` \| `messages` | `auto` | `WRIGHT_LLM_TRANSPORT` | no |
 | `llm.base_url` | string | empty (the model's provider) | `OPENAI_BASE_URL` | no |
 | `session.auto_title` | boolean | true | `WRIGHT_AUTO_TITLE` | no |
+| `memory.enabled` | boolean | true | `WRIGHT_MEMORY_ENABLED` | no |
+| `memory.recall` | boolean | true | `WRIGHT_MEMORY_RECALL` | no |
+| `memory.auto_extract` | boolean | true | `WRIGHT_MEMORY_AUTO_EXTRACT` | no |
 | `logging.level` | `DEBUG` … `CRITICAL` | `WARNING` | `WRIGHT_LOG_LEVEL` | no |
 | `knowledge.enabled` | boolean | false | `WRIGHT_KNOWLEDGE_ENABLED` | no |
 | `knowledge.retriever` | `dense` \| `hybrid` | `dense` | `WRIGHT_KNOWLEDGE_RETRIEVER` | no |
@@ -50,7 +53,9 @@ sessions.
 | `knowledge.index` | path | `simple_index.json` in `rag_dir` | `WRIGHT_KNOWLEDGE_INDEX` | no |
 
 The schema lives in `domain/model/settings.py` (`SETTING_SPECS`); this table
-follows it. An empty environment variable counts as unset. Booleans in the
+follows it. The `memory.*` switches are described in [memory.md](memory.md#配置); a
+project file cannot set them, so a cloned repository cannot turn memory back
+on. An empty environment variable counts as unset. Booleans in the
 environment accept `1/true/yes/on` and `0/false/no/off`.
 
 ## Model catalog
@@ -169,12 +174,14 @@ These stay environment-only:
 ## Editing settings
 
 **Web console:** Settings groups the keys by task (Models, Context & cost,
-Sessions, Knowledge search, Advanced) and can search across them. A key shows
+Memory, Sessions, Knowledge search, Advanced) and can search across them. A key shows
 its source only when it is not the default; Advanced → "Show configuration
 keys" adds the dotted key names. "Save to" picks which file an edit goes to;
 user-only keys are read-only in project scope. The Models section lists each
 catalog provider and whether its key variable is set (never the key), and
-suggests catalog models with their context window and price; `llm.prices` and
+suggests catalog models with their context window and price. When the
+effective `llm.model` or `llm.memory_model` cannot be routed (no key, not in
+the catalog), the row shows the error a new session would stop with; `llm.prices` and
 `llm.context_limits` are edited as tables.
 
 **CLI and TUI:**
@@ -193,7 +200,8 @@ that project: effective value, source layer (`default`, `user`, `project`,
 `env`), the raw value in each file, whether an environment variable
 overrides it, and which files may hold it. Its `models` field lists the
 catalog providers with whether each key is set and reachable, the custom
-endpoint, and every catalog model with its context window and price. `PUT` with `{"scope": "user" |
+endpoint, every catalog model with its context window and price, and
+`problems`: the routing error for `llm.model` or `llm.memory_model`, if any. `PUT` with `{"scope": "user" |
 "project", "key": "llm.model", "value": ...}` writes one key, and
 `"value": null` removes it. `/api/v1/settings` does the same with no project
 (user file only). Writes follow the same rules as loading: a project-scope

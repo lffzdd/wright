@@ -145,6 +145,18 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
         description="Name each session with one short model call after its first turn.",
     ),
     SettingSpec(
+        "memory.enabled", "bool", True, env=("WRIGHT_MEMORY_ENABLED",),
+        description="Long-term memory: the resident block, recall, memory tools and turn records. The egress check stays on either way.",
+    ),
+    SettingSpec(
+        "memory.recall", "bool", True, env=("WRIGHT_MEMORY_RECALL",),
+        description="Pick relevant facts and past turns with one memory-model call per user turn; off keeps only the resident block.",
+    ),
+    SettingSpec(
+        "memory.auto_extract", "bool", True, env=("WRIGHT_MEMORY_AUTO_EXTRACT",),
+        description="Save inferred facts from finished turns without being asked; off keeps only facts written on purpose.",
+    ),
+    SettingSpec(
         "logging.level", "choice", "WARNING", env=("WRIGHT_LOG_LEVEL",),
         choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"),
         description="Lowest level shown in the terminal; the log file always keeps INFO.",
@@ -193,6 +205,13 @@ class SessionSettings:
 
 
 @dataclass(frozen=True)
+class MemorySettings:
+    enabled: bool = True
+    recall: bool = True
+    auto_extract: bool = True
+
+
+@dataclass(frozen=True)
 class LoggingSettings:
     level: str = "WARNING"
 
@@ -209,6 +228,7 @@ class KnowledgeSettings:
 _SECTIONS: Mapping[str, type] = {
     "llm": LlmSettings,
     "session": SessionSettings,
+    "memory": MemorySettings,
     "logging": LoggingSettings,
     "knowledge": KnowledgeSettings,
 }
@@ -223,6 +243,7 @@ class WrightSettings:
 
     llm: LlmSettings = field(default_factory=LlmSettings)
     session: SessionSettings = field(default_factory=SessionSettings)
+    memory: MemorySettings = field(default_factory=MemorySettings)
     logging: LoggingSettings = field(default_factory=LoggingSettings)
     knowledge: KnowledgeSettings = field(default_factory=KnowledgeSettings)
     sources: Mapping[str, SettingSource] = field(default_factory=dict, compare=False)
@@ -270,6 +291,7 @@ __all__ = [
     "KnowledgeSettings",
     "LlmSettings",
     "LoggingSettings",
+    "MemorySettings",
     "SessionSettings",
     "SettingKind",
     "SettingScope",

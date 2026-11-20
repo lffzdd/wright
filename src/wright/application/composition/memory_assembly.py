@@ -30,6 +30,8 @@ def assemble_memory_manager(
     episode_policy: EpisodePolicy | None = None,
     extract_policy: ExtractPolicy | None = None,
     session_repository: Any = None,
+    turn_recall: bool = True,
+    auto_extract: bool = True,
 ) -> MemoryManager:
     """Create the store and service, then hand them to a MemoryManager."""
     root = (directory or memory_dir()).expanduser().resolve()
@@ -53,6 +55,8 @@ def assemble_memory_manager(
         episode_policy=policy,
         extract_policy=extract_policy,
         session_repository=session_repository,
+        turn_recall=turn_recall,
+        auto_extract=auto_extract,
     )
     holder["manager"] = manager
     return manager

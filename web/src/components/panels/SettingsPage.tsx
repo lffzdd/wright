@@ -9,9 +9,9 @@ import { useRuntimeSettings, type RuntimeSettingsState } from "./settings/useRun
 import { getLocale, useT } from "../../i18n";
 import type { RuntimeSetting } from "../../types";
 
-type SectionId = "models" | "context" | "sessions" | "knowledge" | "appearance" | "advanced";
-const SECTIONS: SectionId[] = ["models", "context", "sessions", "knowledge", "appearance", "advanced"];
-const RUNTIME_SECTIONS = new Set<SectionId>(["models", "context", "sessions", "knowledge", "advanced"]);
+type SectionId = "models" | "context" | "memory" | "sessions" | "knowledge" | "appearance" | "advanced";
+const SECTIONS: SectionId[] = ["models", "context", "memory", "sessions", "knowledge", "appearance", "advanced"];
+const RUNTIME_SECTIONS = new Set<SectionId>(["models", "context", "memory", "sessions", "knowledge", "advanced"]);
 
 type Entry = { id: string; terms: string; node: ReactNode };
 type PreferencePatch = { theme?: "dark" | "light"; inspector_open?: boolean; interface_language?: string };
@@ -165,6 +165,14 @@ function useSectionEntries({ runtime, showKeys, setShowKeys, theme, inspectorOpe
     </details>,
   } : null;
 
+  const problems = overview?.problems ?? {};
+  // A server without the memory switches has memory on.
+  const memoryOn = item("memory.enabled")?.value !== false;
+  const memoryOff: Entry = {
+    id: "memory-off",
+    terms: "",
+    node: <p className="hint settings-gated">{tr("web.settings.memory_off")}</p>,
+  };
   const knowledgeOn = Boolean(item("knowledge.enabled")?.value);
   const knowledgeDetail = present(["knowledge.retriever", "knowledge.reranker", "knowledge.rag_dir", "knowledge.index"].map((key) => row(key)));
   const knowledgeOff: Entry = {
@@ -178,8 +186,7 @@ function useSectionEntries({ runtime, showKeys, setShowKeys, theme, inspectorOpe
   return {
     models: view ? present([
       overview ? { id: "providers", terms: [tr("web.models.providers"), tr("web.models.providers_hint"), ...overview.providers.flatMap((provider) => [provider.name, provider.key_env])].join(" "), node: <ProvidersCard overview={overview} /> } : null,
-      modelItem ? row("llm.model", { control: modelControl(modelItem, overview, tr("web.runtime.empty")) }) : null,
-      memoryItem ? row("llm.memory_model", { control: modelControl(memoryItem, overview, tr("web.models.same_as_main")) }) : null,
+      modelItem ? row("llm.model", { control: modelControl(modelItem, overview, tr("web.runtime.empty")), problem: problems["llm.model"] }) : null,
       modelsItem ? row("llm.models", { stacked: true, control: modelListControl(modelsItem, overview) }) : null,
       endpoint,
     ]) : loading,
@@ -195,6 +202,12 @@ function useSectionEntries({ runtime, showKeys, setShowKeys, theme, inspectorOpe
         control: ({ label, stored, disabled, apply: write }) => <EntryTable label={label} format={priceFormat(tr)} stored={listOf(stored)} disabled={disabled}
           suggestions={suggestions} addLabel={tr("web.entries.add_price")} apply={write} />,
       }),
+    ]) : loading,
+    memory: view ? present([
+      row("memory.enabled"),
+      ...(memoryOn || searching ? present([row("memory.recall"), row("memory.auto_extract")]) : [memoryOff]),
+      // Also names sessions and judges the egress check, so it stays visible with memory off.
+      memoryItem ? row("llm.memory_model", { control: modelControl(memoryItem, overview, tr("web.models.same_as_main")), problem: problems["llm.memory_model"] }) : null,
     ]) : loading,
     sessions: view ? present([row("session.auto_title")]) : loading,
     knowledge: view ? present([

@@ -63,8 +63,14 @@ class MemoryManager:
         episode_policy: EpisodePolicy | None = None,
         extract_policy: ExtractPolicy | None = None,
         session_repository: Any = None,
+        turn_recall: bool = True,
+        auto_extract: bool = True,
     ) -> None:
         self.usage_observer = None
+        # memory.recall and memory.auto_extract: skip the model calls, keep the
+        # resident block, tools and explicit writes.
+        self.turn_recall = turn_recall
+        self.auto_extract = auto_extract
         self.llm = llm
         self.selector_llm = selector_llm or llm
         self.episode_policy = episode_policy or EpisodePolicy()
@@ -363,6 +369,11 @@ class MemoryManager:
         self, task: str, *, project_id: str, session_id: str = "", include_recent: bool = True,
     ) -> MemoryContextDTO:
         self._side_call = None
+        if not self.turn_recall:
+            self.meter.record_model_call("selection", status="skipped", reason_codes=("disabled",), attempts=0)
+            return MemoryContextDTO(
+                space_ids=self.readable_space_ids, project_id=project_id, generation=self.service.generation,
+            )
         try:
             resident = build_resident(
                 self.service, space_ids=self.readable_space_ids,
@@ -429,6 +440,9 @@ class MemoryManager:
         )
 
     def _extract_snapshot(self, session_state: Any, snapshot: dict[str, Any]) -> int:
+        if not self.auto_extract:
+            self.meter.record_model_call("extraction", status="skipped", reason_codes=("disabled",), attempts=0)
+            return 0
         root_run_id = str(snapshot.get("episode", {}).get("root_run_id") or "")
         existing = self._receipt(session_state, root_run_id)
         if existing is not None and existing.get("status") != "deferred":
