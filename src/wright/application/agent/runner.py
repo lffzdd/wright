@@ -32,6 +32,7 @@ from .model_turn import ModelTurnRunner
 from .parse import TurnAbort, parse_turn
 from .prompt import AgentPromptManager
 from .run_events import AgentRunEvents
+from .system_prompt import render_system_prompt
 from .turns import (
     RetryCounters,
     TurnControl,
@@ -75,6 +76,7 @@ class Agent:
         execution_journal_factory=None,
         on_run_started: Callable[[str], None] | None = None,
         expose_scheduling: bool = False,
+        role_instruction: str = "",
     ):
         self.llm = llm
         self.session_state = session_state
@@ -143,6 +145,8 @@ class Agent:
             prompt_manager=self._prompt_manager,
             tool_schemas=prepared.schemas,
             tool_names=prepared.names,
+            # The stored system prompt may predate this agent's tools or memory.
+            render_system_prompt=lambda: render_system_prompt(prepared, memory, role_instruction),
             emit_lifecycle=self._run_events.emit,
             is_cancelled=self._is_cancelled,
             record_auxiliary_usage=self._record_auxiliary_usage,

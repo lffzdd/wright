@@ -129,6 +129,17 @@ Ask/Plan 模式不再从 `tools` 里隐藏工具，关掉的 MCP server 的占�
 
 旧 checkpoint 里的 `active_deferred_tools` 字段在加载时忽略。
 
+## system prompt 每次请求重新渲染
+
+会话创建时把第一份 system prompt 写进 transcript，只作历史；每次请求都由
+`agent/system_prompt.py` 的 `render_system_prompt` 按当前的工具列表、记忆说明和
+角色说明重新生成，在请求副本里替换掉存下的那份，开着记忆时再加常驻记忆块。
+恢复的会话因此跟着当前配置走：换了 MCP server、开了知识检索、关掉了
+`memory.enabled`，提示里的 "Always available" 和记忆说明都会对上实际的工具。
+
+渲染是确定的，同一个 Agent 的每次请求逐字节相同，不影响提示缓存；只有配置变了
+提示才变，而那时 `tools` 也变了，缓存本来就要失效一次。
+
 ## Anthropic Messages 传输
 
 `api.anthropic.com` 默认走 `messages` 传输：`infrastructure/llm/anthropic_client.py`

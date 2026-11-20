@@ -15,20 +15,19 @@ from ...domain.model.agent import AgentProfile, CapabilityCatalog, CapabilitySna
 from ...domain.model.mcp import mcp_tool_enabled
 from ...domain.model.session import Session
 from ...domain.model.tool_definition import Tool
-from ...domain.prompt import build_system_prompt
 from ...domain.protocol import call_tool_only, encode_tools
 from ..memory import MemoryManager
 from ..session_runtime.events import SessionEvents
 from ..tool_execution.capabilities import CapabilityAssembly
 from ..tool_execution.dispatch import ToolDispatchService
 from ..tool_execution.tool_search import (
-    DISCOVERY_TOOL_NAMES,
     make_call_tool,
     make_tool_search_tool,
 )
 from .cancellation import CancellationToken
 from .components import AgentComponents, PreparedTools
 from .context import ContextBuilder, ContextCompactor
+from .system_prompt import render_system_prompt
 
 if TYPE_CHECKING:
     from .runner import Agent
@@ -118,22 +117,12 @@ def ensure_system_prompt(
     memory: MemoryManager | None,
     role_instruction: str = "",
 ) -> None:
-    """Persist static instructions once; mutable memory is projected per request."""
+    """Store the first system prompt as history; requests render a fresh one."""
     if session.message_records:
         return
-    memory_section = memory.instructions() if memory else ""
-    prompt_tools = [
-        tool for tool in prepared.tools
-        if tool.name not in DISCOVERY_TOOL_NAMES and tool.list_in_system_prompt
-    ]
-    effective_role = role_instruction or getattr(prepared.profile, "role_instruction", "")
     session.append_message({
         "role": "system",
-        "content": build_system_prompt(
-            prompt_tools,
-            memory_section=memory_section,
-            role_instruction=effective_role,
-        ),
+        "content": render_system_prompt(prepared, memory, role_instruction),
     })
 
 

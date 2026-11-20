@@ -79,12 +79,8 @@ def create_agent(
         )
         runtime_resources = assembly.runtime_resources or resources
     prepared = prepare_model_tools(session_state, tools, profile)
-    ensure_system_prompt(
-        session_state,
-        prepared,
-        memory,
-        role_instruction=role_instruction or (profile.role_instruction if profile else ""),
-    )
+    role_instruction = role_instruction or (profile.role_instruction if profile else "")
+    ensure_system_prompt(session_state, prepared, memory, role_instruction=role_instruction)
     components = assemble_agent_components(
         session_state=session_state,
         events=events,
@@ -121,6 +117,7 @@ def create_agent(
         execution_journal_factory=execution_journal_factory,
         on_run_started=on_run_started,
         expose_scheduling=expose_scheduling,
+        role_instruction=role_instruction,
     )
     bind_root_checkpoint(agent)
     return agent

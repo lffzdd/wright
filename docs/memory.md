@@ -231,4 +231,4 @@ episode 记录目标、状态、交付回答、工具与子 Agent 轨迹、验�
 | `memory.recall`（`WRIGHT_MEMORY_RECALL`） | 开 | 不做回合召回，省掉每个用户回合一次 selector 调用；常驻块、工具和 episode 不变 |
 | `memory.auto_extract`（`WRIGHT_MEMORY_AUTO_EXTRACT`） | 开 | 不做自动提炼；episode 照常记录，事实只来自显式写入 |
 
-设置在组装会话运行时读取。会话的系统提示只在创建时写入一次，所以关掉 `memory.enabled` 后恢复的旧会话，系统提示里仍有记忆说明，但工具已经不在。
+设置在组装会话运行时读取，恢复的旧会话也按当前设置运行：系统提示每次请求重新渲染（见 [native-tool-calling.md](native-tool-calling.md#system-prompt-每次请求重新渲染)），关掉 `memory.enabled` 后旧会话里不再出现记忆说明和记忆工具。

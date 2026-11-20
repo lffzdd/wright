@@ -40,6 +40,7 @@ class ModelTurnRunner:
         emit_lifecycle: Callable,
         is_cancelled: Callable[[], bool],
         record_auxiliary_usage: Callable[[UsageRecord], None],
+        render_system_prompt: Callable[[], str] | None = None,
     ) -> None:
         self.llm = llm
         self.session_state = session_state
@@ -53,6 +54,7 @@ class ModelTurnRunner:
         self._emit_lifecycle = emit_lifecycle
         self._is_cancelled = is_cancelled
         self._record_auxiliary_usage = record_auxiliary_usage
+        self._render_system_prompt = render_system_prompt
 
     @property
     def context_limit(self) -> int | None:
@@ -148,17 +150,7 @@ class ModelTurnRunner:
         from ..workspace.context_usage import classify_context
 
         schemas, _ = encode_tools(self._prompt_manager.visible_schema_tools())
-        system_prompt = None
-        if self.memory is not None:
-            base_prompt = next(
-                (
-                    record.message["content"]
-                    for record in self.session_state.message_records
-                    if record.message.get("role") == "system"
-                ),
-                "",
-            )
-            system_prompt = self.memory.project_system_prompt(base_prompt)
+        system_prompt = self._system_prompt(self.session_state.message_records)
         view = ContextBuilder(self.compactor.detached()).build(
             self.session_state.message_records,
             tools=schemas,
@@ -170,19 +162,26 @@ class ModelTurnRunner:
         breakdown["limit"] = self.context_limit
         return breakdown
 
-    def _build_turn_view(self, reminders: Sequence[dict]):
-        """Project the transcript and this turn's reminders into one request view."""
-        system_prompt = None
-        if self.memory is not None:
+    def _system_prompt(self, records) -> str | None:
+        """This request's system prompt; None keeps the stored one unchanged.
+
+        It is rendered from the current tools and memory, so a resumed session
+        is not told about tools it no longer has. Resident memory goes on top.
+        """
+        if self._render_system_prompt is not None:
+            base_prompt = self._render_system_prompt()
+        elif self.memory is not None:
             base_prompt = next(
-                (
-                    record.message["content"]
-                    for record in self.session_state.message_records
-                    if record.message.get("role") == "system"
-                ),
+                (record.message["content"] for record in records if record.message.get("role") == "system"),
                 "",
             )
-            system_prompt = self.memory.project_system_prompt(base_prompt)
+        else:
+            return None
+        return self.memory.project_system_prompt(base_prompt) if self.memory is not None else base_prompt
+
+    def _build_turn_view(self, reminders: Sequence[dict]):
+        """Project the transcript and this turn's reminders into one request view."""
+        system_prompt = self._system_prompt(self.session_state.message_records)
         optional_reminders: list[dict] = []
         recall = None
         recall_for_turn = getattr(self.memory, "recall_for_turn", None) if self.memory is not None else None

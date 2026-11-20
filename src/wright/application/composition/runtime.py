@@ -818,6 +818,7 @@ def assemble_runtime(
         services=services,
         runtime_resources=runtime_resources,
         expose_scheduling=True,
+        role_instruction=role_instruction,
     )
     bind_root_checkpoint(agent)
 
