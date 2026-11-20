@@ -19,6 +19,7 @@ from ...domain.policy.settings import (
     resolve_settings,
     validate_write,
 )
+from .models import model_overview
 
 logger = get_logger(__name__)
 
@@ -94,6 +95,7 @@ class SettingsService:
             },
             "settings": items,
             "warnings": list(resolved.warnings),
+            "models": model_overview(settings.llm, self.store.environment()),
         }
 
     def update(self, scope: SettingScope, key: str, value: Any) -> None:

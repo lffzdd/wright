@@ -168,9 +168,14 @@ These stay environment-only:
 
 ## Editing settings
 
-**Web console:** Settings → Runtime lists every key with its effective
-value and where it came from. Choose "User" or "Project" to pick which file
-an edit goes to; user-only keys are read-only in project scope.
+**Web console:** Settings groups the keys by task (Models, Context & cost,
+Sessions, Knowledge search, Advanced) and can search across them. A key shows
+its source only when it is not the default; Advanced → "Show configuration
+keys" adds the dotted key names. "Save to" picks which file an edit goes to;
+user-only keys are read-only in project scope. The Models section lists each
+catalog provider and whether its key variable is set (never the key), and
+suggests catalog models with their context window and price; `llm.prices` and
+`llm.context_limits` are edited as tables.
 
 **CLI and TUI:**
 
@@ -186,7 +191,9 @@ comma-separated lists.
 **HTTP API:** `GET /api/v1/workspaces/{id}/settings` describes every key for
 that project: effective value, source layer (`default`, `user`, `project`,
 `env`), the raw value in each file, whether an environment variable
-overrides it, and which files may hold it. `PUT` with `{"scope": "user" |
+overrides it, and which files may hold it. Its `models` field lists the
+catalog providers with whether each key is set and reachable, the custom
+endpoint, and every catalog model with its context window and price. `PUT` with `{"scope": "user" |
 "project", "key": "llm.model", "value": ...}` writes one key, and
 `"value": null` removes it. `/api/v1/settings` does the same with no project
 (user file only). Writes follow the same rules as loading: a project-scope
@@ -212,4 +219,5 @@ write of a user-only key, a secret or an invalid value is refused with 400.
 | domain | `gateway/settings.py` | `SettingsStore` protocol |
 | infrastructure | `config/settings_store.py` | JSON files, locked atomic writes |
 | application | `settings/service.py` | resolve, describe, validated update |
+| application | `settings/models.py` | provider key status and catalog models for the editor |
 | application | `composition/settings.py` | binds the store; `load_settings(project_root)` |

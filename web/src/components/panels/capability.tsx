@@ -4,8 +4,10 @@ import { useT } from "../../i18n";
 import { MenuButton, type MenuEntry } from "../ui/Menu";
 
 /** A capability screen shown in place of the conversation. */
-export function CapabilityPage({ id, title, subtitle, actions, notice, children }: {
+export function CapabilityPage({ id, title, subtitle, actions, notice, wide = false, children }: {
   id: string;
+  /** A wider body, for pages with their own side navigation. */
+  wide?: boolean;
   title: string;
   subtitle?: ReactNode;
   actions?: ReactNode;
@@ -14,7 +16,7 @@ export function CapabilityPage({ id, title, subtitle, actions, notice, children 
 }) {
   const ref = useRef<HTMLElement>(null);
   useEffect(() => { ref.current?.focus({ preventScroll: true }); }, [id]);
-  return <section ref={ref} tabIndex={-1} className="cap-page" aria-labelledby={id}>
+  return <section ref={ref} tabIndex={-1} className={`cap-page${wide ? " wide" : ""}`} aria-labelledby={id}>
     <header className="cap-head">
       <div className="cap-head-inner">
         <div className="cap-title">

@@ -202,6 +202,7 @@ describe("workspace panels", () => {
   it("saves settings from segmented controls", async () => {
     const save = vi.fn(async () => undefined);
     render(<SettingsPage theme="light" inspectorOpen save={save} />);
+    fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
     fireEvent.click(screen.getByRole("radio", { name: "Dark" }));
     fireEvent.click(screen.getByRole("switch", { name: "Inspector open" }));
     await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(2));

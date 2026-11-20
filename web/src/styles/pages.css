@@ -136,8 +136,6 @@
 .interval-field { display: grid; grid-template-columns: 96px minmax(0, 160px); gap: 8px; }
 .run-list { list-style: none; margin: 10px 0 0; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; border-radius: var(--radius-md); background: var(--bg-card-secondary); }
 .run-list li { display: flex; align-items: center; gap: 8px; }
-.settings-group { display: flex; flex-direction: column; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--bg-card); }
-.settings-group h3 { padding: 12px 14px 4px; font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
 
 /* ── .settings-row ── */
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 14px; }
@@ -151,19 +149,9 @@
 }
 .settings-label { color: var(--text-primary); font-size: var(--text-md); }
 
-/* ── .runtime-settings-head ── */
-.runtime-settings-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 12px 14px 0; }
-.runtime-settings-head h3 { padding: 0 0 4px; }
-@media (max-width: 640px) {
-  .runtime-settings-head { flex-direction: column; }
-}
-.runtime-scope { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.runtime-path { padding: 6px 14px 0; font-family: var(--font-mono); overflow-wrap: anywhere; }
-.runtime-notice { padding: 6px 14px 0; }
-.runtime-group { display: flex; flex-direction: column; margin-top: 10px; border-top: 1px solid var(--border-subtle); }
-.runtime-group h4 { padding: 12px 14px 0; font-size: var(--text-sm); font-weight: 600; color: var(--text-secondary); }
+.runtime-path { font-family: var(--font-mono); overflow-wrap: anywhere; }
+.runtime-notice { margin: 0; }
 .runtime-meta { display: flex; flex-direction: column; min-width: 0; }
-.runtime-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
 .runtime-key { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); }
 
 /* ── .runtime-control ── */

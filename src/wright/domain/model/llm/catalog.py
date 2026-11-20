@@ -191,6 +191,10 @@ class ModelCatalog:
                 return found
         return None
 
+    def models(self) -> tuple[CatalogModel, ...]:
+        """Every catalog model, in table order."""
+        return tuple(self._models.values())
+
     def presets(self, provider_ids: Iterable[str]) -> tuple[str, ...]:
         wanted = set(provider_ids)
         return tuple(

@@ -410,8 +410,35 @@ export type RuntimeSetting = {
   scopes: SettingScope[];
 };
 
+export type ProviderStatus = {
+  id: string;
+  name: string;
+  base_url: string | null;
+  key_env: string;
+  key_set: boolean;
+  reachable: boolean;
+};
+
+export type ModelPriceInfo = { input: number; output: number; cache_read: number | null };
+
+export type CatalogModelInfo = {
+  name: string;
+  provider: string;
+  context_window: number | null;
+  preset: boolean;
+  price: ModelPriceInfo | null;
+};
+
+export type ModelOverview = {
+  endpoint: { base_url: string; key_env: string; key_set: boolean; provider: string };
+  providers: ProviderStatus[];
+  models: CatalogModelInfo[];
+};
+
 export type RuntimeSettingsView = {
   paths: { user: string; project: string | null };
   settings: RuntimeSetting[];
   warnings: string[];
+  /** Absent from servers older than the provider overview. */
+  models?: ModelOverview;
 };
