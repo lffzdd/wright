@@ -237,10 +237,6 @@ class MemoryManager:
             self._recall_by_turn[key] = context
         return context
 
-    def recall_block(self, query: str) -> str:
-        """Best-effort recall text. Selector failure does not inject episodes."""
-        return self._prepare_context(query, project_id=self.current_project_id).prompt_injection
-
     def note_injection(self, context: MemoryContextDTO | None, *, omitted: bool) -> None:
         """Record what this main-model request actually carried."""
         if context is None:

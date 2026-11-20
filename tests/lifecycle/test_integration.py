@@ -44,9 +44,6 @@ class RecordingMemory:
     def project_system_prompt(self, system_prompt):
         return system_prompt
 
-    def recall_block(self, query):
-        return ""
-
     def finalize_turn(self, session, answer, *, extract_semantic, termination_reason=None):
         live = any(
             str(task.get("status") or "") in {"pending", "running"}
