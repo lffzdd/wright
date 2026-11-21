@@ -385,8 +385,20 @@ it("explains the network switch inside the glance instead of a separate button",
   expect(screen.queryByRole("button", { name: "Also allow sandbox network for this session" })).toBeNull();
 });
 
-it("has no network switch in host mode", () => {
-  render(<PermissionsPanel sessionId="s" grants={{ ...readyGrants, grants: [], execution_mode: "host" }} update={vi.fn()} interactionMode="agent" permissionMode="bypass" executionMode="host" />);
+it("on host includes network with the shell and still asks before commands", () => {
+  const shell = {
+    operation: "shell" as const,
+    defaults: {
+      in_scope: { decision: "ask" as const, source: "", reason_code: "", reason_params: {} },
+      outside_scope: { decision: "ask" as const, source: "", reason_code: "", reason_params: {} },
+    },
+    directories: [], read_only: [] as string[], rules: [], constraints: [] as string[], precedence: [] as string[],
+  };
+  render(<PermissionsPanel sessionId="s" grants={{ ...readyGrants, grants: [], execution_mode: "host", effective_policy: [shell] }} update={vi.fn()} interactionMode="agent" permissionMode="bypass" executionMode="host" />);
+  expect(screen.getByText("Run commands in this project").closest("li")?.textContent).toMatch(/Asks first/);
+  const network = screen.getByText("Network access").closest("li")!;
+  expect(network.textContent).toMatch(/Automatic/);
+  expect(network.textContent).toContain("Host Shell has network access");
   expect(screen.queryByRole("switch", { name: "Network access" })).toBeNull();
 });
 

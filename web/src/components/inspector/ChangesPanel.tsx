@@ -6,6 +6,9 @@ import { DiffViewer, type DiffFeedbackLine } from "../code/DiffViewer";
 import { useT } from "../../i18n";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import type { ChangeAction, ChangePatch, ChangesSummary, GitChange, GitChangeScope, ReviewChange, ViewState } from "../../types";
+import { ActionSlots, ChangeFold } from "./ChangeFold";
+import { CommitBar } from "./CommitBar";
+import { isGenerated, layoutRows } from "./changeTree";
 
 type Row = GitChange & { review?: ReviewChange };
 type Group = GitChangeScope | "session";
@@ -24,9 +27,6 @@ type PatchState = { refresh: number; loading: boolean; value?: ChangePatch; erro
 /** Past this many files, "expand all" would fire too many diff requests at once. */
 const EXPAND_ALL_LIMIT = 30;
 const splitPath = (path: string) => { const index = path.lastIndexOf("/"); return index < 0 ? ["", path] : [path.slice(0, index + 1), path.slice(index + 1)]; };
-// Build output that is regenerated rather than reviewed line by line.
-const generatedPatterns = [/(^|\/)static\/assets\//, /(^|\/)(dist|build)\//, /\.min\.(js|css)$/, /\.map$/];
-export const isGenerated = (path: string) => generatedPatterns.some((pattern) => pattern.test(path));
 /** Git reports untracked files as "??"; they read as additions. */
 const kindLetter = (status: string) => status[0] === "?" ? "A" : (status[0] || "M");
 const sumStats = (rows: Array<{ additions?: number | null; deletions?: number | null }>) => rows.reduce((sum, row) => ({ add: sum.add + (row.additions ?? 0), del: sum.del + (row.deletions ?? 0) }), { add: 0, del: 0 });
@@ -293,10 +293,12 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
     : <>{bulkButton(group, "discard", tr("web.changes.discard_all"), true)}{bulkButton(group, "stage", tr("web.changes.stage_all"))}</>;
   const groupBlockedHint = (group: Group) => group === "staged" ? bulkBlocked(group, "unstage") : group === "unstaged" && (bulkBlocked(group, "stage") || bulkBlocked(group, "discard"));
 
-  const fileRow = (group: Group, row: Row) => {
+  // Under a directory header the row shows the file name only.
+  const fileRow = (group: Group, row: Row, showDir = true) => {
     const selection = { group, path: row.path };
     const badge = rowState(row);
-    const [dir, name] = splitPath(row.path);
+    const [fullDir, name] = splitPath(row.path);
+    const dir = showDir ? fullDir : "";
     const letter = kindLetter(row.status);
     const active = isOpen(selection);
     const rowBusy = blocked(group);
@@ -347,24 +349,32 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
       </div>}
       {group !== soloGroup && group === "session" && unavailableUndo > 0 && <p className="hint">{tr("web.changes.undo_unavailable", { count: unavailableUndo })}</p>}
       {group !== soloGroup && groupBlockedHint(group) && <p className="hint">{tr("web.changes.bulk_unavailable")}</p>}
-      {(() => {
-        const generated = rows.filter((row) => isGenerated(row.path));
-        // A lone generated file is not worth a fold.
-        const folded = generated.length >= 2 ? generated : [];
-        const visible = rows.filter((row) => !folded.includes(row));
-        const generatedStats = sumStats(folded);
-        return <>
-          {visible.length > 0 && <div className="changes-file-list">{visible.map((row) => fileRow(group, row))}</div>}
-          {folded.length > 0 && <details className="changes-generated" open={folded.some((row) => isOpen({ group, path: row.path })) || undefined}>
-            <summary><span>{tr("web.changes.generated", { count: folded.length })}</span><span className="changes-file-stats"><span className="stat-add">+{generatedStats.add}</span><span className="stat-del">−{generatedStats.del}</span></span></summary>
-            <div className="changes-file-list">{folded.map((row) => fileRow(group, row))}</div>
-          </details>}
-        </>;
-      })()}
-      {group === "staged" && <form className="changes-commit" onSubmit={(event) => { event.preventDefault(); void act("commit", "staged", rows); }}>
-        <label htmlFor={`changes-commit-${sessionId}`}>{tr("web.changes.commit_message")}</label><textarea id={`changes-commit-${sessionId}`} value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} placeholder={tr("web.changes.commit_placeholder")} rows={3} disabled={actionPending} /><p className="hint">{tr("web.changes.commit_help")}</p><button type="submit" className="button" disabled={blocked("staged") || !commitMessage.trim()}>{tr("web.changes.commit")}</button>
-      </form>}
+      {groupRows(group, rows)}
     </section>;
+  };
+  // A fold opens by itself when it holds a file opened from elsewhere.
+  const holdsOpen = (group: Group, rows: Row[]) => rows.some((row) => isOpen({ group, path: row.path })) || undefined;
+  const generatedFold = (group: Group, rows: Row[]) => {
+    const total = sumStats(rows);
+    const slots = (onOpenFile ? 1 : 0) + (group === "unstaged" ? 2 : 1);
+    const aside = <><span className="changes-file-stats"><span className="stat-add">+{total.add}</span>
+      <span className="stat-del">−{total.del}</span></span><ActionSlots count={slots} /></>;
+    return <ChangeFold className="changes-generated" title={tr("web.changes.generated", { count: rows.length })}
+      aside={aside} open={holdsOpen(group, rows)}>{rows.map((row) => fileRow(group, row))}</ChangeFold>;
+  };
+  // Build output first, so it is seen without scrolling past every reviewed file.
+  const groupRows = (group: Group, rows: Row[]) => {
+    const { folded, visible, entries } = layoutRows(rows);
+    const generated = folded.length > 0 && generatedFold(group, folded);
+    if (!entries.length) {
+      return <>{generated}
+        {visible.length > 0 && <div className="changes-file-list">{visible.map((row) => fileRow(group, row))}</div>}</>;
+    }
+    return <>{generated}<div className="changes-file-list">{entries.map((entry) => entry.kind === "file"
+      ? fileRow(group, entry.row)
+      : <ChangeFold key={entry.dir} className="changes-dir" open
+        title={<><bdi>{entry.dir}</bdi><small>{entry.rows.length}</small></>}>
+        {entry.rows.map((row) => fileRow(group, row, false))}</ChangeFold>)}</div></>;
   };
 
   const expandable = allRows.filter((row) => !isGenerated(row.path));
@@ -374,6 +384,8 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
     setExpanded(groupsShown.flatMap((group) => rowsOf(group).filter((row) => !isGenerated(row.path)).map((row) => ({ group, path: row.path }))));
   };
   const showSummary = !!owned && !error && owned.git !== false && allRows.length > 0;
+  const generatedCount = new Set(groupsShown.flatMap((group) => layoutRows(rowsOf(group)).folded)
+    .map((row) => row.path)).size;
 
   return <div className="changes-panel" ref={panelRef}>
     <div className="changes-top" ref={topRef}>
@@ -392,6 +404,8 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
       </div>
       {showSummary && <div className="changes-summary pane-head">
         <b>{tr("web.changes.count", { count: fileCount })}</b>
+        {generatedCount > 0 && <small className="changes-summary-note">
+          {tr("web.changes.generated_count", { count: generatedCount })}</small>}
         <span className="diff-stat"><span className="add stat-add">+{stats.add}</span><span className="del stat-del">−{stats.del}</span></span>
         <span className="grow" />
         {soloGroup && <div className="changes-actions">{groupActions(soloGroup)}</div>}
@@ -408,5 +422,9 @@ export function ChangesPanel({ sessionId, state, onCount, onWorkingChanges, onFe
     {soloGroup === "session" && unavailableUndo > 0 && <p className="hint">{tr("web.changes.undo_unavailable", { count: unavailableUndo })}</p>}
     {soloGroup && groupBlockedHint(soloGroup) && <p className="hint">{tr("web.changes.bulk_unavailable")}</p>}
     {owned?.git !== false && groupsShown.map(groupSection)}
+    {view === "git" && rowsOf("staged").length > 0 && <CommitBar id={`changes-commit-${sessionId}`}
+      count={rowsOf("staged").length} message={commitMessage} onMessage={setCommitMessage}
+      pending={actionPending} blocked={blocked("staged")}
+      onCommit={() => void act("commit", "staged", rowsOf("staged"))} />}
   </div>;
 }

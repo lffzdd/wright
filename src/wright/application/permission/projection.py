@@ -1,7 +1,11 @@
 """Application projections of permission policy for the existing interfaces."""
 from ...domain.model.tool import ToolAccess
 from ...domain.policy.permission.resolver import PermissionPolicy
-from ...domain.policy.permission.settings import PermissionRule, PermissionSettings
+from ...domain.policy.permission.settings import (
+    MatchContext,
+    PermissionRule,
+    PermissionSettings,
+)
 
 
 def summarize_policy(
@@ -25,6 +29,7 @@ def summarize_policy(
         (effect, tuple(getattr(settings, effect, ()) or ()))
         for effect in ("deny", "ask", "allow")
     ] + [("allow", session_rules)]
+    context = MatchContext(execution_mode=execution_mode)
     result = []
     for operation, tool_names in categories:
         defaults = {}
@@ -32,7 +37,7 @@ def summarize_policy(
             decision, _, source, code, params = baseline.evaluate(
                 ToolAccess(frozenset({operation})), tool_name=tool_names[0],
                 subject="", in_scope=in_scope, interaction_mode=interaction_mode,
-                permission_mode=mode,
+                permission_mode=mode, context=context,
             )
             defaults[scope] = {"decision": decision, "source": source, "reason_code": code, "reason_params": params}
         rules = [

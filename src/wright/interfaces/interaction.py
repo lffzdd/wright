@@ -123,7 +123,7 @@ class InteractionBroker:
         record = decision_record(kind, answer, current)  # type: ignore[arg-type]
         self.publisher.publish(
             "interaction.resolved",
-            {"request_id": request_id, "kind": kind, "status": record["status"]},
+            {"request_id": request_id, "kind": kind, "status": record["status"], "choice": record["choice"]},
         )
         return True
 

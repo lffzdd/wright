@@ -194,3 +194,35 @@ def test_assemble_runtime_mode_and_rag(tmp_path, monkeypatch):
         assert "shell keeps a working directory" not in content
     finally:
         shutdown_runtime(rt_general)
+
+
+def test_user_settings_pick_execution_and_search_for_new_sessions(tmp_path, monkeypatch):
+    import json
+    import os
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://127.0.0.1:9/v1")
+    monkeypatch.chdir(tmp_path)
+    for name in ("BRAVE_API_KEY", "WRIGHT_SEARCH_PROVIDER", "WRIGHT_DEFAULT_EXECUTION"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("TAVILY_API_KEY", "test-key")
+    home = os.environ["WRIGHT_HOME"]
+    os.makedirs(home, exist_ok=True)
+    with open(os.path.join(home, "settings.json"), "w", encoding="utf-8") as handle:
+        json.dump({"sandbox": {"default_execution": "host"}, "tools": {"web_search": "off"}}, handle)
+
+    runtime = assemble_runtime(RuntimeConfig(workspace=tmp_path, model="gpt-4o"), start_automation=False)
+    try:
+        assert runtime.session_state.execution_mode == "host"
+        assert "web_search" not in {tool.name for tool in runtime.assembled_base_tools}
+    finally:
+        shutdown_runtime(runtime)
+
+    # An explicit choice for the session still wins.
+    runtime = assemble_runtime(
+        RuntimeConfig(workspace=tmp_path, model="gpt-4o", execution_mode="sandbox"), start_automation=False,
+    )
+    try:
+        assert runtime.session_state.execution_mode == "sandbox"
+    finally:
+        shutdown_runtime(runtime)

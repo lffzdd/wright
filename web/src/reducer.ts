@@ -1,4 +1,4 @@
-import type { AgentView, Attachment, Interaction, ToolState, UiEvent, ViewState } from "./types";
+import type { AgentView, Attachment, Interaction, TimelineItem, ToolState, UiEvent, ViewState } from "./types";
 import { validSessionStatus } from "./protocol";
 
 // Locked against Python notice_display/notice_text by notice-contract.json.
@@ -146,6 +146,27 @@ function upsertSegment(state: ViewState, event: UiEvent, text: (previous: string
   };
 }
 
+/** Keep allow/always/cancel in the transcript; deny is already the failed tool card. */
+function permissionRecord(pending: Interaction | undefined, event: UiEvent): TimelineItem | null {
+  if (!pending || pending.kind !== "permission") return null;
+  const status = String(event.payload.status ?? "");
+  const choice = String(event.payload.choice ?? "");
+  const decision = status === "cancelled" ? "abort"
+    : status === "denied" || choice === "deny" ? "deny"
+    : status === "approved" || choice.startsWith("allow")
+      ? (choice.startsWith("allow") && !choice.startsWith("allow_once") ? "always" : "allow")
+      : null;
+  if (!decision || decision === "deny") return null;
+  return {
+    id: pending.request_id,
+    kind: "approval",
+    phase: decision === "abort" ? "cancelled" : "approved",
+    decision,
+    interaction: pending,
+    turn_id: event.turn_id,
+  };
+}
+
 function closeSegment(state: ViewState, event: UiEvent): ViewState {
   if (!state.active_turn || !state.timeline) return state;
   const open = state.timeline.some((item) => (item.id === segmentId(state, event) || item.id === segmentId(state, event, "reasoning")) && item.text);
@@ -269,8 +290,14 @@ export function applyEvent(state: ViewState, event: UiEvent): ViewState {
     next.pending_interactions = [...next.pending_interactions, event.payload as Interaction];
   } else if (event.type === "interaction.resolved") {
     const requestId = String(event.payload.request_id ?? "");
+    const pending = next.pending_interactions.find((item) => item.request_id === requestId);
     next.pending_interactions = next.pending_interactions.filter((item) => item.request_id !== requestId);
-    if (next.timeline) next.timeline = next.timeline.filter((item) => item.kind !== "approval" || item.id !== requestId);
+    if (next.timeline) {
+      const record = permissionRecord(pending, event);
+      next.timeline = record
+        ? [...next.timeline.filter((item) => item.id !== requestId), record]
+        : next.timeline.filter((item) => item.kind !== "approval" || item.id !== requestId);
+    }
   } else if (event.type === "usage.request") {
     next.usage = {
       ...next.usage,

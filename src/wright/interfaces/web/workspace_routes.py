@@ -27,6 +27,7 @@ from ...application.workspace.journal import ChangeJournalError, SessionChangeJo
 from ...application.workspace.memory_view import (
     MemoryViewError,
     confirm_fact,
+    create_commitment,
     create_fact,
     forget,
     project_memory,
@@ -71,7 +72,6 @@ from ...core.paths import project_id
 from ...domain.model.workspace.project import ProjectContext
 from .auth import BootstrapAuth
 from .runtime_manager import RuntimeManager, RuntimeManagerError
-from .settings_routes import SettingUpdateRequest, describe_settings, update_setting
 
 
 class WorkspaceCreate(BaseModel):
@@ -147,7 +147,15 @@ class FactPatchBody(BaseModel):
 
 
 class CommitmentBody(BaseModel):
-    status: str
+    content: str
+    due: str = ""
+    space: str = ""
+
+
+class CommitmentPatchBody(BaseModel):
+    status: str | None = None
+    due: str | None = None
+    content: str | None = None
 
 
 class SkillBody(BaseModel):
@@ -266,13 +274,13 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
     @router.get("/workspaces/{registered_id}/tree")
     def workspace_tree(registered_id: str, request: Request, path: str = "") -> dict[str, Any]:
         require(request)
-        root = _project_root(manager, registered_id)
+        root = resolve_project_root(manager, registered_id)
         return _files(root, path, listing=True)
 
     @router.get("/workspaces/{registered_id}/file")
     def workspace_file(registered_id: str, request: Request, path: str) -> dict[str, Any]:
         require(request)
-        return _files(_project_root(manager, registered_id), path, listing=False)
+        return _files(resolve_project_root(manager, registered_id), path, listing=False)
 
     @router.get("/workspaces/{registered_id}/changes")
     def workspace_changes(
@@ -283,7 +291,7 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
         # Read-only git status of the project checkout, so a history session can
         # mark changed files without starting its runtime. Actions stay per session.
         require(request)
-        root = _project_root(manager, registered_id)
+        root = resolve_project_root(manager, registered_id)
         try:
             return list_changes(ProjectContext.local(root), scope)
         except DiffError as exc:
@@ -302,14 +310,14 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
         registered_id: str, request: Request, q: str = "", kind: str = "file",
     ) -> dict[str, Any]:
         require(request)
-        root = _project_root(manager, registered_id)
+        root = resolve_project_root(manager, registered_id)
         sessions = manager.workspace_sessions(registered_id)
         return {"kind": kind, "results": _search(root, sessions, q, kind)}
 
     @router.get("/workspaces/{registered_id}/schedules")
     def project_schedules(registered_id: str, request: Request) -> list[dict[str, Any]]:
         require(request)
-        return list_project_schedules(open_autonomy_store, _project_root(manager, registered_id))
+        return list_project_schedules(open_autonomy_store, resolve_project_root(manager, registered_id))
 
     @router.post("/workspaces/{registered_id}/schedules/{schedule_id}/{action}")
     def project_schedule_action(
@@ -325,7 +333,7 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
         try:
             return project_action(
                 open_autonomy_store,
-                _project_root(manager, registered_id),
+                resolve_project_root(manager, registered_id),
                 schedule_id,
                 action,
                 name=body.name,
@@ -458,7 +466,7 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
         return memory_holder["service"]
 
     def memory_scope(registered_id: str) -> tuple[Any, str]:
-        return project_memory_service(), project_id(_project_root(manager, registered_id))
+        return project_memory_service(), project_id(resolve_project_root(manager, registered_id))
 
     @router.get("/workspaces/{registered_id}/memory")
     def memory(registered_id: str, request: Request) -> dict[str, Any]:
@@ -508,46 +516,43 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
         except MemoryViewError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @router.patch("/workspaces/{registered_id}/memory/commitments/{commitment_id}")
-    def patch_commitment(registered_id: str, commitment_id: str, body: CommitmentBody, request: Request) -> dict[str, Any]:
+    @router.post("/workspaces/{registered_id}/memory/commitments")
+    def post_commitment(registered_id: str, body: CommitmentBody, request: Request) -> dict[str, Any]:
         require(request)
         service, bound = memory_scope(registered_id)
         try:
-            return update_commitment(service, commitment_id, bound_project_id=bound, status=body.status)
+            return create_commitment(service, bound_project_id=bound, content=body.content, due=body.due, space=body.space)
+        except MemoryViewError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.patch("/workspaces/{registered_id}/memory/commitments/{commitment_id}")
+    def patch_commitment(registered_id: str, commitment_id: str, body: CommitmentPatchBody, request: Request) -> dict[str, Any]:
+        require(request)
+        service, bound = memory_scope(registered_id)
+        try:
+            return update_commitment(service, commitment_id, bound_project_id=bound, **body.model_dump(exclude_none=True))
         except MemoryViewError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.post("/workspaces/{registered_id}/memory/changes/{change_id}/revert")
     def post_revert_change(registered_id: str, change_id: int, request: Request) -> dict[str, Any]:
         require(request)
-        service, _bound = memory_scope(registered_id)
+        service, bound = memory_scope(registered_id)
         try:
-            return revert_change(service, change_id)
+            return revert_change(service, change_id, bound_project_id=bound)
         except MemoryViewError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    @router.get("/workspaces/{registered_id}/settings")
-    def workspace_settings(registered_id: str, request: Request) -> dict[str, Any]:
-        require(request)
-        return describe_settings(_project_root(manager, registered_id))
-
-    @router.put("/workspaces/{registered_id}/settings")
-    def put_workspace_setting(
-        registered_id: str, body: SettingUpdateRequest, request: Request,
-    ) -> dict[str, Any]:
-        require(request)
-        return update_setting(_project_root(manager, registered_id), body)
 
     @router.get("/workspaces/{registered_id}/rules")
     def rules(registered_id: str, request: Request) -> dict[str, Any]:
         require(request)
-        return list_rules(_project_root(manager, registered_id), skill_store())
+        return list_rules(resolve_project_root(manager, registered_id), skill_store())
 
     @router.get("/workspaces/{registered_id}/rules/{skill_id}")
     def rule(registered_id: str, skill_id: str, request: Request) -> dict[str, Any]:
         require(request)
         try:
-            return get_rule(_project_root(manager, registered_id), skill_store(), skill_id)
+            return get_rule(resolve_project_root(manager, registered_id), skill_store(), skill_id)
         except RuleError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -558,7 +563,7 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
             raise HTTPException(status_code=400, detail="scope must be project or user")
         try:
             return save_rule(
-                _project_root(manager, registered_id),
+                resolve_project_root(manager, registered_id),
                 skill_store(),
                 skill_id,
                 scope=body.scope,  # type: ignore[arg-type]
@@ -579,7 +584,7 @@ def add_workspace_routes(router: APIRouter, manager: RuntimeManager, auth: Boots
             raise HTTPException(status_code=400, detail="scope must be project or user")
         try:
             return delete_rule(
-                _project_root(manager, registered_id),
+                resolve_project_root(manager, registered_id),
                 skill_store(),
                 skill_id,
                 scope=body.scope,  # type: ignore[arg-type]
@@ -687,7 +692,7 @@ def _execution_root(manager: RuntimeManager, session_id: str) -> Path:
     return Path(_handle(manager, session_id).runtime.session_state.workspace_dir)
 
 
-def _project_root(manager: RuntimeManager, registered_id: str) -> Path:
+def resolve_project_root(manager: RuntimeManager, registered_id: str) -> Path:
     try:
         record = manager._catalog().get(registered_id)
     except WorkspaceCatalogError as exc:

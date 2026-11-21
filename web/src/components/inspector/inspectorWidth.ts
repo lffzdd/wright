@@ -1,5 +1,7 @@
+// Kept in step with INSPECTOR_WIDTH_RANGE in interfaces/web/routes.py.
+// 800 is about viewport-640 on a 1440 laptop, matching the restored harness cap.
 export const INSPECTOR_WIDTH_MIN = 280;
-export const INSPECTOR_WIDTH_MAX = 560;
+export const INSPECTOR_WIDTH_MAX = 800;
 export const INSPECTOR_WIDTH_DEFAULT_WIDE = 440;
 export const INSPECTOR_WIDTH_DEFAULT_COMPACT = 300;
 export const INSPECTOR_WIDTH_BREAKPOINT = 1280;

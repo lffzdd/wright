@@ -23,6 +23,15 @@ from .models import model_overview
 
 logger = get_logger(__name__)
 
+# Process switches that stay environment-only: they locate the files settings
+# live in, or are test hooks. Shown read-only; none of them holds a secret.
+ENVIRONMENT_ONLY: tuple[tuple[str, str], ...] = (
+    ("WRIGHT_HOME", "Where Wright keeps its state, settings and keys; default ~/.wright."),
+    ("WRIGHT_MEMORY_DIR", "Where long-term memory is stored."),
+    ("WRIGHT_PERMISSION_CONFIG", "Permission file used instead of ~/.wright/permission_settings.json."),
+    ("WRIGHT_PERMISSION_INTERACTIVE", "1 forces approval prompts; any other value turns them off."),
+)
+
 
 class SettingsService:
     def __init__(self, store: SettingsStore) -> None:
@@ -96,6 +105,10 @@ class SettingsService:
             "settings": items,
             "warnings": list(resolved.warnings),
             "models": model_overview(settings.llm, self.store.environment()),
+            "environment": [
+                {"name": name, "value": self.store.environment().get(name) or None, "description": text}
+                for name, text in ENVIRONMENT_ONLY
+            ],
         }
 
     def update(self, scope: SettingScope, key: str, value: Any) -> None:

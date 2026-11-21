@@ -200,7 +200,7 @@ describe("ToolCard", () => {
 describe("ToolCard states", () => {
   it("labels a denied call without expanding it", () => {
     render(<ToolCard name="shell" phase="failed" args={{ command: "rm a" }} data={{ permission: { decision: "deny" } }} output="Permission denied" />);
-    expect(screen.getByText("Denied")).toBeTruthy();
+    expect(screen.getByText(/Denied/)).toBeTruthy();
     expect(screen.queryByText("failed")).toBeNull();
     expect(screen.queryByText("Permission denied")).toBeNull();
   });

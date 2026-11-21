@@ -57,7 +57,8 @@
 /* ── .run-status ── */
 .run-status { min-width: 0; line-height: 1.5; margin: 0 0 8px; }
 .run-status .dot { color: var(--warning); flex: 0 0 auto; }
-.text-button:not(.composer-settings-toggle):not(:disabled):hover { text-decoration: underline; text-underline-offset: 2px; }
+/* Hover moves the colour toward the primary text instead of underlining. */
+.text-button:not(.composer-settings-toggle):not(:disabled):hover { color: color-mix(in srgb, currentColor 65%, var(--text-primary)); }
 
 /* ── .mention-menu ── */
 .mention-menu { animation: pop-in var(--dur-fast) var(--ease-out); transform-origin: bottom left; }

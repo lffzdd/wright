@@ -373,18 +373,20 @@ def test_plan_projection_publishes_after_root_lifecycle_and_reset(
     ],
 )
 @pytest.mark.parametrize("interaction", ["agent", "ask", "plan"])
+@pytest.mark.parametrize("execution_mode", ["sandbox", "host"])
 def test_permission_summary_defaults_match_actual_policy(
-    mode, inside, outside, interaction
+    mode, inside, outside, interaction, execution_mode
 ):
-    policy = PermissionPolicy(PermissionSettings(mode=mode))
-    summary = summarize_policy(policy,roots=["/project"], interaction_mode=interaction)
+    inside, outside = list(inside), list(outside)
     if interaction in {"ask", "plan"}:
-        inside = ["allow", "deny", "deny"]
-        outside = [
-            "ask",
-            "deny",
-            "deny",
-        ]
+        inside, outside = ["allow", "deny", "deny"], ["ask", "deny", "deny"]
+    elif execution_mode == "host" and mode != "plan":
+        inside[2] = outside[2] = "ask"
+    policy = PermissionPolicy(PermissionSettings(mode=mode))
+    context = MatchContext(execution_mode=execution_mode)
+    summary = summarize_policy(
+        policy, roots=["/project"], interaction_mode=interaction, execution_mode=execution_mode,
+    )
     for index, category in enumerate(summary):
         operation = category["operation"]
         for scope, expected in (
@@ -397,6 +399,7 @@ def test_permission_summary_defaults_match_actual_policy(
                 subject="target",
                 in_scope=scope == "in_scope",
                 interaction_mode=interaction,
+                context=context,
             )
             assert category["defaults"][scope]["decision"] == actual[0] == expected
 

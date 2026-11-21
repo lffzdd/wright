@@ -26,6 +26,7 @@ _LEGACY = {
     "WRIGHT_LLM_TRANSPORT": ("llm.transport", "Chat", "chat"),
     "OPENAI_BASE_URL": ("llm.base_url", "http://127.0.0.1:9/v1", "http://127.0.0.1:9/v1"),
     "WRIGHT_AUTO_TITLE": ("session.auto_title", "off", False),
+    "WRIGHT_DISABLED_SKILLS": ("skills.disabled", "a, b", ("a", "b")),
     "WRIGHT_MEMORY_ENABLED": ("memory.enabled", "off", False),
     "WRIGHT_MEMORY_RECALL": ("memory.recall", "no", False),
     "WRIGHT_MEMORY_AUTO_EXTRACT": ("memory.auto_extract", "0", False),
@@ -35,6 +36,11 @@ _LEGACY = {
     "WRIGHT_KNOWLEDGE_RERANKER": ("knowledge.reranker", "yes", True),
     "WRIGHT_RAG_DIR": ("knowledge.rag_dir", "/opt/rag", "/opt/rag"),
     "WRIGHT_KNOWLEDGE_INDEX": ("knowledge.index", "/opt/rag/i.json", "/opt/rag/i.json"),
+    "WRIGHT_SEARCH_PROVIDER": ("tools.web_search", "Brave", "brave"),
+    "WRIGHT_TRUST_PROJECT_MCP": ("mcp.trust_project", "1", True),
+    "WRIGHT_DEFAULT_EXECUTION": ("sandbox.default_execution", "host", "host"),
+    "WRIGHT_SANDBOX_EGRESS": ("sandbox.egress", "legacy", "legacy"),
+    "WRIGHT_HOOKS_CONFIG": ("hooks.config", "/opt/hooks.json", "/opt/hooks.json"),
 }
 
 
@@ -95,9 +101,10 @@ def test_project_file_cannot_set_user_only_keys(key):
     assert any(key in warning and "user settings file" in warning for warning in resolved.warnings)
 
 
-def test_project_safe_keys_are_only_model_choices():
+def test_project_safe_keys_are_only_model_choices_and_skill_switches():
+    # skills.disabled only takes skills away, so a cloned project file setting it grants nothing.
     assert {spec.key for spec in SETTING_SPECS if spec.project_safe} == {
-        "llm.model", "llm.context_limit", "llm.context_limits", "llm.memory_model",
+        "llm.model", "llm.context_limit", "llm.context_limits", "llm.memory_model", "skills.disabled",
     }
 
 
@@ -292,3 +299,21 @@ def test_runtime_refuses_an_unreadable_user_file(tmp_path, clean_env):
     user_settings_path().write_text("{", encoding="utf-8")
     with pytest.raises(SystemExit, match="Could not load settings"):
         assemble_runtime(RuntimeConfig(workspace=tmp_path, model="m"), start_automation=False)
+
+
+def test_trust_and_sandbox_keys_stay_user_only_and_fall_back_to_the_strict_default():
+    project = {"mcp": {"trust_project": True}, "sandbox": {"default_execution": "host", "egress": "legacy"}}
+    resolved = resolve_settings(project=project)
+    assert resolved.settings.mcp.trust_project is False
+    assert resolved.settings.sandbox.default_execution == "sandbox"
+    assert resolved.settings.sandbox.egress == "proxy"
+    assert len(resolved.warnings) == 3
+    # A typo in the user file keeps the sandbox, not the host.
+    typo = resolve_settings(user={"sandbox": {"default_execution": "hots", "egress": "open"}})
+    assert typo.settings.sandbox.default_execution == "sandbox"
+    assert typo.settings.sandbox.egress == "proxy"
+
+
+def test_a_broken_hooks_path_is_an_error_not_a_silent_loss_of_hooks():
+    with pytest.raises(SettingsError):
+        resolve_settings(user={"hooks": {"config": "   "}})

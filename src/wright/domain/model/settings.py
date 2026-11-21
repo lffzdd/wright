@@ -145,6 +145,10 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
         description="Name each session with one short model call after its first turn.",
     ),
     SettingSpec(
+        "skills.disabled", "list", (), env=("WRIGHT_DISABLED_SKILLS",), project_safe=True,
+        description="Skill ids left out of the catalog; load_skill refuses them.",
+    ),
+    SettingSpec(
         "memory.enabled", "bool", True, env=("WRIGHT_MEMORY_ENABLED",),
         description="Long-term memory: the resident block, recall, memory tools and turn records. The egress check stays on either way.",
     ),
@@ -182,6 +186,32 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
         "knowledge.index", "path", "", env=("WRIGHT_KNOWLEDGE_INDEX",), fail_closed=True,
         description="Knowledge index file; defaults to simple_index.json in knowledge.rag_dir.",
     ),
+    SettingSpec(
+        "tools.web_search", "choice", "auto", env=("WRIGHT_SEARCH_PROVIDER",),
+        choices=("auto", "tavily", "brave", "off"),
+        description="Search provider for web_search; auto uses the first one with a key, off removes the tool.",
+    ),
+    # Trust and sandbox keys stay user-only. Their invalid values fall back to
+    # the default, which is the strictest choice, so they need not fail closed.
+    SettingSpec(
+        "mcp.trust_project", "bool", False, env=("WRIGHT_TRUST_PROJECT_MCP",),
+        description="Also start the MCP servers in the project's .wright/mcp.json; they run commands from the repository.",
+    ),
+    SettingSpec(
+        "sandbox.default_execution", "choice", "sandbox", env=("WRIGHT_DEFAULT_EXECUTION",),
+        choices=("sandbox", "host"),
+        description="Where shell commands of new sessions run; host runs them without the system sandbox.",
+    ),
+    SettingSpec(
+        "sandbox.egress", "choice", "proxy", env=("WRIGHT_SANDBOX_EGRESS",),
+        choices=("proxy", "legacy"),
+        description="Sandboxed network: proxy decides each host; legacy opens or closes all of it per command. Windows always uses legacy.",
+    ),
+    # Losing a hooks file would also lose the hooks that deny tool calls.
+    SettingSpec(
+        "hooks.config", "path", "", env=("WRIGHT_HOOKS_CONFIG",), fail_closed=True,
+        description="Lifecycle hooks file; --hooks-config overrides it.",
+    ),
 )
 
 SPECS_BY_KEY: Mapping[str, SettingSpec] = {spec.key: spec for spec in SETTING_SPECS}
@@ -205,6 +235,11 @@ class SessionSettings:
 
 
 @dataclass(frozen=True)
+class SkillsSettings:
+    disabled: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class MemorySettings:
     enabled: bool = True
     recall: bool = True
@@ -225,12 +260,38 @@ class KnowledgeSettings:
     index: str = ""
 
 
+@dataclass(frozen=True)
+class ToolsSettings:
+    web_search: str = "auto"
+
+
+@dataclass(frozen=True)
+class McpSettings:
+    trust_project: bool = False
+
+
+@dataclass(frozen=True)
+class SandboxSettings:
+    default_execution: str = "sandbox"
+    egress: str = "proxy"
+
+
+@dataclass(frozen=True)
+class HooksSettings:
+    config: str = ""
+
+
 _SECTIONS: Mapping[str, type] = {
     "llm": LlmSettings,
     "session": SessionSettings,
+    "skills": SkillsSettings,
     "memory": MemorySettings,
     "logging": LoggingSettings,
     "knowledge": KnowledgeSettings,
+    "tools": ToolsSettings,
+    "mcp": McpSettings,
+    "sandbox": SandboxSettings,
+    "hooks": HooksSettings,
 }
 
 
@@ -243,9 +304,14 @@ class WrightSettings:
 
     llm: LlmSettings = field(default_factory=LlmSettings)
     session: SessionSettings = field(default_factory=SessionSettings)
+    skills: SkillsSettings = field(default_factory=SkillsSettings)
     memory: MemorySettings = field(default_factory=MemorySettings)
     logging: LoggingSettings = field(default_factory=LoggingSettings)
     knowledge: KnowledgeSettings = field(default_factory=KnowledgeSettings)
+    tools: ToolsSettings = field(default_factory=ToolsSettings)
+    mcp: McpSettings = field(default_factory=McpSettings)
+    sandbox: SandboxSettings = field(default_factory=SandboxSettings)
+    hooks: HooksSettings = field(default_factory=HooksSettings)
     sources: Mapping[str, SettingSource] = field(default_factory=dict, compare=False)
 
     @classmethod
@@ -288,15 +354,20 @@ _check_schema()
 __all__ = [
     "SETTING_SPECS",
     "SPECS_BY_KEY",
+    "HooksSettings",
     "KnowledgeSettings",
     "LlmSettings",
     "LoggingSettings",
+    "McpSettings",
     "MemorySettings",
+    "SandboxSettings",
     "SessionSettings",
     "SettingKind",
     "SettingScope",
     "SettingSource",
     "SettingSpec",
     "SettingsError",
+    "SkillsSettings",
+    "ToolsSettings",
     "WrightSettings",
 ]

@@ -186,26 +186,23 @@
 .inspector-body .sandbox-card p { margin: 0; font-weight: 400; }
 .inspector-body .sandbox-card + .section-label { margin-top: 14px; }
 /* Disclosure: every fold uses the same chevron. */
-.inspector-body .perm-fold > summary,
-.inspector-body .changes-generated > summary {
+.inspector-body .perm-fold > summary {
   display: flex; align-items: center; gap: 6px; list-style: none; padding: 4px 0;
   font: 500 var(--text-xs)/1.4 var(--font-sans); color: var(--text-muted); cursor: pointer;
 }
 .inspector-body .perm-fold > summary::-webkit-details-marker { display: none; }
-.inspector-body .perm-fold > summary::before,
-.inspector-body .changes-generated > summary::before {
+.inspector-body .perm-fold > summary::before {
   content: ""; flex: 0 0 auto; width: 5px; height: 5px; margin: 0 2px 0 1px;
   border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
   transform: rotate(-45deg); transition: transform 140ms var(--ease-out); font-size: 0;
 }
-.inspector-body .perm-fold[open] > summary::before,
-.inspector-body .changes-generated[open] > summary::before { transform: rotate(45deg); }
-.inspector-body .perm-fold > summary:hover, .inspector-body .changes-generated > summary:hover { color: var(--text-primary); }
+.inspector-body .perm-fold[open] > summary::before { transform: rotate(45deg); }
+.inspector-body .perm-fold > summary:hover { color: var(--text-primary); }
 
 /* ── .grant-add-summary ── */
 .inspector-body .grant-add-summary::after { width: 5px; height: 5px; margin: 0 2px 0 1px; border-color: currentColor; color: var(--text-muted); }
 @media (prefers-reduced-motion: reduce) {
-  .inspector-body .perm-fold > summary::before, .inspector-body .changes-generated > summary::before { transition: none; } }
+  .inspector-body .perm-fold > summary::before { transition: none; } }
 /* "Add a rule" is a fold like the others: chevron first, no card around it. */
 .inspector-body .grant-add-section { padding-top: 14px; margin-top: 4px; }
 /* Sandbox status reads as a line under the Shell choice. */

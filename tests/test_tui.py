@@ -15,6 +15,7 @@ from wright.application.session.dispatch import (
 )
 from wright.application.session_runtime.interaction import RoutedPrompter
 from wright.domain.model.session import SessionAuthorization
+from wright.domain.model.settings import McpSettings, WrightSettings
 from wright.domain.model.tool import ToolCall, ToolResult
 from wright.domain.policy import PermissionChoice, PermissionPrompt
 from wright.interfaces.cli.args import parse_cli_args
@@ -209,12 +210,17 @@ def test_trusted_mcp_paths_exclude_project_config_until_opted_in(tmp_path, monke
     project_config.parent.mkdir(parents=True)
     project_config.write_text("{}", encoding="utf-8")
 
+    settings = WrightSettings()
     paths, ignored = _trusted_mcp_config_paths(
-        workspace, SimpleNamespace(trust_project_mcp=False)
+        workspace, SimpleNamespace(trust_project_mcp=False), settings
     )
     trusted_paths, trusted_ignored = _trusted_mcp_config_paths(
-        workspace, SimpleNamespace(trust_project_mcp=True)
+        workspace, SimpleNamespace(trust_project_mcp=True), settings
     )
+    by_setting, _ = _trusted_mcp_config_paths(
+        workspace, SimpleNamespace(trust_project_mcp=False), WrightSettings(mcp=McpSettings(trust_project=True))
+    )
+    assert by_setting[-1] == project_config
 
     assert paths == [tmp_path / "home" / "mcp.json"]
     assert ignored == project_config

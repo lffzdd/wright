@@ -19,6 +19,17 @@ describe("segmentTimeline", () => {
     ]);
   });
 
+  it("keeps a resolved allow line in the transcript", () => {
+    const segments = segmentTimeline([
+      item("t1", "tool", { name: "grep", call_id: "t1" }),
+      item("a", "approval", { phase: "approved", decision: "allow", interaction: { request_id: "a", kind: "permission", command: "ls" } }),
+      item("t2", "shell", { name: "shell", call_id: "t2" }),
+    ]);
+    expect(segments.map((segment) => segment.type === "item" ? segment.item.id : segment.steps.map((step) => step.key))).toEqual([
+      ["tool:t1"], "a", ["tool:t2"],
+    ]);
+  });
+
   it("keeps a question out of the surrounding steps", () => {
     const segments = segmentTimeline([
       item("r", "reasoning", { text: "think" }),

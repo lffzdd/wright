@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 import threading
 from collections.abc import Mapping
 from pathlib import Path
@@ -13,6 +12,7 @@ from typing import Any
 from ...core.file_lock import FileLock
 from ...core.paths import project_settings_path, user_settings_path
 from ...domain.model.settings import SettingScope, SettingsError
+from .files import replace_text
 
 _LOCK = threading.RLock()
 
@@ -85,21 +85,8 @@ def _set_key(data: dict[str, Any], parts: list[str], value: Any) -> None:
 
 
 def _replace(target: Path, data: Mapping[str, Any], *, private: bool) -> None:
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
-    )
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            json.dump(data, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(temporary, 0o600 if private else 0o644)
-        os.replace(temporary, target)
-    except Exception:
-        temporary.unlink(missing_ok=True)
-        raise
+    text = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    replace_text(target, text, mode=0o600 if private else 0o644)
 
 
 __all__ = ["JsonSettingsStore"]

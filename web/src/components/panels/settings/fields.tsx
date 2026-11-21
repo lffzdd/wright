@@ -1,16 +1,21 @@
+import { DotsThree, LockSimple } from "@phosphor-icons/react";
 import { useEffect, useState, type ReactNode } from "react";
 import { useT } from "../../../i18n";
 import type { RuntimeSetting, SettingScope } from "../../../types";
+import { MenuButton, type MenuEntry } from "../../ui/Menu";
 import { Select } from "../../ui/Select";
 import { Switch, Tag } from "../capability";
 import { display, fileValue } from "./useRuntimeSettings";
 
-export type FieldProps = {
-  item: RuntimeSetting;
-  scope: SettingScope;
-  save: (key: string, value: unknown) => Promise<void>;
+/** What every row needs from the page. */
+export type FieldContext = {
+  save: (key: string, value: unknown, scope: SettingScope) => Promise<void>;
   showKeys: boolean;
+  /** A project is open, so project-safe keys can be set for it alone. */
+  hasProject: boolean;
 };
+
+export type ControlProps = { label: string; stored: unknown; disabled: boolean; apply: (value: unknown) => void };
 
 /** The label of a key, falling back to the server's description for the hint. */
 export function useSettingText(item: RuntimeSetting): { label: string; hint: string } {
@@ -22,54 +27,102 @@ export function useSettingText(item: RuntimeSetting): { label: string; hint: str
   };
 }
 
+/** The file a row starts editing: the project's when it already sets the key. */
+function initialScope(item: RuntimeSetting, hasProject: boolean): SettingScope {
+  const projectSet = item.project_value !== null && item.project_value !== undefined;
+  return hasProject && item.scopes.includes("project") && projectSet ? "project" : "user";
+}
+
 /**
- * One setting: label, hint, and only the status worth reading. The source tag
- * shows when the value is not the default; the raw key only when asked for.
+ * One setting: label, hint, control, and a menu for the less common moves
+ * (set it for this project only, go back to the user value, reset). A value
+ * from the environment locks the row; the page header lists every such key.
  */
-export function SettingRow({ item, scope, save, showKeys, control, stacked = false, problem, children }: FieldProps & {
-  /** A blocking problem with the effective value, such as a model no session can reach. */
-  problem?: string;
+export function SettingRow({ item, ctx, control, stacked = false, problem, confirm, children }: {
+  item: RuntimeSetting;
+  ctx: FieldContext;
   /** Replaces the default control for this kind. */
-  control?: (props: { label: string; stored: unknown; disabled: boolean; apply: (value: unknown) => void }) => ReactNode;
+  control?: (props: ControlProps) => ReactNode;
   /** Full-width control below the text instead of beside it. */
   stacked?: boolean;
+  /** A blocking problem with the effective value, such as a model no session can reach. */
+  problem?: string;
+  /** Asked before a value is written; false keeps the old one. */
+  confirm?: (value: unknown) => Promise<boolean>;
   children?: ReactNode;
 }) {
   const tr = useT();
   const { label, hint } = useSettingText(item);
-  const editable = item.scopes.includes(scope);
+  const [scope, setScope] = useState<SettingScope>(() => initialScope(item, ctx.hasProject));
+  const projectSafe = ctx.hasProject && item.scopes.includes("project");
+  const locked = item.env_override;
+  const editable = item.scopes.includes(scope) && !locked;
   const stored = fileValue(item, scope);
   const isSet = stored !== null && stored !== undefined;
-  const apply = (value: unknown) => { save(item.key, value).catch(() => undefined); };
-  const fromElsewhere = item.source !== scope && item.source !== "default" && item.source !== "env";
+  const write = (value: unknown, target: SettingScope = scope) => {
+    ctx.save(item.key, value, target).catch(() => undefined);
+  };
+  const apply = (value: unknown) => {
+    if (!confirm || value === null) { write(value); return; }
+    confirm(value).then((ok) => { if (ok) write(value); }).catch(() => undefined);
+  };
   const body = control
     ? control({ label, stored, disabled: !editable, apply })
     : <SettingControl item={item} label={label} stored={stored} disabled={!editable} apply={apply} />;
-  const reset = editable && isSet
-    ? <button type="button" className="text-button" onClick={() => apply(null)}>{tr("web.runtime.reset")}</button>
-    : null;
-  const status = <>
-    {(item.source !== "default" || showKeys || !editable) && <div className="settings-status">
-      {showKeys && <code className="runtime-key">{item.key}</code>}
-      {item.source !== "default" && <Tag tone={item.source === "env" ? "warning" : "accent"}>{tr(`web.runtime.source.${item.source}`)}</Tag>}
-      {fromElsewhere && <span className="hint">{tr("web.runtime.in_use", { value: display(item.value) || tr("web.runtime.empty") })}</span>}
-      {!editable && <span className="hint">{tr("web.runtime.user_only")}</span>}
-    </div>}
-    {item.env_override && <p className="settings-env-note">{tr("web.runtime.env_note", { name: item.env.join(" / ") })}</p>}
-    {problem && <p className="settings-problem" role="note">{tr("web.runtime.problem", { message: problem })}</p>}
-  </>;
+  const projectSet = item.project_value !== null && item.project_value !== undefined;
+  const menu = rowMenu({ tr, projectSafe, scope, isSet: isSet && editable, projectSet, locked, setScope, write });
+  // Editing one file while the other decides: say what is in effect.
+  const elsewhere = !locked && item.source !== scope && item.source !== "default";
   return <div className={`settings-row runtime-row${stacked ? " stacked" : ""}`} data-setting={item.key}>
     <div className="runtime-meta">
-      <span className="settings-label">{label}</span>
+      <span className="settings-label">
+        {label}
+        {scope === "project" && <Tag tone="accent">{tr("web.settings.row.this_project")}</Tag>}
+      </span>
       {hint && <p className="hint">{hint}</p>}
-      {status}
+      {(ctx.showKeys || elsewhere) && <div className="settings-status">
+        {ctx.showKeys && <code className="runtime-key">{item.key}</code>}
+        {elsewhere && <span className="hint">{tr(`web.settings.row.in_use_${item.source}`, { value: display(item.value) || tr("web.runtime.empty") })}</span>}
+      </div>}
+      {problem && <p className="settings-problem" role="note">{tr("web.runtime.problem", { message: problem })}</p>}
     </div>
     <div className="runtime-control">
       {body}
-      {reset ?? <span aria-hidden="true" />}
+      <div className="settings-row-tools">
+        {locked && <span className="settings-lock" role="img" aria-label={tr("web.settings.locked_by", { name: item.env.join(" / ") })}
+          title={tr("web.settings.locked_by", { name: item.env.join(" / ") })}><LockSimple size={14} /></span>}
+        {menu.length > 0 && <MenuButton label={tr("web.settings.row.more", { name: label })} items={menu}>
+          <DotsThree size={16} weight="bold" />
+        </MenuButton>}
+      </div>
     </div>
     {children}
   </div>;
+}
+
+function rowMenu({ tr, projectSafe, scope, isSet, projectSet, locked, setScope, write }: {
+  tr: ReturnType<typeof useT>;
+  projectSafe: boolean;
+  scope: SettingScope;
+  isSet: boolean;
+  projectSet: boolean;
+  locked: boolean;
+  setScope: (scope: SettingScope) => void;
+  write: (value: unknown, target?: SettingScope) => void;
+}): MenuEntry[] {
+  if (locked) return [];
+  const items: MenuEntry[] = [];
+  if (projectSafe && scope === "user") {
+    items.push({ label: tr("web.settings.row.project_only"), hint: tr("web.settings.row.project_only_hint"), onSelect: () => setScope("project") });
+  }
+  if (projectSafe && scope === "project") {
+    items.push({
+      label: tr("web.settings.row.use_user"),
+      onSelect: () => { if (projectSet) write(null, "project"); setScope("user"); },
+    });
+  }
+  if (isSet) items.push({ label: tr("web.runtime.reset"), onSelect: () => write(null) });
+  return items;
 }
 
 function SettingControl({ item, label, stored, disabled, apply }: {
@@ -88,14 +141,16 @@ function SettingControl({ item, label, stored, disabled, apply }: {
     return <Select className="field-select" ariaLabel={label} disabled={disabled} value={typeof stored === "string" ? stored : ""}
       onChange={(next) => apply(next || null)}
       options={[
-        { value: "", label: tr("web.runtime.default_option", { value: display(item.default) }) },
-        ...item.choices.map((choice) => {
-          const key = `web.setting.choice.${item.key}.${choice}`;
-          return { value: choice, label: tr(key) === key ? choice : tr(key) };
-        }),
+        { value: "", label: tr("web.runtime.default_option", { value: choiceLabel(tr, item.key, display(item.default)) }) },
+        ...item.choices.map((choice) => ({ value: choice, label: choiceLabel(tr, item.key, choice) })),
       ]} />;
   }
   return <TextSetting item={item} label={label} stored={stored} disabled={disabled} apply={apply} />;
+}
+
+export function choiceLabel(tr: ReturnType<typeof useT>, key: string, choice: string): string {
+  const name = `web.setting.choice.${key}.${choice}`;
+  return tr(name) === name ? choice : tr(name);
 }
 
 export function TextSetting({ item, label, stored, disabled, apply }: {

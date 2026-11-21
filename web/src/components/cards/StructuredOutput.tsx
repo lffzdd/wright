@@ -109,7 +109,11 @@ export function StructuredOutput({ value }: { value: unknown }) {
       {(prose.length > 1 || fields.length > 0 || title) && <div className="so-label">{key}</div>}
       <Expandable>{markdown ? <div className="markdown-body"><MarkdownContent content={text} /></div> : <pre className="so-text">{text}</pre>}</Expandable>
     </section>)}
-    <details className="so-raw">
+    <details className="so-raw" onToggle={(event) => {
+      if (!event.currentTarget.open) return;
+      const panel = event.currentTarget.lastElementChild;
+      if (panel instanceof HTMLElement) panel.scrollIntoView({ block: "nearest" });
+    }}>
       <summary><CaretDown size={11} aria-hidden="true" />{tr("web.output.raw")}</summary>
       <JsonView value={record} />
     </details>

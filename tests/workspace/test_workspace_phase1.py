@@ -15,14 +15,25 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from wright.application.agent.context import ContextBuilder, ContextCompactor
+from wright.application.agent.context import (
+    MAX_OUTPUT_RESERVE,
+    ContextBuilder,
+    ContextCompactor,
+    default_output_reserve,
+)
 from wright.application.composition.agent_factory import create_agent
 from wright.application.composition.stores import open_autonomy_store, skill_store
 from wright.application.memory.service import MemoryService
 from wright.application.permission.resources import resource_change
 from wright.application.permission.service import PermissionService
 from wright.application.workspace.catalog import WorkspaceCatalog
-from wright.application.workspace.context_usage import MAX_ITEMS, classify_context
+from wright.application.workspace.context_usage import (
+    MAX_ITEMS,
+    calibrate,
+    classify_context,
+    context_detail,
+    history_entry,
+)
 from wright.application.workspace.documents import render_documents, store_document
 from wright.application.workspace.files import (
     PathRejected,
@@ -117,10 +128,14 @@ def test_context_categories_are_exclusive_estimates():
     assert by_id["skills"]["items"][0]["count"] == 1
     assert by_id["user"]["items"][0]["label"] == "fix the bug"
     assert by_id["assistant"]["tokens"] > 0
-    # The resident memory block moves out of the system prompt into memory.
-    assert {item["key"] for item in by_id["memory"]["items"]} == {"resident_memory", "recalled_facts"}
+    # The resident memory block moves out of the system prompt into memory;
+    # recall changes every turn, so it counts with the conversation.
+    assert [item["key"] for item in by_id["memory"]["items"]] == ["resident_memory"]
+    assert by_id["recalled_memory"]["group"] == "conversation"
+    assert [item["key"] for item in by_id["recalled_memory"]["items"]] == ["recalled_facts"]
     assert by_id["system_prompt"]["tokens"] > 0
     assert by_id["system_prompt"]["group"] == "fixed"
+    assert by_id["system_prompt"]["items"][0]["label"] == "You are helpful."
 
 
 def test_context_items_name_each_tool_call_and_mcp_server():
@@ -150,13 +165,80 @@ def test_context_items_name_each_tool_call_and_mcp_server():
     assert [(item["label"], item["detail"]) for item in outputs] == [("shell", "pytest -q"), ("read_file", "src/app.py")]
     assert outputs[1]["folded"] is True and outputs[1]["call_id"] == "c1"
     assert report["folded"] == {"count": 1, "tokens": 120}
-    assert by_id["skills"]["items"][0]["label"] == "release-check"
-    assert by_id["skills"]["items"][0]["loaded"] is True
-    schemas = {item["label"]: item for item in by_id["tool_schemas"]["items"]}
-    assert (schemas["demo"]["mcp"], schemas["demo"]["count"]) == ("demo", 2)
-    assert "read_file" in schemas
-    assert by_id["tool_schemas"]["tokens"] == 30
-    assert by_id["assistant"]["items"][0]["label"] == "read_file, shell, load_skill"
+    assert by_id["loaded_skills"]["items"][0]["label"] == "release-check"
+    assert by_id["loaded_skills"]["items"][0]["loaded"] is True
+    # MCP schemas are their own category; built-in tools keep the rest.
+    servers = by_id["mcp_schemas"]["items"]
+    assert [(item["label"], item["mcp"], item["count"]) for item in servers] == [("demo", "demo", 2)]
+    assert [item["label"] for item in by_id["tool_schemas"]["items"]] == ["read_file"]
+    assert by_id["tool_schemas"]["tokens"] + by_id["mcp_schemas"]["tokens"] == 30
+    # A reply with no text is only tool-call arguments.
+    assert by_id["assistant"]["tokens"] == 0
+    assert {item["label"] for item in by_id["tool_calls"]["items"]} == {"read_file", "shell", "load_skill"}
+    assert by_id["tool_calls"]["count"] == 3
+
+
+def test_context_splits_replies_and_routes_tool_results():
+    view = SimpleNamespace(
+        entries=(
+            _Message("user", "look", parts=[{"type": "text", "text": "look"}, {"type": "image"}, {"type": "image"}]),
+            _Message("assistant", "Reading now.", reasoning_content="r" * 400, tool_calls=[
+                _call("c1", "write", path="a.py", content="z" * 800),
+                _call("c2", "mcp__demo__clock"),
+                _call("c3", "spawn_agent", task="review"),
+                _call("c4", "read", path="a.py"),
+                _call("c5", "read", path="b.py"),
+            ]),
+            _tool_result("c1", "ok"),
+            _tool_result("c2", "noon"),
+            _tool_result("c3", "done " * 50),
+            _tool_result("c4", "x" * 400),
+            _tool_result("c5", "y" * 200),
+        ),
+        tool_schema_tokens=0,
+        output_reserve_tokens=0,
+    )
+    report = classify_context(view)
+    by_id = {item["id"]: item for item in report["categories"]}
+    assert sum(item["tokens"] for item in report["categories"]) == report["total"]
+    assert by_id["attachments"]["tokens"] == 2048
+    assert by_id["attachments"]["items"][0]["count"] == 2
+    assert by_id["reasoning"]["tokens"] > 0
+    assert by_id["tool_calls"]["tokens"] > by_id["assistant"]["tokens"] > 0
+    assert by_id["assistant"]["items"][0]["label"] == "Reading now."
+    assert [item["label"] for item in by_id["mcp_output"]["items"]] == ["mcp__demo__clock"]
+    assert [item["label"] for item in by_id["subagent_output"]["items"]] == ["spawn_agent"]
+    assert {item["label"] for item in by_id["tool_output"]["items"]} == {"write", "read"}
+    reads = next(item for item in by_id["tool_output"]["by_tool"] if item["label"] == "read")
+    assert reads["count"] == 2
+    assert by_id["tool_output"]["by_tool"][0]["label"] == "read"
+
+
+def test_context_reports_where_folding_starts():
+    view = SimpleNamespace(entries=(), tool_schema_tokens=0, output_reserve_tokens=1000, context_limit=10_000)
+    assert classify_context(view, watermark=0.75)["fold_at"] == 6500
+    assert "fold_at" not in classify_context(view)
+
+
+def test_calibration_anchors_the_total_on_the_last_provider_count():
+    report = calibrate({"used": 1200}, [{"estimated": 900, "actual": 1000}, {"estimated": 1100, "actual": 1300}])
+    # 1300 counted for the last request, plus 100 estimated since.
+    assert report["calibrated_used"] == 1400
+    assert report["anchor"] == {"actual": 1300, "estimated": 1100}
+    assert len(report["history"]) == 2
+    unanchored = calibrate({"used": 1200}, [{"estimated": 900}])
+    assert "calibrated_used" not in unanchored
+    assert unanchored["history"] == [{"estimated": 900}]
+    assert calibrate({"used": 5}, [{"estimated": 900, "actual": 100}])["calibrated_used"] == 0
+    assert history_entry({"used": 50}, 70) == {"estimated": 50, "actual": 70}
+    assert history_entry({"used": 50}, None) == {"estimated": 50}
+
+
+def test_reply_reserve_is_capped_for_large_windows():
+    assert default_output_reserve(8_000) == 1_000
+    assert default_output_reserve(200_000) == 25_000
+    assert default_output_reserve(1_000_000) == MAX_OUTPUT_RESERVE
+    assert default_output_reserve(None) == 0
 
 
 def test_context_lists_only_the_largest_items():
@@ -168,6 +250,82 @@ def test_context_lists_only_the_largest_items():
     assert user["items"][0]["label"].startswith(f"message {MAX_ITEMS + 3}")
 
 
+def _turn_view():
+    return SimpleNamespace(
+        entries=(
+            _Message("system", "You are helpful.\n\nAlways available: read.\n\nFollow the user's language."),
+            _Message("user", "first task", "user_input"),
+            _Message("assistant", "On it.", reasoning_content="think " * 40, tool_calls=[_call("c1", "read", path="a.py")]),
+            _tool_result("c1", "line\n" * 300),
+            _Message("assistant", "Done."),
+            _Message("user", "second task", "user_input"),
+            _Message("assistant", "Sure."),
+            _Message("user", "<plan-state>\n1. x\n</plan-state>", "transient"),
+        ),
+        tools=({"name": "read", "description": "Read", "parameters": {}},),
+        tool_schema_tokens=10,
+        output_reserve_tokens=0,
+    )
+
+
+def test_system_prompt_is_split_into_sections():
+    report = classify_context(_turn_view())
+    system = next(item for item in report["categories"] if item["id"] == "system_prompt")
+    assert [item["key"] for item in sorted(system["items"], key=lambda item: item["id"])] == [
+        "system_role", "system_rules", "system_tools",
+    ]
+    assert system["count"] == 1
+
+
+def test_context_adds_up_each_turn():
+    report = classify_context(_turn_view())
+    first, second = report["turns"]
+    assert (first["label"], second["label"]) == ("first task", "second task")
+    assert first["parts"]["reasoning"] > 0 and first["parts"]["tool_results"] > first["parts"]["tool_calls"] > 0
+    assert second["parts"]["tool_calls"] == 0
+    assert first["tokens"] == sum(first["parts"].values())
+    # Every conversation token except this request's own reminders belongs to a turn.
+    by_id = {item["id"]: item for item in report["categories"]}
+    turned = sum(by_id[name]["tokens"] for name in ("user", "assistant", "reasoning", "tool_calls", "tool_output"))
+    assert first["tokens"] + second["tokens"] == turned
+    assert "turn" not in by_id["plan"]["items"][0]
+    # The snapshot carries no content; it is fetched on demand.
+    assert all("content" not in item for category in report["categories"] for item in category["items"])
+
+
+def test_context_detail_lists_every_item_with_its_content():
+    report = classify_context(_turn_view(), detail=True)
+    turn = context_detail(report, turn=0)
+    assert turn["turn"]["label"] == "first task"
+    assert [item["category"] for item in turn["items"]] == ["user", "tool_calls", "reasoning", "assistant", "tool_output", "assistant"]
+    assert turn["tokens"] == turn["turn"]["tokens"]
+    result = next(item for item in turn["items"] if item["category"] == "tool_output")
+    assert result["content"] == "line\n" * 300
+    call = next(item for item in turn["items"] if item["category"] == "tool_calls")
+    assert json.loads(call["content"]) == {"path": "a.py"}
+    schemas = context_detail(report, category="tool_schemas")
+    assert json.loads(schemas["items"][0]["content"])["name"] == "read"
+    role = next(item for item in context_detail(report, category="system_prompt")["items"] if item["key"] == "system_role")
+    assert role["content"] == "You are helpful."
+    # Ids are stable between the snapshot and the detail view.
+    snapshot_ids = {item["id"] for category in classify_context(_turn_view())["categories"] for item in category["items"]}
+    assert snapshot_ids <= {item["id"] for category in report["categories"] for item in category["items"]}
+    with pytest.raises(KeyError):
+        context_detail(report, category="nope")
+    with pytest.raises(KeyError):
+        context_detail(report, turn=9)
+    # The whole request in wire order: system message, tool list, then the conversation.
+    order = list(dict.fromkeys(item["category"] for item in context_detail(report)["items"]))
+    assert order[:3] == ["system_prompt", "tool_schemas", "user"]
+
+
+def test_context_detail_caps_long_content():
+    view = SimpleNamespace(entries=(_Message("user", "x" * 100_000, "user_input"),), tool_schema_tokens=0, output_reserve_tokens=0)
+    item = context_detail(classify_context(view, detail=True), category="user")["items"][0]
+    assert item["truncated"] is True
+    assert len(item["content"]) < 100_000
+
+
 def test_preview_folds_old_tool_output_like_the_real_request():
     records = [MessageRecord("m0", {"role": "system", "content": "prompt"}, "history")]
     for index in range(6):
@@ -176,8 +334,11 @@ def test_preview_folds_old_tool_output_like_the_real_request():
         records.append(MessageRecord(f"t{index}", {"role": "tool", "tool_call_id": call_id, "content": json.dumps({"ok": True, "data": "w " * 3000})}, "history"))
     builder = ContextBuilder(ContextCompactor(context_watermark=0.5, keep_recent_tool_results=2))
     view = builder.build(records, tools=[], context_limit=8000)
-    report = classify_context(view, preview=True)
+    report = classify_context(view, preview=True, watermark=0.5, limit=8000)
     assert report["preview"] is True
+    # A real view carries no limit of its own; the caller passes it.
+    assert report["limit"] == 8000
+    assert report["fold_at"] == 4000 - 1000
     assert report["folded"]["count"] == 4
     assert report["folded"]["tokens"] > 0
     outputs = next(item for item in report["categories"] if item["id"] == "tool_output")
@@ -634,12 +795,25 @@ def test_workspace_http_isolates_projects_and_preferences(tmp_path: Path, monkey
         )
         assert sized.status_code == 200
         assert sized.json()["inspector_width"] == 420
+        wide = client.put(
+            "/api/v1/preferences",
+            json={"inspector_width": 800},
+            headers={"origin": "http://testserver"},
+        )
+        assert wide.status_code == 200
+        assert wide.json()["inspector_width"] == 800
         rejected = client.put(
             "/api/v1/preferences",
             json={"inspector_width": 120},
             headers={"origin": "http://testserver"},
         )
         assert rejected.status_code == 400
+        too_wide = client.put(
+            "/api/v1/preferences",
+            json={"inspector_width": 801},
+            headers={"origin": "http://testserver"},
+        )
+        assert too_wide.status_code == 400
         assert client.get("/api/v1/preferences").json()["sidebar_open"] is True
         rail = client.put(
             "/api/v1/preferences",
@@ -655,6 +829,21 @@ def test_workspace_http_isolates_projects_and_preferences(tmp_path: Path, monkey
             headers={"origin": "http://testserver"},
         )
         assert narrow.status_code == 400
+        assert client.get("/api/v1/preferences").json()["thought_style"] == "quiet"
+        lead = client.put(
+            "/api/v1/preferences",
+            json={"thought_style": "lead"},
+            headers={"origin": "http://testserver"},
+        )
+        assert lead.status_code == 200
+        assert lead.json()["thought_style"] == "lead"
+        assert client.get("/api/v1/preferences").json()["thought_style"] == "lead"
+        unknown = client.put(
+            "/api/v1/preferences",
+            json={"thought_style": "loud"},
+            headers={"origin": "http://testserver"},
+        )
+        assert unknown.status_code == 422
         commands = client.get("/api/v1/commands")
         assert commands.status_code == 200
         assert any(item["name"] == "/help" for item in commands.json())
@@ -736,6 +925,21 @@ def test_switching_workspace_does_not_retarget_a_running_root(tmp_path: Path, mo
         preview = {item["id"]: item["tokens"] for item in body["context_breakdown"]["categories"]}
         assert preview["tool_schemas"] > 0
         assert body["timeline"] == []
+        detail = client.get(f"/api/v1/sessions/{session_id}/context/detail", params={"category": "tool_schemas"})
+        assert detail.status_code == 200
+        schemas = detail.json()["items"]
+        assert len(schemas) == detail.json()["category"]["count"]
+        assert all(item["content"].startswith("{") for item in schemas)
+        assert client.get(f"/api/v1/sessions/{session_id}/context/detail", params={"category": "nope"}).status_code == 404
+        assert client.get(f"/api/v1/sessions/{session_id}/context/detail", params={"turn": 0}).status_code == 404
+        assert client.get(f"/api/v1/sessions/{session_id}/context/detail").status_code == 400
+        # The whole next request in order; nothing has been sent yet.
+        whole = client.get(f"/api/v1/sessions/{session_id}/context/request", params={"raw": True}).json()
+        assert "source" not in whole and whole["calibrated_used"] is None
+        seqs = [item["seq"] for item in whole["items"]]
+        assert seqs == sorted(seqs) and whole["items"][0]["category"] == "system_prompt"
+        assert whole["request"]["messages"][0]["role"] == "system" and whole["request"]["tools"]
+        assert client.get(f"/api/v1/sessions/{session_id}/skills").json() == {"skills": []}
         assert "stream_id" in body
     finally:
         manager.shutdown()
@@ -900,3 +1104,24 @@ def test_agent_preview_folds_without_announcing_compaction(tmp_path: Path):
     assert report["folded"]["count"] > 0
     assert report["used"] < 12000
     assert announced == []
+
+
+def test_list_directory_marks_git_ignored_entries(tmp_path: Path):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / ".gitignore").write_text("log/\n.env\n", encoding="utf-8")
+    (tmp_path / "log").mkdir()
+    (tmp_path / ".env").write_text("X=1\n", encoding="utf-8")
+    (tmp_path / "main.py").write_text("print(1)\n", encoding="utf-8")
+    entries = {item["name"]: item for item in list_directory(tmp_path, "")["entries"]}
+    assert entries["log"].get("ignored") is True
+    assert entries[".env"].get("ignored") is True
+    assert "ignored" not in entries["main.py"]
+    assert "ignored" not in entries[".gitignore"]
+
+
+def test_list_directory_outside_git_marks_nothing_ignored(tmp_path: Path):
+    (tmp_path / "a.txt").write_text("a\n", encoding="utf-8")
+    entries = list_directory(tmp_path, "")["entries"]
+    assert all("ignored" not in item for item in entries)

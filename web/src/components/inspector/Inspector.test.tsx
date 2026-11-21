@@ -158,6 +158,18 @@ describe("Inspector request and content state", () => {
     expect(document.querySelector(".inspector-split-bar")).toBeNull();
   });
 
+  it("keeps a split slot on every tab so labels do not jump", () => {
+    render(inspector(view()));
+    expect(document.querySelector(".inspector-split-slot")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Show Files below" })).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: /Changes/ }));
+    expect(document.querySelector(".inspector-split-slot")).toBeNull();
+    expect(screen.getByRole("button", { name: "Show Files below" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: /Context/ }));
+    expect(document.querySelector(".inspector-split-slot")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /below/ })).toBeNull();
+  });
+
   it("keeps the scope explanation in a tooltip and a screen-reader description", async () => {
     vi.mocked(api.changes).mockResolvedValue({ changes: [], baseline: "HEAD", local_warning: false });
     render(inspector(view()));
@@ -169,11 +181,10 @@ describe("Inspector request and content state", () => {
     expect(document.querySelector(".changes-scope-info")?.getAttribute("title")).toBe(help?.textContent);
   });
 
-  it("switches tabs on press and draws one shared highlight", () => {
+  it("switches tabs on press", () => {
     render(inspector(view()));
     fireEvent.mouseDown(screen.getByRole("tab", { name: /Context/ }), { button: 0 });
     expect(screen.getByRole("tab", { name: /Context/ }).getAttribute("aria-selected")).toBe("true");
-    expect(document.querySelectorAll(".inspector-tab-indicator")).toHaveLength(1);
     fireEvent.mouseDown(screen.getByRole("tab", { name: /Overview/ }), { button: 2 });
     expect(screen.getByRole("tab", { name: /Context/ }).getAttribute("aria-selected")).toBe("true");
   });
@@ -357,11 +368,15 @@ describe("Inspector files, context and visibility", () => {
     expect(screen.getByRole("img", { name: "6% of the context window used" })).toBeTruthy();
     // The short label carries the full meaning in its tooltip.
     expect(screen.getByTitle("Estimate before the next request").textContent).toBe("estimate");
+    // What every request carries is folded until opened; the reserve is a single row.
+    fireEvent.click(screen.getByRole("button", { name: /Sent every request/ }));
     const labels = [...document.querySelectorAll(".ctx-legend-label")].map((item) => item.textContent);
-    expect(labels).toEqual(["Tool definitions", "System prompt", "Reply reserve"]);
+    expect(labels).toEqual(["System prompt", "Tool definitions"]);
+    expect(screen.getByText("Kept free")).toBeTruthy();
     // Free space is stated once, beside the total, rather than as a legend row.
     expect(document.querySelector(".ctx-sub")?.textContent).toBe("120K left");
-    expect(screen.getByText("Empty: Plan")).toBeTruthy();
+    // Empty categories are left out rather than listed.
+    expect(screen.queryByText(/Plan/)).toBeNull();
   });
 
   it("warns near the context limit", () => {

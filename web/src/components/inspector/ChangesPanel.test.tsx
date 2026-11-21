@@ -89,6 +89,9 @@ describe("Changes user workflow", () => {
     const fold = unstaged.querySelector<HTMLDetailsElement>("details.changes-generated")!;
     expect(fold.open).toBe(false);
     expect(fold.querySelector("summary")?.textContent).toContain("Build output · 2 files");
+    // The fold sits above reviewed files, and the header counts it.
+    expect(fold.compareDocumentPosition(screen.getByRole("button", { name: /M src\/app.ts/ })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("incl. 2 build output")).toBeTruthy();
     expect(fold.querySelectorAll(".changes-file")).toHaveLength(2);
     expect(screen.getByRole("button", { name: /^A pkg\/static\/assets\/index-1.js/ })).toBeTruthy();
     const row = screen.getByRole("button", { name: /M src\/app.ts/ });
@@ -257,12 +260,46 @@ describe("Changes user workflow", () => {
     render(panel());
     await screen.findByText("Commit message");
     await screen.findByRole("button", { name: /M\s*src\/a.txt/ });
-    const commit = screen.getByRole("button", { name: "Commit staged changes" }) as HTMLButtonElement;
+    const commit = screen.getByRole("button", { name: "Commit 1 file" }) as HTMLButtonElement;
     expect(commit.disabled).toBe(true);
     fireEvent.change(screen.getByLabelText("Commit message"), { target: { value: "Fix parser" } });
     fireEvent.click(commit);
     await waitFor(() => expect(api.changeAction).toHaveBeenCalledWith("a", expect.objectContaining({ action: "commit", scope: "staged", message: "Fix parser", expected_revision: "s1", confirm: true })));
     expect(vi.mocked(api.changeAction).mock.calls.every((call) => call[1].action === "commit")).toBe(true);
+  });
+
+  it("submits the commit with Ctrl+Enter and hides the commit bar without staged files", async () => {
+    git([], summary().changes);
+    const { unmount } = render(panel());
+    const field = await screen.findByLabelText("Commit message");
+    fireEvent.change(field, { target: { value: "Fix parser" } });
+    fireEvent.keyDown(field, { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(api.changeAction).toHaveBeenCalledWith("a", expect.objectContaining({ action: "commit" })));
+    unmount();
+    git(summary().changes);
+    render(panel());
+    await screen.findByRole("button", { name: /M\s*src\/a.txt/ });
+    expect(screen.queryByLabelText("Commit message")).toBeNull();
+  });
+
+  it("groups a long list by directory and shows only file names under each header", async () => {
+    const rows = (dir: string, count: number) => Array.from({ length: count }, (_, index) => (
+      { path: `${dir}f${index}.ts`, status: "M", unstaged: true, additions: 1, deletions: 0 }));
+    git([...rows("src/a/", 6), ...rows("src/b/", 4), ...rows("", 1), ...rows(".github/", 1)]);
+    render(panel());
+    const unstaged = await screen.findByRole("region", { name: "Unstaged" });
+    const dirs = [...unstaged.querySelectorAll<HTMLDetailsElement>("details.changes-dir")];
+    expect(dirs.map((item) => item.querySelector("bdi")?.textContent)).toEqual(["src/a/", "src/b/"]);
+    expect(dirs.every((item) => item.open)).toBe(true);
+    expect(dirs[0].querySelectorAll(".changes-file")).toHaveLength(6);
+    expect(dirs[0].querySelector(".changes-file-dir")?.textContent).toBe("");
+    // A directory with one file gets no header: the row keeps its full path, sorted among the folds.
+    const lone = screen.getByRole("button", { name: /M \.github\/f0.ts/ });
+    expect(lone.closest("details")).toBeNull();
+    expect(lone.querySelector(".changes-file-dir")?.textContent).toBe(".github/");
+    const root = screen.getByRole("button", { name: /M f0.ts/ });
+    expect(lone.compareDocumentPosition(root) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(root.compareDocumentPosition(dirs[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("does not let a previous session's action report overwrite the new session", async () => {

@@ -17,7 +17,8 @@ export type Draft = {
   reason: string;
 };
 
-export const emptyDraft = (): Draft => ({
+/** A new draft; ``execution_mode`` starts from the user's default (sandbox.default_execution). */
+export const emptyDraft = (execution_mode: ExecutionMode = "sandbox"): Draft => ({
   prompt: "", attachments: [], documents: [], references: [], command: null, mentions: [], commandId: null,
-  clientRequestId: null, boundSessionId: null, environment: "local", execution_mode: "sandbox", localFiles: [], phase: "idle", reason: "",
+  clientRequestId: null, boundSessionId: null, environment: "local", execution_mode, localFiles: [], phase: "idle", reason: "",
 });

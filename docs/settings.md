@@ -42,6 +42,7 @@ sessions.
 | `llm.transport` | `auto` \| `chat` \| `responses` \| `messages` | `auto` | `WRIGHT_LLM_TRANSPORT` | no |
 | `llm.base_url` | string | empty (the model's provider) | `OPENAI_BASE_URL` | no |
 | `session.auto_title` | boolean | true | `WRIGHT_AUTO_TITLE` | no |
+| `skills.disabled` | list of skill ids | empty | `WRIGHT_DISABLED_SKILLS` (comma-separated) | yes |
 | `memory.enabled` | boolean | true | `WRIGHT_MEMORY_ENABLED` | no |
 | `memory.recall` | boolean | true | `WRIGHT_MEMORY_RECALL` | no |
 | `memory.auto_extract` | boolean | true | `WRIGHT_MEMORY_AUTO_EXTRACT` | no |
@@ -51,11 +52,22 @@ sessions.
 | `knowledge.reranker` | boolean | false | `WRIGHT_KNOWLEDGE_RERANKER` | no |
 | `knowledge.rag_dir` | path | empty | `WRIGHT_RAG_DIR` | no |
 | `knowledge.index` | path | `simple_index.json` in `rag_dir` | `WRIGHT_KNOWLEDGE_INDEX` | no |
+| `tools.web_search` | `auto` \| `tavily` \| `brave` \| `off` | `auto` (first provider with a key) | `WRIGHT_SEARCH_PROVIDER` | no |
+| `mcp.trust_project` | boolean | false | `WRIGHT_TRUST_PROJECT_MCP` | no |
+| `sandbox.default_execution` | `sandbox` \| `host` | `sandbox` | `WRIGHT_DEFAULT_EXECUTION` | no |
+| `sandbox.egress` | `proxy` \| `legacy` | `proxy` | `WRIGHT_SANDBOX_EGRESS` | no |
+| `hooks.config` | path | empty (no hooks) | `WRIGHT_HOOKS_CONFIG` | no |
 
 The schema lives in `domain/model/settings.py` (`SETTING_SPECS`); this table
-follows it. The `memory.*` switches are described in [memory.md](memory.md#配置); a
+follows it. `skills.disabled` drops those skills from the catalog the model
+sees and makes `load_skill` refuse them; it is read on every request, so the
+Context tab's switches take effect on the next one. A body loaded before the
+switch stays in the conversation. The `memory.*` switches are described in [memory.md](memory.md#配置); a
 project file cannot set them, so a cloned repository cannot turn memory back
-on. An empty environment variable counts as unset. Booleans in the
+on. `mcp.trust_project`, `sandbox.*` and `hooks.config` are about trust and
+code execution, so only the user file or the environment may set them; see
+[permissions.md](permissions.md). `--trust-project-mcp`, `--execution-mode` and
+`--hooks-config` still win for one run. An empty environment variable counts as unset. Booleans in the
 environment accept `1/true/yes/on` and `0/false/no/off`.
 
 ## Model catalog
@@ -149,40 +161,74 @@ them in a project file and logs a warning naming the file and key.
   stands.
 - Keys that look like credentials (`api_key`, `token`, `secret`, `password`)
   are rejected in any file. Put secrets in the environment or `.env`.
-- An unreadable user file, or an invalid `llm.base_url`, `knowledge.rag_dir`
-  or `knowledge.index` in the user file, stops startup instead of falling
-  back. A fallback could send the API key to the default endpoint or load
-  code from somewhere else. An unreadable project file is only a warning.
+- An unreadable user file, or an invalid `llm.base_url`, `knowledge.rag_dir`,
+  `knowledge.index` or `hooks.config` in the user file, stops startup instead
+  of falling back. A fallback could send the API key to the default endpoint,
+  load code from somewhere else, or drop the hooks that deny tool calls. An
+  unreadable project file is only a warning.
+- `sandbox.default_execution` and `sandbox.egress` fall back to their default
+  on an invalid value, because the default (`sandbox`, `proxy`) is the
+  stricter choice.
 
 ## Not in settings
 
 These stay environment-only:
 
-- Secrets: `OPENAI_API_KEY`, the provider keys in the model catalog table
-  (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `ZAI_API_KEY`;
-  read from `~/.wright/.env` or the environment, not a project `.env`),
-  `TAVILY_API_KEY`, `SILICONFLOW_API_KEY`,
-  `LLM_API_KEY` and embedding settings read by the optional RAG embedder. A
-  keychain-backed secret store may come later.
-- `WRIGHT_HOME` and `WRIGHT_MEMORY_DIR`, which locate state, including the
-  settings file itself.
-- Permission, trust and sandbox switches (`WRIGHT_PERMISSION_CONFIG`,
-  `WRIGHT_PERMISSION_INTERACTIVE`, `WRIGHT_TRUST_PROJECT_MCP`). Permission
-  settings have their own files; see [permissions.md](permissions.md).
-- Interface preferences (language, theme) in `~/.wright/preferences.json`.
+- `WRIGHT_HOME`, `WRIGHT_MEMORY_DIR` and `WRIGHT_PERMISSION_CONFIG`, which
+  locate state, including the settings file itself, and
+  `WRIGHT_PERMISSION_INTERACTIVE`, a process switch for tests and scripts. The
+  web console shows their values under Advanced.
+- Interface preferences (language, theme, how thinking is shown) in `~/.wright/preferences.json`.
+
+API keys are not settings either. They live in `~/.wright/.env` or the
+environment and are never written to a settings file. The web console can
+set and remove the keys it knows (see below); `LLM_API_KEY` and the RAG
+embedder's other variables are still edited by hand.
+
+## API keys
+
+The keys Wright knows are `OPENAI_API_KEY` and the provider keys of the model
+catalog (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`,
+`ZAI_API_KEY`, `DASHSCOPE_API_KEY`), `TAVILY_API_KEY`, `BRAVE_API_KEY` and
+`SILICONFLOW_API_KEY`. For each the console reports only where it comes from:
+
+- `file`: set in `~/.wright/.env`;
+- `env`: set outside that file (the shell or a project `.env`), which wins at
+  startup, so the console leaves it alone;
+- `missing`.
+
+Writing a key replaces its line in `~/.wright/.env`, keeps every other line,
+writes the file atomically with mode 0600, and updates the running process,
+so the next session uses it without a restart. Values are one line of
+printable text without quotes or backslashes. No response ever contains a
+value.
 
 ## Editing settings
 
-**Web console:** Settings groups the keys by task (Models, Context & cost,
-Memory, Sessions, Knowledge search, Advanced) and can search across them. A key shows
-its source only when it is not the default; Advanced → "Show configuration
-keys" adds the dotted key names. "Save to" picks which file an edit goes to;
-user-only keys are read-only in project scope. The Models section lists each
-catalog provider and whether its key variable is set (never the key), and
-suggests catalog models with their context window and price. When the
-effective `llm.model` or `llm.memory_model` cannot be routed (no key, not in
-the catalog), the row shows the error a new session would stop with; `llm.prices` and
-`llm.context_limits` are edited as tables.
+**Web console:** Settings has eight sections: General, Models, Context & cost,
+Permissions, Tools, Memory, Knowledge search and Advanced, and a search across
+all of them.
+
+- Each row edits the user file. For a project-safe key, the row's menu offers
+  "Set for this project only", which switches that row to the project file;
+  "Use the value for all projects" removes the project value. A row says
+  which file is in effect when it edits the other one.
+- A key set by an environment variable is locked, with a lock icon on the
+  row and one summary at the top of the page listing every such key.
+- Models first asks how models are reached: provider keys (each catalog
+  provider with its key and whether it is ready) or one custom endpoint (its
+  URL, `OPENAI_API_KEY` and the API). Leaving the endpoint removes
+  `llm.base_url` after asking. When the effective `llm.model` or
+  `llm.memory_model` cannot be routed, the row shows the error a new session
+  would stop with. `llm.prices` and `llm.context_limits` are edited as tables.
+- Permissions edits the default permission mode, where commands run,
+  sandbox networking and project MCP trust, and lists the stored rules; see
+  [permissions.md](permissions.md#在设置页修改默认值). Loosening values ask first.
+- Tools edits the search provider and its keys, the MCP servers in
+  `~/.wright/mcp.json` and the project's `.wright/mcp.json`, the skill
+  switches (`skills.disabled`) and the hooks file, whose hooks are listed
+  read-only.
+- API key fields are write-only: set, replace or remove.
 
 **CLI and TUI:**
 
@@ -206,6 +252,23 @@ endpoint, every catalog model with its context window and price, and
 `"value": null` removes it. `/api/v1/settings` does the same with no project
 (user file only). Writes follow the same rules as loading: a project-scope
 write of a user-only key, a secret or an invalid value is refused with 400.
+The same response lists the environment-only variables under `environment`.
+
+The Settings page also uses these routes, each under `/api/v1` (user layer
+only) and `/api/v1/workspaces/{id}` (with that project):
+
+| Route | Does |
+|---|---|
+| `GET /settings/permissions` | default mode, the user and project rules, built-in rules marked `locked` |
+| `PUT /settings/permissions/mode` | `{"mode": ...}` sets the default mode in the user permission file |
+| `POST /settings/permissions/rules` | `{"effect": "deny" \| "ask", "scope", "text"}` adds a rule |
+| `DELETE /settings/permissions/rules/{scope}/{id}` | removes a rule; built-in rules are refused |
+| `GET /settings/skills`, `PUT /settings/skills/{id}` | skill switches without a session |
+| `GET /settings/mcp`, `PUT /settings/mcp/{name}`, `DELETE /settings/mcp/{scope}/{name}` | MCP servers; `env` and `headers` values are write-only, and a `null` value keeps the stored one |
+
+User-only routes: `GET /api/v1/settings/secrets`, `PUT` or `DELETE
+/api/v1/settings/secrets/{name}` (`{"value": ...}`), and `GET
+/api/v1/settings/hooks`, which parses the file `hooks.config` names.
 
 ## Adding a key
 
@@ -228,4 +291,10 @@ write of a user-only key, a secret or an invalid value is refused with 400.
 | infrastructure | `config/settings_store.py` | JSON files, locked atomic writes |
 | application | `settings/service.py` | resolve, describe, validated update |
 | application | `settings/models.py` | provider key status and catalog models for the editor |
-| application | `composition/settings.py` | binds the store; `load_settings(project_root)` |
+| application | `composition/settings.py` | binds the stores; `load_settings(project_root)`, `sandbox_egress()` |
+| domain | `gateway/secrets.py`, `gateway/mcp_config.py` | `SecretStore`, `McpConfigStore` protocols |
+| infrastructure | `config/secret_store.py`, `config/mcp_config_store.py` | `~/.wright/.env` and `mcp.json` edits |
+| application | `settings/secrets.py` | which keys may be written, and where each one comes from |
+| application | `permission/defaults.py` | default mode and stored rules, without a session |
+| application | `workspace/mcp_config.py` | MCP servers as configured, values hidden |
+| interfaces | `web/settings_routes.py` | the HTTP routes above |

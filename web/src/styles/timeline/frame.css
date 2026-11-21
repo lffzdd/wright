@@ -28,24 +28,9 @@
   /* Keeps the reading column (and the user bubble hanging into its gutter) clear of the scrollbar. */
   --conversation-rail-inset: 28px;
 }
-.conversation-stream[data-outline="dock"] {
-  min-height: 0;
-  overflow: hidden;
-  max-width: none;
-  --conversation-rail-inset: 0px;
-}
-.conversation-stream[data-outline="dock"] .conversation-body {
-  flex: 1 1 0%;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
 .conversation-stream > .conversation-body { min-height: 0; width: 100%; }
 
 /* ── .timeline ── */
-.conversation-stream[data-outline="dock"] .conversation-scroll .timeline {
-  min-height: 0;
-}
 .timeline {
   grid-column: 1 / -1;
   min-height: 0;
@@ -55,15 +40,6 @@
   align-content: start;
   column-gap: 0; /* columns come from the parent grid; a gap here would narrow the content column */
   position: relative;
-}
-.conversation-stream[data-outline="dock"] .conversation-scroll-pane {
-  flex-direction: row;
-  align-items: stretch;
-  overflow: hidden;
-}
-.conversation-stream[data-outline="dock"] .conversation-scroll {
-  flex: 1 1 0%;
-  min-width: 0;
 }
 .conversation-stream[data-outline="ticks"] .conversation-main {
   padding-right: var(--conversation-rail-inset, 28px);
@@ -121,21 +97,6 @@
   width: auto;
   max-width: none;
 }
-.conversation-stream[data-outline="dock"] .conversation-outline-host {
-  position: relative;
-  top: auto;
-  right: auto;
-  bottom: auto;
-  width: 148px;
-  flex: 0 0 148px;
-  min-height: 0;
-  max-height: 100%;
-  align-self: flex-start;
-  display: flex;
-  flex-direction: column;
-  pointer-events: auto;
-  z-index: 1;
-}
 @container conversation (min-width: 588px) {
   .conversation-stream[data-outline="ticks"] .conversation-outline-host .outline-ticks { display: flex; }
 }
@@ -148,10 +109,12 @@
 
 /* ── .reveal-flash ── */
 .tl-indent.reveal-flash > .tool-card,
-.tl-indent.reveal-flash > :first-child { animation: reveal-flash 2s var(--ease-out); }
+.tl-indent.reveal-flash > :first-child,
+.msg-row.reveal-flash > .msg-card { animation: reveal-flash 2s var(--ease-out); }
 @media (prefers-reduced-motion: reduce) {
   .tl-indent.reveal-flash > .tool-card,
-  .tl-indent.reveal-flash > :first-child { animation: none; outline: 2px solid var(--accent); }
+  .tl-indent.reveal-flash > :first-child,
+  .msg-row.reveal-flash > .msg-card { animation: none; outline: 2px solid var(--accent); }
 }
 .diff-body > div + div, html.light .tool-card .diff-body > div + div { border-top: 0; }
 .diff-line-old, .diff-line-new { flex-basis: 40px; }

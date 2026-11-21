@@ -2,7 +2,7 @@ import { ArrowsInLineVertical, CaretRight, Check, Folder, GitDiff, ListChecks, S
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { api } from "../../api";
 import { useT } from "../../i18n";
-import type { GitChange, Grants, PlanStep, ViewState, WaitReason } from "../../types";
+import type { ContextDetailQuery, GitChange, Grants, MessageTarget, PlanStep, ViewState, WaitReason } from "../../types";
 import { PermissionsPanel } from "../permissions/permissions";
 import { ChangesPanel } from "./ChangesPanel";
 import { ContextPanel } from "./ContextPanel";
@@ -43,8 +43,13 @@ export function projectRelative(path: string, root?: string): string | null {
   return null;
 }
 
-export function Inspector({ state, sessionId, open, narrow = false, focusPath = null, focusLine, focusRequest = 0, tabRequest, close, onResume, onFeedback, onReference, showCall }: { state: ViewState; sessionId: string; open: boolean; narrow?: boolean; focusPath?: string | null; focusLine?: number; focusRequest?: number; tabRequest?: { tab: InspectorTab; request: number }; close: () => void; onResume?: () => Promise<unknown>; onFeedback?: (feedback: string) => void; onReference?: (path: string) => void; showCall?: (callId: string) => void }) {
+export function Inspector({ state, sessionId, open, narrow = false, focusPath = null, focusLine, focusRequest = 0, tabRequest, close, onResume, onFeedback, onReference, showCall, showMessage }: { state: ViewState; sessionId: string; open: boolean; narrow?: boolean; focusPath?: string | null; focusLine?: number; focusRequest?: number; tabRequest?: { tab: InspectorTab; request: number }; close: () => void; onResume?: () => Promise<unknown>; onFeedback?: (feedback: string) => void; onReference?: (path: string) => void; showCall?: (callId: string) => void; showMessage?: (target: MessageTarget) => void }) {
   const tr = useT();
+  // Stable per session, so the Context detail pane fetches once per selection.
+  const loadContextDetail = useCallback((query: ContextDetailQuery) => api.contextDetail(sessionId, query), [sessionId]);
+  const loadContextRequest = useCallback((raw?: boolean) => api.contextRequest(sessionId, raw), [sessionId]);
+  const loadSkills = useCallback(() => api.skills(sessionId).then((result) => result.skills), [sessionId]);
+  const toggleSkill = useCallback((id: string, enabled: boolean) => api.setSkill(sessionId, id, enabled).then((result) => result.skills), [sessionId]);
   const panelRef = useRef<HTMLElement>(null);
   useEffect(() => {
     if (!open || !narrow) return;
@@ -65,7 +70,11 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
   const [split, setSplit] = useState(false);
   const [splitRatio, setSplitRatio] = useState(0.55);
   const panesRef = useRef<HTMLDivElement>(null);
-  const splitTab = split ? SPLIT_PARTNER[tab] ?? null : null;
+  const splitWith = SPLIT_PARTNER[tab];
+  const splitTab = split ? splitWith ?? null : null;
+  const splitToggle = splitWith
+    ? tr(split ? "web.split_close" : "web.split_open", { name: tr(`web.tab.${splitWith}`) })
+    : "";
   const shows = (item: InspectorTab) => tab === item || splitTab === item;
   useEffect(() => { if (shows("files")) setFilesVisited(true); if (shows("changes")) setChangesVisited(true); }, [tab, splitTab]);
   const startSplitDrag = (event: ReactPointerEvent<HTMLElement>) => {
@@ -79,45 +88,12 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", stop);
   };
-  // One highlight slides between tabs instead of each tab drawing its own box.
   const tablistRef = useRef<HTMLDivElement>(null);
-  const [indicator, setIndicator] = useState<{ left: number; width: number; animate: boolean } | null>(null);
-  useLayoutEffect(() => {
-    const list = tablistRef.current;
-    const selected = list?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
-    if (!list || !selected) return;
-    const measure = () => setIndicator((current) => {
-      const next = { left: selected.offsetLeft, width: selected.offsetWidth };
-      if (current && current.left === next.left && current.width === next.width) return current;
-      // The first placement and resizes jump; only a tab change slides.
-      return { ...next, animate: current !== null && current.left !== next.left };
-    });
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(selected);
-    observer.observe(list);
-    return () => observer.disconnect();
-  }, [tab]);
-  // Every tab carries its label, as in the reference. When the labels do not fit the
-  // panel, only the selected tab keeps its label; the width they need is measured, not guessed.
+  // Labels stay on every tab until they cannot all fit. The split control keeps a
+  // slot when hidden, so that width does not depend on which tab is selected.
   const [compactTabs, setCompactTabs] = useState(false);
   const fullTabsWidth = useRef(0);
   useEffect(() => { setCompactTabs(false); }, [tr]);
-  useLayoutEffect(() => {
-    const list = tablistRef.current;
-    if (!list) return;
-    const measure = () => {
-      if (!compactTabs) {
-        if (list.scrollWidth > list.clientWidth + 1) { fullTabsWidth.current = list.scrollWidth; setCompactTabs(true); }
-      } else if (list.clientWidth >= fullTabsWidth.current) setCompactTabs(false);
-    };
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(list);
-    return () => observer.disconnect();
-  }, [compactTabs]);
   const [changes, setChanges] = useState<GitChange[] | null>(null);
   const [changeCount, setChangeCount] = useState(0);
   const [changesFocus, setChangesFocus] = useState<{ path: string; request: number } | null>(null);
@@ -274,6 +250,21 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
   const completedSteps = steps.filter((step) => step.status === "completed").length;
   const currentStep = steps.findIndex((step) => ACTIVE_STEP.includes(step.status));
   const tabCount = (item: InspectorTab) => item === "files" ? accessedFiles.filter(isWorkUse).length : item === "changes" ? changeCount : 0;
+  const filesOnTab = tabCount("files");
+  useLayoutEffect(() => {
+    const list = tablistRef.current;
+    if (!list) return;
+    const measure = () => {
+      if (!compactTabs) {
+        if (list.scrollWidth > list.clientWidth + 1) { fullTabsWidth.current = list.scrollWidth; setCompactTabs(true); }
+      } else if (list.clientWidth >= fullTabsWidth.current) setCompactTabs(false);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [compactTabs, changeCount, filesOnTab]);
   const fileMeta = (path: string) => recentFileMeta[projectRelative(path, state.session.execution_root) ?? path] ?? {};
   // The icon already says done, doing or to do; only other states (blocked, skipped…) are spelled out.
   const stepMeta = (status: string, note?: string) => {
@@ -318,8 +309,7 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
   }}>
     <div className="inspector-inner in-inner">
     <div className="inspector-tabs in-tabs">
-      <div className={`inspector-tablist${compactTabs ? " compact" : ""}`} role="tablist" aria-label={tr("web.inspector")} ref={tablistRef}>
-      {indicator && <span className={`inspector-tab-indicator${indicator.animate ? " animate" : ""}`} aria-hidden="true" style={{ width: indicator.width, transform: `translateX(${indicator.left}px)` }} />}
+      <div className="inspector-tablist" role="tablist" aria-label={tr("web.inspector")} ref={tablistRef}>
       {/* Tabs switch on press, as editor tabs do; click still covers keyboard and assistive activation. */}
       {tabs.map((item, index) => {
         const Icon = TAB_ICONS[item];
@@ -334,19 +324,22 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
           button?.focus(); button?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
         }} title={tr(`web.tab.${item}`)}>
           <Icon className="tab-ico" size={14} aria-hidden="true" />
-          <span className="tab-label">{tr(`web.tab.${item}`)}</span>
+          <span className={`tab-label${compactTabs ? " sr-only" : ""}`}>{tr(`web.tab.${item}`)}</span>
           {count > 0 && <small className="cnt">{count}</small>}
           {pending && <span className="tab-alert" aria-hidden="true" />}
         </button>;
       })}
       </div>
-      {SPLIT_PARTNER[tab] && <button type="button" className={`icon-button icon-btn inspector-split-toggle${split ? " on" : ""}`} aria-pressed={split}
-        onClick={() => setSplit((value) => !value)}
-        aria-label={split ? tr("web.split_close", { name: tr(`web.tab.${SPLIT_PARTNER[tab]}`) }) : tr("web.split_open", { name: tr(`web.tab.${SPLIT_PARTNER[tab]}`) })}
-        title={split ? tr("web.split_close", { name: tr(`web.tab.${SPLIT_PARTNER[tab]}`) }) : tr("web.split_open", { name: tr(`web.tab.${SPLIT_PARTNER[tab]}`) })}>
-        {split ? <ArrowsInLineVertical size={15} /> : <SquareSplitVertical size={15} />}
-      </button>}
-      <button className="icon-button icon-btn" onClick={close} aria-label={tr("web.close_inspector")} title={tr("web.close_inspector")}><X size={15} weight="bold" /></button>
+      <div className="inspector-tab-actions">
+        {splitWith
+          ? <button type="button" className={`icon-button inspector-split-toggle${split ? " on" : ""}`} aria-pressed={split}
+            onClick={() => setSplit((value) => !value)}
+            aria-label={splitToggle} title={splitToggle}>
+            {split ? <ArrowsInLineVertical size={15} /> : <SquareSplitVertical size={15} />}
+          </button>
+          : <span className="inspector-split-slot" aria-hidden="true" />}
+        <button type="button" className="icon-button" onClick={close} aria-label={tr("web.close_inspector")} title={tr("web.close_inspector")}><X size={15} weight="bold" /></button>
+      </div>
     </div>
     {tab === "task" && <div className="inspector-body in-body" role="tabpanel" id="inspector-panel-task" aria-labelledby="inspector-tab-task">
       <section className="goal-card">
@@ -457,7 +450,9 @@ export function Inspector({ state, sessionId, open, narrow = false, focusPath = 
     </div>}
     {tab === "context" && <div className="inspector-body in-body" role="tabpanel" id="inspector-panel-context" aria-labelledby="inspector-tab-context">
       <ContextPanel breakdown={breakdown} usage={state.usage} historyOnly={historyOnly} model={state.session.model}
-        mcpServers={state.mcp_servers} onCommand={onFeedback} onToggleMcp={(name, enabled) => api.setMcpServer(sessionId, name, enabled)} onShowCall={showCall} />
+        mcpServers={state.mcp_servers} onCommand={onFeedback} onToggleMcp={(name, enabled) => api.setMcpServer(sessionId, name, enabled)} onShowCall={showCall} onShowMessage={showMessage}
+        loadDetail={historyOnly ? undefined : loadContextDetail} loadRequest={historyOnly ? undefined : loadContextRequest} sessionId={sessionId}
+        loadSkills={historyOnly ? undefined : loadSkills} onToggleSkill={toggleSkill} />
     </div>}
     </div>
   </aside>;

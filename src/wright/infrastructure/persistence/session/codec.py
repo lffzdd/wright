@@ -124,6 +124,7 @@ def _serialize_session(session: Session) -> dict[str, Any]:
             "request_context_breakdown": _json_safe(
                 getattr(session, "request_context_breakdown", {}) or {}
             ),
+            "context_history": _json_safe(getattr(session, "context_history", []) or []),
             "documents": _json_safe(getattr(session, "documents", {}) or {}),
             "attachments": {
                 attachment_id: record.to_dict()
@@ -160,6 +161,23 @@ def _serialize_turn(turn: TurnRecord) -> dict[str, Any]:
         "run_id": turn.run_id,
         "step_id": turn.step_id,
     }
+
+
+def _context_history(value: Any) -> list[dict[str, int]]:
+    """Trend points are display data; drop malformed ones instead of failing the load."""
+    if not isinstance(value, list):
+        return []
+    points = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        point = {
+            key: item[key] for key in ("estimated", "actual")
+            if isinstance(item.get(key), int) and not isinstance(item.get(key), bool) and item[key] >= 0
+        }
+        if "estimated" in point:
+            points.append(point)
+    return points
 
 
 def _serialize_usage(usage: UsageRecord | None) -> dict[str, int | float] | None:
@@ -324,6 +342,7 @@ def _deserialize_session(payload: Any) -> Session:
         request_context_breakdown=_object(
             data.get("request_context_breakdown", {}), "request_context_breakdown"
         ),
+        context_history=_context_history(data.get("context_history", [])),
         documents=_documents(data.get("documents", {})),
         attachments=attachments,
         context_tokens=context_tokens,

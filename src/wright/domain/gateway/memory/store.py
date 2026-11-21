@@ -105,10 +105,17 @@ class IMemoryStore(ABC):
         before: dict[str, Any] | None,
         after: dict[str, Any] | None,
         note: str = "",
+        scope: str = "",
     ) -> ChangeRecord: ...
 
     @abstractmethod
-    def list_changes(self, *, limit: int = 100, target_id: str = "") -> list[ChangeRecord]: ...
+    def list_changes(
+        self, *, limit: int = 100, target_id: str = "", scopes: Sequence[str] | None = None
+    ) -> list[ChangeRecord]: ...
+
+    @abstractmethod
+    def scrub_changes(self, target_id: str) -> None:
+        """Drop the before/after snapshots of every change to ``target_id``; keep the rows."""
 
     @abstractmethod
     def get_change(self, change_id: int) -> ChangeRecord | None: ...

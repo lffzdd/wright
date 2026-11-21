@@ -3,12 +3,12 @@
 /* ── .msg-row ── */
 .timeline > .msg-row.assistant-msg { margin: 8px 0; }
 .timeline > .msg-row.user-msg { margin: 32px 0 16px; }
+/* Sits under the reply, left-aligned like the user message's actions, so it stays next to the text it acts on. */
 .msg-row.assistant-msg .msg-actions {
-  position: absolute; top: -6px; right: 0; margin: 0 !important; z-index: 2; padding: 2px;
-  border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-card); box-shadow: 0 2px 8px rgb(0 0 0 / 6%);
+  position: static; justify-content: flex-start; margin: 2px 0 0 !important; padding: 0;
 }
 @media (hover: none) {
-  .msg-row.user-msg .u-meta, .timeline .tf-actions { opacity: 1; }
+  .msg-row.user-msg .u-meta { opacity: 1; }
 }
 
 /* ── .msg-body ── */
@@ -133,11 +133,12 @@
 .del-n, .edit-del { color: var(--danger); font-weight: 400; font-size: inherit; }
 .term-prompt { margin-right: 0; font-weight: 400; }
 /* Reasoning: a quiet summary row; the body is italic with a left rule. */
+/* Space above, little below: a thought opens the step it leads into, so it sits with the tools after it. */
 .timeline .think {
-  margin: 2px 0 8px; color: var(--text-muted); font-size: 13px; border: 0; background: transparent; overflow: visible;
+  margin: 10px 0 2px; color: var(--text-muted); font-size: 13px; border: 0; background: transparent; overflow: visible;
 }
 .timeline .think-body {
-  border-left: 2px solid var(--border-subtle); padding: 2px 0 2px 12px; margin: 6px 0 6px 6px;
+  border-left: 2px solid var(--border-subtle); padding: 2px 0 2px 19px; margin: 2px 0 6px 21px;
   line-height: 1.7; color: var(--text-secondary); font-style: italic;
 }
 .timeline .question-record { margin: 6px 0; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--bg-card); overflow: hidden; }

@@ -90,6 +90,26 @@ describe("real timeline projection", () => {
     expect(screen.getByText(/Collecting tests/).textContent).toContain("Running tests");
   });
 
+  it("replaces an answered prompt with Allowed and a reject mark with Denied", () => {
+    let state = emit(fresh(), "turn.started", { prompt: "run tests" });
+    state = emit(state, "tool.awaiting_approval", { call_id: "c", name: "shell", arguments: { command: "pnpm test src/auth" } });
+    state = emit(state, "interaction.requested", {
+      request_id: "perm-1", kind: "permission", tool_name: "shell", command: "pnpm test src/auth",
+    });
+    state = emit(state, "interaction.resolved", { request_id: "perm-1", kind: "permission", status: "approved", choice: "allow_once" });
+    const { rerender } = render(transcript(state));
+    expect(document.querySelector(".perm-done:not(.deny)")?.textContent).toMatch(/Allowed/);
+    expect(document.querySelector(".perm-done")?.textContent).toContain("pnpm test src/auth");
+
+    let denied = emit(fresh(), "turn.started", { prompt: "rm" });
+    denied = emit(denied, "tool.finished", {
+      call_id: "d", name: "shell", ok: false, arguments: { command: "rm a" },
+      data: { permission: { decision: "deny" } },
+    });
+    rerender(transcript(denied));
+    expect(document.querySelector(".perm-done.deny")?.textContent).toMatch(/Denied/);
+  });
+
   it("keeps identical answers in distinct turns in the original summary cards", () => {
     let state = fresh();
     for (const id of ["turn-1", "turn-2"]) {
@@ -350,6 +370,32 @@ describe("real timeline projection", () => {
     expect(screen.getByText("Done looking")).toBeTruthy();
   });
 
+  it("folds settled reasoning to a bulb and its opening words, and shows the full text when opened", () => {
+    let state = emit(fresh(), "turn.started", { prompt: "Check it" });
+    state = emit(state, "reasoning.delta", { piece: "Read the config first,\nthen compare versions" });
+    state = emit(state, "content.final", { content: "Checked" });
+    state = emit(state, "turn.completed", {});
+    const { container } = render(transcript(state));
+    const card = container.querySelector(".reasoning-card")!;
+    expect(card.querySelector(".think-ic")).toBeTruthy();
+    expect(card.querySelector(".lbl")).toBeNull();
+    expect(card.querySelector(".think-preview")?.textContent).toBe("Read the config first, then compare versions");
+    expect(card.querySelector(".reasoning-body")).toBeNull();
+    fireEvent.click(card.querySelector("summary")!);
+    expect(card.querySelector(".think-preview")).toBeNull();
+    expect(card.querySelector(".lbl")?.textContent).toBe("Thought");
+    expect(card.querySelector(".reasoning-body")?.textContent).toBe("Read the config first,\nthen compare versions");
+  });
+
+  it("streams reasoning as a short window pinned to the newest lines", () => {
+    let state = emit(fresh(), "turn.started", { prompt: "Check it" });
+    state = emit(state, "reasoning.delta", { piece: "Thinking it over" });
+    const { container } = render(transcript(state));
+    const body = container.querySelector(".reasoning-card.running .reasoning-body");
+    expect(body?.classList.contains("tail")).toBe(true);
+    expect(container.querySelector(".think-preview")).toBeNull();
+  });
+
   it("shows a lone step without a group around it", () => {
     let state = emit(fresh(), "turn.started", { prompt: "One" });
     state = emit(state, "tool.planned", { call_id: "r", name: "read", arguments: { path: "a.py" } });
@@ -472,6 +518,12 @@ describe("revealing a tool call", () => {
     expect(scrollTo).toHaveBeenCalled();
   });
 
+  it("reveals the turn's first call from the footer's tool-call count", async () => {
+    const { container } = render(view(folded(), null));
+    fireEvent.click(screen.getByRole("button", { name: "2 tool calls" }));
+    await waitFor(() => expect(container.querySelector('[data-call-id="c1"]')?.classList.contains("reveal-flash")).toBe(true));
+  });
+
   it("says so when the call is not in the conversation", async () => {
     const { rerender } = render(view(folded(), null));
     rerender(view(folded(), { callId: "elsewhere", request: 1 }));
@@ -519,6 +571,29 @@ describe("message actions", () => {
       expect(screen.queryByRole("button", { name: "Fork into a new session from here" })).toBeNull();
       cleanup();
     }
+  });
+
+  it("puts a settled turn's reply actions and stats on one footer row", () => {
+    const { container } = render(<Timeline state={settled()} messageActions={actions()} />);
+    const feet = [...container.querySelectorAll(".turn-footer-block")];
+    expect(feet).toHaveLength(2);
+    // Each reply's actions appear once, in its footer, not under the reply text.
+    expect(container.querySelectorAll(".assistant-msg .msg-actions")).toHaveLength(0);
+    const last = feet[1].querySelector(".turn-foot")!;
+    expect([...last.querySelectorAll(".tf-actions button")].map((button) => button.getAttribute("aria-label")))
+      .toEqual(["Copy reply as Markdown", "Fork into a new session from here", "Regenerate reply"]);
+    expect(last.textContent).toContain("1 tool call");
+    // A normal finish shows no status; only the newest turn keeps its actions in view.
+    expect(container.querySelector(".tf-status")).toBeNull();
+    expect(feet.map((foot) => foot.classList.contains("latest"))).toEqual([false, true]);
+  });
+
+  it("names the outcome in the footer only when a turn did not finish", () => {
+    const state = settled();
+    state.timeline = [...state.timeline!, { id: "s1", kind: "status", status: "failed", order: 5 }];
+    const { container } = render(<Timeline state={state} />);
+    expect(container.querySelectorAll(".tf-status")).toHaveLength(1);
+    expect(container.querySelector(".tf-status.danger")).toBeTruthy();
   });
 
   it("does not offer regenerate when the last prompt has no reply yet", () => {

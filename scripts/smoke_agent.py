@@ -871,11 +871,11 @@ def test_running_total_append_message_increments():
     before = session.context_tokens
     message_id = session.append_message(
         {"role": "user", "content": "a]" * 100}
-    )  # 200 chars ~= 50 tokens
+    )  # 200 bytes ~= 50 tokens
     after = session.context_tokens
     assert message_id == "msg_1"
     assert after > before
-    assert after - before == 50  # 200 chars // 4
+    assert after - before == 50 + 3  # 200 bytes / 4, plus the message's framing
 
     turn = session.record_assistant_turn(
         assistant_raw="done",

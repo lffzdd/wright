@@ -161,6 +161,8 @@ export type TimelineItem = {
   output?: string;
   kind: "text" | "reasoning" | "tool" | "shell" | "edit" | "approval" | "status";
   status?: string;
+  /** Set on a resolved approval record in the transcript. */
+  decision?: "allow" | "always" | "deny" | "abort";
   run_id?: string;
   role?: string;
   text?: string;
@@ -194,7 +196,48 @@ export type ContextItem = {
   loaded?: boolean;
   call_id?: string;
   mcp?: string;
+  /** Natural-language text (a message or a paragraph), shown in the UI font. */
+  prose?: boolean;
+  /** Stable across the snapshot and the detail view. */
+  id?: string;
+  /** Turn the item belongs to; absent for what every request carries. */
+  turn?: number;
+  /** Detail view only: position in the request, the full content, its category. */
+  seq?: number;
+  content?: string;
+  truncated?: boolean;
+  category?: string;
 };
+
+/** Tokens one turn adds, split by kind. */
+export type ContextTurnParts = { text: number; reasoning: number; tool_calls: number; tool_results: number };
+
+/** One user turn: everything from a person's message to the next one. */
+export type ContextTurn = { index: number; label: string; record_id?: string; tokens: number; parts: ContextTurnParts };
+
+export type ContextDetailQuery = { category: string } | { turn: number };
+
+/** Every item of one category or turn, fetched on demand. */
+export type ContextDetail = { items: ContextItem[]; tokens: number; category?: ContextCategory; turn?: ContextTurn };
+
+/** The next request whole and in order, as it would be assembled now. */
+export type ContextRequest = {
+  items: ContextItem[];
+  tokens: number;
+  used?: number;
+  /** The ring's total: the provider's last count plus estimates for what was added since. */
+  calibrated_used?: number | null;
+  limit?: number | null;
+  turns?: ContextTurn[];
+  /** Only when asked for: the messages and tools as they go on the wire. */
+  request?: { messages: unknown[]; tools: unknown[] };
+};
+
+/** A skill on disk and whether the model is offered it. */
+export type SkillView = { id: string; name: string; description: string; enabled: boolean };
+
+/** One tool's share of a tool category: how many calls and their tokens. */
+export type ContextToolSum = { label: string; count: number; tokens: number };
 
 export type ContextGroup = "fixed" | "conversation" | "reserve";
 
@@ -207,7 +250,12 @@ export type ContextCategory = {
   count?: number;
   /** The largest items, biggest first. */
   items?: ContextItem[];
+  /** Tool categories only: items summed per tool, biggest first. */
+  by_tool?: ContextToolSum[];
 };
+
+/** One request: the local estimate and, once it returned, the provider's prompt count. */
+export type ContextPoint = { estimated: number; actual?: number };
 
 export type ContextBreakdown = {
   kind?: string;
@@ -223,6 +271,17 @@ export type ContextBreakdown = {
   note?: string;
   /** Estimated before any request was assembled. */
   preview?: boolean;
+  /** Request size (same scale as `used`) past which older tool results fold. */
+  fold_at?: number;
+  /** Recent requests, oldest first. */
+  history?: ContextPoint[];
+  /** `used` anchored on the provider's count for the last request. */
+  calibrated_used?: number;
+  /** The request the total is anchored on. */
+  anchor?: { actual: number; estimated: number };
+  /** Conversation turns, oldest first; the oldest may be left out. */
+  turns?: ContextTurn[];
+  turns_omitted?: number;
 };
 
 export type ReviewChange = {
@@ -443,4 +502,77 @@ export type RuntimeSettingsView = {
   warnings: string[];
   /** Absent from servers older than the provider overview. */
   models?: ModelOverview;
+  /** Process switches that stay environment-only, shown read-only. */
+  environment?: Array<{ name: string; value: string | null; description: string }>;
 };
+
+/** Where an API key comes from; its value is never sent to the page. */
+export type SecretSource = "file" | "env" | "missing";
+export type SecretsView = {
+  path: string;
+  secrets: Array<{ name: string; group: "models" | "search" | "knowledge"; source: SecretSource }>;
+};
+
+export type PermissionRuleRow = {
+  id: string;
+  effect: "allow" | "ask" | "deny";
+  scope: "session" | SettingScope;
+  text: string;
+  description: string;
+  locked: boolean;
+};
+export type PermissionDefaultsView = {
+  mode: string;
+  modes: string[];
+  path: string;
+  project: boolean;
+  rules: PermissionRuleRow[];
+};
+
+export type SkillSwitchesView = {
+  skills: Array<{ id: string; name: string; description: string; enabled: boolean }>;
+  errors: string[];
+  /** WRIGHT_DISABLED_SKILLS decides; the switches cannot change it. */
+  locked: boolean;
+};
+
+export type McpTransport = "stdio" | "http" | "sse";
+export type McpServerRow = {
+  name: string;
+  scope: SettingScope;
+  transport: McpTransport | "unknown";
+  command: string;
+  args: string[];
+  url: string;
+  /** Names only; values stay on disk. */
+  env: string[];
+  headers: string[];
+  problem: string | null;
+  shadowed: boolean;
+  active: boolean;
+};
+export type McpConfigView = {
+  project_trusted: boolean;
+  files: Partial<Record<SettingScope, { path: string; error: string | null }>>;
+  servers: McpServerRow[];
+};
+/** A null value keeps the stored one. */
+export type McpServerForm = {
+  scope: SettingScope;
+  transport: McpTransport;
+  command?: string;
+  args?: string[];
+  url?: string;
+  env?: Record<string, string | null>;
+  headers?: Record<string, string | null>;
+  previous?: string;
+};
+
+export type HooksView = {
+  path: string;
+  error: string | null;
+  hooks: Array<{ event: string; name: string; matcher: string; command: string[]; timeout: number }>;
+};
+
+/** Where the conversation should scroll: an exact row, else the turn's prompt. */
+export type MessageTarget = { contextId?: string; tocId?: string };

@@ -12,12 +12,9 @@ import {
 import { useT } from "../../i18n";
 
 /** Keep these in step with the conversation-stage and outline rules in styles/timeline/ and styles/layout.css. */
-export const OUTLINE_TEXT_PX = 176;
-export const OUTLINE_TICKS_PX = 28;
 export const OUTLINE_DOCK_MIN_ITEMS = 4;
 export const TRANSCRIPT_MAX_PX = 820;
 export const TRANSCRIPT_MIN_PX = 560;
-export const OUTLINE_TEXT_AT = TRANSCRIPT_MIN_PX + OUTLINE_TEXT_PX;
 
 export type TocItem = {
   id: string;
@@ -353,37 +350,71 @@ function useOutlineActiveScroll(activeId: string | null, listRef: RefObject<HTML
   }, [activeId, listRef]);
 }
 
+/** Hovering the rail waits this long before the list opens, so passing over it does nothing. */
+const OUTLINE_OPEN_DELAY_MS = 150;
+/** Leaving waits a moment, so the pointer can cross the gap between rail and list. */
+const OUTLINE_CLOSE_DELAY_MS = 250;
+
+/**
+ * The tick rail beside the conversation, and the list of prompts it opens.
+ * The list floats over the conversation instead of taking a column, so opening
+ * it never reflows the transcript. Hovering opens it; the button pins it.
+ */
 export function ConversationOutline({
   items,
   activeId,
   tickTops,
   scrollToHeading,
-  labelsOff,
-  onLabelsOff,
-  onLabelsOn,
+  pinned,
+  onPin,
 }: {
   items: TocItem[];
   activeId: string | null;
   tickTops: Record<string, number>;
   scrollToHeading: (id: string) => void;
-  labelsOff: boolean;
-  onLabelsOff: () => void;
-  onLabelsOn: () => void;
+  pinned: boolean;
+  onPin: (pinned: boolean) => void;
 }) {
   const tr = useT();
   const dockRef = useRef<HTMLUListElement>(null);
   const tickRef = useRef<HTMLDivElement>(null);
-  useOutlineActiveScroll(activeId, dockRef);
+  const [hovered, setHovered] = useState(false);
+  // The tick under the pointer, marked in the open list so the two read as one.
+  const [hot, setHot] = useState<string | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const open = pinned || hovered;
+  useOutlineActiveScroll(open ? activeId : null, dockRef);
   useOutlineActiveScroll(activeId, tickRef);
+  const later = (next: boolean, delay: number) => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setHovered(next), delay);
+  };
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  useEffect(() => {
+    if (!pinned) return;
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") onPin(false); };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [pinned, onPin]);
   if (items.length < 2) return null;
 
+  const close = () => {
+    if (timer.current) clearTimeout(timer.current);
+    setHovered(false);
+    onPin(false);
+  };
+
   return (
-    <div className="conversation-outline-host">
-      <aside className="outline-dock" aria-label={tr("web.toc")}>
+    <div
+      className={`conversation-outline-host${open ? " open" : ""}${pinned ? " pinned" : ""}`}
+      onMouseEnter={() => later(true, OUTLINE_OPEN_DELAY_MS)}
+      onMouseLeave={() => later(false, OUTLINE_CLOSE_DELAY_MS)}
+    >
+      <aside className="outline-dock" aria-label={tr("web.toc")} aria-hidden={!open || undefined} inert={!open}>
         <div className="outline-dock-head">
           <span className="outline-dock-title">{tr("web.toc_kicker")}</span>
           <span className="outline-dock-meta">{items.length}</span>
-          <button type="button" className="timeline-toc-close" aria-label={tr("web.toc_close")} onClick={onLabelsOff}>
+          <button type="button" className="timeline-toc-close" aria-label={tr("web.toc_close")} onClick={close}>
             <X size={12} weight="bold" />
           </button>
         </div>
@@ -394,16 +425,19 @@ export function ConversationOutline({
               <li key={item.id}>
                 <button
                   type="button"
-                  className={`outline-dock-item ${isActive ? "active" : ""}`}
+                  className={`outline-dock-item${isActive ? " active" : ""}${hot === item.id ? " hot" : ""}`}
                   aria-current={isActive ? "true" : undefined}
-                  aria-label={item.text}
-                  onClick={() => scrollToHeading(item.id)}
+                  title={item.text}
+                  onClick={() => {
+                    scrollToHeading(item.id);
+                    // Opened by hover, the list gets out of the way once used; pinned, it stays.
+                    if (!pinned) close();
+                  }}
                 >
                   <span className="outline-dock-mark" aria-hidden="true">
                     <i />
                   </span>
                   <span className="outline-dock-text">{item.text}</span>
-                  <span className="outline-tick-preview outline-dock-preview" role="tooltip">{item.text}</span>
                 </button>
               </li>
             );
@@ -411,11 +445,9 @@ export function ConversationOutline({
         </ul>
       </aside>
       <div className="outline-ticks" aria-label={tr("web.toc")} ref={tickRef}>
-        {labelsOff && (
-          <button type="button" className="outline-ticks-expand" aria-label={tr("web.toc_expand")} title={tr("web.toc")} onClick={onLabelsOn}>
-            <ListBullets size={13} weight="bold" />
-          </button>
-        )}
+        <button type="button" className="outline-ticks-expand" aria-label={tr("web.toc_expand")} aria-pressed={pinned} onClick={() => onPin(!pinned)}>
+          <ListBullets size={13} weight="bold" />
+        </button>
         <div className="outline-ticks-track">
           {items.map((item, index) => {
             const isActive = activeId === item.id;
@@ -428,11 +460,13 @@ export function ConversationOutline({
                 className={`outline-tick ${isActive ? "active" : ""}`}
                 style={{ top: `${top}%` }}
                 aria-current={isActive ? "true" : undefined}
-                aria-label={item.text}
+                aria-label={tr("web.toc_tick", { n: index + 1, text: item.text })}
                 onClick={() => scrollToHeading(item.id)}
+                onMouseEnter={() => setHot(item.id)}
+                onMouseLeave={() => setHot(null)}
               >
                 <i aria-hidden="true" />
-                <span className="outline-tick-preview" role="tooltip">{item.text}</span>
+                <span className="outline-tick-preview" role="tooltip">{tr("web.toc_tick", { n: index + 1, text: item.text })}</span>
               </button>
             );
           })}

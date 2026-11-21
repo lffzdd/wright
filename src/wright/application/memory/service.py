@@ -122,10 +122,11 @@ class MemoryService:
         before: dict[str, Any] | None,
         after: dict[str, Any] | None,
         note: str = "",
+        scope: str = "",
     ) -> ChangeRecord:
         return self.store.append_change(
             at=self._stamp(), actor=actor, action=action, target_id=target_id,
-            before=before, after=after, note=note,
+            before=before, after=after, note=note, scope=scope or _scope_of(after) or _scope_of(before),
         )
 
     # spaces ------------------------------------------------------------
@@ -421,21 +422,29 @@ class MemoryService:
                 fact = self.store.get_fact(target_id)
                 if fact is None or fact.status == "deleted":
                     raise MemoryServiceError(f"no such fact: {target_id}")
+                scope = fact.space_id
                 self.store.purge_fact(target_id)
             elif target_id.startswith("ep-"):
-                if not self.store.delete_episode(target_id):
+                episode = self.store.get_episode(target_id)
+                if episode is None or not self.store.delete_episode(target_id):
                     raise MemoryServiceError(f"no such episode: {target_id}")
+                scope = repo_space_id(episode.project_id) if episode.project_id else ""
             elif target_id.startswith("c-"):
-                if not self.store.delete_commitment(target_id):
+                commitment = self.store.get_commitment(target_id)
+                if commitment is None or not self.store.delete_commitment(target_id):
                     raise MemoryServiceError(f"no such commitment: {target_id}")
+                scope = commitment.space_id
             else:
                 raise MemoryServiceError(f"unknown memory id: {target_id}")
             removed.append(target_id)
-            self._log(actor, "forget", target_id, None, None, reason[:200])
+            # Earlier snapshots hold the content too; the rows stay, the content goes.
+            self.store.scrub_changes(target_id)
+            self._log(actor, "forget", target_id, None, None, reason[:200], scope=scope)
             for dependent in self._dependents(target_id):
                 self.store.purge_fact(dependent.id)
+                self.store.scrub_changes(dependent.id)
                 removed.append(dependent.id)
-                self._log(actor, "forget", dependent.id, None, None, f"derived from {target_id}")
+                self._log(actor, "forget", dependent.id, None, None, f"derived from {target_id}", scope=dependent.space_id)
         self._bump()
         return removed
 
@@ -574,8 +583,13 @@ class MemoryService:
 
     # change log --------------------------------------------------------
 
-    def changes(self, *, limit: int = 100, target_id: str = "") -> list[ChangeRecord]:
-        return self.store.list_changes(limit=limit, target_id=target_id)
+    def changes(
+        self, *, limit: int = 100, target_id: str = "", scopes: Sequence[str] | None = None
+    ) -> list[ChangeRecord]:
+        return self.store.list_changes(limit=limit, target_id=target_id, scopes=scopes)
+
+    def get_change(self, change_id: int) -> ChangeRecord | None:
+        return self.store.get_change(change_id)
 
     def revert(self, change_id: int, *, actor: str = "user") -> ChangeRecord:
         change = self.store.get_change(change_id)
@@ -585,6 +599,8 @@ class MemoryService:
             raise MemoryServiceError(f"change {change_id} was already reverted")
         if change.action == "forget":
             raise MemoryServiceError("a forget cannot be undone; the content was not kept")
+        if change.before is None and change.after is None:
+            raise MemoryServiceError("this record was forgotten; its content was not kept")
         target = change.target_id
         with self.store.transaction():
             if target.startswith("f-"):
@@ -699,4 +715,16 @@ def _source_points_at(source: str, target_id: str) -> bool:
     return False
 
 
+def _scope_of(snapshot: dict[str, Any] | None) -> str:
+    """The space a fact, commitment or episode snapshot belongs to."""
+    if not snapshot:
+        return ""
+    space = snapshot.get("space_id")
+    if isinstance(space, str) and space:
+        return space
+    project = snapshot.get("project_id")
+    return repo_space_id(project) if isinstance(project, str) and project else ""
+
+
 __all__ = ["CONSOLIDATION_INTERVAL_HOURS", "MemoryService", "MemoryServiceError"]
+

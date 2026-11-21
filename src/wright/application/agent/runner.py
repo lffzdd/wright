@@ -160,8 +160,11 @@ class Agent:
     def tool_schemas(self) -> list[dict]:
         return self._model_turn.tool_schemas
 
-    def preview_context(self) -> dict:
-        return self._model_turn.preview_context()
+    def preview_context(self, *, detail: bool = False) -> dict:
+        return self._model_turn.preview_context(detail=detail)
+
+    def request_context(self) -> dict:
+        return self._model_turn.request_context()
 
     @property
     def _tool_names(self) -> dict[str, str]:

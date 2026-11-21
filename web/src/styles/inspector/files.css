@@ -31,41 +31,62 @@
 .files-panel .files-project-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .files-panel .pane-head.files-project-head > span { overflow: visible; text-overflow: unset; }
 /* 文件树 */
-.files-panel .files-group::before { display: none; }
-.files-panel .tree, .files-panel .files-tree { padding: 6px 4px 20px; font-size: 13px; }
+.files-panel .tree, .files-panel .files-tree { padding: 6px 4px 20px; font-size: var(--text-sm); }
 .files-panel .tree-row:disabled { cursor: default; }
 .files-panel .tree-row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .files-panel .tree-row.mod .name { color: var(--amber); }
 .files-panel .tree-row.new .name { color: var(--green); }
 .files-panel .tree-row.del .name { color: var(--red); text-decoration: line-through; }
-.files-panel .tree-row .st { font: 600 10.5px var(--font-mono); flex: none; }
+/* Plain status letters, coloured by kind. */
+.files-panel .tree-row .st { flex: none; min-width: 12px; text-align: center; font: 600 var(--text-2xs) var(--font-mono); }
 .files-panel .tree-row.mod .st { color: var(--amber); }
 .files-panel .tree-row.new .st { color: var(--green); }
 .files-panel .tree-row.del .st { color: var(--red); }
+/* A folder holding changes: tinted name and how many changed files are inside. */
+.files-panel .tree-row.has-changes .name { color: var(--amber); }
+.files-panel .tree-row .st.files-dir-count { min-width: 0; color: color-mix(in srgb, var(--amber) 80%, var(--text-3)); font-weight: 500; font-variant-numeric: tabular-nums; }
+/* Gitignored entries step back to the muted text colour. */
+.files-panel .tree-row.files-ignored .name { color: var(--text-3); }
+.files-panel .tree-row.files-ignored .files-icon { opacity: 0.6; }
+/* Session use: an eye for reads, a pencil for edits. */
+.files-panel .tree-row .incontext { flex: none; display: inline-grid; place-items: center; color: color-mix(in srgb, var(--accent) 75%, var(--text-3)); }
+.files-panel .tree-row .incontext.modified { color: var(--accent); }
+/* Header change count: a quiet link to the Changes tab. */
+.files-panel .files-change-summary {
+  flex: none; height: 22px; padding: 0 6px; margin-left: 2px; border-radius: var(--radius-sm);
+  color: var(--text-muted); font: var(--text-xs) var(--font-sans); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.files-panel .files-change-summary:hover { background: var(--files-hover); color: var(--text-primary); }
+.files-panel .files-change-summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .files-panel .tree-slot { width: 12px; flex: none; }
 /* "This session" view: one row per file the session touched, in the tree's padding. */
 .files-panel .files-view-switch { min-width: 0; }
 .files-panel .files-view-switch .segmented-option { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.files-panel .files-count-label { flex: none; white-space: nowrap; }
+.files-panel .files-count-label { flex: none; white-space: nowrap; font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 .files-panel .files-session { padding: 10px 12px 20px; }
 .files-panel .list-rows { display: flex; flex-direction: column; }
-.files-panel .list-rows .lr { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 12.5px; border-top: 1px solid var(--border); }
+.files-panel .list-rows .lr { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: var(--text-sm); border-top: 1px solid var(--border); }
 .files-panel .list-rows .lr:first-child { border-top: 0; padding-top: 0; }
 .files-panel .list-rows .lr .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.files-panel .list-rows .lr .mono { font-family: var(--font-mono); font-size: 12px; }
-.files-panel .list-rows .lr .muted { color: var(--text-3); font: 11.5px var(--font-mono); flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files-panel .list-rows .lr .mono { font-family: var(--font-mono); font-size: var(--text-sm); }
+.files-panel .list-rows .lr .muted { color: var(--text-3); font: var(--text-2xs) var(--font-sans); font-variant-numeric: tabular-nums; flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .files-panel .list-rows .lr .files-show-call {
   display: inline-flex; align-items: center; gap: 3px; flex: none; max-width: 40%; min-width: 0;
   margin: 0 -4px; padding: 1px 4px; border: 0; border-radius: var(--radius-sm);
-  background: transparent; color: var(--text-3); font: 11.5px var(--font-mono); cursor: pointer;
+  background: transparent; color: var(--text-3); font: var(--text-2xs) var(--font-sans); font-variant-numeric: tabular-nums; cursor: pointer;
 }
 .files-panel .list-rows .lr .files-show-call svg { flex: none; }
 .files-panel .list-rows .lr .files-show-call span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .files-panel .list-rows .lr .files-show-call:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .files-panel .list-rows .lr .files-show-call:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The tag split per tool: each name is its own jump, only the hovered one lights up. */
+.files-panel .list-rows .lr .files-calls { display: inline-flex; align-items: center; gap: 2px; flex: none; max-width: 50%; min-width: 0; overflow: hidden; color: var(--text-3); font: var(--text-2xs) var(--font-sans); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.files-panel .list-rows .lr .files-calls > svg { flex: none; margin-right: 2px; }
+.files-panel .list-rows .lr .files-calls .files-show-call { margin: 0; padding: 1px 3px; max-width: none; }
+.files-panel .list-rows .lr .files-calls-sep { flex: none; opacity: .7; }
 .files-panel .list-rows .lr > .ico, .files-panel .list-rows .lr > .files-icon { width: 16px; height: 16px; color: var(--text-3); flex: none; }
 .files-panel .files-session-path span { color: var(--text-3); }
-.files-panel .files-session-path:hover:not(:disabled) b { text-decoration: underline; }
+.files-panel .files-session-path:hover:not(:disabled) b { color: var(--accent); }
 /* The filter opens in place of the project name; it grows in from the search button's side. */
 /* Header controls keep normal case; only the header text itself is set as a small caps label. */
 .files-filter {
@@ -130,7 +151,7 @@
 
 /* ── .files-preview-head ── */
 .files-preview-head { display: flex; align-items: center; gap: 6px; min-width: 0; position: sticky; top: -14px; z-index: 1; margin: -14px -14px 0; padding: 8px 14px; background: var(--bg-panel); border-bottom: 1px solid var(--border-subtle); }
-.files-preview-head .icon-button { flex: 0 0 auto; }
+.files-preview-head .icon-button { flex: 0 0 auto; width: 26px; height: 26px; }
 
 /* ── .files-head-actions ── */
 .files-head-actions .icon-button:hover:not(:disabled) { background: var(--files-hover); color: var(--text-primary); }
@@ -150,7 +171,6 @@
 .files-row-actions:empty { display: none; }
 /* Separate the session block from the project tree while it is open, and rule off its rows lightly. */
 .files-session.open { padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--border-subtle); }
-.files-count { flex: 0 0 auto; font: var(--text-sm)/1.4 var(--font-sans); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 
 /* ── .files-cache-toggle ── */
 .files-cache-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

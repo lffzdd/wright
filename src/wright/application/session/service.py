@@ -21,6 +21,8 @@ from ...domain.model.attachment import AttachmentError
 from ...domain.model.llm.model_adapters import available_models, has_responses_state
 from ...domain.model.session import HistoryRewriteError
 from ...domain.model.session.run import TERMINAL_RUN_STATUSES
+from ...domain.model.settings import SettingsError
+from ...domain.model.skills import SkillNotFoundError
 from ...domain.policy.permission.resolver import sandbox_network_granted
 from ..session_runtime.errors import SessionClosedError, SessionServiceError
 from ..session_runtime.events import session_status
@@ -798,6 +800,28 @@ class SessionService:
             rows = self.mcp_servers()
         self.publisher.publish("session.mcp_updated", {"mcp_servers": rows})
         return rows
+
+    def skills(self) -> list[dict[str, Any]]:
+        """Every skill on disk and whether the model is offered it."""
+        catalog = getattr(self.runtime, "skills", None)
+        return [] if catalog is None else catalog.rows()
+
+    def set_skill(self, skill_id: str, enabled: bool) -> list[dict[str, Any]]:
+        """Turn one skill on or off in settings; it applies from the next request.
+
+        Only the catalog reminder at the end of the request changes, so the
+        cached prefix stays valid and this works mid-turn too.
+        """
+        catalog = getattr(self.runtime, "skills", None)
+        if catalog is None:
+            raise SessionServiceError("this session has no skills")
+        try:
+            catalog.set_enabled(skill_id, enabled)
+        except SkillNotFoundError as exc:
+            raise SessionServiceError(str(exc)) from exc
+        except SettingsError as exc:
+            raise SessionServiceError(f"could not save skills.disabled: {exc}") from exc
+        return self.skills()
 
     def set_execution_policy(
         self,

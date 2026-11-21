@@ -105,6 +105,9 @@ class Session:
     model_name: str | None = None
     # Tokenizer estimate of the last assembled model request. Not billing usage.
     request_context_breakdown: dict[str, Any] = field(default_factory=dict)
+    # Per request, oldest first: the tokenizer estimate and, once the request
+    # returned, the provider's prompt token count. Feeds the Context tab.
+    context_history: list[dict[str, int]] = field(default_factory=list)
     # Non-image uploads. Bytes stay outside the edited workspace.
     documents: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Resolved once for a session.  A transcript with Responses reasoning items
@@ -643,6 +646,7 @@ class Session:
         self.context_tokens = sum(estimate_message_tokens(record.message) for record in self.message_records)
         self.request_context_tokens = 0
         self.request_context_breakdown = {}
+        self.context_history = []
         self._restore_plan()
 
     def _restore_plan(self) -> None:

@@ -112,6 +112,17 @@ class ContextView:
         )
 
 
+# Room kept for the reply: an eighth of the window, but no more than a long
+# reply needs. Without the cap a 1M window would hold back 125K tokens.
+MAX_OUTPUT_RESERVE = 32_000
+
+
+def default_output_reserve(context_limit: int | None) -> int:
+    if context_limit is None:
+        return 0
+    return min(max(256, context_limit // 8), MAX_OUTPUT_RESERVE)
+
+
 class ContextCompactor:
     """Deterministically fold old tool results in a ContextView only."""
 
@@ -341,7 +352,7 @@ class ContextBuilder:
         )
         tool_tokens = estimate_tools_tokens(tool_copies)
         reserve = output_reserve_tokens if output_reserve_tokens is not None else (
-            max(256, context_limit // 8) if context_limit is not None else 0
+            default_output_reserve(context_limit)
         )
         estimated = history_tokens + transient_tokens + tool_tokens + reserve
         projected, folded_ids = self.compactor.project(

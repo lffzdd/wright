@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...domain.model.memory import GLOBAL_SPACE_ID, repo_space_id
+from ...domain.model.memory import GLOBAL_SPACE_ID, ChangeRecord, repo_space_id
 from ..memory.dto import WriteRequest
 from ..memory.service import MemoryService, MemoryServiceError
 
@@ -30,6 +30,49 @@ def visible_spaces(service: MemoryService, bound_project_id: str) -> list[str]:
         spaces.append(service.ensure_repo_space(bound_project_id).id)
     spaces.extend(item.id for item in service.list_spaces() if item.type == "personal")
     return spaces
+
+
+# Fields worth showing when a change is listed; bookkeeping (revision, stamps,
+# use counts) changes on almost every write and says nothing to the user.
+_SHOWN_FIELDS = ("content", "why", "kind", "tier", "status", "sensitivity", "shareable", "space_id", "due", "goal", "outcome")
+CHANGE_LIMIT = 100
+
+
+def _target_type(target_id: str) -> str:
+    if target_id.startswith("f-"):
+        return "fact"
+    if target_id.startswith("ep-"):
+        return "episode"
+    if target_id.startswith("c-"):
+        return "commitment"
+    return "other"
+
+
+def change_view(change: ChangeRecord) -> dict[str, Any]:
+    before, after = change.before or {}, change.after or {}
+    latest = after or before
+    summary = str(latest.get("content") or latest.get("goal") or "")
+    fields = []
+    if change.before is not None and change.after is not None:
+        for name in _SHOWN_FIELDS:
+            if before.get(name) != after.get(name):
+                fields.append({"name": name, "before": before.get(name), "after": after.get(name)})
+    forgotten = change.before is None and change.after is None
+    return {
+        "id": change.id,
+        "at": change.at,
+        "actor": change.actor,
+        "action": change.action,
+        "target_id": change.target_id,
+        "target_type": _target_type(change.target_id),
+        "scope": change.scope,
+        "summary": " ".join(summary.split())[:240],
+        "fields": fields,
+        "note": change.note,
+        "reverted": change.reverted,
+        "forgotten": forgotten and change.action != "forget",
+        "undoable": not change.reverted and change.action not in {"forget", "revert"} and not forgotten,
+    }
 
 
 def project_memory(service: MemoryService | None, *, bound_project_id: str) -> dict[str, Any]:
@@ -56,7 +99,7 @@ def project_memory(service: MemoryService | None, *, bound_project_id: str) -> d
             for item in episodes
         ],
         "commitments": [item.to_dict() for item in commitments],
-        "changes": [item.to_dict() for item in service.changes(limit=50)],
+        "changes": [change_view(item) for item in service.changes(limit=CHANGE_LIMIT, scopes=spaces)],
     }
 
 
@@ -145,26 +188,53 @@ def _require_visible(service: MemoryService, item_id: str, bound_project_id: str
         raise MemoryViewError("this belongs to another project")
 
 
-def update_commitment(service: MemoryService | None, commitment_id: str, *, bound_project_id: str, status: str) -> dict[str, Any]:
+def create_commitment(
+    service: MemoryService | None, *, bound_project_id: str, content: str, due: str = "", space: str = "",
+) -> dict[str, Any]:
     service = _require(service)
-    _require_visible(service, commitment_id, bound_project_id)
+    current = service.ensure_repo_space(bound_project_id).id if bound_project_id else GLOBAL_SPACE_ID
     try:
-        return service.update_commitment(commitment_id, actor="user", status=status).to_dict()
+        space_id = service.resolve_space(space or "current", current=current, allow_create=True)
+        return service.create_commitment(content, space_id=space_id, due=due, actor="user").to_dict()
     except MemoryServiceError as exc:
         raise MemoryViewError(str(exc)) from exc
 
 
-def revert_change(service: MemoryService | None, change_id: int) -> dict[str, Any]:
+def update_commitment(
+    service: MemoryService | None,
+    commitment_id: str,
+    *,
+    bound_project_id: str,
+    status: str | None = None,
+    due: str | None = None,
+    content: str | None = None,
+) -> dict[str, Any]:
     service = _require(service)
+    _require_visible(service, commitment_id, bound_project_id)
     try:
-        return service.revert(change_id, actor="user").to_dict()
+        return service.update_commitment(commitment_id, actor="user", status=status, due=due, content=content).to_dict()
+    except MemoryServiceError as exc:
+        raise MemoryViewError(str(exc)) from exc
+
+
+def revert_change(service: MemoryService | None, change_id: int, *, bound_project_id: str) -> dict[str, Any]:
+    service = _require(service)
+    change = service.get_change(change_id)
+    if change is None:
+        raise MemoryViewError(f"no such change: {change_id}")
+    if change.scope not in visible_spaces(service, bound_project_id):
+        raise MemoryViewError("this change belongs to another project")
+    try:
+        return change_view(service.revert(change_id, actor="user"))
     except MemoryServiceError as exc:
         raise MemoryViewError(str(exc)) from exc
 
 
 __all__ = [
     "MemoryViewError",
+    "change_view",
     "confirm_fact",
+    "create_commitment",
     "create_fact",
     "forget",
     "project_memory",

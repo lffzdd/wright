@@ -52,13 +52,14 @@ def test_provider_is_chosen_from_the_configured_key():
     assert resolve_search_config({"BRAVE_API_KEY": "b"}).provider.name == "brave"
     both = {"TAVILY_API_KEY": "t", "BRAVE_API_KEY": "b"}
     assert resolve_search_config(both).provider.name == "tavily"
-    assert resolve_search_config({**both, "WRIGHT_SEARCH_PROVIDER": "Brave"}).provider.name == "brave"
+    assert resolve_search_config(both, "Brave").provider.name == "brave"
+    assert resolve_search_config(both, "off") is None
 
 
 def test_explicit_provider_without_its_key_or_unknown_provider_is_not_registered(caplog):
     with caplog.at_level(logging.WARNING):
-        assert resolve_search_config({"WRIGHT_SEARCH_PROVIDER": "brave", "TAVILY_API_KEY": "t"}) is None
-        assert resolve_search_config({"WRIGHT_SEARCH_PROVIDER": "bing", "TAVILY_API_KEY": "t"}) is None
+        assert resolve_search_config({"TAVILY_API_KEY": "t"}, "brave") is None
+        assert resolve_search_config({"TAVILY_API_KEY": "t"}, "bing") is None
     assert "BRAVE_API_KEY" in caplog.text
     assert "bing" in caplog.text
 

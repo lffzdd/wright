@@ -56,9 +56,18 @@ Dispatcher 准备工具与调度执行，调用 `PermissionService.authorize` �
 
 授权缓存依赖轻量文件修订，不使用 TTL；目录遍历逐资源校验，后台监控持续检查撤销。后台调度使用同一权威仓储的独立权限服务，不持有用户 Session 的检查点生命周期。
 
+## 在设置页修改默认值
+
+Web 设置页的 Permissions 分区不经过会话，直接修改新会话的默认值：
+
+* 默认权限模式写入用户权限文件（`~/.wright/permission_settings.json` 或 `WRIGHT_PERMISSION_CONFIG` 指向的文件）的 `mode`，只接受 `default`、`acceptEdits`、`plan`、`bypass`。写入复用权限事务：加锁、写前写后整份校验、更新 revision、原子替换；校验失败时文件不变。选择 `bypass` 前界面会确认。只影响新会话，已有会话保持自己的模式。
+* 新会话的 Shell 执行方式和沙箱出网方式是用户设置 `sandbox.default_execution`、`sandbox.egress`，见 [settings.md](settings.md)。改成 `host` 前界面会确认。
+* `mcp.trust_project` 决定是否启动项目 `.wright/mcp.json` 里的服务器，只能写在用户设置里，项目文件不能信任自己。开启前界面会确认。
+* 规则表列出用户层和项目层的 allow、ask、deny 规则。界面只能新增 deny 和 ask 规则（文本形式，如 `shell(terraform destroy*)`、`read(**/.env)`），只收紧权限；allow 规则仍只能来自审批。任何非内置规则都可以删除，删除不会放行，之后由权限模式重新决定。内置 deny 规则锁定，不能删除。无法确定边界的规则（如 `web_fetch(https://x*)`）在写入前的校验中被拒绝。
+
 ## Shell 后端
 
-`Session.execution_mode` 为 `sandbox`（默认）或 `host`，与工作区 `environment=local|worktree`、审批策略 `permission_mode` 独立。worktree 仅隔离工作目录，不是系统安全沙箱。首版执行方式仅属于会话，不支持项目或全局 host 默认；新会话和旧检查点缺少该字段时使用 sandbox，恢复已有 host 会话会保留该选择。
+`Session.execution_mode` 为 `sandbox`（默认）或 `host`，与工作区 `environment=local|worktree`、审批策略 `permission_mode` 独立。worktree 仅隔离工作目录，不是系统安全沙箱。新会话的默认方式来自用户设置 `sandbox.default_execution`（默认 sandbox，只能写在用户设置文件或环境变量 `WRIGHT_DEFAULT_EXECUTION` 里，项目文件不能设置）；值无效时退回 sandbox。旧检查点缺少该字段时使用 sandbox，恢复已有 host 会话会保留该选择。
 
 CLI 新会话可显式使用 `wright --execution-mode host` 或 `wright --execution-mode sandbox`，恢复命令保留原会话的方式。
 
@@ -85,7 +94,7 @@ macOS 和 Linux 上，sandbox 模式的每条命令都有一个只属于它的�
 * macOS：Seatbelt 只允许 `network-outbound` 到代理监听的那个本机端口，没有 DNS 和其他 socket；`/private/etc/ssl` 只读开放，供 TLS 客户端读取系统证书配置。
 * Linux：命令始终在离线网络命名空间里。启动器（`sandbox_launcher.py`，复制到命令的临时目录，由可信解释器执行）在命名空间的 `127.0.0.1:3128` 监听，派生一个转发进程，把连接转到宿主侧代理的 Unix socket；随后给自己装上 seccomp 再执行 bash。命令的新 socket 只能是 AF_INET/AF_INET6（命名空间里只有 `lo`），Unix、netlink、packet socket、io_uring、ptrace 和 `process_vm_*` 都被拒绝；转发进程不可 dump，随 shell 退出。
 * 命令环境带 `HTTP(S)_PROXY`、`ALL_PROXY=socks5h://…`、npm 代理设置和 `NODE_USE_ENV_PROXY=1`，`NO_PROXY` 只含 localhost。不读这些设置的程序没有网络。
-* Windows 尚无代理模式，保持离线或单次联网两种状态；主机规则对 Windows Shell 不生效。`WRIGHT_SANDBOX_EGRESS=legacy` 可在 macOS/Linux 退回旧的全有或全无开关。
+* Windows 尚无代理模式，保持离线或单次联网两种状态；主机规则对 Windows Shell 不生效。用户设置 `sandbox.egress=legacy`（或环境变量 `WRIGHT_SANDBOX_EGRESS=legacy`）可在 macOS/Linux 退回旧的全有或全无开关；值无效时按 proxy 处理。每条命令启动时读取一次。
 
 代理支持 HTTP CONNECT、绝对 URI 的明文 HTTP 和 SOCKS5，只按主机和端口控制，不解密 TLS：
 

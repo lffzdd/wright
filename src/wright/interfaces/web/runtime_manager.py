@@ -274,7 +274,7 @@ class SessionHandle:
                 }
             usage = state.task_usage()
             request = view["request_usage"]
-            from ...application.workspace.context_usage import empty_context
+            from ...application.workspace.context_usage import calibrate, empty_context
             from ...application.workspace.timeline import (
                 project_accessed_files,
                 project_subagents,
@@ -290,6 +290,7 @@ class SessionHandle:
                 breakdown = self._preview_context() or breakdown or empty_context(
                     getattr(self.runtime.llm, "context_limit", None)
                 )
+            breakdown = calibrate(breakdown, getattr(state, "context_history", ()))
             queued_commands = [
                 {
                     "command_id": item["command_id"],
@@ -411,6 +412,47 @@ class SessionHandle:
         self._context_preview = (key, result)
         return result
 
+    def context_detail(self, *, category: str | None = None, turn: int | None = None) -> dict[str, Any]:
+        """Every item of one Context category or turn, with its full content.
+
+        It is assembled for the next request on demand, so the snapshot stays
+        small. Unknown categories and turns raise ``KeyError``.
+        """
+        from ...application.workspace.context_usage import context_detail
+
+        agent = getattr(self.runtime, "agent", None)
+        preview = getattr(agent, "preview_context", None)
+        if not callable(preview):
+            raise RuntimeManagerError("context detail is unavailable", status_code=409)
+        return context_detail(preview(detail=True), category=category, turn=turn)
+
+    def context_request(self, *, raw: bool = False) -> dict[str, Any]:
+        """The next request whole and in order, for the full-request view.
+
+        The total is anchored on the last provider count, the same number the
+        Context tab shows. ``raw`` adds the messages and tools as they go on
+        the wire, for copying.
+        """
+        from ...application.workspace.context_usage import calibrate, context_detail
+
+        agent = getattr(self.runtime, "agent", None)
+        build = getattr(agent, "request_context", None)
+        if not callable(build):
+            raise RuntimeManagerError("context detail is unavailable", status_code=409)
+        built = build()
+        state = getattr(self.runtime, "session_state", None)
+        report = calibrate(built["report"], getattr(state, "context_history", ()))
+        result: dict[str, Any] = {
+            **context_detail(report),
+            "used": report.get("used"),
+            "calibrated_used": report.get("calibrated_used"),
+            "limit": report.get("limit"),
+            "turns": report.get("turns", []),
+        }
+        if raw:
+            result["request"] = {"messages": built["messages"], "tools": built["tools"]}
+        return result
+
     def summary(self) -> dict[str, Any]:
         summary = self.service.summary()
         return {
@@ -429,6 +471,15 @@ class SessionHandle:
     def set_mcp_server(self, name: str, enabled: bool) -> list[dict[str, Any]]:
         try:
             return self.service.set_mcp_server(name, enabled)
+        except SessionServiceError as exc:
+            raise RuntimeManagerError(str(exc)) from exc
+
+    def skills(self) -> list[dict[str, Any]]:
+        return self.service.skills()
+
+    def set_skill(self, skill_id: str, enabled: bool) -> list[dict[str, Any]]:
+        try:
+            return self.service.set_skill(skill_id, enabled)
         except SessionServiceError as exc:
             raise RuntimeManagerError(str(exc)) from exc
 
@@ -494,6 +545,12 @@ class RuntimeManager:
 
     def set_mcp_server(self, session_id: str, name: str, enabled: bool) -> list[dict[str, Any]]:
         return self.get(session_id).set_mcp_server(name, enabled)
+
+    def skills(self, session_id: str) -> list[dict[str, Any]]:
+        return self.get(session_id).skills()
+
+    def set_skill(self, session_id: str, skill_id: str, enabled: bool) -> list[dict[str, Any]]:
+        return self.get(session_id).set_skill(skill_id, enabled)
 
     def create(
         self,

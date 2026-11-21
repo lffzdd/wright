@@ -1,0 +1,420 @@
+{
+  "src/App.tsx": {
+    "@stylistic/max-len": {
+      "count": 20
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "no-nested-ternary": {
+      "count": 11
+    },
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "src/api.ts": {
+    "@stylistic/max-len": {
+      "count": 1
+    }
+  },
+  "src/app/browser.ts": {
+    "@stylistic/max-len": {
+      "count": 1
+    }
+  },
+  "src/app/useCapabilityCounts.ts": {
+    "@stylistic/max-len": {
+      "count": 1
+    }
+  },
+  "src/app/useSessionStream.ts": {
+    "@stylistic/max-len": {
+      "count": 4
+    },
+    "react-hooks/exhaustive-deps": {
+      "count": 4
+    }
+  },
+  "src/components.test.tsx": {
+    "@stylistic/max-len": {
+      "count": 2
+    }
+  },
+  "src/components/cards/InteractionCard.tsx": {
+    "@stylistic/max-len": {
+      "count": 1
+    }
+  },
+  "src/components/cards/Messages.tsx": {
+    "@stylistic/max-len": {
+      "count": 3
+    },
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/components/cards/PlanCard.tsx": {
+    "@stylistic/max-len": {
+      "count": 1
+    },
+    "no-nested-ternary": {
+      "count": 1
+    }
+  },
+  "src/components/cards/StructuredOutput.tsx": {
+    "@stylistic/max-len": {
+      "count": 1
+    }
+  },
+  "src/components/cards/ToolBodies.tsx": {
+    "@stylistic/max-len": {
+      "count": 4
+    },
+    "no-nested-ternary": {
+      "count": 2
+    }
+  },
+  "src/components/cards/ToolCard.tsx": {
+    "@stylistic/max-len": {
+      "count": 7
+    },
+    "no-nested-ternary": {
+      "count": 14
+    },
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/components/cards/toolKinds.ts": {
+    "no-nested-ternary": {
+      "count": 1
+    }
+  },
+  "src/components/code/DiffViewer.tsx": {
+    "no-nested-ternary": {
+      "count": 2
+    }
+  },
+  "src/components/code/highlight.ts": {
+    "@stylistic/max-len": {
+      "count": 2
+    }
+  },
+  "src/components/composer/Composer.test.tsx": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "src/components/composer/Composer.tsx": {
+    "@stylistic/max-len": {
+      "count": 12
+    },
+    "no-nested-ternary": {
+      "count": 1
+    },
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/components/inspector/ChangesPanel.test.tsx": {
+    "@stylistic/max-len": {
+      "count": 2
+    }
+  },
+  "src/components/inspector/ChangesPanel.tsx": {
+    "@stylistic/max-len": {
+      "count": 13
+    },
+    "no-nested-ternary": {
+      "count": 13
+    },
+    "react-hooks/exhaustive-deps": {
+      "count": 4
+    }
+  },
+  "src/components/inspector/ContextDetail.tsx": {
+    "@stylistic/max-len": {
+      "count": 4
+    },
+    "no-nested-ternary": {
+      "count": 4
+    },
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/components/inspector/ContextPanel.test.tsx": {
+    "@stylistic/max-len": {
+      "count": 10
+    }
+  },
+  "src/components/inspector/ContextPanel.tsx": {
+    "@stylistic/max-len": {
+      "count": 10
+    },
+    "no-nested-ternary": {
+      "count": 4
+    }
+  },
+  "src/components/inspector/ContextRequest.tsx": {
+    "@stylistic/max-len": {
+      "count": 4
+    },
+    "no-nested-ternary": {
+      "count": 3
+    }
+  },
+  "src/components/inspector/FilesPanel.tsx": {
+    "@stylistic/max-len": {
+      "count": 10
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "no-nested-ternary": {
+      "count": 7
+    }
+  },
+  "src/components/inspector/Inspector.test.tsx": {
+    "@stylistic/max-len": {
+      "count": 2
+    }
+  },
+  "src/components/inspector/Inspector.tsx": {
+    "@stylistic/max-len": {
+      "count": 19
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "no-nested-ternary": {
+      "count": 6
+    },
+    "react-hooks/exhaustive-deps": {
+      "count": 7
+    }
+  },
+  "src/components/inspector/files-panel.test.tsx": {
+    "@stylistic/max-len": {
+      "count": 1
+    }
+  },
+  "src/components/panels/RulesPage.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/components/panels/SchedulesPage.tsx": {
+    "no-nested-ternary": {
+      "count": 1
+    },
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/components/panels/SearchDialog.tsx": {
+    "no-nested-ternary": {
+      "count": 1
+    },
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/components/panels/SettingsPage.tsx": {
+    "@stylistic/max-len": {
+      "count": 2
+    }
+  },
+  "src/components/panels/capability.tsx": {
+    "@stylistic/max-len": {
+      "count": 2
+    }
+  },
+  "src/components/panels/interval.ts": {
+    "@stylistic/max-len": {
+      "count": 1
+    }
+  },
+  "src/components/panels/memory/ChangesView.tsx": {
+    "@stylistic/max-len": {
+      "count": 1
+    }
+  },
+  "src/components/panels/memory/EpisodesView.tsx": {
+    "@stylistic/max-len": {
+      "count": 1
+    },
+    "no-nested-ternary": {
+      "count": 1
+    }
+  },
+  "src/components/panels/memory/FactsView.tsx": {
+    "@stylistic/max-len": {
+      "count": 4
+    },
+    "no-nested-ternary": {
+      "count": 1
+    }
+  },
+  "src/components/panels/memory/MemoryPage.tsx": {
+    "@stylistic/max-len": {
+      "count": 5
+    },
+    "no-nested-ternary": {
+      "count": 1
+    }
+  },
+  "src/components/panels/settings/EntryTable.tsx": {
+    "@stylistic/max-len": {
+      "count": 2
+    },
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/components/panels/settings/ModelPicker.tsx": {
+    "@stylistic/max-len": {
+      "count": 2
+    }
+  },
+  "src/components/panels/settings/ModelsSection.tsx": {
+    "@stylistic/max-len": {
+      "count": 2
+    }
+  },
+  "src/components/panels/settings/SettingsPage.test.tsx": {
+    "@stylistic/max-len": {
+      "count": 2
+    }
+  },
+  "src/components/permissions/approval.tsx": {
+    "@stylistic/max-len": {
+      "count": 2
+    },
+    "no-nested-ternary": {
+      "count": 7
+    },
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/components/permissions/permissions.tsx": {
+    "@stylistic/max-len": {
+      "count": 13
+    },
+    "no-nested-ternary": {
+      "count": 4
+    }
+  },
+  "src/components/permissions/policyAuditDetail.tsx": {
+    "no-nested-ternary": {
+      "count": 2
+    }
+  },
+  "src/components/session/ContextRing.tsx": {
+    "no-nested-ternary": {
+      "count": 2
+    }
+  },
+  "src/components/session/SessionRail.tsx": {
+    "@stylistic/max-len": {
+      "count": 3
+    },
+    "no-nested-ternary": {
+      "count": 1
+    }
+  },
+  "src/components/session/session.ts": {
+    "@stylistic/max-len": {
+      "count": 1
+    },
+    "no-control-regex": {
+      "count": 1
+    }
+  },
+  "src/components/timeline/StepGroup.tsx": {
+    "@stylistic/max-len": {
+      "count": 1
+    }
+  },
+  "src/components/timeline/Timeline.tsx": {
+    "@stylistic/max-len": {
+      "count": 8
+    },
+    "no-nested-ternary": {
+      "count": 3
+    }
+  },
+  "src/components/timeline/TurnFooter.tsx": {
+    "no-nested-ternary": {
+      "count": 1
+    }
+  },
+  "src/components/timeline/steps.ts": {
+    "@stylistic/max-len": {
+      "count": 1
+    }
+  },
+  "src/components/timeline/toc.tsx": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "src/components/ui/Menu.tsx": {
+    "@stylistic/max-len": {
+      "count": 1
+    }
+  },
+  "src/components/ui/dialogs.tsx": {
+    "@stylistic/max-len": {
+      "count": 3
+    }
+  },
+  "src/i18n.ts": {
+    "@stylistic/max-len": {
+      "count": 1
+    },
+    "no-nested-ternary": {
+      "count": 1
+    }
+  },
+  "src/inspector-navigation.test.tsx": {
+    "no-nested-ternary": {
+      "count": 7
+    }
+  },
+  "src/isolation.test.tsx": {
+    "@stylistic/max-len": {
+      "count": 2
+    }
+  },
+  "src/project-sessions.test.tsx": {
+    "@stylistic/max-len": {
+      "count": 1
+    }
+  },
+  "src/reducer.ts": {
+    "@stylistic/max-len": {
+      "count": 1
+    },
+    "no-nested-ternary": {
+      "count": 11
+    }
+  },
+  "src/startup.test.tsx": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "src/types.ts": {
+    "@stylistic/max-len": {
+      "count": 4
+    }
+  },
+  "tests/reasoning.spec.ts": {
+    "no-nested-ternary": {
+      "count": 4
+    }
+  }
+}

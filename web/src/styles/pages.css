@@ -147,7 +147,7 @@
 @media (max-width: 640px) {
   .settings-row { flex-direction: column; align-items: flex-start; }
 }
-.settings-label { color: var(--text-primary); font-size: var(--text-md); }
+.settings-label { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--text-primary); font-size: var(--text-md); }
 
 .runtime-path { font-family: var(--font-mono); overflow-wrap: anywhere; }
 .runtime-notice { margin: 0; }
@@ -155,12 +155,12 @@
 .runtime-key { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); }
 
 /* ── .runtime-control ── */
-.runtime-control { display: grid; grid-template-columns: 240px 48px; align-items: center; gap: 10px; flex-shrink: 0; justify-items: start; }
+.runtime-control { display: grid; grid-template-columns: 280px 56px; align-items: center; gap: 8px; flex-shrink: 0; justify-items: start; }
 .cap-page .runtime-control input:not([type="checkbox"]), .cap-page .runtime-control .field-select { width: 100%; }
 .runtime-control .switch { justify-self: end; }
 .cap-page .runtime-control input:disabled, .cap-page .runtime-control .field-select:disabled { opacity: 0.55; cursor: not-allowed; background: var(--bg-card-secondary); }
 @media (max-width: 640px) {
-  .runtime-control { width: 100%; grid-template-columns: minmax(0, 1fr) 48px; }
+  .runtime-control { width: 100%; grid-template-columns: minmax(0, 1fr) 56px; }
 }
 /* New-session page. */
 .welcome-title { color: var(--text-primary); margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.02em; text-align: center; }

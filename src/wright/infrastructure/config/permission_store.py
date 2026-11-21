@@ -177,13 +177,13 @@ def protected_permission_paths(project: Path | None = None) -> tuple[Path, ...]:
 class FilePermissionRepository:
     """Authoritative user, project and session stores with light revision probes."""
 
-    def __init__(self, project: Path):
-        from ...core.paths import project_permission_settings_path
+    def __init__(self, project: Path | None):
+        """``project=None`` reads and edits only the user layer (no project is open)."""
+        from ...core.paths import project_id, project_permission_settings_path
 
-        self.project_path = project_permission_settings_path(project)
+        self.project_path = project_permission_settings_path(project) if project is not None else None
         self.project = project
-        from ...core.paths import project_id
-        self.project_identity = project_id(project)
+        self.project_identity = project_id(project) if project is not None else ""
 
     def transaction(self):
         return transaction()
@@ -212,7 +212,7 @@ class FilePermissionRepository:
         settings.allow = [_stamp_lifetime(rule, "user") for rule in settings.allow]
         settings.ask = [_stamp_lifetime(rule, "user") for rule in settings.ask]
         settings.deny = _merge_packaged_denies(settings.deny)
-        if self.project_path.is_file():
+        if self.project_path is not None and self.project_path.is_file():
             data = json.loads(self.project_path.read_text(encoding="utf-8"))
             if data.get("version") != 2:
                 raise ValueError("Project permissions are outdated; approve access again")
@@ -236,7 +236,8 @@ class FilePermissionRepository:
         return tuple(str(path) for path in protected_permission_paths(self.project))
 
     def revision_token(self, identities: tuple[str, ...]):
-        paths = (default_settings_path(), _user_path(), _packaged_path(), self.project_path, *(self._session_path(identity) for identity in identities))
+        project = (self.project_path,) if self.project_path is not None else ()
+        paths = (default_settings_path(), _user_path(), _packaged_path(), *project, *(self._session_path(identity) for identity in identities))
         def stamp(path):
             try:
                 info = path.stat()
@@ -246,6 +247,8 @@ class FilePermissionRepository:
         return (tuple(stamp(path) for path in paths), tuple(str(p) for p in protected_permission_paths(self.project)))
 
     def _session_path(self, identity: str) -> Path:
+        if self.project_path is None:
+            raise ValueError("Session permissions need a project")
         if not identity or not all(char.isalnum() or char in "-_" for char in identity):
             raise ValueError("Invalid session permission identity")
         return self.project_path.parent / "permissions-sessions" / f"{identity}.json"
@@ -273,7 +276,7 @@ class FilePermissionRepository:
                 if not any(isinstance(item, dict) and item.get("id") == record["id"] for item in allow):
                     allow.append(record)
 
-        _update_settings(update, self.project_path if lifetime == "project" else None)
+        _update_settings(update, self._layer_path(lifetime))
 
     def remove(self, record_id: str, lifetime: str) -> None:
         def update(data: dict) -> None:
@@ -284,7 +287,34 @@ class FilePermissionRepository:
                     item for item in items if _stored_identity(item, lifetime, bucket) != record_id
                 ]
 
-        _update_settings(update, self.project_path if lifetime == "project" else None)
+        _update_settings(update, self._layer_path(lifetime))
+
+    def set_default_mode(self, mode: str) -> None:
+        """The mode new sessions start in; only the user layer holds it."""
+
+        def update(data: dict) -> None:
+            data["mode"] = mode
+
+        _update_settings(update, None)
+
+    def add_restriction(self, text: str, effect: str, lifetime: str) -> None:
+        """Append a deny or ask rule in its text form. Only tightens access."""
+        if effect not in {"deny", "ask"}:
+            raise ValueError("Only deny and ask rules can be added here")
+
+        def update(data: dict) -> None:
+            bucket = data.setdefault("permissions", {}).setdefault(effect, [])
+            if text not in bucket:
+                bucket.append(text)
+
+        _update_settings(update, self._layer_path(lifetime))
+
+    def _layer_path(self, lifetime: str) -> Path | None:
+        if lifetime != "project":
+            return None
+        if self.project_path is None:
+            raise ValueError("No project is open")
+        return self.project_path
 
 
 def _configuration_id(rule, lifetime: str) -> str:

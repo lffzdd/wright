@@ -180,15 +180,68 @@ describe("Files panel", () => {
     await screen.findByText("one");
     expect(document.querySelector(".crumb-path")?.textContent).toBe("src/a.ts");
     expect(document.querySelector(".files-preview-head .badge")?.textContent).toBe("M");
-    fireEvent.click(screen.getByRole("button", { name: "Cite" }));
+    const cite = screen.getByRole("button", { name: "Add this file to your message" });
+    expect(cite).toHaveProperty("title", "Add this file to your message");
+    fireEvent.click(cite);
     expect(onReference).toHaveBeenCalledWith("src/a.ts");
   });
 });
 
 describe("Files panel readability", () => {
-  it("marks collapsed folders that hold working-tree changes", async () => {
+  it("counts the working-tree changes inside a collapsed folder", async () => {
+    vi.spyOn(api, "changes").mockResolvedValue({ changes: [
+      { path: "src/a.ts", status: "M" }, { path: "src/lib/deep.ts", status: "M" },
+    ], baseline: "HEAD", local_warning: false });
     await openFiles();
-    await waitFor(() => expect(screen.getByRole("treeitem", { name: /src/ }).querySelector(".st")?.textContent).toBe("•"));
+    const src = screen.getByRole("treeitem", { name: /src/ });
+    await waitFor(() => expect(src.querySelector(".files-dir-count")?.textContent).toBe("2"));
+    expect(src.classList.contains("has-changes")).toBe(true);
+  });
+
+  it("fades entries git ignores", async () => {
+    vi.spyOn(api, "tree").mockResolvedValue({ path: "", entries: [
+      { ...entry("README.md") }, { ...entry(".env"), ignored: true }, { ...entry("log", "dir", "log"), ignored: true },
+    ] });
+    await openFiles();
+    expect(screen.getByRole("treeitem", { name: /^\.env/ }).classList.contains("files-ignored")).toBe(true);
+    expect(screen.getByRole("treeitem", { name: /log/ }).classList.contains("files-ignored")).toBe(true);
+    expect(screen.getByRole("treeitem", { name: /README.md/ }).classList.contains("files-ignored")).toBe(false);
+  });
+
+  it("tells a read apart from an edit in the session mark", async () => {
+    const state = view(); state.accessed_files = [
+      { path: "README.md", access: "read", tools: { read_file: 1 } },
+      { path: ".env", access: "write", tools: { edit_file: 1 } },
+    ];
+    await openFiles(state);
+    const read = screen.getByRole("treeitem", { name: /README.md/ }).querySelector(".incontext");
+    const edit = screen.getByRole("treeitem", { name: /^\.env/ }).querySelector(".incontext");
+    expect(read?.classList.contains("read")).toBe(true);
+    expect(read?.getAttribute("title")).toBe("Read in this session");
+    expect(edit?.classList.contains("modified")).toBe(true);
+    expect(edit?.getAttribute("title")).toBe("Edited in this session");
+  });
+
+  it("counts the working-tree changes in the header and opens them", async () => {
+    vi.spyOn(api, "changes").mockResolvedValue({ changes: [
+      { path: "src/a.ts", status: "M" }, { path: "README.md", status: "M" },
+    ], baseline: "HEAD", local_warning: false });
+    await openFiles();
+    const summary = await waitFor(() => {
+      const found = document.querySelector<HTMLButtonElement>(".files-change-summary");
+      expect(found).toBeTruthy();
+      return found!;
+    });
+    expect(summary.textContent).toBe("2 changed");
+    fireEvent.click(summary);
+    expect(await screen.findByRole("tab", { name: /Changes/, selected: true })).toBeTruthy();
+  });
+
+  it("leaves the header without a summary when nothing changed", async () => {
+    vi.spyOn(api, "changes").mockResolvedValue({ changes: [], baseline: "HEAD", local_warning: false });
+    await openFiles();
+    expect(document.querySelector(".files-change-summary")).toBeNull();
+    expect(document.querySelector(".files-count-label")).toBeNull();
   });
 
   it("marks tree rows that were used in this session", async () => {
@@ -286,11 +339,11 @@ describe("Files panel readability", () => {
     expect((await screen.findByRole("treeitem", { name: /a.ts/ })).getAttribute("title")).toBe("/project/src/a.ts");
   });
 
-  it("names the project and shows a file count without a status legend in the pane head", async () => {
+  it("names the project and shows the change count without a status legend in the pane head", async () => {
     await openFiles();
     const head = document.querySelector(".files-project-head")!;
     expect(head.querySelector("b")?.textContent).toBe("project");
-    expect(head.textContent).toMatch(/3 files/);
+    await waitFor(() => expect(head.textContent).toMatch(/1 changed/));
     // Tree rows already color M and A; the legend only took header room.
     expect(head.querySelector(".c-amber, .c-green")).toBeNull();
   });

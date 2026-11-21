@@ -3,7 +3,8 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from "re
 import { api, ApiError, bootstrap } from "./api";
 import { browserLocale, setLocale, useT } from "./i18n";
 import { paintTheme, paintedTheme, systemTheme } from "./theme";
-import type { FileReference, SessionSummary } from "./types";
+import { paintThoughtStyle, paintedThoughtStyle, type ThoughtStyle } from "./thoughtStyle";
+import type { ExecutionMode, FileReference, SessionSummary } from "./types";
 import { downloadText, tabTitle } from "./app/browser";
 import { useCapabilityCounts } from "./app/useCapabilityCounts";
 import { useServerLatency } from "./app/useServerLatency";
@@ -15,11 +16,12 @@ import { emptyDraft, type Draft } from "./components/composer/draft";
 import { Inspector, type InspectorTab } from "./components/inspector/Inspector";
 import { InspectorResizeHandle } from "./components/inspector/InspectorResizeHandle";
 import { ResizeHandle } from "./components/ui/ResizeHandle";
-import { MemoryPage } from "./components/panels/MemoryPage";
+import { MemoryPage } from "./components/panels/memory/MemoryPage";
 import { RulesPage } from "./components/panels/RulesPage";
 import { SchedulesPage } from "./components/panels/SchedulesPage";
 import { SearchDialog } from "./components/panels/SearchDialog";
 import { SettingsPage } from "./components/panels/SettingsPage";
+import type { PreferencePatch } from "./components/panels/settings/entries";
 import { defaultInspectorWidth, parseInspectorWidth } from "./components/inspector/inspectorWidth";
 import { clampSidebarWidth, parseSidebarWidth, SIDEBAR_WIDTH_DEFAULT, SIDEBAR_WIDTH_MAX, SIDEBAR_WIDTH_MIN } from "./components/session/sidebarWidth";
 import { HeaderTitle } from "./components/session/HeaderTitle";
@@ -55,6 +57,7 @@ export default function App() {
     openInspector, closeInspector, toggleInspector,
   } = useWorkspaceLayout();
   const [theme, setTheme] = useState<"dark" | "light">(paintedTheme);
+  const [thoughtStyle, setThoughtStyle] = useState<ThoughtStyle>(paintedThoughtStyle);
   const [workspaces, setWorkspaces] = useState<WorkspaceRow[]>([]);
   const [panel, setPanel] = useState<Panel>(null);
   const panelRef = useRef(panel);
@@ -65,13 +68,14 @@ export default function App() {
   const [renaming, setRenaming] = useState<string | null>(null);
   const beginHeaderRename = useRef<(() => void) | null>(null);
   const [addingWorkspace, setAddingWorkspace] = useState(false);
-  const [callFocus, setCallFocus] = useState<{ sessionId: string; callId: string; request: number } | null>(null);
+  const [callFocus, setCallFocus] = useState<{ sessionId: string; callId?: string; contextId?: string; tocId?: string; request: number } | null>(null);
   const [inspectorTab, setInspectorTab] = useState<{ tab: InspectorTab; request: number } | undefined>(undefined);
   const [fileFocus, setFileFocus] = useState<{ sessionId: string; path: string; line?: number; request: number } | null>(null);
   const [booted, setBooted] = useState(false);
   const cancelId = useRef<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [draftPolicy, setDraftPolicy] = useState({ interaction_mode: "agent", permission_mode: "default" });
+  const defaultExecution = useRef<ExecutionMode>("sandbox");
   const draftsRef = useRef(drafts);
   draftsRef.current = drafts;
   const workspaceId = useRef<string | null>(null);
@@ -85,7 +89,7 @@ export default function App() {
   }, []);
   const updateDraft = useCallback((sessionId: string, patch: (current: Draft) => Draft) => {
     setDrafts((current) => {
-      const previous = current[sessionId] ?? emptyDraft();
+      const previous = current[sessionId] ?? emptyDraft(defaultExecution.current);
       return { ...current, [sessionId]: patch(previous) };
     });
   }, []);
@@ -215,12 +219,19 @@ export default function App() {
         themeFollowsSystem.current = prefs.theme_saved === false;
         applyTheme(themeFollowsSystem.current ? systemTheme() : prefs.theme);
         setInspectorOpen(prefs.inspector_open);
+        applyThoughtStyle(prefs.thought_style ?? "quiet");
         const stored = parseInspectorWidth(prefs.inspector_width);
         setInspectorWidth(stored ?? defaultInspectorWidth());
         setSidebarOpen(prefs.sidebar_open ?? true);
         setSidebarWidth(parseSidebarWidth(prefs.sidebar_width) ?? SIDEBAR_WIDTH_DEFAULT);
       }
       setProject(projectData);
+      // New drafts start from the user's defaults (Settings → Permissions).
+      defaultExecution.current = projectData.default_execution === "host" ? "host" : "sandbox";
+      if (typeof projectData.default_permission_mode === "string") {
+        const permission_mode = projectData.default_permission_mode;
+        setDraftPolicy((current) => ({ ...current, permission_mode }));
+      }
       launchId.current = String(projectData.project_id ?? "");
       launchRoot.current = typeof projectData.project_root === "string" ? projectData.project_root : undefined;
       if (registry) {
@@ -280,7 +291,7 @@ export default function App() {
       ? sessions.find((item) => item.session_id === selected)?.project_id || state?.session.project_id || surface
       : surface;
     const generation = epoch.current;
-    const current = draftsRef.current[owner] ?? emptyDraft();
+    const current = draftsRef.current[owner] ?? emptyDraft(defaultExecution.current);
     const clientRequestId = current.clientRequestId || crypto.randomUUID();
     updateDraft(owner, (item) => ({ ...item, clientRequestId, commandId, phase: "awaiting", reason: browsing === "preview" ? tr("web.resuming_session") : tr("web.awaiting_accept") }));
     try {
@@ -329,7 +340,7 @@ export default function App() {
       }
       refreshSessions().catch(() => undefined);
       if (accepted && (accepted as { duplicate?: boolean }).duplicate !== true) {
-        updateDraft(owner, () => emptyDraft());
+        updateDraft(owner, () => emptyDraft(defaultExecution.current));
       }
       return "accepted" as const;
     } catch (error) {
@@ -425,8 +436,13 @@ export default function App() {
       setFatal("This checkpoint can be read as history. Its execution directory is gone, so it cannot run again.");
     }
   };
-  const savePreference = async (patch: { theme?: "dark" | "light"; inspector_open?: boolean; interface_language?: string; inspector_width?: number }) => {
+  const applyThoughtStyle = (next: ThoughtStyle) => {
+    setThoughtStyle(next);
+    paintThoughtStyle(next);
+  };
+  const savePreference = async (patch: PreferencePatch & { inspector_width?: number }) => {
     const saved = await api.setPreference(patch);
+    if (patch.thought_style) applyThoughtStyle(saved.thought_style ?? patch.thought_style);
     if (patch.theme) { themeFollowsSystem.current = false; applyTheme(saved.theme); }
     if (patch.inspector_open !== undefined) setInspectorOpen(saved.inspector_open);
     if (patch.interface_language) setLocale(saved.interface_language);
@@ -444,10 +460,29 @@ export default function App() {
       impact.shell ? tr("web.rewind_shell") : "",
     ].filter(Boolean).join("\n\n");
   };
-  const rewind = (sessionId: string, messageId: string, prompt?: string) =>
-    api.rewind(sessionId, { message_id: messageId, command_id: crypto.randomUUID(), ...(prompt === undefined ? {} : { prompt }) })
-      .then(() => { refreshSessions().catch(() => undefined); });
-  const messageActions: MessageActions | undefined = state && browsing === "live" ? {
+  /** A history preview runs nothing; rewinding one resumes the session first, keeping its id. */
+  const ensureLive = async (sessionId: string) => {
+    if (browsing !== "preview") return sessionId;
+    const summary = sessions.find((item) => item.session_id === sessionId);
+    const owner = summary?.project_id || state?.session.project_id || projectKey();
+    const body = { resume: sessionId, client_request_id: crypto.randomUUID() };
+    const created = owner ? await api.createInWorkspace(String(owner), body) : await api.create(body);
+    const liveId = created.session.session_id;
+    remember(liveId);
+    setBrowsing("live");
+    setSelected(liveId);
+    return liveId;
+  };
+  const rewind = async (sessionId: string, messageId: string, prompt?: string) => {
+    const liveId = await ensureLive(sessionId);
+    const edited = prompt === undefined ? {} : { prompt };
+    await api.rewind(liveId, { message_id: messageId, command_id: crypto.randomUUID(), ...edited });
+    refreshSessions().catch(() => undefined);
+  };
+  // A preview can rewind and fork too, unless its execution directory is gone.
+  const recoverable = sessions.find((item) => item.session_id === selected)?.recoverable !== false;
+  const canRewrite = browsing === "live" || (browsing === "preview" && recoverable);
+  const messageActions: MessageActions | undefined = state && canRewrite ? {
     regenerate: (messageId) => {
       const sessionId = state.session.session_id;
       confirmDialog({ title: tr("web.regenerate_title"), message: rewindNotes(messageId), confirmLabel: tr("web.regenerate") })
@@ -481,7 +516,7 @@ export default function App() {
   const running = execution === "running" || execution === "waiting_for_input";
   const directoryQueued = execution === "queued";
   const composerOwner = selected && browsing !== "draft" ? selected : draftKey;
-  const draft = drafts[composerOwner] ?? emptyDraft();
+  const draft = drafts[composerOwner] ?? emptyDraft(defaultExecution.current);
   const selectedWorkspace = workspaces.find((item) => item.project_id === workspaceId.current);
   const branch = String(state?.session.branch_name ?? (workspaceId.current === launchId.current ? project?.branch : "") ?? "");
   const dirty = workspaceId.current === launchId.current ? Number(project?.uncommitted_count ?? 0) : 0;
@@ -593,7 +628,7 @@ export default function App() {
         {page === "memory" && <MemoryPage projectId={selectedProjectId || null} />}
         {page === "rules" && <RulesPage projectId={selectedProjectId || null} />}
         {page === "schedules" && <SchedulesPage sessionId={selected} projectId={selectedProjectId || null} />}
-        {page === "settings" && <SettingsPage theme={theme} inspectorOpen={inspectorOpen} save={savePreference} projectId={selectedProjectId || null} />}
+        {page === "settings" && <SettingsPage theme={theme} thoughtStyle={thoughtStyle} inspectorOpen={inspectorOpen} save={savePreference} projectId={selectedProjectId || null} />}
       </main> : <main className="conversation">
         {state ? <>
           <header className="conversation-head topbar">
@@ -771,6 +806,9 @@ export default function App() {
       {!page && state && selected ? <Inspector key={selected} state={state} sessionId={selected} open={compactViewport ? inspectorOpen && narrowInspector : inspectorOpen} narrow={compactViewport && narrowInspector} focusPath={fileFocus?.sessionId === selected ? fileFocus.path : null} focusLine={fileFocus?.sessionId === selected ? fileFocus.line : undefined} focusRequest={fileFocus?.request} tabRequest={inspectorTab} close={closeInspector} showCall={(callId) => {
         setCallFocus((previous) => ({ sessionId: selected, callId, request: (previous?.request ?? 0) + 1 }));
         // On narrow screens the inspector covers the conversation.
+        if (compactViewport) closeInspector();
+      }} showMessage={(target) => {
+        setCallFocus((previous) => ({ sessionId: selected, ...target, request: (previous?.request ?? 0) + 1 }));
         if (compactViewport) closeInspector();
       }} onResume={resumeSelected} onFeedback={(feedback) => {
         const owner = selected;

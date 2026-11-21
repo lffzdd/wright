@@ -35,7 +35,7 @@ from ..composition.runtime import (
     model_presets,
     shutdown_runtime,
 )
-from ..composition.settings import load_settings
+from ..composition.settings import load_settings, permission_defaults
 from ..composition.stores import (
     copy_session_attachments,
     open_autonomy_store,
@@ -43,6 +43,7 @@ from ..composition.stores import (
     project_worktrees,
 )
 from ..execution.directory import DirectoryExecutionCoordinator
+from ..permission.defaults import PermissionDefaultsError
 from ..session_runtime.publisher import EventPublisher
 from .opening import OpenIntentError, load_resume_checkpoint, resolve_new_environment
 from .service import SessionService
@@ -143,10 +144,16 @@ class SessionDirectory:
 
     def project(self) -> dict[str, Any]:
         try:
-            llm = load_settings(self.project_root).llm
+            settings = load_settings(self.project_root)
         except SettingsError as exc:
             raise SessionDirectoryError(f"Could not load settings: {exc}", kind="settings") from exc
+        llm = settings.llm
         base_model = process_model_name(getattr(self.base_args, "model", None), llm.model)
+        try:
+            default_permission_mode = permission_defaults(self.project_root).describe()["mode"]
+        except PermissionDefaultsError:
+            # A session would stop on the same file; the composer just shows the usual default.
+            default_permission_mode = "default"
         with self._lock:
             self._prune_closed_locked()
             active_count = len(self._sessions)
@@ -163,6 +170,8 @@ class SessionDirectory:
                 and self.worktrees.inspect(ProjectContext.local(self.project_root))["dirty"]
             ),
             "default_model": base_model,
+            "default_execution": getattr(self.base_args, "execution_mode", None) or settings.sandbox.default_execution,
+            "default_permission_mode": default_permission_mode,
             "models": list(available_models(base_model, llm.models, model_presets(llm))),
             **_git_fields(self.project_root),
         }
@@ -390,6 +399,7 @@ class SessionDirectory:
 
         turn_ids, run_ids = seed_ids(saved)
         execution_root = Path(saved.workspace_dir)
+        from ..workspace.context_usage import calibrate
         from ..workspace.timeline import (
             project_accessed_files,
             project_subagents,
@@ -413,7 +423,9 @@ class SessionDirectory:
             "subagents": project_subagents(saved),
             "accessed_files": project_accessed_files(saved),
             "plan": plan,
-            "context_breakdown": dict(getattr(saved, "request_context_breakdown", None) or {}) or None,
+            "context_breakdown": calibrate(
+                dict(saved.request_context_breakdown), saved.context_history,
+            ) if saved.request_context_breakdown else None,
             "session": {
                 "session_id": saved.session_id,
                 "lifecycle": "closed",

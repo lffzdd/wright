@@ -17,5 +17,6 @@
 @import "./styles/inspector/permissions.css";
 @import "./styles/inspector/overrides.css";
 @import "./styles/pages.css";
+@import "./styles/memory.css";
 @import "./styles/settings.css";
 @import "./styles/overlays.css";

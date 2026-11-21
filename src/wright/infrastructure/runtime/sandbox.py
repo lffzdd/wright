@@ -36,15 +36,16 @@ NAMESPACE_EGRESS_PORT = 3128
 _LOCAL_DESTINATIONS = "localhost,127.0.0.1,::1"
 
 
-def egress_mode() -> str:
+def egress_mode(configured: str = "proxy") -> str:
     """``proxy``: network only through the per-command egress proxy.
 
-    ``legacy`` keeps the earlier all-or-nothing switch (``WRIGHT_SANDBOX_EGRESS=legacy``);
-    Windows has no proxy mode yet and always uses it.
+    ``legacy`` keeps the earlier all-or-nothing switch (``sandbox.egress``);
+    Windows has no proxy mode yet and always uses it. Anything but ``legacy``
+    is the proxy, the stricter of the two.
     """
     if sys.platform not in {"darwin", "linux"}:
         return "legacy"
-    return "legacy" if os.getenv("WRIGHT_SANDBOX_EGRESS", "proxy").strip().lower() == "legacy" else "proxy"
+    return "legacy" if configured.strip().lower() == "legacy" else "proxy"
 
 
 def egress_environment(port: int) -> dict[str, str]:
@@ -282,7 +283,10 @@ def _sandbox_environment(scratch: Path) -> dict[str, str]:
     return env
 
 
-def launch(command: str, grant: InvocationGrant, scratch: Path, cwd_file: Path, *, egress: EgressDecider | None = None):
+def launch(
+    command: str, grant: InvocationGrant, scratch: Path, cwd_file: Path, *,
+    egress: EgressDecider | None = None, egress_setting: str = "proxy",
+):
     """Start the command; returns ``(process, egress lease or None)``.
 
     In proxy mode the command reaches the network only through a lease that
@@ -291,7 +295,7 @@ def launch(command: str, grant: InvocationGrant, scratch: Path, cwd_file: Path, 
     if sys.platform == "win32":
         from .windows_sandbox import launch as windows_launch
         return windows_launch(command, grant, scratch, cwd_file), None
-    if egress_mode() == "proxy":
+    if egress_mode(egress_setting) == "proxy":
         return _launch_with_egress(command, grant, scratch, cwd_file, egress)
     argv = macos_argv(command, grant, scratch, cwd_file) if sys.platform == "darwin" else linux_argv(command, grant, scratch, cwd_file)
     env = _sandbox_environment(scratch)

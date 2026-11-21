@@ -1,8 +1,9 @@
-import { CaretRight, Check, ShieldCheck, X } from "@phosphor-icons/react";
+import { CaretRight, Check, X } from "@phosphor-icons/react";
 import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useT } from "../../i18n";
 import type { TimelineItem, ToolState } from "../../types";
 import { RevealCallContext } from "../timeline/revealCall";
+import { PermissionAutoLine, PermissionDoneLine } from "./PermissionRecord";
 import { PlanMark, PlanTimelineCard, planCardPayload, planOf, planRejection } from "./PlanCard";
 import { QuestionRecord } from "./QuestionRecord";
 import {
@@ -11,20 +12,6 @@ import {
 } from "./ToolBodies";
 import { isDirectoryTool, referenceToolCompact, referenceToolKind, toolCategory, toolFamily, toolIcon, toolLabel } from "./toolKinds";
 import { arg, asRecord, formatDuration, textOf } from "./values";
-
-function PermissionDoneLine({ command, decision, rule }: { command: string; decision: "allow" | "deny"; rule?: string }) {
-  const tr = useT();
-  return <div className={`perm-done${decision === "deny" ? " deny" : ""}`}>
-    {decision === "deny" ? <X size={14} aria-hidden="true" /> : <ShieldCheck size={14} aria-hidden="true" />}
-    {tr(decision === "deny" ? "web.perm_done.deny" : rule ? "web.perm_done.always" : "web.perm_done.allow")} · <code className="mono">{command}</code>
-    {rule && <> · {tr("web.perm_done.rule_added")} <code className="mono">{rule}</code></>}
-  </div>;
-}
-
-function PermissionAutoLine({ rule }: { rule: string }) {
-  const tr = useT();
-  return <div className="auto-ok"><ShieldCheck size={14} aria-hidden="true" />{tr("web.perm_auto.rule")} <code className="mono">{rule}</code></div>;
-}
 
 /** Prefer ToolResult.display.diff, then data.diff for older sessions. */
 function editDiffSource(
@@ -92,11 +79,10 @@ export function ToolCard({
   const permission = metricSource?.permission as { decision?: unknown; rule?: string; auto?: boolean } | undefined;
   const denied = phase === "failed" && permission?.decision === "deny";
   if (permission?.auto && permission.rule && phase === "succeeded") {
-    return <div className={`tl-indent${enter ? " enter" : ""}`} data-call-id={callId || undefined}><PermissionAutoLine rule={String(permission.rule)} /></div>;
+    return <PermissionAutoLine callId={callId} rule={String(permission.rule)} enter={enter} />;
   }
   if (denied) {
-    const label = command || path || name;
-    return <div className={`tl-indent${enter ? " enter" : ""}`} data-call-id={callId || undefined}><PermissionDoneLine command={label} decision="deny" /></div>;
+    return <PermissionDoneLine callId={callId} command={command || path || name} decision="deny" enter={enter} />;
   }
   const diffSource = editDiffSource(family, metricSource, display);
   const hasDiff = family === "edit" && typeof diffSource?.diff === "string";

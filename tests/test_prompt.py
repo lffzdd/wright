@@ -85,3 +85,21 @@ def test_agent_system_prompt_uses_the_assembled_catalog(tmp_path):
     assert "new_hidden" not in content
     search = next(tool for tool in agent._schema_tools if tool.name == "tool_search")
     assert "new_hidden" in search.description
+
+
+def test_system_prompt_sections_group_role_tools_rules_and_memory():
+    from wright.application.memory.prompt import build_memory_instructions
+    from wright.domain.prompt import system_prompt_sections
+
+    tools = [_tool("read"), _tool("edit"), _tool("write"), _tool("shell"), _tool("later", deferred=True)]
+    prompt = build_system_prompt(tools, memory_section=build_memory_instructions(), role_instruction="Be a pilot.")
+    sections = dict(system_prompt_sections(prompt))
+    assert list(sections) == ["role", "tools", "rules", "Long-term memory"]
+    assert sections["role"] == "Be a pilot."
+    # Every tool paragraph the builder writes is recognised as tool guidance.
+    for marker in ("Always available:", "Prefer edit", "shell keeps", "Specialized tools"):
+        assert marker in sections["tools"]
+    assert "Follow the user's language" in sections["rules"]
+    assert "memory_write" in sections["Long-term memory"]
+    # Nothing is dropped.
+    assert sum(len(text) for text in sections.values()) >= len(prompt.strip()) - 10 * len(sections)

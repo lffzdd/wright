@@ -269,6 +269,31 @@ describe("UI event reducer", () => {
     expect(next.active_turn).toBeNull();
   });
 
+  it("keeps an allowed prompt as a compact record and drops a denied one", () => {
+    const waiting: ViewState = {
+      ...state,
+      pending_interactions: [{ request_id: "perm-1", kind: "permission", command: "pnpm test" }],
+      timeline: [
+        { id: "call-1", kind: "shell", name: "shell", phase: "awaiting_approval" },
+        { id: "perm-1", kind: "approval", phase: "pending", interaction: { request_id: "perm-1", kind: "permission" } },
+      ],
+    };
+    const allowed = applyEvent(waiting, event(1, "interaction.resolved", { request_id: "perm-1", status: "approved", choice: "allow_once" }));
+    expect(allowed.pending_interactions).toEqual([]);
+    expect(allowed.timeline?.find((item) => item.id === "perm-1")).toMatchObject({
+      kind: "approval", phase: "approved", decision: "allow",
+      interaction: { command: "pnpm test" },
+    });
+    const remembered = applyEvent({ ...waiting, last_seq: 0, seen: [] }, event(1, "interaction.resolved", {
+      request_id: "perm-1", status: "approved", choice: "allow_session_shell",
+    }));
+    expect(remembered.timeline?.find((item) => item.id === "perm-1")?.decision).toBe("always");
+    const denied = applyEvent({ ...waiting, last_seq: 0, seen: [] }, event(1, "interaction.resolved", {
+      request_id: "perm-1", status: "denied", choice: "deny",
+    }));
+    expect(denied.timeline?.some((item) => item.kind === "approval")).toBe(false);
+  });
+
   it("keeps each step's narration as its own block, in order with tools", () => {
     let next = applyEvent({ ...state, timeline: [] }, event(1, "turn.started", { prompt: "fix it" }));
     next = applyEvent(next, event(2, "content.delta", { piece: "Reading first." }));

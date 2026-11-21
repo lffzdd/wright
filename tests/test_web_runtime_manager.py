@@ -576,8 +576,11 @@ def test_history_resumes_same_conversation_and_only_executes_after_send(offline_
     assert calls == ["model"]
     # The saved request breakdown must reach the read-only preview, or the
     # Context panel reports the session as having no statistics.
-    assert preview["context_breakdown"] == (original_state.request_context_breakdown or None)
-    assert preview["context_breakdown"]
+    saved_breakdown = dict(preview["context_breakdown"])
+    # The per-request trend is saved with the checkpoint and comes back with it.
+    assert saved_breakdown.pop("history") == original_state.context_history
+    assert original_state.context_history
+    assert saved_breakdown == (original_state.request_context_breakdown or None)
 
     restored = manager.create(resume=session_id, client_request_id="resume-from-history")
     assert restored.session_id == session_id

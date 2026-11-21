@@ -82,10 +82,15 @@ class ModelTurnRunner:
         if view.omitted_optional_reminders:
             logger.info("episode_recall omitted reason=context_budget")
         self.session_state.request_context_tokens = view.estimated_tokens
-        from ..workspace.context_usage import classify_context
+        from ..workspace.context_usage import (
+            HISTORY_LIMIT,
+            classify_context,
+            history_entry,
+        )
 
-        breakdown = classify_context(view)
-        breakdown["limit"] = self.context_limit
+        breakdown = classify_context(
+            view, watermark=self.compactor.context_watermark, limit=self.context_limit,
+        )
         self.session_state.request_context_breakdown = breakdown
         self._emit_compaction_lifecycle(view)
         if view.over_budget:
@@ -116,6 +121,11 @@ class ModelTurnRunner:
         })
         started = time.monotonic()
         response, usage_record = self._stream_model_response(view, wire_messages, started)
+        point = history_entry(breakdown, usage_record.prompt_tokens if usage_record else None)
+        if point is not None:
+            history = self.session_state.context_history
+            history.append(point)
+            del history[:-HISTORY_LIMIT]
 
         self.ui.on_usage(
             usage_record.prompt_tokens if usage_record else None,
@@ -141,26 +151,43 @@ class ModelTurnRunner:
 
         return response, usage_record
 
-    def preview_context(self) -> dict:
+    def preview_context(self, *, detail: bool = False) -> dict:
         """Side-effect-free estimate of the next request, for the Context tab.
 
         It assembles the request the way ``run`` does, folding included, but
-        skips memory recall, which may record what it injected.
+        skips memory recall, which may record what it injected. ``detail``
+        lists every item with its content, for the detail view.
         """
         from ..workspace.context_usage import classify_context
 
+        return classify_context(
+            self._preview_view(), preview=True, watermark=self.compactor.context_watermark,
+            limit=self.context_limit, detail=detail,
+        )
+
+    def request_context(self) -> dict:
+        """The next request whole, every item with its content, plus what goes on the wire."""
+        from ..workspace.context_usage import classify_context
+
+        view = self._preview_view()
+        report = classify_context(
+            view, preview=True, watermark=self.compactor.context_watermark,
+            limit=self.context_limit, detail=True,
+        )
+        return {"report": report, "messages": list(view.messages), "tools": list(view.tools)}
+
+    def _preview_view(self):
         schemas, _ = encode_tools(self._prompt_manager.visible_schema_tools())
-        system_prompt = self._system_prompt(self.session_state.message_records)
-        view = ContextBuilder(self.compactor.detached()).build(
-            self.session_state.message_records,
+        # A copy: the detail view may be asked for while a turn appends records.
+        records = list(self.session_state.message_records)
+        system_prompt = self._system_prompt(records)
+        return ContextBuilder(self.compactor.detached()).build(
+            records,
             tools=schemas,
             reminders=self._prompt_manager.ephemeral_reminders(),
             system_prompt=system_prompt,
             context_limit=self.context_limit,
         )
-        breakdown = classify_context(view, preview=True)
-        breakdown["limit"] = self.context_limit
-        return breakdown
 
     def _system_prompt(self, records) -> str | None:
         """This request's system prompt; None keeps the stored one unchanged.

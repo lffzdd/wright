@@ -48,7 +48,10 @@ Trace 是审计与后续 eval 的输入，不是完整 transcript，也不承诺
 ## 配置命令 Hook
 
 命令 Hook 不会从仓库自动加载。复制或修改 `docs/lifecycle-hooks.example.json` 后，必须由
-用户显式启动：
+用户显式指定：启动时传 `--hooks-config`，或在用户设置里写 `hooks.config`（环境变量
+`WRIGHT_HOOKS_CONFIG`，Web 设置页 Tools → Lifecycle hooks）。命令行参数优先。`hooks.config`
+只能写在用户设置文件里，项目文件不能设置；它是 fail closed 的路径，文件不存在或解析失败时
+会话直接报错，不会在没有 Hook 的情况下继续运行。设置页只读列出解析出的 Hook，修改请直接编辑文件。
 
 ```bash
 python -m wright.main --hooks-config path/to/hooks.json

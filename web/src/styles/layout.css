@@ -117,12 +117,6 @@
 .conversation-outline-host .outline-ticks {
   pointer-events: auto;
 }
-@media (max-width: 1280px) {
-  .topbar { display: grid; }
-}
-@media (max-width: 700px) {
-  .topbar { grid-template-columns: minmax(0, 1fr) auto; }
-}
 
 /* ── Top bar ──────────────────────────────────────────────────────────────── */
 .topbar { border-bottom-color: var(--border-subtle); }

@@ -324,15 +324,25 @@ a.web-hit-title:hover { color: var(--accent); }
 .term-exit { display: block; padding: 0; }
 
 /* ── .think ── */
+/* Reasoning shares the tool rows' icon column (1px border + 10px padding, a 22px icon, 9px gap), so the run reads as one list. */
 .timeline .think summary {
-  list-style: none; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
-  padding: 2px 8px 2px 6px; margin-left: -6px; border-radius: 6px; user-select: none; transition: color .12s, background .12s;
+  list-style: none; display: flex; width: fit-content; max-width: 100%; min-width: 0; align-items: center; gap: 9px; cursor: pointer;
+  padding: 4px 10px 4px 11px; border-radius: 10px; user-select: none; transition: color .12s, background .12s;
 }
 .timeline .think summary::-webkit-details-marker { display: none; }
 .timeline .think summary:hover { color: var(--text-secondary); background: var(--hover); }
-.timeline .think summary .chev { transition: transform .15s; opacity: .7; flex: none; color: var(--text-muted); }
-.timeline .think[open] summary .chev { transform: rotate(90deg); }
-.timeline .think summary .lbl { font-size: 13px; font-weight: 400; color: inherit; }
+.timeline .think-ic { width: 22px; height: 22px; flex: none; display: grid; place-items: center; color: var(--text-muted); }
+/* Quiet (default): an aside between actions, smaller, muted and italic, and never as wide as the row. */
+.timeline .think-preview {
+  min-width: 0; max-width: 75ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; font-style: italic; color: var(--text-muted);
+}
+.timeline .think-meta { flex: none; color: var(--text-muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.timeline .think summary .lbl { flex: none; font-size: 13px; font-weight: 400; color: inherit; }
+/* Prominent: thinking is the main line and the tool calls sit one step in, under it. */
+:root[data-thought-style="lead"] .timeline .think-preview { max-width: none; font-size: 14px; font-style: normal; color: var(--text-primary); }
+:root[data-thought-style="lead"] .timeline .think-ic { color: var(--text-secondary); }
+:root[data-thought-style="lead"] .timeline .tl-indent[data-call-id] { padding-left: 32px; }
 .timeline .think.running summary .lbl {
   background: linear-gradient(90deg, var(--text-muted) 20%, var(--text-primary) 50%, var(--text-muted) 80%);
   background-size: 200% 100%;
@@ -342,6 +352,11 @@ a.web-hit-title:hover { color: var(--accent); }
 .timeline .think-body .reasoning-body {
   margin: 0; padding: 0; max-height: 320px; overflow: auto; font-size: 13px; font-style: italic;
   color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+/* Streaming: a short window on the newest lines, older ones fading out above. */
+.timeline .think-body .reasoning-body.tail {
+  max-height: calc(13px * 1.7 * 3); overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 40%); mask-image: linear-gradient(to bottom, transparent, #000 40%);
 }
 
 /* ── .plan-card ── */
@@ -364,15 +379,26 @@ a.web-hit-title:hover { color: var(--accent); }
 .timeline .sum-row .ic { color: var(--text-3); }
 
 /* ── .turn-foot ── */
-.timeline .turn-foot { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; min-height: 26px; }
-.timeline .turn-foot .ok { color: var(--ok); }
-.timeline .turn-foot .warn { color: var(--warning); }
-.timeline .turn-foot .sep { opacity: .5; margin: 0 2px; }
+/* One row per turn: the reply's actions, then quiet stats right beside them. */
+.timeline .turn-foot { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; min-height: 28px; }
+.timeline .turn-foot .sep { opacity: .5; }
+.timeline .tf-stats { margin-left: 4px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.timeline .tf-status { display: inline-flex; align-items: center; gap: 4px; font-weight: 500; }
+.timeline .tf-status.warn { color: var(--warning); }
+.timeline .tf-status.danger { color: var(--danger); }
+/* Clickable like the icon buttons beside it: a soft pill on hover, no underline. */
+.timeline .tf-tools { padding: 2px 6px; margin: 0 -6px; border-radius: 6px; font: inherit; color: inherit; transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+.timeline .tf-tools:hover { color: var(--text-primary); background: var(--hover); text-decoration: none; }
 
 /* ── .tf-actions ── */
-.timeline .tf-actions { margin-left: auto; display: flex; gap: 2px; opacity: 0; transition: opacity .15s; }
-.timeline .turn:hover .tf-actions, .timeline .turn-footer-block:hover .tf-actions, .timeline .tf-actions:focus-within { opacity: 1; }
-.timeline .tf-actions .icon-button { width: 26px; height: 26px; color: var(--text-muted); }
+/* Older turns show their actions on hover or focus; the newest keeps them in view. */
+.timeline .tf-actions { display: flex; gap: 2px; margin-left: -6px; opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
+.timeline .turn:hover .tf-actions, .timeline .tf-actions:focus-within,
+.timeline .turn-footer-block.latest .tf-actions { opacity: 1; }
+/* An older turn with no stats takes no row: its hover actions float into the gap before the next prompt. */
+.timeline .turn-footer-block:not(.latest) .turn-foot:not(:has(.tf-stats)) { min-height: 0; height: 0; margin-top: 2px; overflow: visible; align-items: flex-start; }
+.timeline .tf-actions .icon-button { width: 28px; height: 28px; color: var(--text-muted); }
+.timeline .tf-actions .icon-button:hover { background: var(--hover); color: var(--text-primary); }
 @media (hover: none) {
   .timeline .tf-actions { opacity: 1; } }
 

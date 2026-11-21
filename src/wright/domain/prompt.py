@@ -83,9 +83,43 @@ def build_system_prompt(
     return prompt
 
 
+# Opening words of the tool-usage paragraphs ``build_system_prompt`` writes.
+_TOOL_GUIDANCE = ("Always available:", "Prefer edit", "shell keeps", "Specialized tools")
+
+
+def system_prompt_sections(prompt: str) -> list[tuple[str, str]]:
+    """Split a prompt from ``build_system_prompt`` into named sections.
+
+    The first paragraph is the role, the tool paragraphs are ``tools``, the
+    remaining plain paragraphs are ``rules``. From the first Markdown heading
+    on, such as the memory instructions, each top-level heading starts a
+    section named by its title. Empty sections are left out.
+    """
+    sections: dict[str, list[str]] = {"role": [], "tools": [], "rules": []}
+    heading = ""
+    first = True
+    for part in (part.strip() for part in prompt.split("\n\n")):
+        if not part:
+            continue
+        if part.startswith("# "):
+            heading = part.splitlines()[0][2:].strip() or "Instructions"
+            sections.setdefault(heading, [])
+        if heading:
+            sections[heading].append(part)
+        elif first:
+            sections["role"].append(part)
+        elif part.startswith(_TOOL_GUIDANCE):
+            sections["tools"].append(part)
+        else:
+            sections["rules"].append(part)
+        first = False
+    return [(name, "\n\n".join(parts)) for name, parts in sections.items() if parts]
+
+
 __all__ = [
     "DEFAULT_CODING_ROLE",
     "DEFAULT_GENERAL_ROLE",
     "build_system_prompt",
     "get_role_instruction",
+    "system_prompt_sections",
 ]

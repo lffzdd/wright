@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { setLocale } from "../../i18n";
 import { MarkdownContent } from "../code/Markdown";
 import { languageForFence } from "../code/highlight";
@@ -59,6 +59,22 @@ it("lays out a record with its title, fields and unescaped text", () => {
   expect(raw?.hasAttribute("open")).toBe(false);
   expect(raw?.textContent).toContain("mem-a1fbc4ef51a84462");
   expect(container.querySelector(".so-fields")?.textContent).not.toContain("mem-a1fbc4ef51a84462");
+});
+
+it("scrolls the raw JSON into view when it opens", () => {
+  const intoView = vi.fn();
+  const previous = HTMLElement.prototype.scrollIntoView;
+  HTMLElement.prototype.scrollIntoView = intoView;
+  try {
+    const { container } = render(<StructuredOutput value={memory} />);
+    const details = container.querySelector<HTMLDetailsElement>(".so-raw")!;
+    fireEvent.click(details.querySelector("summary")!);
+    details.dispatchEvent(new Event("toggle"));
+    expect(details.open).toBe(true);
+    expect(intoView).toHaveBeenCalled();
+  } finally {
+    HTMLElement.prototype.scrollIntoView = previous;
+  }
 });
 
 it("keeps file text literal instead of rendering it as Markdown", () => {

@@ -573,4 +573,84 @@ def test_settings_routes_require_auth(tmp_path):
     static.mkdir()
     (static / "index.html").write_text("<main>Wright</main>")
     client = TestClient(create_app(FakeManager(), BootstrapAuth("bootstrap-secret"), static_dir=static))
-    assert client.get("/api/v1/settings").status_code == 401
+    client.headers["origin"] = "http://testserver"
+    for method, path in (
+        ("get", "/api/v1/settings"),
+        ("get", "/api/v1/settings/secrets"),
+        ("put", "/api/v1/settings/secrets/TAVILY_API_KEY"),
+        ("get", "/api/v1/settings/permissions"),
+        ("put", "/api/v1/settings/permissions/mode"),
+        ("get", "/api/v1/settings/mcp"),
+        ("get", "/api/v1/settings/skills"),
+        ("get", "/api/v1/settings/hooks"),
+        ("get", "/api/v1/workspaces/ws/settings/permissions"),
+    ):
+        body = {"json": {}} if method == "put" else {}
+        assert getattr(client, method)(path, **body).status_code == 401, path
+
+
+def test_settings_page_routes_edit_keys_permissions_tools(tmp_path, monkeypatch):
+    import json as _json
+
+    from wright.core.paths import wright_home
+
+    for name in ("TAVILY_API_KEY", "WRIGHT_TRUST_PROJECT_MCP", "WRIGHT_HOOKS_CONFIG"):
+        monkeypatch.delenv(name, raising=False)
+    client = _workspace_client(tmp_path)
+
+    written = client.put("/api/v1/settings/secrets/TAVILY_API_KEY", json={"value": "tvly-secret"})
+    assert written.status_code == 200, written.text
+    assert "tvly-secret" not in written.text
+    assert "tvly-secret" not in client.get("/api/v1/settings/secrets").text
+    assert client.put("/api/v1/settings/secrets/WRIGHT_HOME", json={"value": "x"}).status_code == 400
+    assert client.delete("/api/v1/settings/secrets/TAVILY_API_KEY").status_code == 200
+
+    mode = client.put("/api/v1/workspaces/ws/settings/permissions/mode", json={"mode": "plan"})
+    assert mode.status_code == 200 and mode.json()["mode"] == "plan"
+    assert client.put("/api/v1/settings/permissions/mode", json={"mode": "everything"}).status_code == 400
+    rule = client.post(
+        "/api/v1/workspaces/ws/settings/permissions/rules",
+        json={"effect": "deny", "scope": "project", "text": "shell(terraform destroy*)"},
+    )
+    assert rule.status_code == 200, rule.text
+    assert client.post(
+        "/api/v1/settings/permissions/rules", json={"effect": "deny", "scope": "project", "text": "shell(x)"},
+    ).status_code == 400
+
+    saved = client.put(
+        "/api/v1/workspaces/ws/settings/mcp/docs",
+        json={"scope": "user", "transport": "stdio", "command": "npx", "args": ["docs-mcp"], "env": {"TOKEN": "t0ken"}},
+    )
+    assert saved.status_code == 200, saved.text
+    assert "t0ken" not in saved.text
+    [server] = saved.json()["servers"]
+    assert server["env"] == ["TOKEN"] and server["command"] == "npx"
+    # Leaving the value out keeps it.
+    client.put(
+        "/api/v1/workspaces/ws/settings/mcp/docs",
+        json={"scope": "user", "transport": "stdio", "command": "uvx", "env": {"TOKEN": None}},
+    )
+    stored = _json.loads((wright_home() / "mcp.json").read_text(encoding="utf-8"))
+    assert stored["mcpServers"]["docs"] == {"type": "stdio", "command": "uvx", "env": {"TOKEN": "t0ken"}}
+    project_server = client.put(
+        "/api/v1/workspaces/ws/settings/mcp/repo", json={"scope": "project", "transport": "http", "url": "https://mcp.test/"},
+    ).json()
+    assert next(row for row in project_server["servers"] if row["name"] == "repo")["active"] is False
+    assert client.delete("/api/v1/workspaces/ws/settings/mcp/project/repo").status_code == 200
+
+    skill = tmp_path / "project" / ".wright" / "skills" / "lint"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: lint\ndescription: Run lint\n---\nRun ruff.\n", encoding="utf-8")
+    skills = client.get("/api/v1/workspaces/ws/settings/skills").json()
+    assert [row["id"] for row in skills["skills"]] == ["lint"] and skills["skills"][0]["enabled"]
+    off = client.put("/api/v1/workspaces/ws/settings/skills/lint", json={"enabled": False}).json()
+    assert off["skills"][0]["enabled"] is False
+    assert client.put("/api/v1/workspaces/ws/settings/skills/nope", json={"enabled": False}).status_code == 404
+
+    hooks = tmp_path / "hooks.json"
+    hooks.write_text(_json.dumps({"hooks": {"pre_tool_use": [{"name": "guard", "command": ["true"]}]}}), encoding="utf-8")
+    client.put("/api/v1/settings", json={"scope": "user", "key": "hooks.config", "value": str(hooks)})
+    listed = client.get("/api/v1/settings/hooks").json()
+    assert listed["error"] is None and listed["hooks"][0]["name"] == "guard"
+    environment = {row["name"] for row in client.get("/api/v1/settings").json()["environment"]}
+    assert "WRIGHT_HOME" in environment

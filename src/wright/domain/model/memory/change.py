@@ -21,6 +21,9 @@ class ChangeRecord:
     after: dict[str, Any] | None
     note: str = ""
     reverted: bool = False
+    # The space the target belongs to ("repo:<id>", "global", "personal:<name>").
+    # Kept after a forget so the console still knows whose record it was.
+    scope: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -33,6 +36,7 @@ class ChangeRecord:
             "after": self.after,
             "note": self.note,
             "reverted": self.reverted,
+            "scope": self.scope,
         }
 
 

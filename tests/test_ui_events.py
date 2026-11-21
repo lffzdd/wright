@@ -113,6 +113,9 @@ def test_interaction_broker_accepts_only_first_answer_and_closes_fail_closed():
     request_id = broker.snapshot()[0]["request_id"]
 
     assert broker.resolve(request_id, "allow_once") is True
+    allowed = [event for event in publisher.retained_events() if event.type == "interaction.resolved"][-1]
+    assert allowed.payload["status"] == "approved"
+    assert allowed.payload["choice"] == "allow_once"
     assert broker.resolve(request_id, "deny") is False
     thread.join(timeout=1)
     assert result == ["allow_once"]

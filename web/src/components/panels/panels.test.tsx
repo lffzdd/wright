@@ -1,8 +1,8 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Inspector } from "../inspector/Inspector";
 import type { ViewState } from "../../types";
-import { MemoryPage } from "./MemoryPage";
+import { MemoryPage } from "./memory/MemoryPage";
 import { RulesPage } from "./RulesPage";
 import { SchedulesPage } from "./SchedulesPage";
 import { SearchDialog } from "./SearchDialog";
@@ -100,7 +100,7 @@ describe("workspace panels", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it("lists facts with their space and tier, and confirms a quarantined one", async () => {
+  it("groups facts by how they reach the agent and asks to review quarantined ones", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
       calls.push(`${init?.method ?? "GET"} ${url}`);
@@ -115,10 +115,10 @@ describe("workspace panels", () => {
     render(<MemoryPage projectId="ws" />);
     expect(await screen.findByText("Answer in Chinese.")).toBeTruthy();
     expect(vi.mocked(fetch).mock.calls[0][0]).toBe("/api/v1/workspaces/ws/memory");
-    expect(screen.getByText("pinned")).toBeTruthy();
-    expect(screen.getByText("needs confirmation")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Actions for Deploy host is db.corp.internal." }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Confirm" }));
+    expect(within(screen.getByRole("region", { name: "Always on" })).getByText("Answer in Chinese.")).toBeTruthy();
+    const review = screen.getByRole("region", { name: "1 facts came from tool output" });
+    expect(within(review).getByText("Deploy host is db.corp.internal.")).toBeTruthy();
+    fireEvent.click(within(review).getByRole("button", { name: "Keep" }));
     await vi.waitFor(() => expect(calls).toContain("POST /api/v1/workspaces/ws/memory/facts/f-2/confirm"));
   });
 
@@ -139,14 +139,47 @@ describe("workspace panels", () => {
       }) };
     }));
     render(<MemoryPage projectId="ws" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Actions for Use uv, never pip install globally." }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Edit" }));
-    const editor = screen.getByLabelText("Edit fact") as HTMLTextAreaElement;
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const editor = screen.getByLabelText("Fact") as HTMLTextAreaElement;
     expect(editor.value).toBe("Use uv, never pip install globally.");
     fireEvent.change(editor, { target: { value: "Use uv only." } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await vi.waitFor(() => expect(patches).toHaveLength(1));
     expect(patches[0]).toMatchObject({ content: "Use uv only.", expected_revision: 2 });
+  });
+
+  it("shows a change as a sentence with its field diff and undoes it", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      return { ok: true, statusText: "OK", json: async () => ({
+        facts: [], episodes: [], commitments: [],
+        changes: [{ id: 7, at: new Date().toISOString(), actor: "user", action: "update", target_id: "f-1", target_type: "fact", summary: "Use uv.",
+          fields: [{ name: "tier", before: "indexed", after: "pinned" }], note: "", reverted: false, forgotten: false, undoable: true }],
+      }) };
+    }));
+    render(<MemoryPage projectId="ws" />);
+    fireEvent.click(await screen.findByRole("tab", { name: "History" }));
+    expect(screen.getByText("You edited a fact")).toBeTruthy();
+    expect(screen.getByText("Indexed")).toBeTruthy();
+    expect(screen.getByText("Always on")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await vi.waitFor(() => expect(calls).toContain("POST /api/v1/workspaces/ws/memory/changes/7/revert"));
+  });
+
+  it("adds a commitment with a due date", async () => {
+    const posts: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "POST") posts.push(JSON.parse(String(init.body)));
+      return { ok: true, statusText: "OK", json: async () => ({ facts: [], episodes: [], commitments: [], changes: [] }) };
+    }));
+    render(<MemoryPage projectId="ws" />);
+    fireEvent.click(await screen.findByRole("tab", { name: /Commitments/ }));
+    fireEvent.click(screen.getByRole("button", { name: "New commitment" }));
+    fireEvent.change(screen.getByLabelText("Commitment"), { target: { value: "Rotate staging keys" } });
+    fireEvent.change(screen.getByLabelText("Due date"), { target: { value: "2026-12-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await vi.waitFor(() => expect(posts).toEqual([{ content: "Rotate staging keys", due: "2026-12-01" }]));
   });
 
   it("requires a rule id and body before saving", async () => {
@@ -202,7 +235,7 @@ describe("workspace panels", () => {
   it("saves settings from segmented controls", async () => {
     const save = vi.fn(async () => undefined);
     render(<SettingsPage theme="light" inspectorOpen save={save} />);
-    fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
+    fireEvent.click(screen.getByRole("button", { name: "General" }));
     fireEvent.click(screen.getByRole("radio", { name: "Dark" }));
     fireEvent.click(screen.getByRole("switch", { name: "Inspector open" }));
     await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(2));

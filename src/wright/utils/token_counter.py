@@ -4,14 +4,21 @@ from __future__ import annotations
 
 import json
 
-from ..common.constants import CHARS_PER_TOKEN
+from ..common.constants import BYTES_PER_TOKEN, MESSAGE_OVERHEAD_TOKENS
+
+__all__ = ["BYTES_PER_TOKEN", "estimate_message_tokens", "estimate_tokens", "estimate_tools_tokens", "tool_image_references"]
 
 
 def estimate_tokens(text: str) -> int:
-    """Roughly estimate token count based on character length."""
+    """Roughly estimate token count from UTF-8 length, rounded up.
+
+    Bytes rather than characters, so CJK text (three bytes, about one token, a
+    character) is not counted at a quarter of its size. Non-empty text is at
+    least one token.
+    """
     if not text:
         return 0
-    return len(text) // CHARS_PER_TOKEN
+    return -(-len(text.encode("utf-8", errors="replace")) // BYTES_PER_TOKEN)
 
 
 def tool_image_references(message: dict) -> list[dict]:
@@ -33,9 +40,13 @@ def tool_image_references(message: dict) -> list[dict]:
 
 
 def estimate_message_tokens(message: dict) -> int:
-    """Estimate token count for a message including content, tool calls, and images."""
+    """Estimate token count for a message including content, tool calls, and images.
+
+    Every message adds a few tokens for its role and framing, so a short
+    message is not counted as free.
+    """
     content = message.get("content")
-    count = estimate_tokens(content) if isinstance(content, str) else 0
+    count = MESSAGE_OVERHEAD_TOKENS + (estimate_tokens(content) if isinstance(content, str) else 0)
     if message.get("tool_calls"):
         count += estimate_tokens(json.dumps(message["tool_calls"], ensure_ascii=False))
     reasoning = message.get("reasoning_content")

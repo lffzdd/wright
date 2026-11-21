@@ -1,11 +1,12 @@
-import { ArrowClockwise, ArrowUUpLeft, At, CaretDoubleUp, CaretRight, Eye, EyeSlash, File, FileCode, FileImage, FileLock, FileText, Folder, FolderOpen, GitDiff, MagnifyingGlass, TreeStructure, X } from "@phosphor-icons/react";
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { ArrowClockwise, ArrowUUpLeft, At, CaretDoubleUp, CaretRight, Code, Eye, EyeSlash, Folder, GitDiff, Image, MagnifyingGlass, PencilSimple, TreeStructure, X } from "@phosphor-icons/react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { useT } from "../../i18n";
 import { CodeView } from "../code/CodeView";
 import { languageForPath } from "../code/highlight";
+import { FilePageIcon, NotePageIcon } from "../ui/chromeIcons";
 import { SegmentedControl } from "../ui/SegmentedControl";
 
-export type TreeEntry = { name: string; path: string; kind: string; size?: number | null };
+export type TreeEntry = { name: string; path: string; kind: string; size?: number | null; ignored?: boolean };
 export type AccessedFile = { path: string; access?: string; call_id?: string; tool?: string; tools?: Record<string, number>; last_calls?: Record<string, string> };
 type FileMeta = { size?: number; additions?: number; deletions?: number };
 // A reload keeps the previous entries on screen until the new listing arrives.
@@ -54,18 +55,25 @@ const EXT_GROUPS: Record<string, string> = {
   cursorindexingignore: "config",
   png: "image", jpg: "image", jpeg: "image", gif: "image", svg: "image", webp: "image", ico: "image",
 };
+/** Few, plain glyphs: brackets for code and config, a note for prose, a page for the rest. */
+const CODE_GROUPS = new Set(["code", "style", "config"]);
 const FileIcon = ({ name }: { name: string }) => {
   const ext = extOf(name);
   const group = EXT_GROUPS[ext] ?? "other";
-  const Icon = ext === "lock" ? FileLock : group === "doc" ? FileText : group === "image" ? FileImage : group === "other" ? File : FileCode;
-  return <Icon size={14} className={`ico files-icon ext-${group}`} aria-hidden="true" />;
+  const className = `ico files-icon ext-${ext === "lock" ? "lock" : group}`;
+  if (CODE_GROUPS.has(group)) return <Code size={15} weight="bold" className={className} aria-hidden="true" />;
+  if (group === "image") return <Image size={15} weight="bold" className={className} aria-hidden="true" />;
+  // The page shapes are drawn locally: Phosphor's corners are too tight at this size.
+  if (group === "doc") return <NotePageIcon className={className} />;
+  return <FilePageIcon className={className} />;
 };
 /** Placeholder rows for a folder that is loading; they fade in late so quick loads do not flash. */
 const TreeSkeleton = ({ depth, label }: { depth: number; label: string }) => <div className="files-skeleton" role="status" style={{ paddingLeft: 8 + depth * 14 + 12 }}>
   <span className="sr-only">{label}</span>
   {[62, 44, 54].map((width) => <span key={width} className="files-skeleton-bar" aria-hidden="true" style={{ width: `${width}%` }} />)}
 </div>;
-const FolderIcon = ({ open }: { open?: boolean }) => open ? <FolderOpen size={14} className="ico files-icon dir" aria-hidden="true" /> : <Folder size={14} className="ico files-icon dir" aria-hidden="true" />;
+/** Used in the session list only; tree folders read by their caret. */
+const FolderIcon = () => <Folder size={15} weight="bold" className="ico files-icon dir" aria-hidden="true" />;
 /**
  * What the session did to a path, from the strongest tool used on it: any edit
  * or write is MOD, then READ, GREP, LIST. Older payloads without per-tool
@@ -338,7 +346,8 @@ export function FilesPanel({ sessionKey, canReadFiles, historyOnly, accessedFile
         {letter && <span className={`badge ${letter}`} title={status}>{letter}</span>}
         {usageCall && <button type="button" className="icon-btn sm" onClick={() => showCall?.(usageCall)} aria-label={tr("web.files.show_call")} title={`${tr("web.files.show_call")} · ${toolSummary(usage!)}`}><ArrowUUpLeft size={14} /></button>}
         {changeStatus.has(filePath) && <button type="button" className="icon-btn sm" onClick={() => openChanges(filePath)} aria-label={tr("web.files.view_diff")} title={tr("web.files.view_diff")}><GitDiff size={14} /></button>}
-        {onReference && <button type="button" className="btn btn-ghost btn-sm mention-file" onClick={() => onReference(filePath)}><At size={14} aria-hidden="true" />{tr("web.cite")}</button>}
+        {onReference && <button type="button" className="icon-button" onClick={() => onReference(filePath)}
+          aria-label={tr("web.cite")} title={tr("web.cite")}><At size={14} aria-hidden="true" /></button>}
       </div>
       {preview?.error && <p className="form-error" role="alert">{preview.error}</p>}
       {!preview?.error && preview?.text === undefined && <p className="hint" role="status">{tr("web.inspector_loading")}</p>}
@@ -365,13 +374,25 @@ export function FilesPanel({ sessionKey, canReadFiles, historyOnly, accessedFile
         const written = accessKind(file).kind === "modified";
         const callId = showCall ? usageCallId(file) : undefined;
         const count = accessCounts[file.path] ?? 1;
+        const perTool = Object.entries(file.tools ?? {}).map(([tool, runs]) => ({ tool, count: runs, id: file.last_calls?.[tool] }));
         return <div className="lr" key={file.path}>
           {written ? <span className="badge M" title={tr("web.files.filter_changed")}>M</span> : isDir ? <FolderIcon /> : <FileIcon name={name} />}
           {/* A folder opens in the tree; a file opens its preview. */}
           <button type="button" className="grow mono files-session-path" disabled={!canReadFiles} onClick={() => isDir ? reveal(isRoot ? "" : file.path, true) : openFile(file.path)} title={absolutePath(file.path, projectRoot)}>
             <bdi>{isRoot ? <b>{projectName || file.path}</b> : <><span>{dir}</span><b>{name}{isDir ? "/" : ""}</b></>}</bdi>
           </button>
-          {callId
+          {/* Each tool jumps to its own latest call; only one call per tool is kept. */}
+          {showCall && perTool.length
+            ? <span className="files-calls" role="group" aria-label={`${tr("web.files.show_call")}: ${file.path}`}>
+              <ArrowUUpLeft size={12} aria-hidden="true" />
+              {perTool.map(({ tool, count: runs, id }, index) => <Fragment key={tool}>
+                {index > 0 ? <span className="files-calls-sep" aria-hidden="true">·</span> : null}
+                {id
+                  ? <button type="button" className="files-show-call" onClick={() => showCall(id)} title={tr("web.files.show_tool_call", { tool })}>{runs > 1 ? `${tool} ×${runs}` : tool}</button>
+                  : <span className="files-calls-plain">{runs > 1 ? `${tool} ×${runs}` : tool}</span>}
+              </Fragment>)}
+            </span>
+            : callId
             ? <button type="button" className="files-show-call" onClick={() => showCall?.(callId)} aria-label={`${tr("web.files.show_call")}: ${file.path}`} title={tr("web.files.show_call")}><ArrowUUpLeft size={12} aria-hidden="true" /><span>{toolSummary(file)}</span></button>
             : <span className="muted" title={tr("web.files.access_count", { count })}>{toolSummary(file)}</span>}
           <button type="button" className="icon-btn sm" onClick={() => reveal(isRoot ? "" : file.path, isDir)} disabled={!canReadFiles} aria-label={`${tr("web.files.locate")}: ${file.path}`} title={tr("web.files.locate")}><TreeStructure size={14} /></button>
@@ -380,16 +401,14 @@ export function FilesPanel({ sessionKey, canReadFiles, historyOnly, accessedFile
     </div>
   </section>;
 
-  const usedPaths = new Set(accessedFiles.filter(isWorkUse).map((file) => file.path));
-  const changedDirs = (() => {
-    const dirs = new Set<string>();
-    for (const path of changeStatus.keys()) for (const dir of chainOf(path, false)) dirs.add(dir);
-    return dirs;
-  })();
-  const fileCount = Object.values(branches).reduce((sum, branch) => {
-    const entries = "entries" in branch ? branch.entries ?? [] : [];
-    return sum + entries.filter((entry) => entry.kind !== "dir" && (showCache || !CACHE_NAMES.has(entry.name))).length;
-  }, 0);
+  // How the session used each path: an edit outranks a read, as in the session list.
+  const usedKinds = new Map<string, string>();
+  for (const file of accessedFiles.filter(isWorkUse)) if (usedKinds.get(file.path) !== "modified") usedKinds.set(file.path, accessKind(file).kind);
+  // Changed files under each folder, counted for the folder's badge.
+  const changedDirs = new Map<string, number>();
+  for (const path of changeStatus.keys()) {
+    for (const dir of chainOf(path, false)) changedDirs.set(dir, (changedDirs.get(dir) ?? 0) + 1);
+  }
 
   const tree = (path: string, depth: number): ReactNode => {
     const branch = branches[path];
@@ -401,25 +420,28 @@ export function FilesPanel({ sessionKey, canReadFiles, historyOnly, accessedFile
       const pad = { paddingLeft: 8 + depth * 14 };
       if (entry.kind === "dir") {
         const open = expanded.has(entry.path);
-        const hasMod = changedDirs.has(entry.path);
+        const changedCount = changedDirs.get(entry.path) ?? 0;
         return <div key={entry.path} role="none">
-          <button type="button" className={`tree-row files-row files-dir${open ? " open" : ""}${flashPath === entry.path ? " files-reveal" : ""}`} role="treeitem" data-path={entry.path} data-dir="true" aria-level={depth + 1} aria-expanded={open} style={pad} onClick={() => toggle(entry.path)} title={absolutePath(entry.path, projectRoot)}>
+          <button type="button" className={`tree-row files-row files-dir${open ? " open" : ""}${changedCount ? " has-changes" : ""}${entry.ignored ? " files-ignored" : ""}${flashPath === entry.path ? " files-reveal" : ""}`} role="treeitem" data-path={entry.path} data-dir="true" aria-level={depth + 1} aria-expanded={open} style={pad} onClick={() => toggle(entry.path)} title={absolutePath(entry.path, projectRoot)}>
             <CaretRight size={12} className="chev ico" aria-hidden="true" />
-            <FolderIcon open={open} />
             <span className="name">{entry.name}</span>
-            {hasMod && <span className="st" style={{ color: "var(--amber)" }} title={tr("web.files.dir_changed")}>•</span>}
+            {changedCount > 0 && <span className="st files-dir-count" title={tr("web.files.dir_changed")}>{changedCount}</span>}
           </button>
-          {open && <div role="group" className="files-group">{tree(entry.path, depth + 1)}</div>}
+          {/* The indent guide runs under this folder's caret. */}
+          {open && <div role="group" className="files-group" style={{ "--files-guide": `${8 + depth * 14 + 6}px` } as CSSProperties}>{tree(entry.path, depth + 1)}</div>}
         </div>;
       }
       const status = changeStatus.get(entry.path);
       const letter = status ? treeLetter(status) : "";
       const kind = status ? treeKind(status) : "";
-      return <button key={entry.path} type="button" className={`tree-row files-row${kind ? ` ${kind}` : ""}${flashPath === entry.path ? " files-reveal" : ""}`} role="treeitem" data-path={entry.path} aria-level={depth + 1} style={pad} disabled={!canReadFiles} title={absolutePath(entry.path, projectRoot)} onClick={() => openFile(entry.path)}>
+      const used = usedKinds.get(entry.path);
+      return <button key={entry.path} type="button" className={`tree-row files-row${kind ? ` ${kind}` : ""}${entry.ignored ? " files-ignored" : ""}${flashPath === entry.path ? " files-reveal" : ""}`} role="treeitem" data-path={entry.path} aria-level={depth + 1} style={pad} disabled={!canReadFiles} title={absolutePath(entry.path, projectRoot)} onClick={() => openFile(entry.path)}>
         <span className="tree-slot" aria-hidden="true" />
         <FileIcon name={entry.name} />
         <span className="name">{entry.name}</span>
-        {usedPaths.has(entry.path) && <span className="incontext" title={tr("web.files.used")} />}
+        {used && <span className={`incontext ${used}`} title={tr(used === "modified" ? "web.files.used_edit" : "web.files.used_read")}>
+          {used === "modified" ? <PencilSimple size={11} aria-hidden="true" /> : <Eye size={11} aria-hidden="true" />}
+        </span>}
         {letter && <span className="st">{letter}</span>}
       </button>;
     });
@@ -463,7 +485,10 @@ export function FilesPanel({ sessionKey, canReadFiles, historyOnly, accessedFile
               { value: "session", label: `${tr("web.files.view.session")} ${sessionFiles.length}`, title: tr("web.files.session") },
             ]} />
           : <b className="files-project-name" title={projectName}>{projectName || tr("web.files.project")}</b>}
-        {!sessionView && <span className="files-count-label">{tr("web.files_count", { count: fileCount })}</span>}
+        {!sessionView && changes.length > 0 && <button type="button" className="text-button files-change-summary"
+          onClick={() => openChanges(changes[0].path)} title={tr("web.files.view_diff")}>
+          {tr("web.files.changed_count", { count: changes.length })}
+        </button>}
       </>}
       <span className="grow" />
       <span className="files-head-actions">

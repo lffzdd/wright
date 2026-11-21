@@ -1,4 +1,4 @@
-import type { TimelineItem, ToolState } from "../../types";
+import type { ActiveTurn, TimelineItem, ToolState } from "../../types";
 import { planRejection } from "../cards/PlanCard";
 import { toolCategory, type StepCategory } from "../cards/toolKinds";
 
@@ -71,13 +71,13 @@ export function appendStep(segments: Segment[], step: Step): void {
 
 /**
  * Splits a timeline into messages and runs of consecutive process steps.
- * Approval records render nothing, so they do not split a run; questions
- * and edits stand on their own.
+ * Pending approvals live in the dock, so they do not split a run. A resolved
+ * allow/cancel line stays in the transcript, like a question.
  */
 export function segmentTimeline(items: TimelineItem[]): Segment[] {
   const segments: Segment[] = [];
   for (const item of items) {
-    if (item.kind === "approval") continue;
+    if (item.kind === "approval" && item.phase !== "approved" && item.phase !== "cancelled") continue;
     if (!isStepItem(item)) {
       segments.push({ type: "item", item });
       continue;
@@ -85,6 +85,12 @@ export function segmentTimeline(items: TimelineItem[]): Segment[] {
     appendStep(segments, stepFromItem(item));
   }
   return segments;
+}
+
+/** The timeline id of the reasoning the model is streaming right now, if any. */
+export function streamingReasoningId(turn: ActiveTurn | null | undefined): string | undefined {
+  if (!turn?.reasoning || turn.content) return undefined;
+  return `${turn.turn_id}:reasoning:${turn.segment ?? 0}`;
 }
 
 export function stepCategory(step: Step): StepCategory | null {

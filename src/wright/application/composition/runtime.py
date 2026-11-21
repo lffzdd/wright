@@ -84,6 +84,7 @@ from ..session_runtime.interaction import RoutedPrompter, UserPrompter
 from ..session_runtime.live_resources import RuntimeResources
 from ..session_runtime.loops import SessionLoopRegistry
 from ..session_runtime.publisher import EventPublisher
+from ..skills import EnabledSkills
 from ..tool_execution.approval import InteractiveApprovalHandler
 from ..tool_execution.capabilities import assemble_tool_capabilities
 from .capabilities import local_permission_service
@@ -94,7 +95,7 @@ from .memory_assembly import (
     egress_guard,
     memory_tools,
 )
-from .settings import load_settings
+from .settings import disabled_skills, load_settings, write_disabled_skills
 
 logger = get_logger(__name__)
 # The only keys a project .env can set; everything else belongs in ~/.wright/
@@ -130,6 +131,8 @@ class WrightRuntime:
     interaction_broker: Any = None
     # Side model that names a session after its first turn; None turns it off.
     title_llm: Any = None
+    # The skill catalog with the settings switches applied.
+    skills: EnabledSkills | None = None
     # Effective settings this runtime was built with.
     settings: WrightSettings = field(default_factory=WrightSettings)
     # Catalog models the picker offers when llm.models is empty.
@@ -248,6 +251,7 @@ def _open_session(
     project_context: ProjectContext,
     session_id: str | None,
     resume_chooser: Callable[[list[dict]], str] | None,
+    default_execution: str = "sandbox",
 ) -> tuple[Session, bool]:
     """Create a session or restore one. Raises CheckpointError."""
     resume_arg = config.resume
@@ -267,7 +271,7 @@ def _open_session(
         session_id=session_id,
         project_root=project_root,
         environment=project_context.environment,
-        execution_mode=config.execution_mode or "sandbox",
+        execution_mode=config.execution_mode or default_execution,
         base_commit=project_context.base_commit,
         branch_name=project_context.branch_name,
     ), False
@@ -299,14 +303,13 @@ def load_env() -> None:
 
 
 def _trusted_mcp_config_paths(
-    workspace: Path, config: RuntimeConfig
+    workspace: Path, config: RuntimeConfig, settings: WrightSettings
 ) -> tuple[list[Path], Path | None]:
     """Return executable MCP configs and any ignored project config."""
     paths = [user_mcp_config_path()]
     project = project_mcp_config_path(workspace)
-    trusted = config.trust_project_mcp or os.getenv(
-        "WRIGHT_TRUST_PROJECT_MCP"
-    ) == "1"
+    # mcp.trust_project is user-only, so a project file cannot trust itself.
+    trusted = config.trust_project_mcp or settings.mcp.trust_project
     if trusted:
         paths.append(project)
         return paths, None
@@ -399,7 +402,7 @@ def _select_base_tools(config: RuntimeConfig, settings: WrightSettings) -> tuple
     knowledge_tools = optional_knowledge_tools(
         settings.knowledge, enabled=True if config.with_rag else None
     )
-    active_base_tools = [*base_tools, *optional_web_search_tools()]
+    active_base_tools = [*base_tools, *optional_web_search_tools(provider=settings.tools.web_search)]
     if config.mode == "general":
         coding_only = {"edit", "write", "shell"}
         active_base_tools = [t for t in active_base_tools if t.name not in coding_only]
@@ -556,6 +559,7 @@ def assemble_runtime(
             project_context=project_context,
             session_id=session_id,
             resume_chooser=resume_chooser,
+            default_execution=settings.sandbox.default_execution,
         )
     except CheckpointError as exc:
         raise SystemExit(f"Could not resume the session: {exc}") from exc
@@ -645,7 +649,7 @@ def assemble_runtime(
             config_path=(
                 config.hooks_config
                 if config.hooks_config is not None
-                else None
+                else Path(settings.hooks.config).expanduser() if settings.hooks.config else None
             ),
             trace_dir=trace_dir(project_root),
         )
@@ -661,10 +665,10 @@ def assemble_runtime(
     # User MCP config is an explicit local preference. Project config is code
     # from the workspace and may start arbitrary stdio processes, so it is
     # opt-in instead of being trusted merely because the repository was opened.
-    mcp_paths, ignored_project_mcp = _trusted_mcp_config_paths(workspace_dir, config)
+    mcp_paths, ignored_project_mcp = _trusted_mcp_config_paths(workspace_dir, config, settings)
     if ignored_project_mcp is not None:
         logger.warning(
-            "Ignored untrusted project MCP config %s; pass --trust-project-mcp to load it",
+            "Ignored untrusted project MCP config %s; turn on mcp.trust_project or pass --trust-project-mcp to load it",
             ignored_project_mcp,
         )
     try:
@@ -732,7 +736,11 @@ def assemble_runtime(
     # stays: facts may already be in a resumed transcript.
     services.egress_guard = egress_guard(store_manager)
     memory_manager = store_manager if settings.memory.enabled else None
-    skill_registry = SkillRegistry(skill_directories(workspace_dir))
+    skill_registry = EnabledSkills(
+        SkillRegistry(skill_directories(workspace_dir)),
+        disabled_skills(project_root, settings.skills.disabled),
+        write_disabled_skills(project_root),
+    )
     # 注册与 schema 暴露分开：加载器常驻注册，有技能时才出现在当轮 schema 和目录里。
     skill_tools = resident_skill_tools(skill_registry)
     tools = [
@@ -859,6 +867,7 @@ def assemble_runtime(
         directory_coordinator=coordinator,
         sandbox_control=LocalSandboxControl(),
         title_llm=selector_llm if settings.session.auto_title else None,
+        skills=skill_registry,
         settings=settings,
         model_presets=router.presets(),
     )

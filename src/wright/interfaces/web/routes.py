@@ -24,8 +24,8 @@ from ..i18n.locale import LOCALE_LABELS, SUPPORTED_LOCALES, get_locale, set_loca
 from .auth import COOKIE_NAME, BootstrapAuth
 from .diff import DiffError, change_patch, list_changes
 from .runtime_manager import RuntimeManager, RuntimeManagerError
-from .settings_routes import SettingUpdateRequest, describe_settings, update_setting
-from .workspace_routes import add_workspace_routes
+from .settings_routes import add_settings_routes
+from .workspace_routes import add_workspace_routes, resolve_project_root
 
 
 class BootstrapRequest(BaseModel):
@@ -53,6 +53,8 @@ class LabelRequest(BaseModel):
 
 
 class McpServerRequest(BaseModel):
+    """An on/off switch: an MCP server or a skill."""
+
     enabled: bool
 
 
@@ -88,9 +90,12 @@ class PreferenceRequest(BaseModel):
     inspector_width: int | None = None
     sidebar_open: bool | None = None
     sidebar_width: int | None = None
+    # How folded reasoning sits among tool calls: a quiet aside, or the lead line.
+    thought_style: Literal["quiet", "lead"] | None = None
 
 
-INSPECTOR_WIDTH_RANGE = (280, 560)
+# Kept in step with web/src/components/inspector/inspectorWidth.ts.
+INSPECTOR_WIDTH_RANGE = (280, 800)
 SIDEBAR_WIDTH_RANGE = (180, 400)
 
 
@@ -147,6 +152,7 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
             and body.inspector_width is None
             and body.sidebar_open is None
             and body.sidebar_width is None
+            and body.thought_style is None
         ):
             raise HTTPException(status_code=400, detail="at least one preference is required")
         if body.interface_language is not None:
@@ -165,6 +171,8 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
             if _width_or_none(body.sidebar_width, SIDEBAR_WIDTH_RANGE) is None:
                 raise HTTPException(status_code=400, detail="sidebar_width out of range")
             save_preference("sidebar_width", body.sidebar_width)
+        if body.thought_style is not None:
+            save_preference("thought_style", body.thought_style)
         return _preference_view()
 
     @router.get("/project")
@@ -174,17 +182,6 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
             return manager.project()
         except RuntimeManagerError as exc:
             raise HTTPException(status_code=exc.status_code or 409, detail=str(exc)) from exc
-
-    # User settings only; /workspaces/{id}/settings adds that project's file.
-    @router.get("/settings")
-    def settings(request: Request) -> dict[str, Any]:
-        _require_auth(request, auth)
-        return describe_settings(None)
-
-    @router.put("/settings")
-    def update_settings(body: SettingUpdateRequest, request: Request) -> dict[str, Any]:
-        _require_auth(request, auth)
-        return update_setting(None, body)
 
     @router.get("/sessions")
     def sessions(request: Request, all_projects: bool = False) -> list[dict[str, Any]]:
@@ -239,6 +236,30 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
             return manager.get(session_id).snapshot()
         except RuntimeManagerError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.get("/sessions/{session_id}/context/detail")
+    def context_detail(
+        session_id: str, request: Request, category: str | None = None, turn: int | None = None,
+    ) -> dict[str, Any]:
+        """Full items of one Context category or turn; the snapshot lists only the largest."""
+        _require_auth(request, auth)
+        if (category is None) == (turn is None):
+            raise HTTPException(status_code=400, detail="pass exactly one of category or turn")
+        try:
+            return manager.get(session_id).context_detail(category=category, turn=turn)
+        except RuntimeManagerError as exc:
+            raise HTTPException(status_code=exc.status_code or 404, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"no such context entry: {exc.args[0]}") from exc
+
+    @router.get("/sessions/{session_id}/context/request")
+    def context_request(session_id: str, request: Request, raw: bool = False) -> dict[str, Any]:
+        """Every item of the next request in order; ``raw`` adds the wire JSON."""
+        _require_auth(request, auth)
+        try:
+            return manager.get(session_id).context_request(raw=raw)
+        except RuntimeManagerError as exc:
+            raise HTTPException(status_code=exc.status_code or 404, detail=str(exc)) from exc
 
     @router.get("/sessions/{session_id}/commands/{command_id}")
     def command_status(session_id: str, command_id: str, request: Request) -> dict[str, Any]:
@@ -300,6 +321,24 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
         _require_auth(request, auth)
         try:
             return {"mcp_servers": manager.set_mcp_server(session_id, name, body.enabled)}
+        except RuntimeManagerError as exc:
+            raise HTTPException(status_code=exc.status_code or 409, detail=str(exc)) from exc
+
+    @router.get("/sessions/{session_id}/skills")
+    def session_skills(session_id: str, request: Request) -> dict[str, Any]:
+        """Skills on disk and whether each is offered to the model."""
+        _require_auth(request, auth)
+        try:
+            return {"skills": manager.skills(session_id)}
+        except RuntimeManagerError as exc:
+            raise HTTPException(status_code=exc.status_code or 404, detail=str(exc)) from exc
+
+    @router.post("/sessions/{session_id}/skills/{skill_id}")
+    def set_skill(session_id: str, skill_id: str, body: McpServerRequest, request: Request) -> dict[str, Any]:
+        """Turn one skill on or off in this project's settings."""
+        _require_auth(request, auth)
+        try:
+            return {"skills": manager.set_skill(session_id, skill_id, body.enabled)}
         except RuntimeManagerError as exc:
             raise HTTPException(status_code=exc.status_code or 409, detail=str(exc)) from exc
 
@@ -441,6 +480,10 @@ def create_api_router(manager: RuntimeManager, auth: BootstrapAuth) -> APIRouter
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     add_workspace_routes(router, manager, auth)
+    def require(request: Request) -> None:
+        _require_auth(request, auth)
+
+    add_settings_routes(router, require, lambda registered_id: resolve_project_root(manager, registered_id))
     return router
 
 
@@ -462,6 +505,9 @@ def _preference_view() -> dict[str, Any]:
     sidebar = stored.get("sidebar_open")
     if not isinstance(sidebar, bool):
         sidebar = True
+    thought_style = stored.get("thought_style")
+    if thought_style not in {"quiet", "lead"}:
+        thought_style = "quiet"
     return {
         "interface_language": get_locale(),
         # Unsaved choices let the browser pick (language, color scheme).
@@ -476,4 +522,5 @@ def _preference_view() -> dict[str, Any]:
         "inspector_width": _width_or_none(stored.get("inspector_width"), INSPECTOR_WIDTH_RANGE),
         "sidebar_open": sidebar,
         "sidebar_width": _width_or_none(stored.get("sidebar_width"), SIDEBAR_WIDTH_RANGE),
+        "thought_style": thought_style,
     }

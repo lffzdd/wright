@@ -12,6 +12,11 @@ DEFAULT_TEMPERATURE = 0.0
 
 # Performance & Token estimation
 CHARS_PER_TOKEN = 4
+# Rough estimates count UTF-8 bytes, so CJK text (3 bytes a character) is not
+# undercounted the way characters are; each message also carries role and
+# framing tokens.
+BYTES_PER_TOKEN = 4
+MESSAGE_OVERHEAD_TOKENS = 3
 DEFAULT_TIMEOUT = 60.0
 DEFAULT_POLL_INTERVAL = 0.5
 

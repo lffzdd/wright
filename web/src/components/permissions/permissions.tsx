@@ -325,7 +325,7 @@ export function PermissionsPanel({ sessionId, grants, update, interactionMode, p
   }));
   const networkGrants = sandboxNetworkGrants(grants);
   const sessionNetwork = networkGrants.find((grant) => grant.lifetime === "session");
-  const networkDecision: Decision | null = readOnly ? "deny" : execution === "host" ? "ask" : networkGrants.length ? "allow" : "ask";
+  const networkDecision: Decision | null = readOnly ? "deny" : execution === "host" || networkGrants.length ? "allow" : "ask";
   const networkToggle = Boolean(grants) && !readOnly && execution === "sandbox" && (!networkGrants.length || Boolean(sessionNetwork));
   const toggleNetwork = async () => {
     if (!grants || !networkToggle || saving) return;

@@ -35,7 +35,7 @@
 .files-panel .pane-head.files-project-head, .files-preview .pane-head {
   display: flex; align-items: center; gap: 8px; margin: 0; min-height: 0;
   padding: 10px 12px; background: var(--bg-sunken); border-bottom: 1px solid var(--border);
-  font-size: 12px; color: var(--text-3);
+  font-size: var(--text-xs); color: var(--text-3);
   text-transform: none; letter-spacing: 0; font-weight: 400;
 }
 .changes-panel .changes-top { background: var(--bg-sunken); }
@@ -43,17 +43,17 @@
 .changes-panel .changes-toolbar { justify-content: space-between; }
 .changes-panel .changes-scope-info { display: inline-grid; place-items: center; color: var(--text-3); }
 /* .segmented */
-.changes-panel .segmented-control, .files-panel .segmented-control { display: inline-flex; width: auto; flex: 0 1 auto; padding: 2px; gap: 0; border-radius: 8px; background: var(--bg-sunken); border: 1px solid var(--border); }
+.changes-panel .segmented-control, .files-panel .segmented-control, .context-panel .segmented-control, .ctx-detail .segmented-control, .ctx-request .segmented-control { display: inline-flex; width: auto; flex: 0 1 auto; padding: 2px; gap: 0; border-radius: 8px; background: var(--bg-sunken); border: 1px solid var(--border); }
 /* .btn / .icon-btn */
 .changes-panel .btn, .files-panel .btn, .files-preview .btn {
   display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px;
   border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; cursor: pointer;
-  font-weight: 500; font-size: 13px; white-space: nowrap;
+  font-weight: 500; font-size: var(--text-sm); white-space: nowrap;
   transition: background var(--dur) var(--ease), color var(--dur), border-color var(--dur), transform 80ms;
 }
 .changes-panel .btn-ghost, .files-panel .btn-ghost, .files-preview .btn-ghost { color: var(--text-2); }
 .changes-panel .btn-outline { border: 1px solid var(--border-strong); color: var(--text); background: var(--bg-elev); }
-.changes-panel .btn-sm, .files-panel .btn-sm, .files-preview .btn-sm { height: 26px; padding: 0 9px; font-size: 12px; gap: 6px; }
+.changes-panel .btn-sm, .files-panel .btn-sm, .files-preview .btn-sm { height: 26px; padding: 0 9px; font-size: var(--text-xs); gap: 6px; }
 .changes-panel .diff-file-head,
 .changes-panel .diff-file-head.changes-file,
 .changes-panel .diff-file-head.changes-file:hover,
@@ -98,7 +98,7 @@
 .segmented-option.active { background: var(--bg-card); color: var(--text-primary); box-shadow: var(--shadow-sm); }
 
 /* ── .changes-panel ── */
-.changes-panel .segmented-option, .files-panel .segmented-option { display: inline-flex; align-items: center; gap: 5px; flex: 0 1 auto; height: 24px; padding: 0 9px; border: 0; border-radius: 6px; background: transparent; font-size: 12px; font-weight: 400; color: var(--text-3); box-shadow: none; transition: color var(--dur), background var(--dur); }
+.changes-panel .segmented-option, .files-panel .segmented-option, .context-panel .segmented-option, .ctx-detail .segmented-option, .ctx-request .segmented-option { display: inline-flex; align-items: center; gap: 5px; flex: 0 1 auto; height: 24px; padding: 0 9px; border: 0; border-radius: 6px; background: transparent; font-size: var(--text-xs); font-weight: 400; color: var(--text-3); box-shadow: none; transition: color var(--dur), background var(--dur); }
 
 /* ── .glance ── */
 /* Permissions: tables get a soft grouped container; prose stays flat.
@@ -110,7 +110,7 @@
 
 /* ── .boundary-list ── */
 .boundary-list .policy-check { flex: 0 0 16px; height: 16px; display: grid; place-items: center; border-radius: 50%; background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--ok); margin-top: 1px; }
-.ctx-num small { font-size: 13px; font-weight: 400; color: var(--text-muted); }
+.ctx-num small { font-size: var(--text-sm); font-weight: 400; color: var(--text-muted); }
 .ctx-group-head .ctx-legend-tokens { font-weight: 400; letter-spacing: 0; color: var(--text-muted); }
 
 /* ── .ctx-item ── */
@@ -120,14 +120,15 @@ button.ctx-item:hover { background: var(--bg-card-hover); }
 .inspector-tabs button[role="tab"] { height: 28px; padding: 0 8px; font-weight: 500; color: var(--text-muted); background: transparent; }
 
 /* ── .ctx-item ── */
-.ctx-item .ctx-legend-tokens { font-size: 11.5px; }
+.ctx-item .ctx-legend-tokens { font-size: var(--text-2xs); }
 
 /* ── .ctx-action ── */
 .ctx-action.ghost { border-color: transparent; background: transparent; color: var(--text-secondary); }
 .ctx-note p { margin: 6px 0 0; }
 
 /* ── .mcp-row ── */
-.mcp-row .muted, .rule-row-effect { font: 11.5px var(--font-mono); color: var(--text-muted); }
+.mcp-row .muted { font: var(--text-2xs) var(--font-sans); font-variant-numeric: tabular-nums; color: var(--text-muted); }
+.rule-row-effect { font: 11.5px var(--font-mono); color: var(--text-muted); }
 .rule-row-body small { font-size: 11.5px; color: var(--text-muted); }
 .rule-row-pattern, .rule-row-body small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -137,21 +138,20 @@ button.ctx-item:hover { background: var(--bg-card-hover); }
 /* ── .files-panel ── */
 .files-panel .section-label { padding: 0 4px 2px 8px; min-height: 26px; font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-muted); }
 .files-panel .tree-row {
-  display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding-right: 10px;
-  border: 0; border-radius: var(--radius-xs); background: transparent; text-align: left; color: var(--text-2); cursor: pointer;
-  font: 13px/1.4 var(--font-sans);
+  display: flex; align-items: center; gap: 6px; width: 100%; height: 28px; padding-right: 10px;
+  border: 0; border-radius: var(--radius-sm); background: transparent; text-align: left; color: var(--text-primary); cursor: pointer;
+  font: 13.5px/1.4 var(--font-sans);
 }
 .files-panel .tree-row.sel { background: var(--accent-soft); color: var(--text); }
-.files-panel .tree-row .ico { width: 14px; height: 14px; color: var(--text-3); flex: none; }
+.files-panel .tree-row .ico { width: 15px; height: 15px; color: var(--text-2); flex: none; }
 .files-panel .tree-row .chev { width: 12px; height: 12px; transition: transform var(--dur); }
 .files-panel .tree-row.open .chev { transform: rotate(90deg); }
-.files-panel .tree-row .incontext { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); flex: none; }
-.files-panel .tree-path { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font-size: 12px; }
+.files-panel .tree-path { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font: var(--text-xs) var(--font-mono); }
 .files-panel .files-session-path b { font-weight: 400; }
 .files-filter-clear:hover { background: var(--files-hover); color: var(--text-primary); }
 
 /* ── .files-preview ── */
-.files-preview .crumb-path { font: 12px var(--font-mono); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files-preview .crumb-path { font: var(--text-xs) var(--font-mono); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── .plan-headline ── */
 .plan-headline > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -160,8 +160,6 @@ button.ctx-item:hover { background: var(--bg-card-hover); }
 /* ── .diff-viewer ── */
 .diff-viewer { margin: 10px 0 12px; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--bg-card); }
 
-/* ── .inspector-tab-indicator ── */
-.inspector-tab-indicator { top: 0; bottom: 0; margin: auto 0; height: 30px; border-radius: 7px; background: var(--active); border: 0; box-shadow: none; }
 /* .file-view / .crumb-path */
 .files-preview.file-view, .files-preview { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0; outline: none; }
 /* Files panel: session filters, extension badges, status letters, tree reveal. */
@@ -266,7 +264,7 @@ button.ctx-item:hover { background: var(--bg-card-hover); }
 
 /* ── .files-preview ── */
 .files-preview .cv-panel { flex: 1; min-height: 0; border: 0; border-radius: 0; background: transparent; }
-.files-preview .cv { --cv-bg: transparent; background: transparent; font: 12px/1.65 var(--font-mono); }
+.files-preview .cv { --cv-bg: transparent; background: transparent; font: var(--text-xs)/1.65 var(--font-mono); }
 .files-preview .cv-num { padding: 0 10px 0 12px; border-right: 1px solid var(--border); background: transparent; color: var(--text-3); }
 .files-preview .hint, .files-preview .form-error, .files-preview .empty-small { margin: 0; padding: 10px 12px; }
 

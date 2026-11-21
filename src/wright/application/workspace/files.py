@@ -6,7 +6,10 @@ a registered project or from a session execution root.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
+
+from ...core.git import git_command
 
 MAX_LIST_ENTRIES = 500
 MAX_READ_CHARS = 200_000
@@ -70,12 +73,38 @@ def list_directory(root: Path, relative: str = "") -> dict[str, object]:
             "kind": kind,
             "size": stat.st_size if kind == "file" else None,
         })
+    for name in _ignored_names(directory, [str(entry["name"]) for entry in entries]):
+        for entry in entries:
+            if entry["name"] == name:
+                entry["ignored"] = True
     rel = directory.relative_to(root.expanduser().resolve()).as_posix()
     return {
         "path": "" if rel == "." else rel,
         "entries": entries,
         "truncated": truncated,
     }
+
+
+def _ignored_names(directory: Path, names: list[str]) -> set[str]:
+    """Names in ``directory`` that git ignores; empty outside a checkout or on any git failure."""
+
+    if not names:
+        return set()
+    try:
+        result = subprocess.run(
+            git_command(directory, "check-ignore", "-z", "--stdin"),
+            input="\0".join(names) + "\0",
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    # 0: some names ignored, 1: none ignored, anything else: not a checkout or git failed.
+    if result.returncode != 0:
+        return set()
+    return {item for item in result.stdout.split("\0") if item}
 
 
 def read_text(root: Path, relative: str) -> dict[str, object]:

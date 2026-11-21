@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 
 from ...domain.model.session import Session
@@ -11,12 +12,13 @@ from ...infrastructure.runtime.network import AuthorizedNetwork
 from ..permission.service import PermissionService
 from ..tool_execution import capabilities as _capabilities
 from ..tool_execution.capabilities import CapabilityAssembly
+from .settings import sandbox_egress
 
 
 def bind_local_runtime(permissions: PermissionService) -> PermissionService:
     permissions.execution_factory = permissions.execution_factory or AuthorizedExecution
     permissions.network_factory = permissions.network_factory or AuthorizedNetwork
-    permissions.backend_factory = permissions.backend_factory or LocalExecutionBackend
+    permissions.backend_factory = permissions.backend_factory or partial(LocalExecutionBackend, egress_setting=sandbox_egress)
     return permissions
 
 

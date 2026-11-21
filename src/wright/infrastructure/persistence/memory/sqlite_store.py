@@ -78,9 +78,28 @@ CREATE TABLE IF NOT EXISTS changes (
     before TEXT,
     after TEXT,
     note TEXT NOT NULL DEFAULT '',
-    reverted INTEGER NOT NULL DEFAULT 0
+    reverted INTEGER NOT NULL DEFAULT 0,
+    scope TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS changes_by_target ON changes(target_id);
+"""
+
+# Change rows written before the scope column existed take it from their own
+# snapshot (space_id, or repo:<project_id> for episodes). A row with no snapshot
+# borrows it from another row about the same target.
+_BACKFILL_CHANGE_SCOPE = """
+UPDATE changes SET scope = COALESCE(
+    json_extract(after, '$.space_id'),
+    json_extract(before, '$.space_id'),
+    'repo:' || json_extract(after, '$.project_id'),
+    'repo:' || json_extract(before, '$.project_id'),
+    ''
+) WHERE scope = '';
+UPDATE changes SET scope = COALESCE((
+    SELECT other.scope FROM changes AS other
+    WHERE other.target_id = changes.target_id AND other.scope != '' LIMIT 1
+), '') WHERE scope = '';
+CREATE INDEX IF NOT EXISTS changes_by_scope ON changes(scope, id);
 """
 
 
@@ -102,6 +121,7 @@ class SqliteMemoryStore(IMemoryStore):
             # executescript commits on its own, so it runs outside transaction().
             # Every statement in the schema is idempotent.
             self._conn.executescript(_SCHEMA)
+            self._migrate_change_scope()
             self._conn.execute(
                 "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)",
                 (SCHEMA_VERSION,),
@@ -112,6 +132,14 @@ class SqliteMemoryStore(IMemoryStore):
             self.path.chmod(0o600)
         except OSError:
             pass
+
+    def _migrate_change_scope(self) -> None:
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(changes)").fetchall()}
+        if "scope" not in columns:
+            self._conn.execute("ALTER TABLE changes ADD COLUMN scope TEXT NOT NULL DEFAULT ''")
+            self._conn.executescript(_BACKFILL_CHANGE_SCOPE)
+        else:
+            self._conn.execute("CREATE INDEX IF NOT EXISTS changes_by_scope ON changes(scope, id)")
 
     def close(self) -> None:
         with self._lock:
@@ -356,21 +384,39 @@ class SqliteMemoryStore(IMemoryStore):
         before: dict[str, Any] | None,
         after: dict[str, Any] | None,
         note: str = "",
+        scope: str = "",
     ) -> ChangeRecord:
         cursor = self._execute(
-            "INSERT INTO changes(at, actor, action, target_id, before, after, note) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (at, actor, action, target_id, _dump_optional(before), _dump_optional(after), note),
+            "INSERT INTO changes(at, actor, action, target_id, before, after, note, scope) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (at, actor, action, target_id, _dump_optional(before), _dump_optional(after), note, scope),
         )
-        return ChangeRecord(int(cursor.lastrowid or 0), at, actor, action, target_id, before, after, note)  # type: ignore[arg-type]
+        return ChangeRecord(
+            int(cursor.lastrowid or 0), at, actor, action, target_id, before, after, note, scope=scope,  # type: ignore[arg-type]
+        )
 
-    def list_changes(self, *, limit: int = 100, target_id: str = "") -> list[ChangeRecord]:
+    def list_changes(
+        self, *, limit: int = 100, target_id: str = "", scopes: Sequence[str] | None = None
+    ) -> list[ChangeRecord]:
+        clauses: list[str] = []
+        params: list[Any] = []
         if target_id:
-            rows = self._execute(
-                "SELECT * FROM changes WHERE target_id = ? ORDER BY id DESC LIMIT ?", (target_id, limit)
-            ).fetchall()
-        else:
-            rows = self._execute("SELECT * FROM changes ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-        return [_change(row) for row in rows]
+            clauses.append("target_id = ?")
+            params.append(target_id)
+        if scopes is not None:
+            wanted = list(dict.fromkeys(scopes))
+            if not wanted:
+                return []
+            clauses.append(f"scope IN ({', '.join('?' for _ in wanted)})")
+            params.extend(wanted)
+        sql = "SELECT * FROM changes"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        return [_change(row) for row in self._execute(sql, params).fetchall()]
+
+    def scrub_changes(self, target_id: str) -> None:
+        self._execute("UPDATE changes SET before = NULL, after = NULL WHERE target_id = ?", (target_id,))
 
     def get_change(self, change_id: int) -> ChangeRecord | None:
         row = self._execute("SELECT * FROM changes WHERE id = ?", (change_id,)).fetchone()
@@ -415,6 +461,7 @@ def _change(row: sqlite3.Row) -> ChangeRecord:
         after=json.loads(row["after"]) if row["after"] else None,
         note=row["note"] or "",
         reverted=bool(row["reverted"]),
+        scope=row["scope"] or "",
     )
 
 

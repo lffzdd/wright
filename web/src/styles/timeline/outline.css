@@ -178,54 +178,37 @@
 /* ── .outline-dock ── */
 .outline-dock,
 .outline-ticks { display: none; }
+/* Floats left of the rail over the conversation, so opening it never reflows the transcript. */
 .outline-dock {
   position: absolute;
-  top: 8px;
-  right: 0;
-  width: 144px;
-  max-height: min(68vh, calc(100% - 96px));
+  top: 0;
+  right: calc(100% + 4px);
+  width: 224px;
+  max-height: min(70vh, 100%);
   flex: none;
   flex-direction: column;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--bg-panel) 88%, transparent);
-  box-shadow: var(--shadow-md);
+  /* See-through enough to keep the conversation under it in view; the blur keeps the list legible. */
+  background: color-mix(in srgb, var(--bg-panel) 72%, transparent);
+  backdrop-filter: blur(6px) saturate(1.2);
+  box-shadow: var(--shadow-popover);
   overflow: hidden;
+  animation: tocFadeIn 0.15s ease-out;
 }
-.conversation-stream[data-outline="dock"] .outline-dock {
-  position: sticky;
-  top: 0;
-  right: auto;
-  width: 100%;
-  height: auto;
-  max-height: 100%;
-  min-height: 0;
-  align-self: flex-start;
-  border-radius: 0;
-  border: 0;
-  border-left: 1px solid color-mix(in srgb, var(--border-strong) 55%, var(--border-subtle));
-  box-shadow: none;
-  background: transparent;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  flex: 0 1 auto;
-  --outline-dock-rail: 8px;
-  --outline-dock-gap: 6px; border-left-color: var(--border-subtle);
+@container conversation (min-width: 588px) {
+  .conversation-outline-host.open .outline-dock { display: flex; }
 }
-@container conversation (min-width: 736px) {
-  .conversation-stream[data-outline="dock"] .outline-dock { display: flex; }
-}
+.outline-dock .outline-dock-list { padding-left: 10px; }
+/* The open list already names every tick; it marks the hovered one instead of a tooltip. */
+.conversation-outline-host.open .outline-tick-preview { display: none; }
+.outline-dock-item.hot { background: var(--hover); color: var(--text-primary); }
 
 /* ── .outline-dock-head ── */
 .outline-dock-head {
   flex: 0 0 auto;
   display: flex; align-items: center; gap: 6px;
   padding: 8px 8px 6px 10px;
-}
-.conversation-stream[data-outline="dock"] .outline-dock-head {
-  padding: 7px 8px 5px;
-  padding-left: calc(var(--outline-dock-rail) + var(--outline-dock-gap) + 2px);
 }
 .outline-dock-head .timeline-toc-close { margin-left: 0; flex: 0 0 auto; }
 .outline-dock-title {
@@ -255,11 +238,6 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-}
-.conversation-stream[data-outline="dock"] .outline-dock-list {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
 }
 
 /* ── .outline-dock-item ── */
@@ -295,10 +273,6 @@
 .outline-dock-item:focus-visible .outline-dock-mark i {
   width: 14px;
   background: color-mix(in srgb, var(--text-secondary) 75%, transparent);
-}
-.outline-dock-item .outline-dock-preview {
-  right: calc(100% + 10px);
-  z-index: 4;
 }
 .outline-dock-mark {
   grid-column: 1;
@@ -339,9 +313,6 @@
   overflow: visible;
   z-index: 8;
 }
-@container conversation (min-width: 736px) {
-  .conversation-stream[data-outline="dock"] .outline-ticks { display: none; }
-}
 
 /* ── .outline-ticks-expand ── */
 .outline-ticks-expand {
@@ -358,10 +329,10 @@
   color: var(--text-primary);
   background: var(--bg-card-hover);
 }
-@container conversation (min-width: 736px) {
-  .conversation-stage[data-labels="off"]:not([data-compact="true"]) .outline-ticks-expand { display: grid; }
-  .conversation-stage[data-compact="true"] .outline-ticks-expand { display: none; }
+@container conversation (min-width: 588px) {
+  .conversation-stage:not([data-compact="true"]) .outline-ticks-expand { display: grid; }
 }
+.outline-ticks-expand[aria-pressed="true"] { color: var(--accent); background: var(--accent-subtle); }
 
 /* ── .outline-ticks-track ── */
 .outline-ticks-track {

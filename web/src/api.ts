@@ -1,4 +1,10 @@
-import type { ChangeAction, ChangeActionResult, ChangePatch, ChangesSummary, ExecutionMode, FolderListing, GitChangeScope, Grants, ReviewSummary, RuntimeSettingsView, SandboxStatus, SessionSummary, SettingScope, Snapshot } from "./types";
+import type {
+  ChangeAction, ContextDetail, ContextDetailQuery, ContextRequest, SkillView, ChangeActionResult, ChangePatch,
+  ChangesSummary, ExecutionMode, FolderListing, GitChangeScope, Grants, HooksView, McpConfigView, McpServerForm,
+  PermissionDefaultsView, ReviewSummary, RuntimeSettingsView, SandboxStatus, SecretsView, SessionSummary, SettingScope,
+  SkillSwitchesView, Snapshot,
+} from "./types";
+import type { ThoughtStyle } from "./thoughtStyle";
 
 export class ApiError extends Error {
   constructor(message: string, public status: number, public latest?: Grants) { super(message); }
@@ -42,21 +48,40 @@ export const api = {
     inspector_width: number | null;
     sidebar_open?: boolean;
     sidebar_width?: number | null;
+    thought_style?: ThoughtStyle;
   }>("/api/v1/preferences"),
-  setPreference: (body: { interface_language?: string; theme?: "dark" | "light"; inspector_open?: boolean; inspector_width?: number; sidebar_open?: boolean; sidebar_width?: number }) => json<{
+  setPreference: (body: {
+    interface_language?: string; theme?: "dark" | "light"; inspector_open?: boolean; inspector_width?: number;
+    sidebar_open?: boolean; sidebar_width?: number; thought_style?: ThoughtStyle;
+  }) => json<{
     interface_language: string;
     theme: "dark" | "light";
     inspector_open: boolean;
     inspector_width: number | null;
     sidebar_open?: boolean;
     sidebar_width?: number | null;
+    thought_style?: ThoughtStyle;
   }>("/api/v1/preferences", { method: "PUT", body: JSON.stringify(body) }),
   project: () => json<Record<string, unknown>>("/api/v1/project"),
   // Without a project only the user settings file is in play.
   runtimeSettings: (projectId: string | null) => json<RuntimeSettingsView>(settingsPath(projectId)),
   setRuntimeSetting: (projectId: string | null, body: { scope: SettingScope; key: string; value: unknown }) => json<RuntimeSettingsView>(settingsPath(projectId), { method: "PUT", body: JSON.stringify(body) }),
+  secrets: () => json<SecretsView>("/api/v1/settings/secrets"),
+  // A null or empty value removes the key. The response never carries a value.
+  setSecret: (name: string, value: string | null) => json<SecretsView>(`/api/v1/settings/secrets/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ value }) }),
+  permissionDefaults: (projectId: string | null) => json<PermissionDefaultsView>(`${settingsPath(projectId)}/permissions`),
+  setPermissionMode: (projectId: string | null, mode: string) => json<PermissionDefaultsView>(`${settingsPath(projectId)}/permissions/mode`, { method: "PUT", body: JSON.stringify({ mode }) }),
+  addPermissionRule: (projectId: string | null, body: { effect: "deny" | "ask"; scope: SettingScope; text: string }) => json<PermissionDefaultsView>(`${settingsPath(projectId)}/permissions/rules`, { method: "POST", body: JSON.stringify(body) }),
+  removePermissionRule: (projectId: string | null, scope: string, id: string) => json<PermissionDefaultsView>(`${settingsPath(projectId)}/permissions/rules/${encodeURIComponent(scope)}/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  skillSwitches: (projectId: string | null) => json<SkillSwitchesView>(`${settingsPath(projectId)}/skills`),
+  setSkillSwitch: (projectId: string | null, id: string, enabled: boolean) => json<SkillSwitchesView>(`${settingsPath(projectId)}/skills/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ enabled }) }),
+  mcpConfig: (projectId: string | null) => json<McpConfigView>(`${settingsPath(projectId)}/mcp`),
+  saveMcpServer: (projectId: string | null, name: string, body: McpServerForm) => json<McpConfigView>(`${settingsPath(projectId)}/mcp/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify(body) }),
+  removeMcpServer: (projectId: string | null, scope: SettingScope, name: string) => json<McpConfigView>(`${settingsPath(projectId)}/mcp/${encodeURIComponent(scope)}/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  hooks: () => json<HooksView>("/api/v1/settings/hooks"),
   sessions: (allProjects = false) => json<SessionSummary[]>(`/api/v1/sessions${allProjects ? "?all_projects=true" : ""}`),
   snapshot: (id: string) => json<Snapshot>(`/api/v1/sessions/${id}/snapshot`),
+  contextDetail: (id: string, query: ContextDetailQuery) => json<ContextDetail>(`/api/v1/sessions/${id}/context/detail?${"category" in query ? `category=${encodeURIComponent(query.category)}` : `turn=${query.turn}`}`),
   create: (body: Record<string, unknown>) => json<Snapshot & { submit_error?: string }>("/api/v1/sessions", { method: "POST", body: JSON.stringify(body) }),
   preview: (id: string, projectId?: string) => json<Snapshot>(`/api/v1/sessions/${id}/preview${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`),
   submitTurn: (id: string, body: Record<string, unknown>) => json<Record<string, unknown>>(`/api/v1/sessions/${id}/turns`, { method: "POST", body: JSON.stringify(body) }),
@@ -92,17 +117,20 @@ export const api = {
   unregisterWorkspace: (projectId: string) => json<Record<string, unknown>>(`/api/v1/workspaces/${projectId}`, { method: "DELETE" }),
   /** Read-only git status of a registered project, for sessions whose runtime is not running. */
   workspaceChanges: (projectId: string) => json<ChangesSummary>(`/api/v1/workspaces/${projectId}/changes`),
-  workspaceTree: (projectId: string, path = "") => json<{ path: string; entries: Array<{ name: string; path: string; kind: string; size: number | null }> }>(`/api/v1/workspaces/${projectId}/tree?path=${encodeURIComponent(path)}`),
+  workspaceTree: (projectId: string, path = "") => json<{ path: string; entries: Array<{ name: string; path: string; kind: string; size: number | null; ignored?: boolean }> }>(`/api/v1/workspaces/${projectId}/tree?path=${encodeURIComponent(path)}`),
   workspaceFile: (projectId: string, path: string) => json<{ path: string; content: string; binary: boolean; line_count?: number }>(`/api/v1/workspaces/${projectId}/file?path=${encodeURIComponent(path)}`),
   workspaceSessions: (projectId: string) => json<SessionSummary[]>(`/api/v1/workspaces/${projectId}/sessions`),
   createInWorkspace: (projectId: string, body: Record<string, unknown>) => json<Snapshot>(`/api/v1/workspaces/${projectId}/sessions`, { method: "POST", body: JSON.stringify(body) }),
   commands: () => json<Array<{ name: string; description: string; usage: string }>>("/api/v1/commands"),
   search: (sessionId: string, q: string, kind: string) => json<{ kind: string; results: Array<Record<string, unknown>> }>(`/api/v1/sessions/${sessionId}/search?q=${encodeURIComponent(q)}&kind=${encodeURIComponent(kind)}`),
-  tree: (sessionId: string, path = "") => json<{ path: string; entries: Array<{ name: string; path: string; kind: string; size: number | null }> }>(`/api/v1/sessions/${sessionId}/tree?path=${encodeURIComponent(path)}`),
+  tree: (sessionId: string, path = "") => json<{ path: string; entries: Array<{ name: string; path: string; kind: string; size: number | null; ignored?: boolean }> }>(`/api/v1/sessions/${sessionId}/tree?path=${encodeURIComponent(path)}`),
   file: (sessionId: string, path: string) => json<{ path: string; content: string; binary: boolean; line_count?: number }>(`/api/v1/sessions/${sessionId}/file?path=${encodeURIComponent(path)}`),
   workspaceInfo: (sessionId: string) => json<Record<string, unknown>>(`/api/v1/sessions/${sessionId}/workspace`),
   policy: (sessionId: string, body: { interaction_mode?: string; permission_mode?: string; execution_mode?: ExecutionMode }) => json<Record<string, unknown>>(`/api/v1/sessions/${sessionId}/policy`, { method: "POST", body: JSON.stringify(body) }),
   /** Only called for servers the snapshot marks `toggleable`. */
+  contextRequest: (sessionId: string, raw = false) => json<ContextRequest>(`/api/v1/sessions/${sessionId}/context/request${raw ? "?raw=true" : ""}`),
+  skills: (sessionId: string) => json<{ skills: SkillView[] }>(`/api/v1/sessions/${sessionId}/skills`),
+  setSkill: (sessionId: string, skillId: string, enabled: boolean) => json<{ skills: SkillView[] }>(`/api/v1/sessions/${sessionId}/skills/${encodeURIComponent(skillId)}`, { method: "POST", body: JSON.stringify({ enabled }) }),
   setMcpServer: (sessionId: string, name: string, enabled: boolean) => json<Record<string, unknown>>(`/api/v1/sessions/${sessionId}/mcp/${encodeURIComponent(name)}`, { method: "POST", body: JSON.stringify({ enabled }) }),
   grants: (sessionId: string) => json<Grants>(`/api/v1/sessions/${sessionId}/grants`),
   revokeGrant: (sessionId: string, ruleId: string, source: string, expected_version: string) => json<Grants>(`/api/v1/sessions/${sessionId}/grants/${ruleId}/revoke`, { method: "POST", body: JSON.stringify({ source, expected_version }) }),
@@ -116,6 +144,7 @@ export const api = {
   updateFact: (projectId: string, factId: string, body: Record<string, unknown>) => json<Record<string, unknown>>(`/api/v1/workspaces/${projectId}/memory/facts/${factId}`, { method: "PATCH", body: JSON.stringify(body) }),
   confirmFact: (projectId: string, factId: string) => json<Record<string, unknown>>(`/api/v1/workspaces/${projectId}/memory/facts/${factId}/confirm`, { method: "POST" }),
   forgetMemory: (projectId: string, itemId: string) => json<Record<string, unknown>>(`/api/v1/workspaces/${projectId}/memory/items/${itemId}`, { method: "DELETE", body: JSON.stringify({ confirm: true }) }),
+  createCommitment: (projectId: string, body: Record<string, unknown>) => json<Record<string, unknown>>(`/api/v1/workspaces/${projectId}/memory/commitments`, { method: "POST", body: JSON.stringify(body) }),
   updateCommitment: (projectId: string, commitmentId: string, body: Record<string, unknown>) => json<Record<string, unknown>>(`/api/v1/workspaces/${projectId}/memory/commitments/${commitmentId}`, { method: "PATCH", body: JSON.stringify(body) }),
   revertMemoryChange: (projectId: string, changeId: number) => json<Record<string, unknown>>(`/api/v1/workspaces/${projectId}/memory/changes/${changeId}/revert`, { method: "POST" }),
   workspaceSearch: (projectId: string, q: string, kind: string) => json<{ kind: string; results: Array<Record<string, unknown>> }>(`/api/v1/workspaces/${projectId}/search?q=${encodeURIComponent(q)}&kind=${encodeURIComponent(kind)}`),

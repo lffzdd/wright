@@ -41,7 +41,6 @@ def test_linux_proxy_mode_keeps_the_network_namespace_and_runs_the_launcher(monk
 
 
 def test_proxy_mode_never_opens_the_network_without_a_decider(monkeypatch, grant, tmp_path):
-    monkeypatch.setattr(sandbox, "egress_mode", lambda: "proxy")
     monkeypatch.setattr(sandbox, "_provider", lambda: "/usr/bin/sandbox-exec")
     monkeypatch.setattr(sandbox.sys, "platform", "darwin")
     launched = []
@@ -62,13 +61,24 @@ def test_egress_environment_names_the_proxy_for_common_clients():
 
 def test_egress_mode_switch(monkeypatch):
     monkeypatch.setattr(sandbox.sys, "platform", "linux")
-    monkeypatch.delenv("WRIGHT_SANDBOX_EGRESS", raising=False)
     assert sandbox.egress_mode() == "proxy"
-    monkeypatch.setenv("WRIGHT_SANDBOX_EGRESS", "legacy")
-    assert sandbox.egress_mode() == "legacy"
+    assert sandbox.egress_mode("legacy") == "legacy"
+    # Anything unknown is the stricter proxy mode.
+    assert sandbox.egress_mode("open") == "proxy"
     monkeypatch.setattr(sandbox.sys, "platform", "win32")
-    monkeypatch.delenv("WRIGHT_SANDBOX_EGRESS")
-    assert sandbox.egress_mode() == "legacy"
+    assert sandbox.egress_mode("proxy") == "legacy"
+
+
+def test_egress_setting_comes_from_the_user_settings_file(monkeypatch, tmp_path):
+    from wright.application.composition.settings import sandbox_egress
+
+    monkeypatch.setenv("WRIGHT_HOME", str(tmp_path))
+    monkeypatch.delenv("WRIGHT_SANDBOX_EGRESS", raising=False)
+    assert sandbox_egress() == "proxy"
+    (tmp_path / "settings.json").write_text('{"sandbox": {"egress": "legacy"}}', encoding="utf-8")
+    assert sandbox_egress() == "legacy"
+    (tmp_path / "settings.json").write_text("{not json", encoding="utf-8")
+    assert sandbox_egress() == "proxy"
 
 
 def run_bpf(program: bytes, *, arch: int, nr: int, arg0: int = 0) -> int:

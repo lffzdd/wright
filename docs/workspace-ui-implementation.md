@@ -49,7 +49,7 @@ Changes 当前行为和验收标准见 [Changes 功能约定](changes-contract.m
 
 审阅响应包含 `applied` 和逐条 `results`。`applied: false` 表示磁盘没有留下这批操作的结果。Accept 的文案是“已落盘编辑的审阅接受”。
 
-偏好：`interface_language`、`theme`、`inspector_open`。至少要有一个字段。
+偏好：`interface_language`、`theme`、`inspector_open`、`thought_style`（`quiet` 淡显 / `lead` 突出，默认 `quiet`）。至少要有一个字段。
 
 ## 测试
 

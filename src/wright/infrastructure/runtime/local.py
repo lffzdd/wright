@@ -131,9 +131,14 @@ class LocalExecutionBackend:
 
     environment_id = "local"
 
-    def __init__(self, workspace_dir: Path, cwd_provider: Callable[[], Path]):
+    def __init__(
+        self, workspace_dir: Path, cwd_provider: Callable[[], Path], *,
+        egress_setting: Callable[[], str] = lambda: "proxy",
+    ):
         self.workspace_dir = Path(workspace_dir).expanduser().resolve()
         self._cwd_provider = cwd_provider
+        # Read per command, so a changed sandbox.egress reaches the next one.
+        self._egress_setting = egress_setting
 
     def _path_from_local(self, path: Path) -> ExecutionPath:
         return ExecutionPath(self.environment_id, str(path.resolve()))
@@ -382,7 +387,9 @@ class LocalExecutionBackend:
                 process = host_launch(command, grant, scratch, cwd_path)
             else:
                 from .sandbox import launch as sandbox_launch
-                process, lease = sandbox_launch(command, grant, scratch, cwd_path, egress=egress)
+                process, lease = sandbox_launch(
+                    command, grant, scratch, cwd_path, egress=egress, egress_setting=self._egress_setting(),
+                )
         except Exception:
             shutil.rmtree(scratch)
             raise

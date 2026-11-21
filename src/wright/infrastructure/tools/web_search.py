@@ -31,7 +31,6 @@ DEFAULT_RESULTS = 5
 MAX_RESULTS = 10
 MAX_TITLE = 120
 MAX_SNIPPET = 300
-PROVIDER_ENV = "WRIGHT_SEARCH_PROVIDER"
 _CACHE_TTL = 300.0
 _CACHE_MAX = 64
 
@@ -126,7 +125,7 @@ def _brave_results(data: Any) -> list[dict[str, str]]:
     ]
 
 
-# Order is the auto-detection preference when WRIGHT_SEARCH_PROVIDER is unset.
+# Order is the auto-detection preference when tools.web_search is auto.
 PROVIDERS: dict[str, SearchProvider] = {
     "tavily": SearchProvider(
         name="tavily",
@@ -165,34 +164,37 @@ def _env(env: Mapping[str, str], name: str) -> str:
     return (env.get(name) or "").strip()
 
 
-def resolve_search_config(env: Mapping[str, str] | None = None) -> WebSearchConfig | None:
-    """Pick the provider: the explicit setting, else the first one with a key."""
+def resolve_search_config(env: Mapping[str, str] | None = None, provider: str = "auto") -> WebSearchConfig | None:
+    """Pick the provider named by ``tools.web_search``, else the first one with a key."""
     env = os.environ if env is None else env
-    chosen = _env(env, PROVIDER_ENV).lower()
-    if chosen:
-        provider = PROVIDERS.get(chosen)
-        if provider is None:
+    chosen = provider.strip().lower()
+    if chosen == "off":
+        logger.info("web_search disabled: tools.web_search is off")
+        return None
+    if chosen != "auto":
+        selected = PROVIDERS.get(chosen)
+        if selected is None:
             logger.warning(
-                "web_search disabled: unknown %s=%s (choose one of %s)",
-                PROVIDER_ENV, chosen, ", ".join(PROVIDERS),
+                "web_search disabled: unknown tools.web_search=%s (choose one of %s)",
+                chosen, ", ".join(PROVIDERS),
             )
             return None
-        if not _env(env, provider.key_env):
-            logger.warning("web_search disabled: %s=%s but %s is not set", PROVIDER_ENV, chosen, provider.key_env)
+        if not _env(env, selected.key_env):
+            logger.warning("web_search disabled: tools.web_search=%s but %s is not set", chosen, selected.key_env)
             return None
     else:
-        provider = next((item for item in PROVIDERS.values() if _env(env, item.key_env)), None)
-        if provider is None:
+        selected = next((item for item in PROVIDERS.values() if _env(env, item.key_env)), None)
+        if selected is None:
             logger.info("web_search disabled: no search provider key is set")
             return None
-    base_url = (_env(env, provider.base_url_env) or provider.default_base_url).rstrip("/")
-    endpoint = base_url + provider.path
+    base_url = (_env(env, selected.base_url_env) or selected.default_base_url).rstrip("/")
+    endpoint = base_url + selected.path
     try:
         request_target("GET", endpoint)
     except (PermissionError, httpx.InvalidURL):
-        logger.warning("web_search disabled: %s is not an http(s) URL", provider.base_url_env)
+        logger.warning("web_search disabled: %s is not an http(s) URL", selected.base_url_env)
         return None
-    return WebSearchConfig(provider, _env(env, provider.key_env), endpoint)
+    return WebSearchConfig(selected, _env(env, selected.key_env), endpoint)
 
 
 def _count(value: Any) -> int:
@@ -311,8 +313,8 @@ def build_web_search_tool(config: WebSearchConfig) -> Tool:
     )
 
 
-def optional_web_search_tools(env: Mapping[str, str] | None = None) -> list[Tool]:
-    config = resolve_search_config(env)
+def optional_web_search_tools(env: Mapping[str, str] | None = None, provider: str = "auto") -> list[Tool]:
+    config = resolve_search_config(env, provider)
     return [] if config is None else [build_web_search_tool(config)]
 
 

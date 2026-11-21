@@ -2,15 +2,16 @@ import { ArrowDown, X } from "@phosphor-icons/react";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { MarkdownContent } from "../code/Markdown";
 import { present, useT } from "../../i18n";
-import type { ViewState } from "../../types";
+import type { TimelineItem, ViewState } from "../../types";
 import { AssistantMessage, ReasoningRow, UserMessage } from "../cards/Messages";
 import { InteractionCard } from "../cards/InteractionCard";
+import { PermissionDoneLine, permissionTarget } from "../cards/PermissionRecord";
 import { toolCardFromState } from "../cards/ToolCard";
 import { RevealCallContext, StepGroup, type RevealCall } from "./StepGroup";
-import { appendStep, segmentTimeline, stepFromTool, type Segment } from "./steps";
+import { appendStep, segmentTimeline, stepFromTool, streamingReasoningId, type Segment } from "./steps";
 import { TurnFooter } from "./TurnFooter";
 import { summarizeTurns, turnKeys } from "./turnSummary";
-import { ConversationOutline, OUTLINE_DOCK_MIN_ITEMS, OUTLINE_TEXT_AT, TimelineTOC, useTimelineTOC } from "./toc";
+import { ConversationOutline, OUTLINE_DOCK_MIN_ITEMS, TimelineTOC, useTimelineTOC } from "./toc";
 
 export function InteractionDock({ sessionId, pending, respond, root }: {
   sessionId: string;
@@ -100,8 +101,8 @@ export function Timeline({ state, userLabel, timestamp, children, revealCall, me
   const tr = useT();
   const scroller = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
-  const [labelsOff, setLabelsOff] = useState(true);
-  const [narrow, setNarrow] = useState(false);
+  // The outline list floats over the conversation; pinned keeps it open after the pointer leaves.
+  const [outlinePinned, setOutlinePinned] = useState(false);
   const stick = useRef(true);
   const [stuck, setStuck] = useState(true);
   const lastTop = useRef(0);
@@ -128,20 +129,6 @@ export function Timeline({ state, userLabel, timestamp, children, revealCall, me
     return () => node.removeEventListener("tocjump", release);
   }, []);
   useEffect(() => {
-    const stage = stageRef.current;
-    const column = stage?.parentElement;
-    if (!column || typeof ResizeObserver === "undefined") return;
-    const restore = () => {
-      const tooNarrow = column.clientWidth < OUTLINE_TEXT_AT;
-      setNarrow(tooNarrow);
-      if (tooNarrow) setLabelsOff(false);
-    };
-    restore();
-    const observer = new ResizeObserver(restore);
-    observer.observe(column);
-    return () => observer.disconnect();
-  }, []);
-  useEffect(() => {
     // Markdown, code blocks and images can grow after the commit that scrolled
     // to the bottom; keep a stuck view pinned while the content settles.
     const node = scroller.current;
@@ -164,16 +151,26 @@ export function Timeline({ state, userLabel, timestamp, children, revealCall, me
     state.active_turn?.tools.length,
     state.timeline?.length,
   ]);
+  // A footer's tool-call count reveals the turn's first call; an outside reveal replaces it.
+  const [footReveal, setFootReveal] = useState<RevealCall | null>(null);
+  useEffect(() => setFootReveal(null), [revealCall]);
+  const reveal = footReveal ?? revealCall ?? null;
   const [revealMissed, setRevealMissed] = useState(false);
   useEffect(() => {
-    if (!revealCall) return;
+    if (!reveal) return;
     let flashTimer: number | undefined;
     let missTimer: number | undefined;
     let frame = 0;
     // A step group opened for this reveal renders its cards a frame or two later.
     const attempt = (tries: number) => {
       const node = scroller.current;
-      const target = node?.querySelector<HTMLElement>(`[data-call-id="${revealCall.callId.replace(/["\\]/g, "\\$&")}"]`);
+      const escape = (value: string) => value.replace(/["\\]/g, "\\$&");
+      const exact = reveal.callId ? `[data-call-id="${escape(reveal.callId)}"]`
+        : reveal.contextId ? `[data-context-id="${escape(reveal.contextId)}"]` : "";
+      const fallback = reveal.tocId ? `[data-toc-id="${escape(reveal.tocId)}"]` : "";
+      // The exact element first; once the retries run out, the turn's prompt.
+      const find = (selector: string) => selector ? node?.querySelector<HTMLElement>(selector) ?? null : null;
+      const target = find(exact) ?? (tries === 0 || !exact ? find(fallback) : null);
       if (!target && tries > 0) { frame = window.requestAnimationFrame(() => attempt(tries - 1)); return; }
       if (!node || !target) {
         setRevealMissed(true);
@@ -193,7 +190,7 @@ export function Timeline({ state, userLabel, timestamp, children, revealCall, me
     };
     frame = window.requestAnimationFrame(() => attempt(3));
     return () => { window.cancelAnimationFrame(frame); window.clearTimeout(flashTimer); window.clearTimeout(missTimer); };
-  }, [revealCall]);
+  }, [reveal]);
   const timeline = state.timeline ?? [];
   const toc = useTimelineTOC(scroller, {
     sessionId: state.session.session_id,
@@ -256,33 +253,46 @@ export function Timeline({ state, userLabel, timestamp, children, revealCall, me
     }
     return undefined;
   };
+  // The newest settled turn keeps its actions in view.
+  const latestKey = keys.length && keys[keys.length - 1] !== openKey ? keys[keys.length - 1] : undefined;
+  const findIn = (key: string, test: (item: TimelineItem) => boolean) => timeline.find((item, i) => keys[i] === key && test(item));
   const footerAt = (segment: Segment, index: number) => {
     const key = segmentKey(segment);
     const summary = key && closingSegment.get(key) === index ? turnSummaries.get(key) : undefined;
     if (!summary || !key) return null;
     const reply = lastAssistantOf(key);
     const canRegenerate = Boolean(actions && editableId && reply && reply.id === regenerateReplyId);
+    const callId = findIn(key, (item) => ["tool", "shell", "edit"].includes(item.kind) && Boolean(item.call_id))?.call_id;
+    const tocId = findIn(key, (item) => item.kind === "text" && item.role === "user")?.id;
+    const showTools = callId ? () => setFootReveal({ callId, tocId, request: Date.now() }) : undefined;
     return <TurnFooter
       key={`${key}:footer`}
       summary={summary}
+      latest={key === latestKey}
+      reply={reply?.text}
       onViewChanges={onViewChanges}
       onSuggest={onSuggest}
-      onCopy={reply?.text ? () => { navigator.clipboard?.writeText(reply.text || "").catch(() => undefined); } : undefined}
       onRegenerate={canRegenerate ? () => actions?.regenerate(editableId!) : undefined}
+      onFork={reply && actions && persisted(reply.id) ? () => actions.fork(reply.id) : undefined}
+      onShowTools={showTools}
     />;
   };
   const renderSegment = (segment: Segment, index: number) => {
-        if (segment.type === "steps") return <StepGroup key={segment.key} steps={segment.steps} live={turnRunning && (pendingPrompt ? false : index > lastPrompt)} sessionId={state.session?.session_id} entering={entering} />;
+        if (segment.type === "steps") return <StepGroup key={segment.key} steps={segment.steps} live={turnRunning && (pendingPrompt ? false : index > lastPrompt)} thinkingId={streamingReasoningId(state.active_turn)} sessionId={state.session?.session_id} entering={entering} />;
         const item = segment.item;
         if (item.kind === "text" && item.role === "user") return <UserMessage key={item.id} text={item.text || ""} userLabel={userLabel} timestamp={timestamp} tocId={item.id} interjection={item.interjection} enter={entering(item.turn_id !== undefined && !item.interjection ? `user:${item.turn_id}` : item.id)} onEdit={actions && item.id === editableId ? () => actions.edit(item.id, item.text || "") : undefined} />;
         if (item.kind === "text") {
-          // A settled turn's footer carries regenerate; don't offer it twice.
+          // A settled turn's last reply hands its actions to the footer row.
           const footerKey = keyOf.get(item.id);
-          const footerHasRegenerate = Boolean(footerKey && closingSegment.has(footerKey) && turnSummaries.has(footerKey));
-          const reply = <AssistantMessage key={item.id} text={item.text || ""} enter={entering(item.turn_id !== undefined ? `reply:${item.turn_id}` : item.id)} onRegenerate={actions && editableId && item.id === regenerateReplyId && !footerHasRegenerate ? () => actions.regenerate(editableId) : undefined} onFork={actions && persisted(item.id) ? () => actions.fork(item.id) : undefined} />;
+          const hasFooter = Boolean(footerKey && closingSegment.has(footerKey) && turnSummaries.has(footerKey));
+          const inFooter = hasFooter && lastAssistantOf(footerKey!)?.id === item.id;
+          const reply = <AssistantMessage key={item.id} contextId={`${item.id}:text`} text={item.text || ""} enter={entering(item.turn_id !== undefined ? `reply:${item.turn_id}` : item.id)} actionsInFooter={inFooter} onRegenerate={actions && editableId && item.id === regenerateReplyId && !hasFooter ? () => actions.regenerate(editableId) : undefined} onFork={actions && persisted(item.id) ? () => actions.fork(item.id) : undefined} />;
           return reply;
         }
         if (item.kind === "status") return <TurnOutcome key={item.id} status={item.status} detail={item.text} enter={entering(item.id)} />;
+        if (item.kind === "approval" && item.interaction && item.decision) {
+          return <PermissionDoneLine key={item.id} command={permissionTarget(item.interaction)} decision={item.decision} enter={entering(item.id)} />;
+        }
         return null;
   };
   const isUserSegment = (segment: Segment): segment is Extract<Segment, { type: "item" }> => (
@@ -319,17 +329,17 @@ export function Timeline({ state, userLabel, timestamp, children, revealCall, me
   useEffect(() => {
     if (lastOutlineSessionRef.current === state.session.session_id) return;
     lastOutlineSessionRef.current = state.session.session_id;
-    setLabelsOff(toc.items.length < OUTLINE_DOCK_MIN_ITEMS);
-  }, [state.session.session_id, toc.items.length]);
+    setOutlinePinned(false);
+  }, [state.session.session_id]);
   useEffect(() => {
-    if (outlineCompact) setLabelsOff(true);
+    if (outlineCompact) setOutlinePinned(false);
   }, [outlineCompact]);
   const jump = <button type="button" className={`jump${stuck ? "" : " show"}`} aria-hidden={stuck || undefined} tabIndex={stuck ? -1 : undefined} onClick={() => { stick.current = true; setStuck(true); scroller.current?.scrollTo?.({ top: scroller.current.scrollHeight }); }}><ArrowDown size={14} weight="bold" aria-hidden="true" />{tr("web.jump_bottom")}</button>;
   const foot = typeof children === "function" ? children(jump) : <>{jump}{children}</>;
-  return <RevealCallContext.Provider value={revealCall ?? null}><div className="conversation-stage" ref={stageRef} data-labels={labelsOff ? "off" : undefined} data-compact={outlineCompact ? "true" : undefined}>
+  return <RevealCallContext.Provider value={reveal}><div className="conversation-stage" ref={stageRef} data-compact={outlineCompact ? "true" : undefined}>
     <div
       className="conversation-stream"
-      data-outline={outlineCompact || labelsOff || narrow ? "ticks" : "dock"}
+      data-outline="ticks"
     >
     <div className="conversation-body">
     <div className="conversation-scroll-pane">
@@ -342,7 +352,7 @@ export function Timeline({ state, userLabel, timestamp, children, revealCall, me
       {renderTurnGroups()}
       {pendingPrompt && <UserMessage text={pendingPrompt} userLabel={userLabel} timestamp={timestamp} tocId={activeTurn ? `${activeTurn}:user` : "pending-user"} enter={entering(activeTurn ? `user:${activeTurn}` : "pending-user")} />}
       {(liveSegments.length > 0 || liveText || (state.active_turn && !liveText && !liveTools.length && !timeline.some((item) => item.turn_id !== undefined && item.turn_id === state.active_turn?.turn_id && item.role === "assistant"))) && <div className="turn">
-        {liveSegments.map((segment) => segment.type === "steps" && <StepGroup key={segment.key} steps={segment.steps} live={turnRunning} sessionId={state.session?.session_id} entering={entering} />)}
+        {liveSegments.map((segment) => segment.type === "steps" && <StepGroup key={segment.key} steps={segment.steps} live={turnRunning} thinkingId={streamingReasoningId(state.active_turn)} sessionId={state.session?.session_id} entering={entering} />)}
         {liveText && <AssistantMessage text={liveText} streaming enter={entering(activeTurn ? `reply:${activeTurn}` : "live-reply")} />}
         {state.active_turn && !liveText && !liveTools.length && !timeline.some((item) => item.turn_id !== undefined && item.turn_id === state.active_turn?.turn_id && item.role === "assistant") && <p className="empty-small working-indicator">{tr("web.working")}</p>}
       </div>}
@@ -377,9 +387,8 @@ export function Timeline({ state, userLabel, timestamp, children, revealCall, me
       activeId={toc.activeId}
       tickTops={toc.tickTops}
       scrollToHeading={toc.scrollToHeading}
-      labelsOff={labelsOff}
-      onLabelsOff={() => setLabelsOff(true)}
-      onLabelsOn={() => setLabelsOff(false)}
+      pinned={outlinePinned}
+      onPin={setOutlinePinned}
     />
     </div>
     <div className="conversation-main conversation-main-foot">
